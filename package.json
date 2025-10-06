@@ -1,0 +1,23 @@
+{
+  "name": "sya-tortillerias-socketio",
+  "version": "1.0.0",
+  "description": "Socket.IO server for real-time communication between Desktop POS and Mobile App",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "keywords": ["socketio", "realtime", "pos", "notifications"],
+  "author": "SYA Tortillerías",
+  "license": "ISC",
+  "dependencies": {
+    "socket.io": "^4.7.2",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

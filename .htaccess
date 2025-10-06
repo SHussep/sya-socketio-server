@@ -1,0 +1,12 @@
+# Socket.IO Proxy Configuration
+RewriteEngine On
+
+# Habilitar proxy
+RewriteCond %{HTTP:Upgrade} websocket [NC]
+RewriteCond %{HTTP:Connection} upgrade [NC]
+RewriteRule ^(.*) http://127.0.0.1:3000/$1 [P,L]
+
+# Proxy para peticiones HTTP normales
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.*)$ http://127.0.0.1:3000/$1 [P,L]
