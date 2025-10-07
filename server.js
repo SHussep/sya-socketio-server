@@ -782,6 +782,124 @@ app.put('/api/guardian-events/:id/mark-read', authenticateToken, async (req, res
     }
 });
 
+// POST /api/branches - Crear sucursal
+app.post('/api/branches', authenticateToken, async (req, res) => {
+    try {
+        const { tenantId } = req.user;
+        const { branchCode, name, address, phoneNumber } = req.body;
+
+        const result = await pool.query(
+            `INSERT INTO branches (tenant_id, branch_code, name, address, phone_number)
+             VALUES ($1, $2, $3, $4, $5)
+             RETURNING *`,
+            [tenantId, branchCode, name, address, phoneNumber]
+        );
+
+        console.log(`[Branches] ✅ Sucursal creada: ${name}`);
+        res.json({ success: true, data: result.rows[0] });
+    } catch (error) {
+        console.error('[Branches] Error:', error);
+        res.status(500).json({ success: false, message: 'Error al crear sucursal' });
+    }
+});
+
+// GET /api/branches - Listar sucursales
+app.get('/api/branches', authenticateToken, async (req, res) => {
+    try {
+        const { tenantId } = req.user;
+
+        const result = await pool.query(
+            `SELECT * FROM branches WHERE tenant_id = $1 AND is_active = true ORDER BY created_at DESC`,
+            [tenantId]
+        );
+
+        res.json({ success: true, data: result.rows });
+    } catch (error) {
+        console.error('[Branches] Error:', error);
+        res.status(500).json({ success: false, message: 'Error al obtener sucursales' });
+    }
+});
+
+// POST /api/seed-test-data - Crear datos de prueba (SOLO PARA DESARROLLO)
+app.post('/api/seed-test-data', authenticateToken, async (req, res) => {
+    try {
+        const { tenantId, employeeId } = req.user;
+
+        // Crear branch si no existe
+        let branchResult = await pool.query(
+            'SELECT id FROM branches WHERE tenant_id = $1 LIMIT 1',
+            [tenantId]
+        );
+
+        let branchId;
+        if (branchResult.rows.length === 0) {
+            const newBranch = await pool.query(
+                `INSERT INTO branches (tenant_id, branch_code, name, address)
+                 VALUES ($1, 'SUC001', 'Sucursal Principal', 'Dirección de ejemplo')
+                 RETURNING id`,
+                [tenantId]
+            );
+            branchId = newBranch.rows[0].id;
+            console.log('[Seed] ✅ Branch creada:', branchId);
+        } else {
+            branchId = branchResult.rows[0].id;
+            console.log('[Seed] Branch existente:', branchId);
+        }
+
+        // Crear ventas de prueba
+        for (let i = 1; i <= 5; i++) {
+            await pool.query(
+                `INSERT INTO sales (tenant_id, branch_id, employee_id, ticket_number, total_amount, payment_method)
+                 VALUES ($1, $2, $3, $4, $5, $6)
+                 ON CONFLICT (tenant_id, ticket_number) DO NOTHING`,
+                [tenantId, branchId, employeeId, `TICKET-TEST-${i}`, 150.50 * i, 'Efectivo']
+            );
+        }
+
+        // Crear gastos de prueba
+        await pool.query(
+            `INSERT INTO expenses (tenant_id, branch_id, employee_id, category, description, amount)
+             VALUES ($1, $2, $3, 'Suministros', 'Compra de materiales', 250.00)
+             ON CONFLICT DO NOTHING`,
+            [tenantId, branchId, employeeId]
+        );
+
+        // Crear corte de caja de prueba
+        await pool.query(
+            `INSERT INTO cash_cuts (tenant_id, branch_id, employee_id, cut_number, total_sales, total_expenses, cash_in_drawer, expected_cash, difference)
+             VALUES ($1, $2, $3, 'CORTE-TEST-001', 1500.00, 250.00, 1250.00, 1250.00, 0)
+             ON CONFLICT (tenant_id, cut_number) DO NOTHING`,
+            [tenantId, branchId, employeeId]
+        );
+
+        // Crear eventos Guardian de prueba
+        const guardianEvents = [
+            { type: 'SCALE_CONNECTED', severity: 'low', title: 'Báscula Conectada', desc: 'Báscula 001 conectada correctamente' },
+            { type: 'SCALE_DISCONNECTED', severity: 'high', title: 'Báscula Desconectada', desc: 'Báscula 001 se ha desconectado inesperadamente' },
+            { type: 'WEIGHT_WITHOUT_SALE', severity: 'medium', title: 'Peso sin Venta', desc: 'Se detectó un peso de 2.5 kg sin registrar venta', weight: 2.5 },
+            { type: 'SUSPICIOUS_ACTIVITY', severity: 'critical', title: 'Actividad Sospechosa', desc: 'Múltiples pesos sin ventas en corto periodo' }
+        ];
+
+        for (const event of guardianEvents) {
+            await pool.query(
+                `INSERT INTO guardian_events (tenant_id, branch_id, employee_id, event_type, severity, title, description, weight_kg)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+                [tenantId, branchId, employeeId, event.type, event.severity, event.title, event.desc, event.weight || null]
+            );
+        }
+
+        console.log('[Seed] ✅ Datos de prueba creados');
+        res.json({
+            success: true,
+            message: 'Datos de prueba creados exitosamente',
+            branchId
+        });
+    } catch (error) {
+        console.error('[Seed] Error:', error);
+        res.status(500).json({ success: false, message: 'Error al crear datos de prueba' });
+    }
+});
+
 // ═══════════════════════════════════════════════════════════════
 // CONFIGURAR SOCKET.IO
 // ═══════════════════════════════════════════════════════════════
