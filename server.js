@@ -464,6 +464,58 @@ app.post('/api/auth/scan-qr', async (req, res) => {
     }
 });
 
+// POST /api/auth/refresh - Refrescar access token usando refresh token
+app.post('/api/auth/refresh', async (req, res) => {
+    const { refreshToken } = req.body;
+
+    if (!refreshToken) {
+        return res.status(401).json({ success: false, message: 'Refresh token no proporcionado' });
+    }
+
+    try {
+        // Verificar el refresh token
+        const decoded = jwt.verify(refreshToken, JWT_SECRET);
+
+        // Verificar que el dispositivo siga activo
+        const deviceResult = await pool.query(
+            'SELECT * FROM mobile_devices WHERE device_id = $1 AND tenant_id = $2 AND is_active = true',
+            [decoded.deviceId, decoded.tenantId]
+        );
+
+        if (deviceResult.rows.length === 0) {
+            return res.status(403).json({ success: false, message: 'Dispositivo no encontrado o inactivo' });
+        }
+
+        // Generar nuevo access token
+        const newAccessToken = jwt.sign(
+            { tenantId: decoded.tenantId, employeeId: decoded.employeeId, deviceId: decoded.deviceId },
+            JWT_SECRET,
+            { expiresIn: '15m' }
+        );
+
+        // Actualizar last_active del dispositivo
+        await pool.query(
+            'UPDATE mobile_devices SET last_active = CURRENT_TIMESTAMP WHERE device_id = $1',
+            [decoded.deviceId]
+        );
+
+        console.log(`[Token Refresh] ✅ Token refrescado para device ${decoded.deviceId}`);
+
+        res.json({
+            success: true,
+            accessToken: newAccessToken,
+            refreshToken: refreshToken, // Mantener el mismo refresh token
+            expiresIn: 900 // 15 minutos en segundos
+        });
+    } catch (error) {
+        if (error.name === 'TokenExpiredError') {
+            return res.status(403).json({ success: false, message: 'Refresh token expirado' });
+        }
+        console.error('[Token Refresh] Error:', error);
+        res.status(403).json({ success: false, message: 'Refresh token inválido' });
+    }
+});
+
 // ═══════════════════════════════════════════════════════════════
 // ENDPOINTS PARA DASHBOARD MÓVIL
 // ═══════════════════════════════════════════════════════════════
