@@ -1,6 +1,6 @@
 // ═══════════════════════════════════════════════════════════════
 // SERVIDOR SOCKET.IO + REST API PARA SYA TORTILLERÍAS
-// Dominio: syatortillerias.com.mx
+// Con PostgreSQL Database
 // ═══════════════════════════════════════════════════════════════
 
 const express = require('express');
@@ -10,6 +10,7 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const { pool, initializeDatabase } = require('./database');
 require('dotenv').config();
 
 const PORT = process.env.PORT || 3000;
@@ -21,18 +22,6 @@ const ALLOWED_ORIGINS = [
     'https://www.syatortillerias.com.mx',
     'https://socket.syatortillerias.com.mx',
 ];
-
-// ═══════════════════════════════════════════════════════════════
-// IN-MEMORY DATABASE (Para producción, usar MongoDB/PostgreSQL)
-// ═══════════════════════════════════════════════════════════════
-
-const db = {
-    tenants: [],
-    employees: [],
-    devices: [],
-    sessions: [],
-    qrCodes: [], // QR codes activos
-};
 
 // ═══════════════════════════════════════════════════════════════
 // CONFIGURAR EXPRESS
@@ -55,17 +44,25 @@ app.get('/', (req, res) => {
     res.send('Socket.IO Server for SYA Tortillerías - Running ✅');
 });
 
-app.get('/health', (req, res) => {
-    res.json({
-        status: 'ok',
-        timestamp: new Date().toISOString(),
-        stats: {
-            tenants: db.tenants.length,
-            employees: db.employees.length,
-            devices: db.devices.length,
-            sessions: db.sessions.length,
-        }
-    });
+app.get('/health', async (req, res) => {
+    try {
+        const tenants = await pool.query('SELECT COUNT(*) FROM tenants');
+        const employees = await pool.query('SELECT COUNT(*) FROM employees');
+        const devices = await pool.query('SELECT COUNT(*) FROM devices');
+
+        res.json({
+            status: 'ok',
+            timestamp: new Date().toISOString(),
+            database: 'connected',
+            stats: {
+                tenants: parseInt(tenants.rows[0].count),
+                employees: parseInt(employees.rows[0].count),
+                devices: parseInt(devices.rows[0].count),
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ status: 'error', message: error.message });
+    }
 });
 
 // ─────────────────────────────────────────────────────────
@@ -78,7 +75,12 @@ app.post('/api/auth/google-signup', async (req, res) => {
         console.log('[Google Signup] Request:', { email, businessName });
 
         // Verificar si ya existe
-        if (db.tenants.find(t => t.email.toLowerCase() === email.toLowerCase())) {
+        const existing = await pool.query(
+            'SELECT id FROM tenants WHERE LOWER(email) = LOWER($1)',
+            [email]
+        );
+
+        if (existing.rows.length > 0) {
             return res.status(409).json({
                 success: false,
                 message: 'El email ya está registrado'
@@ -89,39 +91,35 @@ app.post('/api/auth/google-signup', async (req, res) => {
         const tenantCode = `SYA${Date.now().toString().slice(-6)}`;
 
         // Crear tenant
-        const tenant = {
-            id: db.tenants.length + 1,
-            tenantCode,
-            businessName,
-            email,
-            phoneNumber,
-            address,
-            subscriptionStatus: 'trial',
-            subscriptionPlan: 'basic',
-            subscriptionEndsAt: null,
-            trialEndsAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 días
-            maxDevices: 3,
-            createdAt: new Date().toISOString()
-        };
+        const tenantResult = await pool.query(
+            `INSERT INTO tenants (tenant_code, business_name, email, phone_number, address,
+             subscription_status, subscription_plan, trial_ends_at, max_devices)
+             VALUES ($1, $2, $3, $4, $5, 'trial', 'basic', $6, 3)
+             RETURNING *`,
+            [
+                tenantCode,
+                businessName,
+                email,
+                phoneNumber,
+                address,
+                new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 días
+            ]
+        );
 
-        db.tenants.push(tenant);
+        const tenant = tenantResult.rows[0];
 
         // Crear empleado admin
-        const hashedPassword = await bcrypt.hash('1234', 10); // Password por defecto
+        const hashedPassword = await bcrypt.hash('1234', 10);
+        const username = displayName.replace(/\s+/g, '').toLowerCase();
 
-        const employee = {
-            id: db.employees.length + 1,
-            tenantId: tenant.id,
-            username: displayName.replace(/\s+/g, '').toLowerCase(),
-            fullName: displayName,
-            email,
-            password: hashedPassword,
-            role: 'admin',
-            isActive: true,
-            createdAt: new Date().toISOString()
-        };
+        const employeeResult = await pool.query(
+            `INSERT INTO employees (tenant_id, username, full_name, email, password, role, is_active)
+             VALUES ($1, $2, $3, $4, $5, 'admin', true)
+             RETURNING *`,
+            [tenant.id, username, displayName, email, hashedPassword]
+        );
 
-        db.employees.push(employee);
+        const employee = employeeResult.rows[0];
 
         // Generar JWT token
         const token = jwt.sign(
@@ -137,12 +135,12 @@ app.post('/api/auth/google-signup', async (req, res) => {
             token,
             tenant: {
                 id: tenant.id,
-                tenantCode: tenant.tenantCode,
-                businessName: tenant.businessName,
-                subscriptionStatus: tenant.subscriptionStatus,
-                subscriptionPlan: tenant.subscriptionPlan,
-                subscriptionEndsAt: tenant.subscriptionEndsAt,
-                trialEndsAt: tenant.trialEndsAt
+                tenantCode: tenant.tenant_code,
+                businessName: tenant.business_name,
+                subscriptionStatus: tenant.subscription_status,
+                subscriptionPlan: tenant.subscription_plan,
+                subscriptionEndsAt: tenant.subscription_ends_at,
+                trialEndsAt: tenant.trial_ends_at
             }
         });
     } catch (error) {
@@ -161,20 +159,28 @@ app.post('/api/auth/desktop-login', async (req, res) => {
         console.log('[Desktop Login] Request:', { tenantCode, username });
 
         // Buscar tenant
-        const tenant = db.tenants.find(t => t.tenantCode === tenantCode);
-        if (!tenant) {
+        const tenantResult = await pool.query(
+            'SELECT * FROM tenants WHERE tenant_code = $1',
+            [tenantCode]
+        );
+
+        if (tenantResult.rows.length === 0) {
             return res.status(401).json({ success: false, message: 'Código de tenant inválido' });
         }
 
+        const tenant = tenantResult.rows[0];
+
         // Buscar empleado
-        const employee = db.employees.find(e =>
-            e.tenantId === tenant.id &&
-            e.username.toLowerCase() === username.toLowerCase()
+        const employeeResult = await pool.query(
+            'SELECT * FROM employees WHERE tenant_id = $1 AND LOWER(username) = LOWER($2)',
+            [tenant.id, username]
         );
 
-        if (!employee) {
+        if (employeeResult.rows.length === 0) {
             return res.status(401).json({ success: false, message: 'Usuario no encontrado' });
         }
+
+        const employee = employeeResult.rows[0];
 
         // Validar password
         const validPassword = await bcrypt.compare(password, employee.password);
@@ -196,12 +202,12 @@ app.post('/api/auth/desktop-login', async (req, res) => {
             token,
             tenant: {
                 id: tenant.id,
-                tenantCode: tenant.tenantCode,
-                businessName: tenant.businessName,
-                subscriptionStatus: tenant.subscriptionStatus,
-                subscriptionPlan: tenant.subscriptionPlan,
-                subscriptionEndsAt: tenant.subscriptionEndsAt,
-                trialEndsAt: tenant.trialEndsAt
+                tenantCode: tenant.tenant_code,
+                businessName: tenant.business_name,
+                subscriptionStatus: tenant.subscription_status,
+                subscriptionPlan: tenant.subscription_plan,
+                subscriptionEndsAt: tenant.subscription_ends_at,
+                trialEndsAt: tenant.trial_ends_at
             },
             branch: {
                 id: 1,
@@ -211,7 +217,7 @@ app.post('/api/auth/desktop-login', async (req, res) => {
             user: {
                 id: employee.id,
                 username: employee.username,
-                fullName: employee.fullName,
+                fullName: employee.full_name,
                 email: employee.email,
                 role: employee.role
             }
@@ -232,11 +238,16 @@ app.post('/api/auth/mobile-credentials-login', async (req, res) => {
         console.log('[Mobile Login] Request:', { email, username });
 
         // Buscar empleado por email
-        const employee = db.employees.find(e => e.email.toLowerCase() === email.toLowerCase());
+        const employeeResult = await pool.query(
+            'SELECT * FROM employees WHERE LOWER(email) = LOWER($1)',
+            [email]
+        );
 
-        if (!employee) {
+        if (employeeResult.rows.length === 0) {
             return res.status(401).json({ success: false, message: 'Credenciales inválidas' });
         }
+
+        const employee = employeeResult.rows[0];
 
         // Validar password
         const validPassword = await bcrypt.compare(password, employee.password);
@@ -245,7 +256,12 @@ app.post('/api/auth/mobile-credentials-login', async (req, res) => {
         }
 
         // Buscar tenant
-        const tenant = db.tenants.find(t => t.id === employee.tenantId);
+        const tenantResult = await pool.query(
+            'SELECT * FROM tenants WHERE id = $1',
+            [employee.tenant_id]
+        );
+
+        const tenant = tenantResult.rows[0];
 
         console.log('[Mobile Login] ✅ Credenciales válidas');
 
@@ -254,14 +270,14 @@ app.post('/api/auth/mobile-credentials-login', async (req, res) => {
             employee: {
                 id: employee.id,
                 username: employee.username,
-                fullName: employee.fullName,
+                fullName: employee.full_name,
                 email: employee.email,
                 role: employee.role
             },
             tenant: {
                 id: tenant.id,
-                tenantCode: tenant.tenantCode,
-                businessName: tenant.businessName
+                tenantCode: tenant.tenant_code,
+                businessName: tenant.business_name
             }
         });
     } catch (error) {
@@ -280,17 +296,33 @@ app.post('/api/auth/scan-qr', async (req, res) => {
         console.log('[QR Scan] Request:', { syncCode, email, deviceId });
 
         // Buscar empleado
-        const employee = db.employees.find(e => e.email.toLowerCase() === email.toLowerCase());
+        const employeeResult = await pool.query(
+            'SELECT * FROM employees WHERE LOWER(email) = LOWER($1)',
+            [email]
+        );
 
-        if (!employee) {
+        if (employeeResult.rows.length === 0) {
             return res.status(401).json({ success: false, message: 'Usuario no encontrado' });
         }
 
-        const tenant = db.tenants.find(t => t.id === employee.tenantId);
+        const employee = employeeResult.rows[0];
+
+        // Buscar tenant
+        const tenantResult = await pool.query(
+            'SELECT * FROM tenants WHERE id = $1',
+            [employee.tenant_id]
+        );
+
+        const tenant = tenantResult.rows[0];
 
         // Validar límite de dispositivos
-        const deviceCount = db.devices.filter(d => d.tenantId === tenant.id).length;
-        const maxDevices = tenant.maxDevices || 3;
+        const deviceCountResult = await pool.query(
+            'SELECT COUNT(*) FROM devices WHERE tenant_id = $1 AND is_active = true',
+            [tenant.id]
+        );
+
+        const deviceCount = parseInt(deviceCountResult.rows[0].count);
+        const maxDevices = tenant.max_devices || 3;
 
         if (deviceCount >= maxDevices) {
             return res.status(403).json({
@@ -300,13 +332,16 @@ app.post('/api/auth/scan-qr', async (req, res) => {
         }
 
         // Registrar dispositivo
-        db.devices.push({
-            id: deviceId,
-            name: deviceName,
-            tenantId: tenant.id,
-            employeeId: employee.id,
-            linkedAt: new Date().toISOString()
-        });
+        await pool.query(
+            `INSERT INTO devices (id, name, tenant_id, employee_id, device_type, is_active)
+             VALUES ($1, $2, $3, $4, 'mobile', true)
+             ON CONFLICT (id) DO UPDATE SET
+                name = $2,
+                employee_id = $4,
+                last_active = CURRENT_TIMESTAMP,
+                is_active = true`,
+            [deviceId, deviceName, tenant.id, employee.id]
+        );
 
         // Generar tokens
         const accessToken = jwt.sign(
@@ -330,14 +365,14 @@ app.post('/api/auth/scan-qr', async (req, res) => {
             employee: {
                 id: employee.id,
                 username: employee.username,
-                fullName: employee.fullName,
+                fullName: employee.full_name,
                 email: employee.email,
                 role: employee.role
             },
             tenant: {
                 id: tenant.id,
-                tenantCode: tenant.tenantCode,
-                businessName: tenant.businessName
+                tenantCode: tenant.tenant_code,
+                businessName: tenant.business_name
             },
             branch: {
                 id: 1,
@@ -444,21 +479,36 @@ io.on('connection', (socket) => {
 // INICIAR SERVIDOR
 // ═══════════════════════════════════════════════════════════════
 
-server.listen(PORT, () => {
-    console.log('\n╔══════════════════════════════════════════════════════════╗');
-    console.log('║   🚀 Socket.IO + REST API - SYA Tortillerías            ║');
-    console.log('╚══════════════════════════════════════════════════════════╝\n');
-    console.log(`✅ Servidor corriendo en puerto ${PORT}`);
-    console.log(`🌐 REST API: http://localhost:${PORT}/api`);
-    console.log(`🔌 Socket.IO: http://localhost:${PORT}`);
-    console.log(`📅 Iniciado: ${stats.startTime.toLocaleString('es-MX')}\n`);
-    console.log('📋 Endpoints disponibles:');
-    console.log('   POST /api/auth/google-signup');
-    console.log('   POST /api/auth/desktop-login');
-    console.log('   POST /api/auth/mobile-credentials-login');
-    console.log('   POST /api/auth/scan-qr');
-    console.log('   GET  /health\n');
-});
+async function startServer() {
+    try {
+        // Initialize database
+        await initializeDatabase();
+
+        // Start server
+        server.listen(PORT, () => {
+            console.log('\n╔══════════════════════════════════════════════════════════╗');
+            console.log('║   🚀 Socket.IO + REST API - SYA Tortillerías            ║');
+            console.log('║   📊 PostgreSQL Database                                 ║');
+            console.log('╚══════════════════════════════════════════════════════════╝\n');
+            console.log(`✅ Servidor corriendo en puerto ${PORT}`);
+            console.log(`🌐 REST API: http://localhost:${PORT}/api`);
+            console.log(`🔌 Socket.IO: http://localhost:${PORT}`);
+            console.log(`💾 Database: PostgreSQL`);
+            console.log(`📅 Iniciado: ${stats.startTime.toLocaleString('es-MX')}\n`);
+            console.log('📋 Endpoints disponibles:');
+            console.log('   POST /api/auth/google-signup');
+            console.log('   POST /api/auth/desktop-login');
+            console.log('   POST /api/auth/mobile-credentials-login');
+            console.log('   POST /api/auth/scan-qr');
+            console.log('   GET  /health\n');
+        });
+    } catch (error) {
+        console.error('❌ Error starting server:', error);
+        process.exit(1);
+    }
+}
+
+startServer();
 
 // Manejo de errores
 process.on('uncaughtException', (err) => {
