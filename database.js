@@ -195,6 +195,19 @@ async function initializeDatabase() {
         await client.query('CREATE INDEX IF NOT EXISTS idx_cash_cuts_branch_id ON cash_cuts(branch_id)');
         await client.query('CREATE INDEX IF NOT EXISTS idx_guardian_events_tenant_id ON guardian_events(tenant_id)');
         await client.query('CREATE INDEX IF NOT EXISTS idx_guardian_events_branch_id ON guardian_events(branch_id)');
+
+        // IMPORTANTE: Agregar columna event_date si no existe (para tablas creadas antes de esta versión)
+        try {
+            await client.query(`
+                ALTER TABLE guardian_events
+                ADD COLUMN IF NOT EXISTS event_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            `);
+            console.log('[DB] ✅ Columna event_date verificada/agregada en guardian_events');
+        } catch (error) {
+            console.log('[DB] ⚠️ No se pudo agregar event_date (probablemente ya existe):', error.message);
+        }
+
+        // Ahora sí crear los índices (después de asegurar que la columna existe)
         await client.query('CREATE INDEX IF NOT EXISTS idx_guardian_events_date ON guardian_events(event_date DESC)');
         await client.query('CREATE INDEX IF NOT EXISTS idx_guardian_events_unread ON guardian_events(tenant_id, is_read) WHERE is_read = false');
 
