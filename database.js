@@ -196,18 +196,48 @@ async function initializeDatabase() {
         await client.query('CREATE INDEX IF NOT EXISTS idx_guardian_events_tenant_id ON guardian_events(tenant_id)');
         await client.query('CREATE INDEX IF NOT EXISTS idx_guardian_events_branch_id ON guardian_events(branch_id)');
 
-        // IMPORTANTE: Agregar columna event_date si no existe (para tablas creadas antes de esta versión)
+        // IMPORTANTE: Agregar columnas faltantes si no existen (para tablas creadas antes de esta versión)
         try {
             await client.query(`
                 ALTER TABLE guardian_events
                 ADD COLUMN IF NOT EXISTS event_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             `);
-            console.log('[DB] ✅ Columna event_date verificada/agregada en guardian_events');
+            console.log('[DB] ✅ Columna event_date verificada/agregada');
         } catch (error) {
-            console.log('[DB] ⚠️ No se pudo agregar event_date (probablemente ya existe):', error.message);
+            console.log('[DB] ⚠️ event_date:', error.message);
         }
 
-        // Ahora sí crear los índices (después de asegurar que la columna existe)
+        try {
+            await client.query(`
+                ALTER TABLE guardian_events
+                ADD COLUMN IF NOT EXISTS is_read BOOLEAN DEFAULT false
+            `);
+            console.log('[DB] ✅ Columna is_read verificada/agregada');
+        } catch (error) {
+            console.log('[DB] ⚠️ is_read:', error.message);
+        }
+
+        try {
+            await client.query(`
+                ALTER TABLE guardian_events
+                ADD COLUMN IF NOT EXISTS severity VARCHAR(20) DEFAULT 'medium'
+            `);
+            console.log('[DB] ✅ Columna severity verificada/agregada');
+        } catch (error) {
+            console.log('[DB] ⚠️ severity:', error.message);
+        }
+
+        try {
+            await client.query(`
+                ALTER TABLE guardian_events
+                ADD COLUMN IF NOT EXISTS metadata JSONB
+            `);
+            console.log('[DB] ✅ Columna metadata verificada/agregada');
+        } catch (error) {
+            console.log('[DB] ⚠️ metadata:', error.message);
+        }
+
+        // Ahora sí crear los índices (después de asegurar que las columnas existen)
         await client.query('CREATE INDEX IF NOT EXISTS idx_guardian_events_date ON guardian_events(event_date DESC)');
         await client.query('CREATE INDEX IF NOT EXISTS idx_guardian_events_unread ON guardian_events(tenant_id, is_read) WHERE is_read = false');
 
