@@ -252,22 +252,26 @@ app.post('/api/auth/desktop-login', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────
-// AUTH: Mobile Credentials Login
+// AUTH: Mobile Login (username o email + password)
 // ─────────────────────────────────────────────────────────
-app.post('/api/auth/mobile-credentials-login', async (req, res) => {
+app.post('/api/auth/login', async (req, res) => {
     try {
-        const { email, username, password } = req.body;
+        const { username, password } = req.body;
 
-        console.log('[Mobile Login] Request:', { email, username });
+        console.log('[Mobile Login] Request:', { username });
 
-        // Buscar empleado por email
+        // Buscar empleado por username O email
         const employeeResult = await pool.query(
-            'SELECT * FROM employees WHERE LOWER(email) = LOWER($1)',
-            [email]
+            'SELECT * FROM employees WHERE LOWER(username) = LOWER($1) OR LOWER(email) = LOWER($1)',
+            [username]
         );
 
         if (employeeResult.rows.length === 0) {
-            return res.status(401).json({ success: false, message: 'Credenciales inválidas' });
+            console.log('[Mobile Login] ❌ Usuario no encontrado');
+            return res.status(401).json({
+                isSuccess: false,
+                errorMessage: 'Credenciales inválidas'
+            });
         }
 
         const employee = employeeResult.rows[0];
@@ -275,7 +279,11 @@ app.post('/api/auth/mobile-credentials-login', async (req, res) => {
         // Validar password
         const validPassword = await bcrypt.compare(password, employee.password);
         if (!validPassword) {
-            return res.status(401).json({ success: false, message: 'Credenciales inválidas' });
+            console.log('[Mobile Login] ❌ Contraseña incorrecta');
+            return res.status(401).json({
+                isSuccess: false,
+                errorMessage: 'Credenciales inválidas'
+            });
         }
 
         // Buscar tenant
@@ -286,11 +294,23 @@ app.post('/api/auth/mobile-credentials-login', async (req, res) => {
 
         const tenant = tenantResult.rows[0];
 
-        console.log('[Mobile Login] ✅ Credenciales válidas');
+        // Generar JWT token
+        const token = jwt.sign(
+            {
+                employeeId: employee.id,
+                tenantId: tenant.id,
+                email: employee.email
+            },
+            JWT_SECRET,
+            { expiresIn: '7d' }
+        );
+
+        console.log('[Mobile Login] ✅ Login exitoso:', employee.username);
 
         res.json({
-            success: true,
-            employee: {
+            isSuccess: true,
+            token: token,
+            user: {
                 id: employee.id,
                 username: employee.username,
                 fullName: employee.full_name,
@@ -300,13 +320,36 @@ app.post('/api/auth/mobile-credentials-login', async (req, res) => {
             tenant: {
                 id: tenant.id,
                 tenantCode: tenant.tenant_code,
-                businessName: tenant.business_name
-            }
+                businessName: tenant.business_name,
+                subscriptionStatus: tenant.subscription_status
+            },
+            branches: [
+                {
+                    id: 1,
+                    name: 'Sucursal Principal',
+                    code: 'BR001'
+                }
+            ]
         });
     } catch (error) {
         console.error('[Mobile Login] Error:', error);
-        res.status(500).json({ success: false, message: 'Error en el servidor' });
+        res.status(500).json({
+            isSuccess: false,
+            errorMessage: 'Error en el servidor'
+        });
     }
+});
+
+// ─────────────────────────────────────────────────────────
+// AUTH: Mobile Credentials Login (Alias para compatibilidad)
+// ─────────────────────────────────────────────────────────
+app.post('/api/auth/mobile-credentials-login', async (req, res) => {
+    // Redirigir al endpoint principal
+    req.body.username = req.body.email || req.body.username;
+    return app._router.handle(
+        Object.assign(req, { url: '/api/auth/login', method: 'POST' }),
+        res
+    );
 });
 
 // ─────────────────────────────────────────────────────────
