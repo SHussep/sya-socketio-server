@@ -14,7 +14,14 @@ const { pool, initializeDatabase } = require('./database');
 require('dotenv').config();
 
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET || 'sya-secret-key-change-in-production';
+const JWT_SECRET = process.env.JWT_SECRET;
+
+// Validación de seguridad: JWT_SECRET es obligatorio en producción
+if (!JWT_SECRET) {
+    console.error('❌ FATAL ERROR: JWT_SECRET no está configurado en las variables de entorno');
+    console.error('Por favor, configura JWT_SECRET en Render Dashboard > Environment');
+    process.exit(1);
+}
 
 const ALLOWED_ORIGINS = [
     'http://localhost',
