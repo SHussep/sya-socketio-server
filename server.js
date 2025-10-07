@@ -333,7 +333,8 @@ app.post('/api/auth/login', async (req, res) => {
                 id: tenant.id,
                 tenantCode: tenant.tenant_code,
                 businessName: tenant.business_name,
-                subscriptionStatus: tenant.subscription_status
+                subscriptionStatus: tenant.subscription_status,
+                subscriptionPlan: tenant.subscription_plan
             },
             branches: [
                 {
