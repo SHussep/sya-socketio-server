@@ -93,7 +93,7 @@ app.get('/api/database/view', async (req, res) => {
 // ─────────────────────────────────────────────────────────
 app.post('/api/auth/google-signup', async (req, res) => {
     try {
-        const { idToken, email, displayName, businessName, phoneNumber, address } = req.body;
+        const { idToken, email, displayName, businessName, phoneNumber, address, password } = req.body;
 
         console.log('[Google Signup] Request:', { email, businessName });
 
@@ -131,9 +131,12 @@ app.post('/api/auth/google-signup', async (req, res) => {
 
         const tenant = tenantResult.rows[0];
 
-        // Crear empleado admin
-        const hashedPassword = await bcrypt.hash('1234', 10);
+        // Crear empleado admin con la contraseña del desktop (o 1234 por defecto)
+        const passwordToHash = password || '1234';
+        const hashedPassword = await bcrypt.hash(passwordToHash, 10);
         const username = displayName.replace(/\s+/g, '').toLowerCase();
+
+        console.log('[Google Signup] Creando usuario con contraseña desde desktop:', password ? '✅' : '❌ (usando 1234 por defecto)');
 
         const employeeResult = await pool.query(
             `INSERT INTO employees (tenant_id, username, full_name, email, password, role, is_active)
@@ -315,7 +318,9 @@ app.post('/api/auth/login', async (req, res) => {
                 username: employee.username,
                 fullName: employee.full_name,
                 email: employee.email,
-                role: employee.role
+                role: employee.role,
+                isActive: employee.is_active,
+                createdAt: employee.created_at
             },
             tenant: {
                 id: tenant.id,
