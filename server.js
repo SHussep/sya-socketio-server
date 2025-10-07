@@ -623,11 +623,29 @@ app.get('/api/sales', authenticateToken, async (req, res) => {
     }
 });
 
-// POST /api/sales - Crear venta (desde Desktop)
-app.post('/api/sales', authenticateToken, async (req, res) => {
+// POST /api/sales - Crear venta desde Desktop (sin JWT)
+app.post('/api/sales', async (req, res) => {
     try {
-        const { tenantId, employeeId } = req.user;
-        const { branchId, ticketNumber, totalAmount, paymentMethod } = req.body;
+        const { tenantId, branchId, ticketNumber, totalAmount, paymentMethod, userEmail } = req.body;
+
+        console.log(`[Sales] Desktop sync - Tenant: ${tenantId}, Branch: ${branchId}, User: ${userEmail}`);
+
+        // Validar datos requeridos
+        if (!tenantId || !branchId || !ticketNumber || !totalAmount) {
+            return res.status(400).json({ success: false, message: 'Datos incompletos' });
+        }
+
+        // Buscar el empleado por email (opcional, para employee_id)
+        let employeeId = null;
+        if (userEmail) {
+            const empResult = await pool.query(
+                'SELECT id FROM employees WHERE LOWER(email) = LOWER($1) AND tenant_id = $2',
+                [userEmail, tenantId]
+            );
+            if (empResult.rows.length > 0) {
+                employeeId = empResult.rows[0].id;
+            }
+        }
 
         const result = await pool.query(
             `INSERT INTO sales (tenant_id, branch_id, employee_id, ticket_number, total_amount, payment_method)
@@ -636,7 +654,7 @@ app.post('/api/sales', authenticateToken, async (req, res) => {
             [tenantId, branchId, employeeId, ticketNumber, totalAmount, paymentMethod]
         );
 
-        console.log(`[Sales] ✅ Venta creada: ${ticketNumber} - $${totalAmount}`);
+        console.log(`[Sales] ✅ Venta creada desde Desktop: ${ticketNumber} - $${totalAmount}`);
         res.json({ success: true, data: result.rows[0] });
     } catch (error) {
         console.error('[Sales] Error:', error);
@@ -672,11 +690,26 @@ app.get('/api/expenses', authenticateToken, async (req, res) => {
     }
 });
 
-// POST /api/expenses - Crear gasto (desde Desktop)
-app.post('/api/expenses', authenticateToken, async (req, res) => {
+// POST /api/expenses - Crear gasto desde Desktop (sin JWT)
+app.post('/api/expenses', async (req, res) => {
     try {
-        const { tenantId, employeeId } = req.user;
-        const { branchId, category, description, amount } = req.body;
+        const { tenantId, branchId, category, description, amount, userEmail } = req.body;
+
+        if (!tenantId || !branchId || !category || !amount) {
+            return res.status(400).json({ success: false, message: 'Datos incompletos' });
+        }
+
+        // Buscar empleado por email
+        let employeeId = null;
+        if (userEmail) {
+            const empResult = await pool.query(
+                'SELECT id FROM employees WHERE LOWER(email) = LOWER($1) AND tenant_id = $2',
+                [userEmail, tenantId]
+            );
+            if (empResult.rows.length > 0) {
+                employeeId = empResult.rows[0].id;
+            }
+        }
 
         const result = await pool.query(
             `INSERT INTO expenses (tenant_id, branch_id, employee_id, category, description, amount)
@@ -685,7 +718,7 @@ app.post('/api/expenses', authenticateToken, async (req, res) => {
             [tenantId, branchId, employeeId, category, description, amount]
         );
 
-        console.log(`[Expenses] ✅ Gasto creado: ${category} - $${amount}`);
+        console.log(`[Expenses] ✅ Gasto creado desde Desktop: ${category} - $${amount}`);
         res.json({ success: true, data: result.rows[0] });
     } catch (error) {
         console.error('[Expenses] Error:', error);
