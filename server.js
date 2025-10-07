@@ -65,6 +65,29 @@ app.get('/health', async (req, res) => {
     }
 });
 
+// Ver todos los datos de la BD (para debugging)
+app.get('/api/database/view', async (req, res) => {
+    try {
+        const tenants = await pool.query('SELECT * FROM tenants ORDER BY created_at DESC');
+        const employees = await pool.query('SELECT id, tenant_id, username, full_name, email, role, is_active, created_at FROM employees ORDER BY created_at DESC');
+        const devices = await pool.query('SELECT * FROM devices ORDER BY linked_at DESC');
+        const sessions = await pool.query('SELECT id, tenant_id, employee_id, device_id, expires_at, created_at, is_active FROM sessions ORDER BY created_at DESC');
+
+        res.json({
+            success: true,
+            timestamp: new Date().toISOString(),
+            data: {
+                tenants: tenants.rows,
+                employees: employees.rows,
+                devices: devices.rows,
+                sessions: sessions.rows,
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 // ─────────────────────────────────────────────────────────
 // AUTH: Google Signup (desde Desktop)
 // ─────────────────────────────────────────────────────────
