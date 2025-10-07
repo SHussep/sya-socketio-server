@@ -465,6 +465,324 @@ app.post('/api/auth/scan-qr', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+// ENDPOINTS PARA DASHBOARD MÓVIL
+// ═══════════════════════════════════════════════════════════════
+
+// Middleware para autenticación JWT
+function authenticateToken(req, res, next) {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+
+    if (!token) {
+        return res.status(401).json({ success: false, message: 'Token no proporcionado' });
+    }
+
+    jwt.verify(token, JWT_SECRET, (err, user) => {
+        if (err) {
+            return res.status(403).json({ success: false, message: 'Token inválido o expirado' });
+        }
+        req.user = user;
+        next();
+    });
+}
+
+// GET /api/dashboard/summary - Resumen del dashboard
+app.get('/api/dashboard/summary', authenticateToken, async (req, res) => {
+    try {
+        const { tenantId } = req.user;
+
+        // Total de ventas del día
+        const salesResult = await pool.query(
+            `SELECT COALESCE(SUM(total_amount), 0) as total
+             FROM sales
+             WHERE tenant_id = $1
+             AND DATE(sale_date) = CURRENT_DATE`,
+            [tenantId]
+        );
+
+        // Total de gastos del día
+        const expensesResult = await pool.query(
+            `SELECT COALESCE(SUM(amount), 0) as total
+             FROM expenses
+             WHERE tenant_id = $1
+             AND DATE(expense_date) = CURRENT_DATE`,
+            [tenantId]
+        );
+
+        // Último corte de caja
+        const cashCutResult = await pool.query(
+            `SELECT cash_in_drawer
+             FROM cash_cuts
+             WHERE tenant_id = $1
+             ORDER BY cut_date DESC
+             LIMIT 1`,
+            [tenantId]
+        );
+
+        // Eventos Guardian no leídos
+        const guardianEventsResult = await pool.query(
+            `SELECT COUNT(*) as count
+             FROM guardian_events
+             WHERE tenant_id = $1
+             AND is_read = false`,
+            [tenantId]
+        );
+
+        res.json({
+            success: true,
+            data: {
+                totalSales: parseFloat(salesResult.rows[0].total),
+                totalExpenses: parseFloat(expensesResult.rows[0].total),
+                cashInDrawer: cashCutResult.rows.length > 0 ? parseFloat(cashCutResult.rows[0].cash_in_drawer) : 0,
+                unreadGuardianEvents: parseInt(guardianEventsResult.rows[0].count)
+            }
+        });
+    } catch (error) {
+        console.error('[Dashboard Summary] Error:', error);
+        res.status(500).json({ success: false, message: 'Error al obtener resumen' });
+    }
+});
+
+// GET /api/sales - Lista de ventas
+app.get('/api/sales', authenticateToken, async (req, res) => {
+    try {
+        const { tenantId } = req.user;
+        const { limit = 50, offset = 0 } = req.query;
+
+        const result = await pool.query(
+            `SELECT s.id, s.ticket_number, s.total_amount, s.payment_method, s.sale_date,
+                    e.full_name as employee_name, b.name as branch_name
+             FROM sales s
+             LEFT JOIN employees e ON s.employee_id = e.id
+             LEFT JOIN branches b ON s.branch_id = b.id
+             WHERE s.tenant_id = $1
+             ORDER BY s.sale_date DESC
+             LIMIT $2 OFFSET $3`,
+            [tenantId, limit, offset]
+        );
+
+        res.json({
+            success: true,
+            data: result.rows
+        });
+    } catch (error) {
+        console.error('[Sales] Error:', error);
+        res.status(500).json({ success: false, message: 'Error al obtener ventas' });
+    }
+});
+
+// POST /api/sales - Crear venta (desde Desktop)
+app.post('/api/sales', authenticateToken, async (req, res) => {
+    try {
+        const { tenantId, employeeId } = req.user;
+        const { branchId, ticketNumber, totalAmount, paymentMethod } = req.body;
+
+        const result = await pool.query(
+            `INSERT INTO sales (tenant_id, branch_id, employee_id, ticket_number, total_amount, payment_method)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             RETURNING *`,
+            [tenantId, branchId, employeeId, ticketNumber, totalAmount, paymentMethod]
+        );
+
+        console.log(`[Sales] ✅ Venta creada: ${ticketNumber} - $${totalAmount}`);
+        res.json({ success: true, data: result.rows[0] });
+    } catch (error) {
+        console.error('[Sales] Error:', error);
+        res.status(500).json({ success: false, message: 'Error al crear venta' });
+    }
+});
+
+// GET /api/expenses - Lista de gastos
+app.get('/api/expenses', authenticateToken, async (req, res) => {
+    try {
+        const { tenantId } = req.user;
+        const { limit = 50, offset = 0 } = req.query;
+
+        const result = await pool.query(
+            `SELECT e.id, e.category, e.description, e.amount, e.expense_date,
+                    emp.full_name as employee_name, b.name as branch_name
+             FROM expenses e
+             LEFT JOIN employees emp ON e.employee_id = emp.id
+             LEFT JOIN branches b ON e.branch_id = b.id
+             WHERE e.tenant_id = $1
+             ORDER BY e.expense_date DESC
+             LIMIT $2 OFFSET $3`,
+            [tenantId, limit, offset]
+        );
+
+        res.json({
+            success: true,
+            data: result.rows
+        });
+    } catch (error) {
+        console.error('[Expenses] Error:', error);
+        res.status(500).json({ success: false, message: 'Error al obtener gastos' });
+    }
+});
+
+// POST /api/expenses - Crear gasto (desde Desktop)
+app.post('/api/expenses', authenticateToken, async (req, res) => {
+    try {
+        const { tenantId, employeeId } = req.user;
+        const { branchId, category, description, amount } = req.body;
+
+        const result = await pool.query(
+            `INSERT INTO expenses (tenant_id, branch_id, employee_id, category, description, amount)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             RETURNING *`,
+            [tenantId, branchId, employeeId, category, description, amount]
+        );
+
+        console.log(`[Expenses] ✅ Gasto creado: ${category} - $${amount}`);
+        res.json({ success: true, data: result.rows[0] });
+    } catch (error) {
+        console.error('[Expenses] Error:', error);
+        res.status(500).json({ success: false, message: 'Error al crear gasto' });
+    }
+});
+
+// GET /api/cash-cuts - Lista de cortes de caja
+app.get('/api/cash-cuts', authenticateToken, async (req, res) => {
+    try {
+        const { tenantId } = req.user;
+        const { limit = 50, offset = 0 } = req.query;
+
+        const result = await pool.query(
+            `SELECT c.id, c.cut_number, c.total_sales, c.total_expenses, c.cash_in_drawer,
+                    c.expected_cash, c.difference, c.cut_date,
+                    e.full_name as employee_name, b.name as branch_name
+             FROM cash_cuts c
+             LEFT JOIN employees e ON c.employee_id = e.id
+             LEFT JOIN branches b ON c.branch_id = b.id
+             WHERE c.tenant_id = $1
+             ORDER BY c.cut_date DESC
+             LIMIT $2 OFFSET $3`,
+            [tenantId, limit, offset]
+        );
+
+        res.json({
+            success: true,
+            data: result.rows
+        });
+    } catch (error) {
+        console.error('[Cash Cuts] Error:', error);
+        res.status(500).json({ success: false, message: 'Error al obtener cortes de caja' });
+    }
+});
+
+// POST /api/cash-cuts - Crear corte de caja (desde Desktop)
+app.post('/api/cash-cuts', authenticateToken, async (req, res) => {
+    try {
+        const { tenantId, employeeId } = req.user;
+        const { branchId, cutNumber, totalSales, totalExpenses, cashInDrawer, expectedCash, difference } = req.body;
+
+        const result = await pool.query(
+            `INSERT INTO cash_cuts (tenant_id, branch_id, employee_id, cut_number, total_sales, total_expenses, cash_in_drawer, expected_cash, difference)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             RETURNING *`,
+            [tenantId, branchId, employeeId, cutNumber, totalSales, totalExpenses, cashInDrawer, expectedCash, difference]
+        );
+
+        console.log(`[Cash Cuts] ✅ Corte creado: ${cutNumber}`);
+        res.json({ success: true, data: result.rows[0] });
+    } catch (error) {
+        console.error('[Cash Cuts] Error:', error);
+        res.status(500).json({ success: false, message: 'Error al crear corte de caja' });
+    }
+});
+
+// GET /api/guardian-events - Lista de eventos Guardian (MUY IMPORTANTE)
+app.get('/api/guardian-events', authenticateToken, async (req, res) => {
+    try {
+        const { tenantId } = req.user;
+        const { limit = 100, offset = 0, unreadOnly = false } = req.query;
+
+        let query = `
+            SELECT g.id, g.event_type, g.severity, g.title, g.description,
+                   g.weight_kg, g.scale_id, g.metadata, g.is_read, g.event_date,
+                   e.full_name as employee_name, b.name as branch_name
+            FROM guardian_events g
+            LEFT JOIN employees e ON g.employee_id = e.id
+            LEFT JOIN branches b ON g.branch_id = b.id
+            WHERE g.tenant_id = $1
+        `;
+
+        const params = [tenantId];
+
+        if (unreadOnly === 'true') {
+            query += ' AND g.is_read = false';
+        }
+
+        query += ' ORDER BY g.event_date DESC LIMIT $2 OFFSET $3';
+        params.push(limit, offset);
+
+        const result = await pool.query(query, params);
+
+        res.json({
+            success: true,
+            data: result.rows
+        });
+    } catch (error) {
+        console.error('[Guardian Events] Error:', error);
+        res.status(500).json({ success: false, message: 'Error al obtener eventos Guardian' });
+    }
+});
+
+// POST /api/guardian-events - Crear evento Guardian (desde Desktop)
+app.post('/api/guardian-events', authenticateToken, async (req, res) => {
+    try {
+        const { tenantId, employeeId } = req.user;
+        const { branchId, eventType, severity, title, description, weightKg, scaleId, metadata } = req.body;
+
+        const result = await pool.query(
+            `INSERT INTO guardian_events (tenant_id, branch_id, employee_id, event_type, severity, title, description, weight_kg, scale_id, metadata)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             RETURNING *`,
+            [tenantId, branchId, employeeId, eventType, severity, title, description, weightKg, scaleId, metadata ? JSON.stringify(metadata) : null]
+        );
+
+        console.log(`[Guardian Events] 🚨 Evento creado: ${eventType} - ${title}`);
+
+        // TODO: Enviar notificación push al móvil
+        // await sendPushNotification(tenantId, {
+        //     title: title,
+        //     body: description,
+        //     data: { eventId: result.rows[0].id, eventType, severity }
+        // });
+
+        res.json({ success: true, data: result.rows[0] });
+    } catch (error) {
+        console.error('[Guardian Events] Error:', error);
+        res.status(500).json({ success: false, message: 'Error al crear evento Guardian' });
+    }
+});
+
+// PUT /api/guardian-events/:id/mark-read - Marcar evento como leído
+app.put('/api/guardian-events/:id/mark-read', authenticateToken, async (req, res) => {
+    try {
+        const { tenantId } = req.user;
+        const { id } = req.params;
+
+        const result = await pool.query(
+            `UPDATE guardian_events
+             SET is_read = true
+             WHERE id = $1 AND tenant_id = $2
+             RETURNING *`,
+            [id, tenantId]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ success: false, message: 'Evento no encontrado' });
+        }
+
+        res.json({ success: true, data: result.rows[0] });
+    } catch (error) {
+        console.error('[Guardian Events] Error:', error);
+        res.status(500).json({ success: false, message: 'Error al marcar evento' });
+    }
+});
+
+// ═══════════════════════════════════════════════════════════════
 // CONFIGURAR SOCKET.IO
 // ═══════════════════════════════════════════════════════════════
 
