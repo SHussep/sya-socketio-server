@@ -162,7 +162,7 @@ app.post('/api/auth/google-signup', async (req, res) => {
 
         // Generar JWT token
         const token = jwt.sign(
-            { tenantId: tenant.id, employeeId: employee.id, role: 'admin' },
+            { tenantId: tenant.id, employeeId: employee.id, branchId: branch.id, role: 'admin' },
             JWT_SECRET,
             { expiresIn: '30d' }
         );
@@ -238,9 +238,12 @@ app.post('/api/auth/desktop-login', async (req, res) => {
             return res.status(401).json({ success: false, message: 'Contraseña incorrecta' });
         }
 
+        // Obtener main_branch_id del empleado
+        const branchId = employee.main_branch_id || 1;
+
         // Generar token
         const token = jwt.sign(
-            { tenantId: tenant.id, employeeId: employee.id, role: employee.role },
+            { tenantId: tenant.id, employeeId: employee.id, branchId, role: employee.role },
             JWT_SECRET,
             { expiresIn: '30d' }
         );
@@ -615,20 +618,33 @@ app.get('/api/dashboard/summary', authenticateToken, async (req, res) => {
 // GET /api/sales - Lista de ventas
 app.get('/api/sales', authenticateToken, async (req, res) => {
     try {
-        const { tenantId } = req.user;
-        const { limit = 50, offset = 0 } = req.query;
+        const { tenantId, branchId } = req.user;
+        const { limit = 50, offset = 0, all_branches = 'false' } = req.query;
 
-        const result = await pool.query(
-            `SELECT s.id, s.ticket_number, s.total_amount, s.payment_method, s.sale_date,
-                    e.full_name as employee_name, b.name as branch_name
-             FROM sales s
-             LEFT JOIN employees e ON s.employee_id = e.id
-             LEFT JOIN branches b ON s.branch_id = b.id
-             WHERE s.tenant_id = $1
-             ORDER BY s.sale_date DESC
-             LIMIT $2 OFFSET $3`,
-            [tenantId, limit, offset]
-        );
+        let query = `
+            SELECT s.id, s.ticket_number, s.total_amount, s.payment_method, s.sale_date,
+                   e.full_name as employee_name, e.role as employee_role,
+                   b.name as branch_name
+            FROM sales s
+            LEFT JOIN employees e ON s.employee_id = e.id
+            LEFT JOIN branches b ON s.branch_id = b.id
+            WHERE s.tenant_id = $1
+        `;
+
+        const params = [tenantId];
+
+        // Filtrar por branch_id solo si no se solicita ver todas las sucursales
+        if (all_branches !== 'true' && branchId) {
+            query += ' AND s.branch_id = $2';
+            params.push(branchId);
+            query += ' ORDER BY s.sale_date DESC LIMIT $3 OFFSET $4';
+            params.push(limit, offset);
+        } else {
+            query += ' ORDER BY s.sale_date DESC LIMIT $2 OFFSET $3';
+            params.push(limit, offset);
+        }
+
+        const result = await pool.query(query, params);
 
         res.json({
             success: true,
@@ -682,20 +698,34 @@ app.post('/api/sales', async (req, res) => {
 // GET /api/expenses - Lista de gastos
 app.get('/api/expenses', authenticateToken, async (req, res) => {
     try {
-        const { tenantId } = req.user;
-        const { limit = 50, offset = 0 } = req.query;
+        const { tenantId, branchId } = req.user;
+        const { limit = 50, offset = 0, all_branches = 'false' } = req.query;
 
-        const result = await pool.query(
-            `SELECT e.id, e.category, e.description, e.amount, e.expense_date,
-                    emp.full_name as employee_name, b.name as branch_name
-             FROM expenses e
-             LEFT JOIN employees emp ON e.employee_id = emp.id
-             LEFT JOIN branches b ON e.branch_id = b.id
-             WHERE e.tenant_id = $1
-             ORDER BY e.expense_date DESC
-             LIMIT $2 OFFSET $3`,
-            [tenantId, limit, offset]
-        );
+        let query = `
+            SELECT e.id, e.description as concept, e.description, e.amount, e.expense_date,
+                   emp.full_name as employee_name, b.name as branch_name,
+                   cat.name as category
+            FROM expenses e
+            LEFT JOIN employees emp ON e.employee_id = emp.id
+            LEFT JOIN branches b ON e.branch_id = b.id
+            LEFT JOIN expense_categories cat ON e.category_id = cat.id
+            WHERE e.tenant_id = $1
+        `;
+
+        const params = [tenantId];
+
+        // Filtrar por branch_id solo si no se solicita ver todas las sucursales
+        if (all_branches !== 'true' && branchId) {
+            query += ' AND e.branch_id = $2';
+            params.push(branchId);
+            query += ' ORDER BY e.expense_date DESC LIMIT $3 OFFSET $4';
+            params.push(limit, offset);
+        } else {
+            query += ' ORDER BY e.expense_date DESC LIMIT $2 OFFSET $3';
+            params.push(limit, offset);
+        }
+
+        const result = await pool.query(query, params);
 
         res.json({
             success: true,
@@ -796,8 +826,8 @@ app.post('/api/cash-cuts', authenticateToken, async (req, res) => {
 // GET /api/guardian-events - Lista de eventos Guardian (MUY IMPORTANTE)
 app.get('/api/guardian-events', authenticateToken, async (req, res) => {
     try {
-        const { tenantId } = req.user;
-        const { limit = 100, offset = 0, unreadOnly = false } = req.query;
+        const { tenantId, branchId } = req.user;
+        const { limit = 100, offset = 0, unreadOnly = false, all_branches = 'false' } = req.query;
 
         let query = `
             SELECT g.id, g.event_type, g.severity, g.title, g.description,
@@ -810,12 +840,20 @@ app.get('/api/guardian-events', authenticateToken, async (req, res) => {
         `;
 
         const params = [tenantId];
+        let paramIndex = 2;
+
+        // Filtrar por branch_id si no se solicita ver todas
+        if (all_branches !== 'true' && branchId) {
+            query += ` AND g.branch_id = $${paramIndex}`;
+            params.push(branchId);
+            paramIndex++;
+        }
 
         if (unreadOnly === 'true') {
             query += ' AND g.is_read = false';
         }
 
-        query += ' ORDER BY g.event_date DESC LIMIT $2 OFFSET $3';
+        query += ` ORDER BY g.event_date DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
         params.push(limit, offset);
 
         const result = await pool.query(query, params);
@@ -843,16 +881,28 @@ app.post('/api/guardian-events', authenticateToken, async (req, res) => {
             [tenantId, branchId, employeeId, eventType, severity, title, description, weightKg, scaleId, metadata ? JSON.stringify(metadata) : null]
         );
 
+        const event = result.rows[0];
+
         console.log(`[Guardian Events] 🚨 Evento creado: ${eventType} - ${title}`);
 
-        // TODO: Enviar notificación push al móvil
-        // await sendPushNotification(tenantId, {
-        //     title: title,
-        //     body: description,
-        //     data: { eventId: result.rows[0].id, eventType, severity }
-        // });
+        // ✅ Notificación en tiempo real vía Socket.IO
+        // Emitir evento solo a usuarios del mismo tenant
+        io.to(`tenant_${tenantId}`).emit('guardian_event', {
+            id: event.id,
+            eventType: event.event_type,
+            severity: event.severity,
+            title: event.title,
+            description: event.description,
+            branchId: event.branch_id,
+            weightKg: event.weight_kg,
+            scaleId: event.scale_id,
+            eventDate: event.event_date,
+            timestamp: event.event_date
+        });
 
-        res.json({ success: true, data: result.rows[0] });
+        console.log(`[Guardian Events] 📡 Notificación Socket.IO enviada a tenant_${tenantId}`);
+
+        res.json({ success: true, data: event });
     } catch (error) {
         console.error('[Guardian Events] Error:', error);
         res.status(500).json({ success: false, message: 'Error al crear evento Guardian' });
@@ -881,6 +931,29 @@ app.put('/api/guardian-events/:id/mark-read', authenticateToken, async (req, res
     } catch (error) {
         console.error('[Guardian Events] Error:', error);
         res.status(500).json({ success: false, message: 'Error al marcar evento' });
+    }
+});
+
+// GET /api/branches - Obtener sucursales del tenant
+app.get('/api/branches', authenticateToken, async (req, res) => {
+    try {
+        const { tenantId } = req.user;
+
+        const result = await pool.query(
+            `SELECT id, branch_code, name, address, phone_number, is_active, created_at
+             FROM branches
+             WHERE tenant_id = $1 AND is_active = true
+             ORDER BY created_at ASC`,
+            [tenantId]
+        );
+
+        res.json({
+            success: true,
+            data: result.rows
+        });
+    } catch (error) {
+        console.error('[Branches] Error:', error);
+        res.status(500).json({ success: false, message: 'Error al obtener sucursales' });
     }
 });
 
