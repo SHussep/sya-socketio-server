@@ -160,18 +160,36 @@ app.post('/api/auth/google-signup', async (req, res) => {
 
         const employee = employeeResult.rows[0];
 
-        // Generar JWT token
-        const token = jwt.sign(
-            { tenantId: tenant.id, employeeId: employee.id, branchId: branch.id, role: 'admin' },
-            JWT_SECRET,
-            { expiresIn: '30d' }
+        // Crear branch principal
+        const branchCode = `${tenantCode}-MAIN`;
+        const branchResult = await pool.query(
+            `INSERT INTO branches (tenant_id, branch_code, name, address, is_active)
+             VALUES ($1, $2, $3, $4, true)
+             RETURNING *`,
+            [tenant.id, branchCode, `${businessName} - Principal`, address || 'N/A']
+        );
+
+        const branch = branchResult.rows[0];
+
+        // Actualizar employee con main_branch_id
+        await pool.query(
+            `UPDATE employees SET main_branch_id = $1 WHERE id = $2`,
+            [branch.id, employee.id]
+        );
+
+        // Vincular employee a branch con permisos completos
+        await pool.query(
+            `INSERT INTO employee_branches (employee_id, branch_id, can_login, can_sell, can_manage_inventory, can_close_shift)
+             VALUES ($1, $2, true, true, true, true)`,
+            [employee.id, branch.id]
         );
 
         console.log('[Google Signup] ✅ Tenant creado:', tenantCode);
+        console.log('[Google Signup] ✅ Branch creado:', branchCode);
+        console.log('[Google Signup] ✅ Employee ID:', employee.id);
 
         res.json({
             success: true,
-            token,
             tenant: {
                 id: tenant.id,
                 tenantCode: tenant.tenant_code,
@@ -180,6 +198,17 @@ app.post('/api/auth/google-signup', async (req, res) => {
                 subscriptionPlan: tenant.subscription_plan,
                 subscriptionEndsAt: tenant.subscription_ends_at,
                 trialEndsAt: tenant.trial_ends_at
+            },
+            employee: {
+                id: employee.id,
+                email: employee.email,
+                fullName: employee.full_name,
+                role: employee.role
+            },
+            branch: {
+                id: branch.id,
+                branchCode: branch.branch_code,
+                name: branch.name
             }
         });
     } catch (error) {
