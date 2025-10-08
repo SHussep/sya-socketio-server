@@ -1040,6 +1040,284 @@ app.get('/api/branches', authenticateToken, async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+// ENDPOINTS DE TURNOS (SHIFTS) - CORTES DE CAJA
+// ═══════════════════════════════════════════════════════════════
+
+// POST /api/shifts/open - Abrir turno (inicio de sesión)
+app.post('/api/shifts/open', authenticateToken, async (req, res) => {
+    try {
+        const { tenantId, employeeId, branchId } = req.user;
+        const { initialAmount } = req.body;
+
+        // Verificar si hay un turno abierto para este empleado
+        const existingShift = await pool.query(
+            `SELECT id FROM shifts
+             WHERE tenant_id = $1 AND branch_id = $2 AND employee_id = $3 AND is_cash_cut_open = true`,
+            [tenantId, branchId, employeeId]
+        );
+
+        if (existingShift.rows.length > 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'Ya tienes un turno abierto. Debes cerrar el turno actual antes de abrir uno nuevo.',
+                existingShiftId: existingShift.rows[0].id
+            });
+        }
+
+        // Crear nuevo turno
+        const result = await pool.query(
+            `INSERT INTO shifts (tenant_id, branch_id, employee_id, start_time, initial_amount, transaction_counter, is_cash_cut_open)
+             VALUES ($1, $2, $3, CURRENT_TIMESTAMP, $4, 0, true)
+             RETURNING id, tenant_id, branch_id, employee_id, start_time, initial_amount, transaction_counter, is_cash_cut_open, created_at`,
+            [tenantId, branchId, employeeId, initialAmount || 0]
+        );
+
+        const shift = result.rows[0];
+        console.log(`[Shifts] 🚀 Turno abierto: ID ${shift.id} - Empleado ${employeeId} - Sucursal ${branchId}`);
+
+        res.json({
+            success: true,
+            data: shift,
+            message: 'Turno abierto exitosamente'
+        });
+
+    } catch (error) {
+        console.error('[Shifts] Error al abrir turno:', error);
+        res.status(500).json({ success: false, message: 'Error al abrir turno' });
+    }
+});
+
+// POST /api/shifts/close - Cerrar turno (cierre de sesión)
+app.post('/api/shifts/close', authenticateToken, async (req, res) => {
+    try {
+        const { tenantId, employeeId, branchId } = req.user;
+        const { shiftId, finalAmount } = req.body;
+
+        // Verificar que el turno existe, pertenece al empleado y está abierto
+        const shiftCheck = await pool.query(
+            `SELECT id, start_time FROM shifts
+             WHERE id = $1 AND tenant_id = $2 AND branch_id = $3 AND employee_id = $4 AND is_cash_cut_open = true`,
+            [shiftId, tenantId, branchId, employeeId]
+        );
+
+        if (shiftCheck.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Turno no encontrado o ya está cerrado'
+            });
+        }
+
+        // Cerrar el turno
+        const result = await pool.query(
+            `UPDATE shifts
+             SET end_time = CURRENT_TIMESTAMP,
+                 final_amount = $1,
+                 is_cash_cut_open = false,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = $2
+             RETURNING id, tenant_id, branch_id, employee_id, start_time, end_time, initial_amount, final_amount, transaction_counter, is_cash_cut_open`,
+            [finalAmount || 0, shiftId]
+        );
+
+        const shift = result.rows[0];
+        console.log(`[Shifts] 🔒 Turno cerrado: ID ${shift.id} - Empleado ${employeeId}`);
+
+        res.json({
+            success: true,
+            data: shift,
+            message: 'Turno cerrado exitosamente'
+        });
+
+    } catch (error) {
+        console.error('[Shifts] Error al cerrar turno:', error);
+        res.status(500).json({ success: false, message: 'Error al cerrar turno' });
+    }
+});
+
+// GET /api/shifts/current - Obtener turno actual del empleado
+app.get('/api/shifts/current', authenticateToken, async (req, res) => {
+    try {
+        const { tenantId, employeeId, branchId } = req.user;
+
+        const result = await pool.query(
+            `SELECT s.id, s.tenant_id, s.branch_id, s.employee_id, s.start_time, s.end_time,
+                    s.initial_amount, s.final_amount, s.transaction_counter, s.is_cash_cut_open,
+                    e.full_name as employee_name,
+                    b.name as branch_name
+             FROM shifts s
+             LEFT JOIN employees e ON s.employee_id = e.id
+             LEFT JOIN branches b ON s.branch_id = b.id
+             WHERE s.tenant_id = $1 AND s.branch_id = $2 AND s.employee_id = $3 AND s.is_cash_cut_open = true
+             ORDER BY s.start_time DESC
+             LIMIT 1`,
+            [tenantId, branchId, employeeId]
+        );
+
+        if (result.rows.length === 0) {
+            return res.json({
+                success: true,
+                data: null,
+                message: 'No hay turno abierto'
+            });
+        }
+
+        res.json({
+            success: true,
+            data: result.rows[0]
+        });
+
+    } catch (error) {
+        console.error('[Shifts] Error al obtener turno actual:', error);
+        res.status(500).json({ success: false, message: 'Error al obtener turno actual' });
+    }
+});
+
+// GET /api/shifts/history - Obtener historial de turnos (cortes de caja)
+app.get('/api/shifts/history', authenticateToken, async (req, res) => {
+    try {
+        const { tenantId, branchId } = req.user;
+        const { limit = 50, offset = 0, all_branches = 'false', employee_id } = req.query;
+
+        let query = `
+            SELECT s.id, s.tenant_id, s.branch_id, s.employee_id, s.start_time, s.end_time,
+                   s.initial_amount, s.final_amount, s.transaction_counter, s.is_cash_cut_open,
+                   e.full_name as employee_name, e.role as employee_role,
+                   b.name as branch_name
+            FROM shifts s
+            LEFT JOIN employees e ON s.employee_id = e.id
+            LEFT JOIN branches b ON s.branch_id = b.id
+            WHERE s.tenant_id = $1
+        `;
+
+        const params = [tenantId];
+        let paramIndex = 2;
+
+        // Filtrar por sucursal si no se solicita todas
+        if (all_branches !== 'true' && branchId) {
+            query += ` AND s.branch_id = $${paramIndex}`;
+            params.push(branchId);
+            paramIndex++;
+        }
+
+        // Filtrar por empleado específico (para ver historial de un usuario)
+        if (employee_id) {
+            query += ` AND s.employee_id = $${paramIndex}`;
+            params.push(employee_id);
+            paramIndex++;
+        }
+
+        query += ` ORDER BY s.start_time DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+        params.push(limit, offset);
+
+        const result = await pool.query(query, params);
+
+        res.json({
+            success: true,
+            data: result.rows
+        });
+
+    } catch (error) {
+        console.error('[Shifts] Error al obtener historial:', error);
+        res.status(500).json({ success: false, message: 'Error al obtener historial de turnos' });
+    }
+});
+
+// GET /api/shifts/summary - Resumen de cortes de caja (para administradores)
+app.get('/api/shifts/summary', authenticateToken, async (req, res) => {
+    try {
+        const { tenantId } = req.user;
+        const { date_from, date_to, branch_id } = req.query;
+
+        let query = `
+            SELECT s.id, s.branch_id, s.employee_id, s.start_time, s.end_time,
+                   s.initial_amount, s.final_amount, s.transaction_counter, s.is_cash_cut_open,
+                   e.full_name as employee_name,
+                   b.name as branch_name,
+                   (s.final_amount - s.initial_amount) as difference
+            FROM shifts s
+            LEFT JOIN employees e ON s.employee_id = e.id
+            LEFT JOIN branches b ON s.branch_id = b.id
+            WHERE s.tenant_id = $1
+        `;
+
+        const params = [tenantId];
+        let paramIndex = 2;
+
+        if (branch_id) {
+            query += ` AND s.branch_id = $${paramIndex}`;
+            params.push(branch_id);
+            paramIndex++;
+        }
+
+        if (date_from) {
+            query += ` AND s.start_time >= $${paramIndex}`;
+            params.push(date_from);
+            paramIndex++;
+        }
+
+        if (date_to) {
+            query += ` AND s.start_time <= $${paramIndex}`;
+            params.push(date_to);
+            paramIndex++;
+        }
+
+        query += ` ORDER BY s.start_time DESC`;
+
+        const result = await pool.query(query, params);
+
+        // Calcular totales
+        const summary = {
+            total_shifts: result.rows.length,
+            total_transactions: result.rows.reduce((sum, shift) => sum + (shift.transaction_counter || 0), 0),
+            total_initial: result.rows.reduce((sum, shift) => sum + parseFloat(shift.initial_amount || 0), 0),
+            total_final: result.rows.reduce((sum, shift) => sum + parseFloat(shift.final_amount || 0), 0),
+            shifts: result.rows
+        };
+
+        summary.total_difference = summary.total_final - summary.total_initial;
+
+        res.json({
+            success: true,
+            data: summary
+        });
+
+    } catch (error) {
+        console.error('[Shifts] Error al obtener resumen:', error);
+        res.status(500).json({ success: false, message: 'Error al obtener resumen de cortes' });
+    }
+});
+
+// PUT /api/shifts/:id/increment-counter - Incrementar contador de transacciones
+app.put('/api/shifts/:id/increment-counter', authenticateToken, async (req, res) => {
+    try {
+        const { tenantId } = req.user;
+        const { id } = req.params;
+
+        const result = await pool.query(
+            `UPDATE shifts
+             SET transaction_counter = transaction_counter + 1,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = $1 AND tenant_id = $2 AND is_cash_cut_open = true
+             RETURNING transaction_counter`,
+            [id, tenantId]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ success: false, message: 'Turno no encontrado o cerrado' });
+        }
+
+        res.json({
+            success: true,
+            data: { transaction_counter: result.rows[0].transaction_counter }
+        });
+
+    } catch (error) {
+        console.error('[Shifts] Error al incrementar contador:', error);
+        res.status(500).json({ success: false, message: 'Error al incrementar contador' });
+    }
+});
+
+// ═══════════════════════════════════════════════════════════════
 // CONFIGURAR SOCKET.IO
 // ═══════════════════════════════════════════════════════════════
 
