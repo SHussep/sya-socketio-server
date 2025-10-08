@@ -265,6 +265,167 @@ module.exports = function(pool) {
     });
 
     // ─────────────────────────────────────────────────────────
+    // POST /api/auth/google-signup
+    // Registro desde Desktop con Google OAuth
+    // ─────────────────────────────────────────────────────────
+    router.post('/google-signup', async (req, res) => {
+        console.log('[Google Signup] Nueva solicitud de registro con Google');
+
+        const { idToken, email, displayName, businessName, phoneNumber, address, password } = req.body;
+
+        if (!idToken || !email || !displayName || !businessName || !password) {
+            return res.status(400).json({
+                success: false,
+                message: 'Faltan campos requeridos: idToken, email, displayName, businessName, password'
+            });
+        }
+
+        const client = await pool.connect();
+
+        try {
+            await client.query('BEGIN');
+
+            // 1. Verificar si el email ya está registrado
+            const existingEmployee = await client.query(
+                'SELECT id, tenant_id FROM employees WHERE LOWER(email) = LOWER($1)',
+                [email]
+            );
+
+            if (existingEmployee.rows.length > 0) {
+                await client.query('ROLLBACK');
+                return res.status(409).json({
+                    success: false,
+                    message: 'Este email ya está registrado'
+                });
+            }
+
+            // 2. Obtener la subscripción por defecto (Basic - Trial)
+            const subscriptionResult = await client.query(
+                "SELECT id FROM subscriptions WHERE name = 'Basic' LIMIT 1"
+            );
+
+            if (subscriptionResult.rows.length === 0) {
+                await client.query('ROLLBACK');
+                return res.status(500).json({
+                    success: false,
+                    message: 'Error: No se encontró plan de subscripción Basic'
+                });
+            }
+
+            const subscriptionId = subscriptionResult.rows[0].id;
+
+            // 3. Generar tenant_code único
+            const tenantCode = `TNT${Date.now()}`;
+
+            // 4. Crear tenant (negocio)
+            const tenantResult = await client.query(`
+                INSERT INTO tenants (
+                    tenant_code, business_name, subscription_id,
+                    subscription_status, trial_ends_at, contact_email,
+                    contact_phone, address, is_active, created_at, updated_at
+                ) VALUES ($1, $2, $3, 'trial', NOW() + INTERVAL '30 days', $4, $5, $6, true, NOW(), NOW())
+                RETURNING id, tenant_code, business_name, subscription_status, trial_ends_at
+            `, [tenantCode, businessName, subscriptionId, email, phoneNumber, address]);
+
+            const tenant = tenantResult.rows[0];
+
+            console.log(`[Google Signup] ✅ Tenant creado: ${tenant.tenant_code} (ID: ${tenant.id})`);
+
+            // 5. Crear branch por defecto (primera sucursal)
+            const branchCode = `${tenantCode}-MAIN`;
+            const branchResult = await client.query(`
+                INSERT INTO branches (
+                    tenant_id, branch_code, name, address,
+                    is_active, is_main, created_at, updated_at
+                ) VALUES ($1, $2, $3, $4, true, true, NOW(), NOW())
+                RETURNING id, branch_code, name
+            `, [tenant.id, branchCode, businessName + ' - Principal', address || 'N/A']);
+
+            const branch = branchResult.rows[0];
+
+            console.log(`[Google Signup] ✅ Branch creado: ${branch.branch_code} (ID: ${branch.id})`);
+
+            // 6. Hash de contraseña
+            const passwordHash = await bcrypt.hash(password, 10);
+
+            // 7. Crear empleado owner
+            const username = displayName.replace(/\s+/g, '').toLowerCase();
+            const employeeResult = await client.query(`
+                INSERT INTO employees (
+                    tenant_id, email, username, full_name, password,
+                    role, is_active, google_id, main_branch_id, created_at, updated_at
+                ) VALUES ($1, $2, $3, $4, $5, 'owner', true, $6, $7, NOW(), NOW())
+                RETURNING id, email, username, full_name, role
+            `, [tenant.id, email, username, displayName, passwordHash, idToken, branch.id]);
+
+            const employee = employeeResult.rows[0];
+
+            console.log(`[Google Signup] ✅ Employee creado: ${employee.email} (ID: ${employee.id}, Role: ${employee.role})`);
+
+            // 8. Asignar permisos completos al owner en el branch
+            await client.query(`
+                INSERT INTO employee_branches (
+                    employee_id, branch_id, can_login, can_sell,
+                    can_manage_inventory, can_close_shift, created_at
+                ) VALUES ($1, $2, true, true, true, true, NOW())
+            `, [employee.id, branch.id]);
+
+            await client.query('COMMIT');
+
+            // 9. Generar JWT token
+            const token = jwt.sign(
+                {
+                    employeeId: employee.id,
+                    tenantId: tenant.id,
+                    branchId: branch.id,
+                    role: employee.role,
+                    email: employee.email
+                },
+                JWT_SECRET,
+                { expiresIn: '7d' }
+            );
+
+            console.log(`[Google Signup] ✅ Registro completado exitosamente para: ${email}`);
+
+            res.status(201).json({
+                success: true,
+                message: 'Registro exitoso',
+                token,
+                tenant: {
+                    id: tenant.id,
+                    tenantCode: tenant.tenant_code,
+                    businessName: tenant.business_name,
+                    subscriptionStatus: tenant.subscription_status,
+                    subscriptionPlan: 'Basic',
+                    trialEndsAt: tenant.trial_ends_at
+                },
+                employee: {
+                    id: employee.id,
+                    email: employee.email,
+                    fullName: employee.full_name,
+                    role: employee.role
+                },
+                branch: {
+                    id: branch.id,
+                    branchCode: branch.branch_code,
+                    name: branch.name
+                }
+            });
+
+        } catch (error) {
+            await client.query('ROLLBACK');
+            console.error('[Google Signup] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al registrar usuario',
+                error: error.message
+            });
+        } finally {
+            client.release();
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
     // Middleware: Verificar JWT Token
     // ─────────────────────────────────────────────────────────
     router.authenticateToken = function(req, res, next) {
