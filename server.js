@@ -126,11 +126,25 @@ app.post('/api/auth/google-signup', async (req, res) => {
         // Generar TenantCode único
         const tenantCode = `SYA${Date.now().toString().slice(-6)}`;
 
+        // Obtener subscription_id del plan Basic
+        const subscriptionResult = await pool.query(
+            "SELECT id FROM subscriptions WHERE name = 'Basic' LIMIT 1"
+        );
+
+        if (subscriptionResult.rows.length === 0) {
+            return res.status(500).json({
+                success: false,
+                message: 'No se encontró plan de subscripción Basic. Contacte al administrador.'
+            });
+        }
+
+        const subscriptionId = subscriptionResult.rows[0].id;
+
         // Crear tenant
         const tenantResult = await pool.query(
             `INSERT INTO tenants (tenant_code, business_name, email, phone_number, address,
-             subscription_status, subscription_plan, trial_ends_at, max_devices)
-             VALUES ($1, $2, $3, $4, $5, 'trial', 'basic', $6, 3)
+             subscription_status, subscription_id, trial_ends_at)
+             VALUES ($1, $2, $3, $4, $5, 'trial', $6, $7)
              RETURNING *`,
             [
                 tenantCode,
@@ -138,6 +152,7 @@ app.post('/api/auth/google-signup', async (req, res) => {
                 email,
                 phoneNumber,
                 address,
+                subscriptionId,
                 new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 días
             ]
         );
