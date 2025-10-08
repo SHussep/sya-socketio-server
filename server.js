@@ -46,6 +46,12 @@ app.use(bodyParser.urlencoded({ extended: true }));
 // REST API ENDPOINTS
 // ═══════════════════════════════════════════════════════════════
 
+
+// Importar rutas modulares
+const restoreRoutes = require('./routes/restore');
+
+// Registrar rutas
+app.use('/api/restore', restoreRoutes);
 // Health check
 app.get('/', (req, res) => {
     res.send('Socket.IO Server for SYA Tortillerías - Running ✅');
@@ -177,8 +183,19 @@ app.post('/api/auth/google-signup', async (req, res) => {
             }
         });
     } catch (error) {
-        console.error('[Google Signup] Error:', error);
-        res.status(500).json({ success: false, message: 'Error en el servidor' });
+        console.error('[Google Signup] ❌ Error completo:', error);
+        console.error('[Google Signup] ❌ Stack:', error.stack);
+
+        // Devolver mensaje más descriptivo
+        const errorMessage = error.code === '23505'
+            ? 'El email ya está registrado'
+            : error.message || 'Error en el servidor';
+
+        res.status(500).json({
+            success: false,
+            message: errorMessage,
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
     }
 });
 
