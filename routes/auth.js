@@ -321,8 +321,8 @@ module.exports = function(pool) {
             const tenantResult = await client.query(`
                 INSERT INTO tenants (
                     tenant_code, business_name, subscription_id,
-                    subscription_status, trial_ends_at, contact_email,
-                    contact_phone, address, is_active, created_at, updated_at
+                    subscription_status, trial_ends_at, email,
+                    phone_number, address, is_active, created_at, updated_at
                 ) VALUES ($1, $2, $3, 'trial', NOW() + INTERVAL '30 days', $4, $5, $6, true, NOW(), NOW())
                 RETURNING id, tenant_code, business_name, subscription_status, trial_ends_at
             `, [tenantCode, businessName, subscriptionId, email, phoneNumber, address]);
