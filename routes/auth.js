@@ -336,8 +336,8 @@ module.exports = function(pool) {
             const branchResult = await client.query(`
                 INSERT INTO branches (
                     tenant_id, branch_code, name, address,
-                    is_active, is_main, created_at, updated_at
-                ) VALUES ($1, $2, $3, $4, true, true, NOW(), NOW())
+                    is_active, created_at, updated_at
+                ) VALUES ($1, $2, $3, $4, true, NOW(), NOW())
                 RETURNING id, branch_code, name
             `, [tenant.id, branchCode, businessName + ' - Principal', address || 'N/A']);
 
@@ -366,7 +366,7 @@ module.exports = function(pool) {
             await client.query(`
                 INSERT INTO employee_branches (
                     employee_id, branch_id, can_login, can_sell,
-                    can_manage_inventory, can_close_shift, created_at
+                    can_manage_inventory, can_close_shift, assigned_at
                 ) VALUES ($1, $2, true, true, true, true, NOW())
             `, [employee.id, branch.id]);
 
