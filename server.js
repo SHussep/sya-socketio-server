@@ -377,6 +377,23 @@ app.post('/api/auth/login', async (req, res) => {
 
         const tenant = tenantResult.rows[0];
 
+        // Obtener branches del employee
+        const branchesResult = await pool.query(
+            `SELECT b.id, b.branch_code as code, b.name, b.address
+             FROM branches b
+             INNER JOIN employee_branches eb ON b.id = eb.branch_id
+             WHERE eb.employee_id = $1 AND b.is_active = true
+             ORDER BY b.created_at ASC`,
+            [employee.id]
+        );
+
+        const branches = branchesResult.rows.map(b => ({
+            id: b.id,
+            code: b.code,
+            name: b.name,
+            address: b.address || 'N/A'
+        }));
+
         // Generar JWT token
         const token = jwt.sign(
             {
@@ -389,6 +406,7 @@ app.post('/api/auth/login', async (req, res) => {
         );
 
         console.log('[Mobile Login] ✅ Login exitoso:', employee.username);
+        console.log(`[Mobile Login] Branches accesibles: ${branches.length}`);
 
         res.json({
             isSuccess: true,
@@ -409,13 +427,7 @@ app.post('/api/auth/login', async (req, res) => {
                 subscriptionStatus: tenant.subscription_status,
                 subscriptionPlan: tenant.subscription_plan
             },
-            branches: [
-                {
-                    id: 1,
-                    name: 'Sucursal Principal',
-                    code: 'BR001'
-                }
-            ]
+            branches: branches
         });
     } catch (error) {
         console.error('[Mobile Login] Error:', error);
