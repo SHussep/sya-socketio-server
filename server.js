@@ -867,6 +867,124 @@ app.post('/api/cash-cuts', authenticateToken, async (req, res) => {
     }
 });
 
+// ============================================================================
+// ENDPOINTS DE SYNC PARA DESKTOP (ALIAS DE LOS ENDPOINTS NORMALES)
+// ============================================================================
+
+// POST /api/sync/sales - Alias de /api/sales (para compatibilidad con Desktop)
+app.post('/api/sync/sales', async (req, res) => {
+    try {
+        const { tenantId, branchId, employeeId, ticketNumber, totalAmount, paymentMethod, userEmail } = req.body;
+
+        console.log(`[Sync/Sales] Desktop sync - Tenant: ${tenantId}, Branch: ${branchId}, Ticket: ${ticketNumber}`);
+
+        if (!tenantId || !branchId || !ticketNumber || !totalAmount) {
+            return res.status(400).json({ success: false, message: 'Datos incompletos (tenantId, branchId, ticketNumber, totalAmount requeridos)' });
+        }
+
+        // Usar employeeId del body si viene, sino buscar por email
+        let finalEmployeeId = employeeId;
+        if (!finalEmployeeId && userEmail) {
+            const empResult = await pool.query(
+                'SELECT id FROM employees WHERE LOWER(email) = LOWER($1) AND tenant_id = $2',
+                [userEmail, tenantId]
+            );
+            if (empResult.rows.length > 0) {
+                finalEmployeeId = empResult.rows[0].id;
+            }
+        }
+
+        const result = await pool.query(
+            `INSERT INTO sales (tenant_id, branch_id, employee_id, ticket_number, total_amount, payment_method)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             RETURNING *`,
+            [tenantId, branchId, finalEmployeeId, ticketNumber, totalAmount, paymentMethod || 'cash']
+        );
+
+        console.log(`[Sync/Sales] ✅ Venta sincronizada: ${ticketNumber} - $${totalAmount}`);
+        res.json({ success: true, data: result.rows[0] });
+    } catch (error) {
+        console.error('[Sync/Sales] Error:', error);
+        res.status(500).json({ success: false, message: 'Error al sincronizar venta', error: error.message });
+    }
+});
+
+// POST /api/sync/expenses - Alias de /api/expenses (para compatibilidad con Desktop)
+app.post('/api/sync/expenses', async (req, res) => {
+    try {
+        const { tenantId, branchId, employeeId, category, description, amount, userEmail } = req.body;
+
+        console.log(`[Sync/Expenses] Desktop sync - Tenant: ${tenantId}, Branch: ${branchId}, Category: ${category}`);
+
+        if (!tenantId || !branchId || !category || !amount) {
+            return res.status(400).json({ success: false, message: 'Datos incompletos (tenantId, branchId, category, amount requeridos)' });
+        }
+
+        // Usar employeeId del body si viene, sino buscar por email
+        let finalEmployeeId = employeeId;
+        if (!finalEmployeeId && userEmail) {
+            const empResult = await pool.query(
+                'SELECT id FROM employees WHERE LOWER(email) = LOWER($1) AND tenant_id = $2',
+                [userEmail, tenantId]
+            );
+            if (empResult.rows.length > 0) {
+                finalEmployeeId = empResult.rows[0].id;
+            }
+        }
+
+        const result = await pool.query(
+            `INSERT INTO expenses (tenant_id, branch_id, employee_id, category, description, amount)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             RETURNING *`,
+            [tenantId, branchId, finalEmployeeId, category, description || '', amount]
+        );
+
+        console.log(`[Sync/Expenses] ✅ Gasto sincronizado: ${category} - $${amount}`);
+        res.json({ success: true, data: result.rows[0] });
+    } catch (error) {
+        console.error('[Sync/Expenses] Error:', error);
+        res.status(500).json({ success: false, message: 'Error al sincronizar gasto', error: error.message });
+    }
+});
+
+// POST /api/sync/cash-cuts - Alias de /api/cash-cuts (para compatibilidad con Desktop)
+app.post('/api/sync/cash-cuts', async (req, res) => {
+    try {
+        const { tenantId, branchId, employeeId, cutNumber, totalSales, totalExpenses, cashInDrawer, expectedCash, difference, userEmail } = req.body;
+
+        console.log(`[Sync/CashCuts] Desktop sync - Tenant: ${tenantId}, Branch: ${branchId}, Cut: ${cutNumber}`);
+
+        if (!tenantId || !branchId || !cutNumber) {
+            return res.status(400).json({ success: false, message: 'Datos incompletos (tenantId, branchId, cutNumber requeridos)' });
+        }
+
+        // Usar employeeId del body si viene, sino buscar por email
+        let finalEmployeeId = employeeId;
+        if (!finalEmployeeId && userEmail) {
+            const empResult = await pool.query(
+                'SELECT id FROM employees WHERE LOWER(email) = LOWER($1) AND tenant_id = $2',
+                [userEmail, tenantId]
+            );
+            if (empResult.rows.length > 0) {
+                finalEmployeeId = empResult.rows[0].id;
+            }
+        }
+
+        const result = await pool.query(
+            `INSERT INTO cash_cuts (tenant_id, branch_id, employee_id, cut_number, total_sales, total_expenses, cash_in_drawer, expected_cash, difference)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             RETURNING *`,
+            [tenantId, branchId, finalEmployeeId, cutNumber, totalSales || 0, totalExpenses || 0, cashInDrawer || 0, expectedCash || 0, difference || 0]
+        );
+
+        console.log(`[Sync/CashCuts] ✅ Corte sincronizado: ${cutNumber}`);
+        res.json({ success: true, data: result.rows[0] });
+    } catch (error) {
+        console.error('[Sync/CashCuts] Error:', error);
+        res.status(500).json({ success: false, message: 'Error al sincronizar corte', error: error.message });
+    }
+});
+
 // GET /api/guardian-events - Lista de eventos Guardian (MUY IMPORTANTE)
 app.get('/api/guardian-events', authenticateToken, async (req, res) => {
     try {
