@@ -1,101 +1,67 @@
-const bcrypt = require('bcrypt');
-const { Pool } = require('pg');
-require('dotenv').config();
+const axios = require('axios');
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
-});
+const API_URL = 'https://sya-socketio-server.onrender.com';
 
 async function createTestUser() {
-  const client = await pool.connect();
+    console.log('\n🧪 CREANDO USUARIO DE PRUEBA...\n');
 
-  try {
-    console.log('🔐 Creando usuario de prueba...');
+    try {
+        const testUser = {
+            email: `test_${Date.now()}@tortilleria.com`,
+            displayName: 'Usuario de Prueba',
+            businessName: 'Tortillería de Pruebas',
+            phoneNumber: '5551234567',
+            address: 'Calle de Prueba 123',
+            password: 'TestPassword123'
+        };
 
-    // Hashear password
-    const hashedPassword = await bcrypt.hash('1234', 10);
+        console.log('Datos del usuario:');
+        console.log(JSON.stringify(testUser, null, 2));
 
-    // 1. Crear Tenant
-    const tenantResult = await client.query(`
-      INSERT INTO tenants (tenant_code, business_name, email, subscription_status, created_at)
-      VALUES ('SYA001', 'SYA Tortillerías', 'saul.hussep@gmail.com', 'trial', NOW())
-      ON CONFLICT (tenant_code) DO UPDATE SET business_name = EXCLUDED.business_name
-      RETURNING id, tenant_code
-    `);
+        const response = await axios.post(
+            `${API_URL}/api/auth/google-signup`,
+            testUser,
+            { timeout: 30000 }
+        );
 
-    const tenantId = tenantResult.rows[0].id;
-    const tenantCode = tenantResult.rows[0].tenant_code;
-    console.log(`✅ Tenant creado: ${tenantCode} (ID: ${tenantId})`);
+        if (response.data.success) {
+            console.log('\n✅ Usuario creado exitosamente\n');
+            console.log('═══════════════════════════════════════════');
+            console.log('📋 CREDENCIALES PARA TESTING:');
+            console.log('═══════════════════════════════════════════');
+            console.log(`Tenant Code: ${response.data.tenant.tenantCode}`);
+            console.log(`Username: ${response.data.employee.username || 'N/A'}`);
+            console.log(`Email: ${response.data.employee.email}`);
+            console.log(`Password: TestPassword123`);
+            console.log(`\nTenant ID: ${response.data.tenant.id}`);
+            console.log(`Employee ID: ${response.data.employee.id}`);
+            console.log(`Branch ID: ${response.data.branch.id}`);
+            console.log(`Branch Code: ${response.data.branch.branchCode}`);
+            console.log('═══════════════════════════════════════════\n');
 
-    // 2. Crear Branch
-    const branchResult = await client.query(`
-      INSERT INTO branches (tenant_id, branch_code, name, is_main, created_at)
-      VALUES ($1, 'MAIN', 'Sucursal Principal', true, NOW())
-      ON CONFLICT (tenant_id, branch_code) DO UPDATE SET name = EXCLUDED.name
-      RETURNING id
-    `, [tenantId]);
+            const fs = require('fs');
+            fs.writeFileSync(
+                'test_credentials.json',
+                JSON.stringify({
+                    tenantCode: response.data.tenant.tenantCode,
+                    username: response.data.employee.username,
+                    email: response.data.employee.email,
+                    password: 'TestPassword123',
+                    tenantId: response.data.tenant.id,
+                    employeeId: response.data.employee.id,
+                    branchId: response.data.branch.id
+                }, null, 2)
+            );
 
-    const branchId = branchResult.rows[0].id;
-    console.log(`✅ Sucursal creada (ID: ${branchId})`);
+            console.log('✅ Credenciales guardadas en test_credentials.json\n');
 
-    // 3. Crear Employee (Usuario)
-    const employeeResult = await client.query(`
-      INSERT INTO employees (
-        tenant_id,
-        branch_id,
-        email,
-        username,
-        full_name,
-        password_hash,
-        role,
-        is_owner,
-        is_active,
-        created_at
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
-      ON CONFLICT (tenant_id, email) DO UPDATE
-      SET password_hash = EXCLUDED.password_hash,
-          username = EXCLUDED.username
-      RETURNING id, email, username
-    `, [
-      tenantId,
-      branchId,
-      'saul.hussep@gmail.com',
-      'saulhussep',
-      'Saul Hussep',
-      hashedPassword,
-      'Administrador',
-      true,
-      true
-    ]);
+        } else {
+            console.log('❌ Error:', response.data.message);
+        }
 
-    const employee = employeeResult.rows[0];
-    console.log(`✅ Usuario creado: ${employee.username} (${employee.email})`);
-    console.log('');
-    console.log('═══════════════════════════════════════════');
-    console.log('  CREDENCIALES PARA LOGIN MÓVIL:');
-    console.log('═══════════════════════════════════════════');
-    console.log(`  Usuario: ${employee.username}`);
-    console.log(`  Email: ${employee.email}`);
-    console.log(`  Password: 1234`);
-    console.log('═══════════════════════════════════════════');
-
-  } catch (error) {
-    console.error('❌ Error:', error.message);
-    throw error;
-  } finally {
-    client.release();
-    await pool.end();
-  }
+    } catch (error) {
+        console.error('❌ Error creando usuario:', error.response?.data || error.message);
+    }
 }
 
-createTestUser()
-  .then(() => {
-    console.log('\n✅ Usuario de prueba creado exitosamente');
-    process.exit(0);
-  })
-  .catch(err => {
-    console.error('\n❌ Error al crear usuario:', err);
-    process.exit(1);
-  });
+createTestUser();
