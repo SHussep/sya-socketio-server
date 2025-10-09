@@ -611,9 +611,11 @@ app.post('/api/auth/join-branch', async (req, res) => {
                 address: branch.address
             },
             employee: {
+                username: employee.username,
                 id: employee.id,
                 email: employee.email,
-                fullName: employee.full_name
+                fullName: employee.full_name,
+                role: employee.role
             },
             tenant: {
                 id: tenant.id,
