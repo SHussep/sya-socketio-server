@@ -216,6 +216,7 @@ app.post('/api/auth/google-signup', async (req, res) => {
             },
             employee: {
                 id: employee.id,
+                username: employee.username,  // ✅ AGREGADO: username para login móvil
                 email: employee.email,
                 fullName: employee.full_name,
                 role: employee.role
@@ -224,6 +225,12 @@ app.post('/api/auth/google-signup', async (req, res) => {
                 id: branch.id,
                 branchCode: branch.branch_code,
                 name: branch.name
+            },
+            // ✅ AGREGADO: Credenciales para mostrar en Desktop UI
+            credentials: {
+                username: employee.username,
+                email: employee.email,
+                message: 'Guarda estas credenciales para iniciar sesión en la app móvil'
             }
         });
     } catch (error) {
@@ -527,6 +534,100 @@ app.post('/api/auth/scan-qr', async (req, res) => {
     } catch (error) {
         console.error('[QR Scan] Error:', error);
         res.status(500).json({ success: false, message: 'Error en el servidor' });
+    }
+});
+
+// ─────────────────────────────────────────────────────────
+// AUTH: Unirse a Nueva Sucursal (Desktop)
+// ─────────────────────────────────────────────────────────
+app.post('/api/auth/join-branch', async (req, res) => {
+    try {
+        const { email, password, branchName, address } = req.body;
+
+        console.log('[Join Branch] Request:', { email, branchName });
+
+        // 1. Validar credenciales del empleado
+        const employeeResult = await pool.query(
+            'SELECT * FROM employees WHERE LOWER(email) = LOWER($1)',
+            [email]
+        );
+
+        if (employeeResult.rows.length === 0) {
+            console.log('[Join Branch] ❌ Usuario no encontrado');
+            return res.status(401).json({
+                success: false,
+                message: 'Credenciales inválidas'
+            });
+        }
+
+        const employee = employeeResult.rows[0];
+
+        // Validar password
+        const validPassword = await bcrypt.compare(password, employee.password);
+        if (!validPassword) {
+            console.log('[Join Branch] ❌ Contraseña incorrecta');
+            return res.status(401).json({
+                success: false,
+                message: 'Credenciales inválidas'
+            });
+        }
+
+        // 2. Obtener tenant del empleado
+        const tenantResult = await pool.query(
+            'SELECT * FROM tenants WHERE id = $1',
+            [employee.tenant_id]
+        );
+
+        const tenant = tenantResult.rows[0];
+
+        // 3. Crear nueva sucursal
+        const branchCode = `${tenant.tenant_code}-${Date.now().toString().slice(-6)}`;
+        const branchResult = await pool.query(
+            `INSERT INTO branches (tenant_id, branch_code, name, address, is_active)
+             VALUES ($1, $2, $3, $4, true)
+             RETURNING *`,
+            [tenant.id, branchCode, branchName, address || 'N/A']
+        );
+
+        const branch = branchResult.rows[0];
+
+        // 4. Vincular empleado a la nueva sucursal con permisos completos
+        await pool.query(
+            `INSERT INTO employee_branches (employee_id, branch_id, can_login, can_sell, can_manage_inventory, can_close_shift)
+             VALUES ($1, $2, true, true, true, true)`,
+            [employee.id, branch.id]
+        );
+
+        console.log('[Join Branch] ✅ Sucursal creada:', branchCode);
+        console.log('[Join Branch] ✅ Empleado vinculado a sucursal');
+
+        res.json({
+            success: true,
+            message: 'Te has unido exitosamente a la nueva sucursal',
+            branch: {
+                id: branch.id,
+                branchCode: branch.branch_code,
+                name: branch.name,
+                address: branch.address
+            },
+            employee: {
+                id: employee.id,
+                email: employee.email,
+                fullName: employee.full_name
+            },
+            tenant: {
+                id: tenant.id,
+                tenantCode: tenant.tenant_code,
+                businessName: tenant.business_name
+            }
+        });
+    } catch (error) {
+        console.error('[Join Branch] ❌ Error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error al crear la sucursal',
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
     }
 });
 
