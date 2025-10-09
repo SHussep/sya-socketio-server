@@ -802,11 +802,29 @@ app.post('/api/expenses', async (req, res) => {
             }
         }
 
+        // Buscar o crear categoría
+        let categoryId = null;
+        const catResult = await pool.query(
+            'SELECT id FROM expense_categories WHERE LOWER(name) = LOWER($1) AND tenant_id = $2',
+            [category, tenantId]
+        );
+
+        if (catResult.rows.length > 0) {
+            categoryId = catResult.rows[0].id;
+        } else {
+            const newCat = await pool.query(
+                'INSERT INTO expense_categories (tenant_id, name) VALUES ($1, $2) RETURNING id',
+                [tenantId, category]
+            );
+            categoryId = newCat.rows[0].id;
+            console.log(`[Expenses] Categoría creada: ${category} (ID: ${categoryId})`);
+        }
+
         const result = await pool.query(
-            `INSERT INTO expenses (tenant_id, branch_id, employee_id, category, description, amount)
+            `INSERT INTO expenses (tenant_id, branch_id, employee_id, category_id, description, amount)
              VALUES ($1, $2, $3, $4, $5, $6)
              RETURNING *`,
-            [tenantId, branchId, employeeId, category, description, amount]
+            [tenantId, branchId, employeeId, categoryId, description, amount]
         );
 
         console.log(`[Expenses] ✅ Gasto creado desde Desktop: ${category} - $${amount}`);
@@ -932,11 +950,29 @@ app.post('/api/sync/expenses', async (req, res) => {
             }
         }
 
+        // Buscar o crear categoría
+        let categoryId = null;
+        const catResult = await pool.query(
+            'SELECT id FROM expense_categories WHERE LOWER(name) = LOWER($1) AND tenant_id = $2',
+            [category, tenantId]
+        );
+
+        if (catResult.rows.length > 0) {
+            categoryId = catResult.rows[0].id;
+        } else {
+            const newCat = await pool.query(
+                'INSERT INTO expense_categories (tenant_id, name) VALUES ($1, $2) RETURNING id',
+                [tenantId, category]
+            );
+            categoryId = newCat.rows[0].id;
+            console.log(`[Sync/Expenses] Categoría creada: ${category} (ID: ${categoryId})`);
+        }
+
         const result = await pool.query(
-            `INSERT INTO expenses (tenant_id, branch_id, employee_id, category, description, amount)
+            `INSERT INTO expenses (tenant_id, branch_id, employee_id, category_id, description, amount)
              VALUES ($1, $2, $3, $4, $5, $6)
              RETURNING *`,
-            [tenantId, branchId, finalEmployeeId, category, description || '', amount]
+            [tenantId, branchId, finalEmployeeId, categoryId, description || '', amount]
         );
 
         console.log(`[Sync/Expenses] ✅ Gasto sincronizado: ${category} - $${amount}`);
