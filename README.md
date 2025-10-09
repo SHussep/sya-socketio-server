@@ -142,3 +142,4 @@ Socket.IO Server for SYA Tortillerías - Running ✅
 **Error: Permission denied**
 - Usa `sudo` si es necesario
 - Verifica permisos de carpeta
+
