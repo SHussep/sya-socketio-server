@@ -779,13 +779,16 @@ app.get('/api/dashboard/summary', authenticateToken, async (req, res) => {
 // GET /api/sales - Lista de ventas
 app.get('/api/sales', authenticateToken, async (req, res) => {
     try {
-        const { tenantId, branchId } = req.user;
-        const { limit = 50, offset = 0, all_branches = 'false' } = req.query;
+        const { tenantId, branchId: userBranchId } = req.user;
+        const { limit = 50, offset = 0, all_branches = 'false', branch_id } = req.query;
+
+        // Prioridad: 1. branch_id del query, 2. branchId del JWT
+        const targetBranchId = branch_id ? parseInt(branch_id) : userBranchId;
 
         let query = `
             SELECT s.id, s.ticket_number, s.total_amount, s.payment_method, s.sale_date,
                    e.full_name as employee_name, e.role as employee_role,
-                   b.name as branch_name
+                   b.name as branch_name, b.id as branch_id
             FROM sales s
             LEFT JOIN employees e ON s.employee_id = e.id
             LEFT JOIN branches b ON s.branch_id = b.id
@@ -795,15 +798,17 @@ app.get('/api/sales', authenticateToken, async (req, res) => {
         const params = [tenantId];
 
         // Filtrar por branch_id solo si no se solicita ver todas las sucursales
-        if (all_branches !== 'true' && branchId) {
+        if (all_branches !== 'true' && targetBranchId) {
             query += ' AND s.branch_id = $2';
-            params.push(branchId);
+            params.push(targetBranchId);
             query += ' ORDER BY s.sale_date DESC LIMIT $3 OFFSET $4';
             params.push(limit, offset);
         } else {
             query += ' ORDER BY s.sale_date DESC LIMIT $2 OFFSET $3';
             params.push(limit, offset);
         }
+
+        console.log(`[Sales] Fetching sales - Tenant: ${tenantId}, Branch: ${targetBranchId}, all_branches: ${all_branches}`);
 
         const result = await pool.query(query, params);
 
@@ -859,12 +864,15 @@ app.post('/api/sales', async (req, res) => {
 // GET /api/expenses - Lista de gastos
 app.get('/api/expenses', authenticateToken, async (req, res) => {
     try {
-        const { tenantId, branchId } = req.user;
-        const { limit = 50, offset = 0, all_branches = 'false' } = req.query;
+        const { tenantId, branchId: userBranchId } = req.user;
+        const { limit = 50, offset = 0, all_branches = 'false', branch_id } = req.query;
+
+        // Prioridad: 1. branch_id del query, 2. branchId del JWT
+        const targetBranchId = branch_id ? parseInt(branch_id) : userBranchId;
 
         let query = `
             SELECT e.id, e.description as concept, e.description, e.amount, e.expense_date,
-                   emp.full_name as employee_name, b.name as branch_name,
+                   emp.full_name as employee_name, b.name as branch_name, b.id as branch_id,
                    cat.name as category
             FROM expenses e
             LEFT JOIN employees emp ON e.employee_id = emp.id
@@ -876,15 +884,17 @@ app.get('/api/expenses', authenticateToken, async (req, res) => {
         const params = [tenantId];
 
         // Filtrar por branch_id solo si no se solicita ver todas las sucursales
-        if (all_branches !== 'true' && branchId) {
+        if (all_branches !== 'true' && targetBranchId) {
             query += ' AND e.branch_id = $2';
-            params.push(branchId);
+            params.push(targetBranchId);
             query += ' ORDER BY e.expense_date DESC LIMIT $3 OFFSET $4';
             params.push(limit, offset);
         } else {
             query += ' ORDER BY e.expense_date DESC LIMIT $2 OFFSET $3';
             params.push(limit, offset);
         }
+
+        console.log(`[Expenses] Fetching expenses - Tenant: ${tenantId}, Branch: ${targetBranchId}, all_branches: ${all_branches}`);
 
         const result = await pool.query(query, params);
 
@@ -1259,13 +1269,16 @@ app.post('/api/sync/purchases', async (req, res) => {
 // GET /api/guardian-events - Lista de eventos Guardian (MUY IMPORTANTE)
 app.get('/api/guardian-events', authenticateToken, async (req, res) => {
     try {
-        const { tenantId, branchId } = req.user;
-        const { limit = 100, offset = 0, unreadOnly = false, all_branches = 'false' } = req.query;
+        const { tenantId, branchId: userBranchId } = req.user;
+        const { limit = 100, offset = 0, unreadOnly = false, all_branches = 'false', branch_id } = req.query;
+
+        // Prioridad: 1. branch_id del query, 2. branchId del JWT
+        const targetBranchId = branch_id ? parseInt(branch_id) : userBranchId;
 
         let query = `
             SELECT g.id, g.event_type, g.severity, g.title, g.description,
                    g.weight_kg, g.scale_id, g.metadata, g.is_read, g.event_date,
-                   e.full_name as employee_name, b.name as branch_name
+                   e.full_name as employee_name, b.name as branch_name, b.id as branch_id
             FROM guardian_events g
             LEFT JOIN employees e ON g.employee_id = e.id
             LEFT JOIN branches b ON g.branch_id = b.id
@@ -1276,9 +1289,9 @@ app.get('/api/guardian-events', authenticateToken, async (req, res) => {
         let paramIndex = 2;
 
         // Filtrar por branch_id si no se solicita ver todas
-        if (all_branches !== 'true' && branchId) {
+        if (all_branches !== 'true' && targetBranchId) {
             query += ` AND g.branch_id = $${paramIndex}`;
-            params.push(branchId);
+            params.push(targetBranchId);
             paramIndex++;
         }
 
@@ -1288,6 +1301,8 @@ app.get('/api/guardian-events', authenticateToken, async (req, res) => {
 
         query += ` ORDER BY g.event_date DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
         params.push(limit, offset);
+
+        console.log(`[Guardian Events] Fetching events - Tenant: ${tenantId}, Branch: ${targetBranchId}, all_branches: ${all_branches}, unreadOnly: ${unreadOnly}`);
 
         const result = await pool.query(query, params);
 
