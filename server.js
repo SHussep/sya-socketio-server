@@ -722,44 +722,60 @@ function authenticateToken(req, res, next) {
 // GET /api/dashboard/summary - Resumen del dashboard
 app.get('/api/dashboard/summary', authenticateToken, async (req, res) => {
     try {
-        const { tenantId } = req.user;
+        const { tenantId, branchId: userBranchId } = req.user;
+        const { branch_id, start_date, end_date, all_branches = 'false' } = req.query;
 
-        // Total de ventas del día
-        const salesResult = await pool.query(
-            `SELECT COALESCE(SUM(total_amount), 0) as total
-             FROM sales
-             WHERE tenant_id = $1
-             AND DATE(sale_date) = CURRENT_DATE`,
-            [tenantId]
-        );
+        // Prioridad: 1. branch_id del query, 2. branchId del JWT
+        const targetBranchId = branch_id ? parseInt(branch_id) : userBranchId;
+        const shouldFilterByBranch = all_branches !== 'true' && targetBranchId;
 
-        // Total de gastos del día
-        const expensesResult = await pool.query(
-            `SELECT COALESCE(SUM(amount), 0) as total
-             FROM expenses
-             WHERE tenant_id = $1
-             AND DATE(expense_date) = CURRENT_DATE`,
-            [tenantId]
-        );
+        // Construir filtros de fecha
+        let dateFilter = 'DATE(sale_date) = CURRENT_DATE';
+        let expenseDateFilter = 'DATE(expense_date) = CURRENT_DATE';
+
+        if (start_date && end_date) {
+            dateFilter = `sale_date >= '${start_date}' AND sale_date <= '${end_date}'`;
+            expenseDateFilter = `expense_date >= '${start_date}' AND expense_date <= '${end_date}'`;
+        }
+
+        // Total de ventas
+        let salesQuery = `SELECT COALESCE(SUM(total_amount), 0) as total FROM sales WHERE tenant_id = $1 AND ${dateFilter}`;
+        let salesParams = [tenantId];
+        if (shouldFilterByBranch) {
+            salesQuery += ` AND branch_id = $2`;
+            salesParams.push(targetBranchId);
+        }
+        const salesResult = await pool.query(salesQuery, salesParams);
+
+        // Total de gastos
+        let expensesQuery = `SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE tenant_id = $1 AND ${expenseDateFilter}`;
+        let expensesParams = [tenantId];
+        if (shouldFilterByBranch) {
+            expensesQuery += ` AND branch_id = $2`;
+            expensesParams.push(targetBranchId);
+        }
+        const expensesResult = await pool.query(expensesQuery, expensesParams);
 
         // Último corte de caja
-        const cashCutResult = await pool.query(
-            `SELECT cash_in_drawer
-             FROM cash_cuts
-             WHERE tenant_id = $1
-             ORDER BY cut_date DESC
-             LIMIT 1`,
-            [tenantId]
-        );
+        let cashCutQuery = `SELECT cash_in_drawer FROM cash_cuts WHERE tenant_id = $1`;
+        let cashCutParams = [tenantId];
+        if (shouldFilterByBranch) {
+            cashCutQuery += ` AND branch_id = $2`;
+            cashCutParams.push(targetBranchId);
+        }
+        cashCutQuery += ` ORDER BY cut_date DESC LIMIT 1`;
+        const cashCutResult = await pool.query(cashCutQuery, cashCutParams);
 
         // Eventos Guardian no leídos
-        const guardianEventsResult = await pool.query(
-            `SELECT COUNT(*) as count
-             FROM guardian_events
-             WHERE tenant_id = $1
-             AND is_read = false`,
-            [tenantId]
-        );
+        let guardianQuery = `SELECT COUNT(*) as count FROM guardian_events WHERE tenant_id = $1 AND is_read = false`;
+        let guardianParams = [tenantId];
+        if (shouldFilterByBranch) {
+            guardianQuery += ` AND branch_id = $2`;
+            guardianParams.push(targetBranchId);
+        }
+        const guardianEventsResult = await pool.query(guardianQuery, guardianParams);
+
+        console.log(`[Dashboard Summary] Fetching summary - Tenant: ${tenantId}, Branch: ${targetBranchId}, all_branches: ${all_branches}`);
 
         res.json({
             success: true,
