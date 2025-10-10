@@ -803,6 +803,7 @@ app.get('/api/sales', authenticateToken, async (req, res) => {
 
         let query = `
             SELECT s.id, s.ticket_number, s.total_amount, s.payment_method, s.sale_date,
+                   s.sale_type,
                    e.full_name as employee_name, e.role as employee_role,
                    b.name as branch_name, b.id as branch_id
             FROM sales s
@@ -1035,9 +1036,9 @@ app.post('/api/cash-cuts', authenticateToken, async (req, res) => {
 // POST /api/sync/sales - Alias de /api/sales (para compatibilidad con Desktop)
 app.post('/api/sync/sales', async (req, res) => {
     try {
-        const { tenantId, branchId, employeeId, ticketNumber, totalAmount, paymentMethod, userEmail } = req.body;
+        const { tenantId, branchId, employeeId, ticketNumber, totalAmount, paymentMethod, userEmail, sale_type } = req.body;
 
-        console.log(`[Sync/Sales] Desktop sync - Tenant: ${tenantId}, Branch: ${branchId}, Ticket: ${ticketNumber}`);
+        console.log(`[Sync/Sales] Desktop sync - Tenant: ${tenantId}, Branch: ${branchId}, Ticket: ${ticketNumber}, Type: ${sale_type}`);
 
         if (!tenantId || !branchId || !ticketNumber || !totalAmount) {
             return res.status(400).json({ success: false, message: 'Datos incompletos (tenantId, branchId, ticketNumber, totalAmount requeridos)' });
@@ -1056,13 +1057,13 @@ app.post('/api/sync/sales', async (req, res) => {
         }
 
         const result = await pool.query(
-            `INSERT INTO sales (tenant_id, branch_id, employee_id, ticket_number, total_amount, payment_method)
-             VALUES ($1, $2, $3, $4, $5, $6)
+            `INSERT INTO sales (tenant_id, branch_id, employee_id, ticket_number, total_amount, payment_method, sale_type)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
              RETURNING *`,
-            [tenantId, branchId, finalEmployeeId, ticketNumber, totalAmount, paymentMethod || 'cash']
+            [tenantId, branchId, finalEmployeeId, ticketNumber, totalAmount, paymentMethod || 'cash', sale_type || 'counter']
         );
 
-        console.log(`[Sync/Sales] ✅ Venta sincronizada: ${ticketNumber} - $${totalAmount}`);
+        console.log(`[Sync/Sales] ✅ Venta sincronizada: ${ticketNumber} - $${totalAmount} (${sale_type || 'counter'})`);
         res.json({ success: true, data: result.rows[0] });
     } catch (error) {
         console.error('[Sync/Sales] Error:', error);
@@ -1398,22 +1399,26 @@ app.put('/api/guardian-events/:id/mark-read', authenticateToken, async (req, res
     }
 });
 
-// GET /api/branches - Obtener sucursales del tenant
+// GET /api/branches - Obtener sucursales del tenant (autenticado)
 app.get('/api/branches', authenticateToken, async (req, res) => {
     try {
-        const { tenantId } = req.user;
+        const { tenantId, employeeId } = req.user;
 
+        // Obtener sucursales del empleado (a las que tiene acceso)
         const result = await pool.query(
-            `SELECT id, branch_code, name, address, phone_number, is_active, created_at
-             FROM branches
-             WHERE tenant_id = $1 AND is_active = true
-             ORDER BY created_at ASC`,
-            [tenantId]
+            `SELECT b.id, b.branch_code as code, b.name, b.address, b.phone_number
+             FROM branches b
+             INNER JOIN employee_branches eb ON b.id = eb.branch_id
+             WHERE eb.employee_id = $1 AND b.tenant_id = $2 AND b.is_active = true
+             ORDER BY b.created_at ASC`,
+            [employeeId, tenantId]
         );
+
+        console.log(`[Branches] 📋 Sucursales para employee ${employeeId}: ${result.rows.length}`);
 
         res.json({
             success: true,
-            data: result.rows
+            branches: result.rows
         });
     } catch (error) {
         console.error('[Branches] Error:', error);
