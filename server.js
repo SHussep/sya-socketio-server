@@ -729,16 +729,18 @@ app.get('/api/dashboard/summary', authenticateToken, async (req, res) => {
         const targetBranchId = branch_id ? parseInt(branch_id) : userBranchId;
         const shouldFilterByBranch = all_branches !== 'true' && targetBranchId;
 
-        // Construir filtros de fecha
-        let dateFilter = 'DATE(sale_date) = CURRENT_DATE';
-        let expenseDateFilter = 'DATE(expense_date) = CURRENT_DATE';
+        // Construir filtros de fecha timezone-aware
+        // Las columnas ahora son TIMESTAMP WITH TIME ZONE
+        // Cuando el cliente envía una fecha, debe incluir su timezone
+        let dateFilter = 'DATE(sale_date AT TIME ZONE \'America/Mexico_City\') = CURRENT_DATE';
+        let expenseDateFilter = 'DATE(expense_date AT TIME ZONE \'America/Mexico_City\') = CURRENT_DATE';
 
         if (start_date && end_date) {
-            // Usar DATE() para comparar solo la fecha, ignorando timezone
-            const startDateOnly = start_date.split('T')[0]; // Extraer solo YYYY-MM-DD
-            const endDateOnly = end_date.split('T')[0];
-            dateFilter = `DATE(sale_date) >= '${startDateOnly}' AND DATE(sale_date) <= '${endDateOnly}'`;
-            expenseDateFilter = `DATE(expense_date) >= '${startDateOnly}' AND DATE(expense_date) <= '${endDateOnly}'`;
+            // El cliente envía timestamps con su timezone local
+            // PostgreSQL los convierte automáticamente a UTC internamente
+            // Para filtrar, convertimos de vuelta a la zona horaria del cliente
+            dateFilter = `sale_date >= '${start_date}'::timestamptz AND sale_date <= '${end_date}'::timestamptz`;
+            expenseDateFilter = `expense_date >= '${start_date}'::timestamptz AND expense_date <= '${end_date}'::timestamptz`;
         }
 
         // Total de ventas
