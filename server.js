@@ -734,8 +734,11 @@ app.get('/api/dashboard/summary', authenticateToken, async (req, res) => {
         let expenseDateFilter = 'DATE(expense_date) = CURRENT_DATE';
 
         if (start_date && end_date) {
-            dateFilter = `sale_date >= '${start_date}' AND sale_date <= '${end_date}'`;
-            expenseDateFilter = `expense_date >= '${start_date}' AND expense_date <= '${end_date}'`;
+            // Usar DATE() para comparar solo la fecha, ignorando timezone
+            const startDateOnly = start_date.split('T')[0]; // Extraer solo YYYY-MM-DD
+            const endDateOnly = end_date.split('T')[0];
+            dateFilter = `DATE(sale_date) >= '${startDateOnly}' AND DATE(sale_date) <= '${endDateOnly}'`;
+            expenseDateFilter = `DATE(expense_date) >= '${startDateOnly}' AND DATE(expense_date) <= '${endDateOnly}'`;
         }
 
         // Total de ventas
