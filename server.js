@@ -1742,6 +1742,63 @@ app.put('/api/shifts/:id/increment-counter', authenticateToken, async (req, res)
     }
 });
 
+// POST /api/sync/shifts/open - Abrir turno desde Desktop (sin JWT)
+app.post('/api/sync/shifts/open', async (req, res) => {
+    try {
+        const { tenantId, branchId, employeeId, initialAmount, userEmail } = req.body;
+
+        console.log(`[Sync/Shifts] Desktop sync - Tenant: ${tenantId}, Branch: ${branchId}, Employee: ${employeeId}`);
+
+        if (!tenantId || !branchId || !employeeId) {
+            return res.status(400).json({
+                success: false,
+                message: 'Datos incompletos (tenantId, branchId, employeeId requeridos)'
+            });
+        }
+
+        // Verificar si hay un turno abierto para este empleado
+        const existingShift = await pool.query(
+            `SELECT id FROM shifts
+             WHERE tenant_id = $1 AND branch_id = $2 AND employee_id = $3 AND is_cash_cut_open = true`,
+            [tenantId, branchId, employeeId]
+        );
+
+        if (existingShift.rows.length > 0) {
+            console.log(`[Sync/Shifts] ⚠️ Ya existe turno abierto: ID ${existingShift.rows[0].id}`);
+            return res.status(400).json({
+                success: false,
+                message: 'Ya hay un turno abierto para este empleado',
+                existingShiftId: existingShift.rows[0].id
+            });
+        }
+
+        // Crear nuevo turno
+        const result = await pool.query(
+            `INSERT INTO shifts (tenant_id, branch_id, employee_id, start_time, initial_amount, transaction_counter, is_cash_cut_open)
+             VALUES ($1, $2, $3, CURRENT_TIMESTAMP, $4, 0, true)
+             RETURNING id, tenant_id, branch_id, employee_id, start_time, initial_amount, transaction_counter, is_cash_cut_open, created_at`,
+            [tenantId, branchId, employeeId, initialAmount || 0]
+        );
+
+        const shift = result.rows[0];
+        console.log(`[Sync/Shifts] ✅ Turno sincronizado desde Desktop: ID ${shift.id} - Employee ${employeeId} - Branch ${branchId} - Initial $${initialAmount}`);
+
+        res.json({
+            success: true,
+            data: shift,
+            message: 'Turno abierto exitosamente'
+        });
+
+    } catch (error) {
+        console.error('[Sync/Shifts] Error al abrir turno:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error al abrir turno',
+            error: error.message
+        });
+    }
+});
+
 // ═══════════════════════════════════════════════════════════════
 // CONFIGURAR SOCKET.IO
 // ═══════════════════════════════════════════════════════════════
@@ -1815,6 +1872,20 @@ io.on('connection', (socket) => {
     socket.on('weight_update', (data) => {
         const roomName = `branch_${data.branchId}`;
         io.to(roomName).emit('weight_update', { ...data, receivedAt: new Date().toISOString() });
+    });
+
+    socket.on('shift_started', (data) => {
+        stats.totalEvents++;
+        const roomName = `branch_${data.branchId}`;
+        console.log(`[SHIFT] Sucursal ${data.branchId}: ${data.employeeName} inició turno - $${data.initialAmount}`);
+        io.to(roomName).emit('shift_started', { ...data, receivedAt: new Date().toISOString() });
+    });
+
+    socket.on('shift_ended', (data) => {
+        stats.totalEvents++;
+        const roomName = `branch_${data.branchId}`;
+        console.log(`[SHIFT] Sucursal ${data.branchId}: ${data.employeeName} cerró turno - Diferencia: $${data.difference}`);
+        io.to(roomName).emit('shift_ended', { ...data, receivedAt: new Date().toISOString() });
     });
 
     socket.on('get_stats', () => {
