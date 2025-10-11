@@ -1564,19 +1564,31 @@ app.get('/api/shifts/current', authenticateToken, async (req, res) => {
     try {
         const { tenantId, employeeId, branchId } = req.user;
 
-        const result = await pool.query(
-            `SELECT s.id, s.tenant_id, s.branch_id, s.employee_id, s.start_time, s.end_time,
-                    s.initial_amount, s.final_amount, s.transaction_counter, s.is_cash_cut_open,
-                    e.full_name as employee_name,
-                    b.name as branch_name
-             FROM shifts s
-             LEFT JOIN employees e ON s.employee_id = e.id
-             LEFT JOIN branches b ON s.branch_id = b.id
-             WHERE s.tenant_id = $1 AND s.branch_id = $2 AND s.employee_id = $3 AND s.is_cash_cut_open = true
-             ORDER BY s.start_time DESC
-             LIMIT 1`,
-            [tenantId, branchId, employeeId]
-        );
+        // Mobile JWT no incluye branchId, así que filtramos solo por tenantId y employeeId
+        // Desktop JWT incluye branchId, así que podemos filtrar por sucursal específica
+        let query = `
+            SELECT s.id, s.tenant_id, s.branch_id, s.employee_id, s.start_time, s.end_time,
+                   s.initial_amount, s.final_amount, s.transaction_counter, s.is_cash_cut_open,
+                   e.full_name as employee_name,
+                   b.name as branch_name
+            FROM shifts s
+            LEFT JOIN employees e ON s.employee_id = e.id
+            LEFT JOIN branches b ON s.branch_id = b.id
+            WHERE s.tenant_id = $1 AND s.employee_id = $2 AND s.is_cash_cut_open = true`;
+
+        const params = [tenantId, employeeId];
+
+        // Si el JWT incluye branchId (Desktop), filtrar por sucursal
+        if (branchId) {
+            query += ' AND s.branch_id = $3';
+            params.push(branchId);
+        }
+
+        query += ' ORDER BY s.start_time DESC LIMIT 1';
+
+        console.log(`[Shifts Current] Fetching current shift - Tenant: ${tenantId}, Employee: ${employeeId}, Branch: ${branchId || 'all'}`);
+
+        const result = await pool.query(query, params);
 
         if (result.rows.length === 0) {
             return res.json({
@@ -1585,6 +1597,8 @@ app.get('/api/shifts/current', authenticateToken, async (req, res) => {
                 message: 'No hay turno abierto'
             });
         }
+
+        console.log(`[Shifts Current] ✅ Found shift ID ${result.rows[0].id} in branch ${result.rows[0].branch_name}`);
 
         res.json({
             success: true,
