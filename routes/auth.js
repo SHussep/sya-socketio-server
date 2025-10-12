@@ -444,7 +444,7 @@ module.exports = function(pool) {
             // Verificar token
             const decoded = jwt.verify(token, JWT_SECRET);
 
-            // Obtener sucursales del tenant
+            // Obtener sucursales del tenant con información de backup
             const branchesResult = await pool.query(`
                 SELECT
                     b.id,
@@ -454,9 +454,12 @@ module.exports = function(pool) {
                     b.timezone,
                     b.is_active,
                     b.created_at,
-                    COUNT(eb.employee_id) as employee_count
+                    COUNT(DISTINCT eb.employee_id) as employee_count,
+                    COUNT(bm.id) > 0 as has_backup,
+                    MAX(bm.created_at) as last_backup_date
                 FROM branches b
                 LEFT JOIN employee_branches eb ON b.id = eb.branch_id
+                LEFT JOIN backup_metadata bm ON b.id = bm.branch_id
                 WHERE b.tenant_id = $1 AND b.is_active = true
                 GROUP BY b.id
                 ORDER BY b.created_at ASC
@@ -473,6 +476,8 @@ module.exports = function(pool) {
                     branchCode: b.branch_code,
                     timezone: b.timezone,
                     employeeCount: parseInt(b.employee_count),
+                    hasBackup: b.has_backup,
+                    lastBackupDate: b.last_backup_date,
                     createdAt: b.created_at
                 }))
             });
