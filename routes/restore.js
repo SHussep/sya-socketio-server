@@ -94,10 +94,10 @@ router.post('/login', async (req, res) => {
             });
         }
 
-        // Generar tokens
+        // Generar tokens (usar "employeeId" para consistencia con otros endpoints)
         const accessToken = jwt.sign(
             {
-                id: employee.id,
+                employeeId: employee.id,
                 tenantId: employee.tenant_id,
                 branchId: employee.main_branch_id,
                 email: employee.email,
@@ -108,7 +108,7 @@ router.post('/login', async (req, res) => {
         );
 
         const refreshToken = jwt.sign(
-            { id: employee.id },
+            { employeeId: employee.id },
             process.env.JWT_SECRET,
             { expiresIn: '30d' }
         );
