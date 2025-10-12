@@ -729,16 +729,30 @@ app.get('/api/dashboard/summary', authenticateToken, async (req, res) => {
         const targetBranchId = branch_id ? parseInt(branch_id) : userBranchId;
         const shouldFilterByBranch = all_branches !== 'true' && targetBranchId;
 
-        // Construir filtros de fecha timezone-aware
+        // Obtener timezone del branch (cada sucursal puede estar en zona horaria diferente)
+        let branchTimezone = 'America/Mexico_City'; // Default
+        if (targetBranchId) {
+            const branchInfo = await pool.query(
+                'SELECT timezone FROM branches WHERE id = $1',
+                [targetBranchId]
+            );
+            if (branchInfo.rows.length > 0 && branchInfo.rows[0].timezone) {
+                branchTimezone = branchInfo.rows[0].timezone;
+            }
+        }
+
+        console.log(`[Dashboard Summary] Using timezone: ${branchTimezone} for branch ${targetBranchId}`);
+
+        // Construir filtros de fecha timezone-aware usando el timezone del branch
         // Las columnas ahora son TIMESTAMP WITH TIME ZONE
-        // Cuando el cliente envía una fecha, debe incluir su timezone
-        let dateFilter = 'DATE(sale_date AT TIME ZONE \'America/Mexico_City\') = CURRENT_DATE';
-        let expenseDateFilter = 'DATE(expense_date AT TIME ZONE \'America/Mexico_City\') = CURRENT_DATE';
+        // Cuando el cliente NO envía fechas, usamos CURRENT_DATE en el timezone del branch
+        let dateFilter = `DATE(sale_date AT TIME ZONE '${branchTimezone}') = DATE(NOW() AT TIME ZONE '${branchTimezone}')`;
+        let expenseDateFilter = `DATE(expense_date AT TIME ZONE '${branchTimezone}') = DATE(NOW() AT TIME ZONE '${branchTimezone}')`;
 
         if (start_date && end_date) {
             // El cliente envía timestamps con su timezone local
             // PostgreSQL los convierte automáticamente a UTC internamente
-            // Para filtrar, convertimos de vuelta a la zona horaria del cliente
+            // Para filtrar, convertimos de vuelta a la zona horaria del branch
             dateFilter = `sale_date >= '${start_date}'::timestamptz AND sale_date <= '${end_date}'::timestamptz`;
             expenseDateFilter = `expense_date >= '${start_date}'::timestamptz AND expense_date <= '${end_date}'::timestamptz`;
         }
