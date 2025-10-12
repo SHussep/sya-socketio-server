@@ -50,10 +50,12 @@ app.use(bodyParser.urlencoded({ extended: true }));
 // Importar rutas modulares
 const restoreRoutes = require('./routes/restore');
 const backupRoutes = require('./routes/backup');
+const authRoutes = require('./routes/auth')(pool); // Pasar pool al módulo
 
 // Registrar rutas
 app.use('/api/restore', restoreRoutes);
 app.use('/api/backup', backupRoutes);
+app.use('/api/auth', authRoutes); // Registrar rutas de autenticación
 // Health check
 app.get('/', (req, res) => {
     res.send('Socket.IO Server for SYA Tortillerías - Running ✅');
@@ -108,9 +110,9 @@ app.get('/api/database/view', async (req, res) => {
 // ─────────────────────────────────────────────────────────
 app.post('/api/auth/google-signup', async (req, res) => {
     try {
-        const { idToken, email, displayName, businessName, phoneNumber, address, password } = req.body;
+        const { idToken, email, displayName, businessName, phoneNumber, address, password, timezone } = req.body;
 
-        console.log('[Google Signup] Request:', { email, businessName });
+        console.log('[Google Signup] Request:', { email, businessName, timezone });
 
         // Verificar si ya existe
         const existing = await pool.query(
@@ -177,16 +179,18 @@ app.post('/api/auth/google-signup', async (req, res) => {
 
         const employee = employeeResult.rows[0];
 
-        // Crear branch principal
+        // Crear branch principal con timezone
         const branchCode = `${tenantCode}-MAIN`;
+        const branchTimezone = timezone || 'America/Mexico_City'; // Default: Centro de México
         const branchResult = await pool.query(
-            `INSERT INTO branches (tenant_id, branch_code, name, address, is_active)
-             VALUES ($1, $2, $3, $4, true)
+            `INSERT INTO branches (tenant_id, branch_code, name, address, timezone, is_active)
+             VALUES ($1, $2, $3, $4, $5, true)
              RETURNING *`,
-            [tenant.id, branchCode, `${businessName} - Principal`, address || 'N/A']
+            [tenant.id, branchCode, `${businessName} - Principal`, address || 'N/A', branchTimezone]
         );
 
         const branch = branchResult.rows[0];
+        console.log('[Google Signup] ✅ Timezone configurado:', branchTimezone);
 
         // Actualizar employee con main_branch_id
         await pool.query(
