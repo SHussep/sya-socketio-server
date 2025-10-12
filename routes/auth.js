@@ -451,9 +451,6 @@ module.exports = function(pool) {
                     b.branch_code,
                     b.name,
                     b.address,
-                    b.phone_number,
-                    b.email,
-                    b.rfc,
                     b.timezone,
                     b.is_active,
                     b.created_at,
@@ -474,9 +471,6 @@ module.exports = function(pool) {
                     name: b.name,
                     address: b.address,
                     branchCode: b.branch_code,
-                    phone: b.phone_number,
-                    email: b.email,
-                    rfc: b.rfc,
                     timezone: b.timezone,
                     employeeCount: parseInt(b.employee_count),
                     createdAt: b.created_at
@@ -584,19 +578,15 @@ module.exports = function(pool) {
             // Crear nueva sucursal
             const branchResult = await client.query(`
                 INSERT INTO branches (
-                    tenant_id, branch_code, name, address,
-                    phone_number, email, rfc, timezone,
+                    tenant_id, branch_code, name, address, timezone,
                     is_active, created_at, updated_at
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, NOW(), NOW())
+                ) VALUES ($1, $2, $3, $4, $5, true, NOW(), NOW())
                 RETURNING id, branch_code, name, address, timezone
             `, [
                 tenantId,
                 branchCode,
                 branchName,
                 address || null,
-                phone || null,
-                email || null,
-                rfc || null,
                 timezone || 'America/Mexico_City'
             ]);
 
