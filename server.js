@@ -49,9 +49,11 @@ app.use(bodyParser.urlencoded({ extended: true }));
 
 // Importar rutas modulares
 const restoreRoutes = require('./routes/restore');
+const backupRoutes = require('./routes/backup');
 
 // Registrar rutas
 app.use('/api/restore', restoreRoutes);
+app.use('/api/backup', backupRoutes);
 // Health check
 app.get('/', (req, res) => {
     res.send('Socket.IO Server for SYA Tortillerías - Running ✅');
