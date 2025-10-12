@@ -687,18 +687,22 @@ module.exports = function(pool) {
 
             const branch = branchResult.rows[0];
 
-            // Verificar que el empleado tiene permisos en esta sucursal
+            // Verificar si el empleado ya tiene permisos en esta sucursal
             const permissionResult = await client.query(
                 'SELECT * FROM employee_branches WHERE employee_id = $1 AND branch_id = $2',
                 [decoded.employeeId, branchId]
             );
 
+            // Si no tiene permisos, crearlos (owner tiene acceso a todas sus sucursales)
             if (permissionResult.rows.length === 0) {
-                await client.query('ROLLBACK');
-                return res.status(403).json({
-                    success: false,
-                    message: 'No tienes permisos para acceder a esta sucursal'
-                });
+                console.log(`[Join Existing Branch] Creando permisos para empleado ${decoded.employeeId} en sucursal ${branch.name}`);
+
+                await client.query(`
+                    INSERT INTO employee_branches (
+                        employee_id, branch_id, can_login, can_sell,
+                        can_manage_inventory, can_close_shift, assigned_at
+                    ) VALUES ($1, $2, true, true, true, true, NOW())
+                `, [decoded.employeeId, branchId]);
             }
 
             // TODO: Implementar tabla 'devices' para rastrear dispositivos
