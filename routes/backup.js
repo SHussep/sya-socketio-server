@@ -85,7 +85,148 @@ async function refreshDropboxToken() {
 // ENDPOINTS
 // ═══════════════════════════════════════════════════════════════
 
-// POST /api/backup/upload - Subir backup a Dropbox y registrar metadata
+// POST /api/backup/upload-desktop - Subir backup desde Desktop sin JWT (usa identificación de dispositivo)
+router.post('/upload-desktop', async (req, res) => {
+    try {
+        const {
+            tenant_id,
+            branch_id,
+            employee_id,
+            backup_filename,
+            backup_base64, // Backup en Base64 (Desktop lo envía así)
+            device_name,
+            device_id
+        } = req.body;
+
+        console.log(`[Backup Upload Desktop] Request - Tenant: ${tenant_id}, Branch: ${branch_id}, Device: ${device_name}`);
+
+        // Validar datos requeridos
+        if (!tenant_id || !branch_id || !backup_filename || !backup_base64) {
+            return res.status(400).json({
+                success: false,
+                message: 'Faltan datos requeridos: tenant_id, branch_id, backup_filename, backup_base64'
+            });
+        }
+
+        // Convertir Base64 a Buffer
+        const backupBuffer = Buffer.from(backup_base64, 'base64');
+        const file_size_bytes = backupBuffer.length;
+
+        console.log(`[Backup Upload Desktop] Tamaño: ${(file_size_bytes / 1024 / 1024).toFixed(2)} MB`);
+
+        // Generar timestamp único para el nombre del archivo (evitar sobrescritura)
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').split('.')[0];
+        const uniqueFilename = backup_filename.replace('.zip', `_${timestamp}.zip`);
+
+        // Subir a Dropbox con estructura de carpetas por tenant y branch
+        const dropboxPath = `/SYA Backups/${tenant_id}/${branch_id}/${uniqueFilename}`;
+
+        try {
+            const dbx = getDropboxClient();
+            const uploadResult = await dbx.filesUpload({
+                path: dropboxPath,
+                contents: backupBuffer,
+                mode: { '.tag': 'add' }, // No sobrescribir, crear archivo nuevo
+                autorename: true, // Auto-renombrar si existe conflicto
+                mute: false
+            });
+
+            console.log(`[Backup Upload Desktop] ✅ Subido a Dropbox: ${dropboxPath}`);
+
+            // Registrar metadata en PostgreSQL
+            const metadataResult = await pool.query(
+                `INSERT INTO backup_metadata (
+                    tenant_id, branch_id, employee_id, backup_filename, backup_path,
+                    file_size_bytes, device_name, device_id, is_automatic, encryption_enabled
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                RETURNING *`,
+                [
+                    tenant_id,
+                    branch_id,
+                    employee_id || null,
+                    uniqueFilename,
+                    dropboxPath,
+                    file_size_bytes,
+                    device_name || 'Desktop',
+                    device_id || 'unknown',
+                    true, // is_automatic
+                    false // encryption_enabled
+                ]
+            );
+
+            const metadata = metadataResult.rows[0];
+
+            console.log(`[Backup Upload Desktop] ✅ Metadata registrada - ID: ${metadata.id}`);
+
+            res.json({
+                success: true,
+                data: {
+                    backup_id: metadata.id,
+                    dropbox_path: dropboxPath,
+                    file_size_bytes: metadata.file_size_bytes,
+                    created_at: metadata.created_at,
+                    expires_at: metadata.expires_at
+                },
+                message: 'Backup subido exitosamente desde Desktop'
+            });
+
+        } catch (dropboxError) {
+            // Si el token expiró, intentar refrescarlo
+            if (dropboxError.status === 401) {
+                console.log('[Backup Upload Desktop] Token expirado, refrescando...');
+                await refreshDropboxToken();
+
+                // Reintentar la subida
+                const dbx = getDropboxClient();
+                const uploadResult = await dbx.filesUpload({
+                    path: dropboxPath,
+                    contents: backupBuffer,
+                    mode: { '.tag': 'add' },
+                    autorename: true
+                });
+
+                console.log(`[Backup Upload Desktop] ✅ Subido a Dropbox (reintento): ${dropboxPath}`);
+
+                // Registrar metadata
+                const metadataResult = await pool.query(
+                    `INSERT INTO backup_metadata (
+                        tenant_id, branch_id, employee_id, backup_filename, backup_path,
+                        file_size_bytes, device_name, device_id, is_automatic, encryption_enabled
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                    RETURNING *`,
+                    [tenant_id, branch_id, employee_id || null, uniqueFilename, dropboxPath, file_size_bytes,
+                     device_name || 'Desktop', device_id || 'unknown', true, false]
+                );
+
+                const metadata = metadataResult.rows[0];
+
+                return res.json({
+                    success: true,
+                    data: {
+                        backup_id: metadata.id,
+                        dropbox_path: dropboxPath,
+                        file_size_bytes: metadata.file_size_bytes,
+                        created_at: metadata.created_at,
+                        expires_at: metadata.expires_at
+                    },
+                    message: 'Backup subido exitosamente desde Desktop (tras refrescar token)'
+                });
+            } else {
+                throw dropboxError;
+            }
+        }
+
+    } catch (error) {
+        console.error('[Backup Upload Desktop] ❌ Error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error al subir backup desde Desktop',
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
+    }
+});
+
+// POST /api/backup/upload - Subir backup a Dropbox y registrar metadata (requiere JWT)
 router.post('/upload', authenticateToken, async (req, res) => {
     try {
         const { tenantId, branchId, employeeId } = req.user;
