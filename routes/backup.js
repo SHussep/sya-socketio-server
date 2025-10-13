@@ -114,20 +114,27 @@ router.post('/upload-desktop', async (req, res) => {
 
         console.log(`[Backup Upload Desktop] Tamaño: ${(file_size_bytes / 1024 / 1024).toFixed(2)} MB`);
 
-        // Generar timestamp único para el nombre del archivo (evitar sobrescritura)
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').split('.')[0];
-        const uniqueFilename = backup_filename.replace('.zip', `_${timestamp}.zip`);
+        // Usar nombre fijo por branch para sobrescribir backup anterior
+        // Esto mantiene solo UN backup por branch, el más reciente
+        const simpleFilename = `SYA_Backup_Branch_${branch_id}.zip`;
 
         // Subir a Dropbox con estructura de carpetas por tenant y branch
-        const dropboxPath = `/SYA Backups/${tenant_id}/${branch_id}/${uniqueFilename}`;
+        const dropboxPath = `/SYA Backups/${tenant_id}/${branch_id}/${simpleFilename}`;
 
         try {
+            // PRIMERO: Eliminar backups viejos de esta branch de la BD (mantener solo el más reciente)
+            await pool.query(
+                `DELETE FROM backup_metadata
+                 WHERE tenant_id = $1 AND branch_id = $2`,
+                [tenant_id, branch_id]
+            );
+
             const dbx = getDropboxClient();
             const uploadResult = await dbx.filesUpload({
                 path: dropboxPath,
                 contents: backupBuffer,
-                mode: { '.tag': 'add' }, // No sobrescribir, crear archivo nuevo
-                autorename: true, // Auto-renombrar si existe conflicto
+                mode: { '.tag': 'overwrite' }, // Sobrescribir el backup anterior
+                autorename: false,
                 mute: false
             });
 
@@ -144,7 +151,7 @@ router.post('/upload-desktop', async (req, res) => {
                     tenant_id,
                     branch_id,
                     employee_id || null,
-                    uniqueFilename,
+                    simpleFilename,
                     dropboxPath,
                     file_size_bytes,
                     device_name || 'Desktop',
@@ -181,8 +188,8 @@ router.post('/upload-desktop', async (req, res) => {
                 const uploadResult = await dbx.filesUpload({
                     path: dropboxPath,
                     contents: backupBuffer,
-                    mode: { '.tag': 'add' },
-                    autorename: true
+                    mode: { '.tag': 'overwrite' },
+                    autorename: false
                 });
 
                 console.log(`[Backup Upload Desktop] ✅ Subido a Dropbox (reintento): ${dropboxPath}`);
@@ -194,7 +201,7 @@ router.post('/upload-desktop', async (req, res) => {
                         file_size_bytes, device_name, device_id, is_automatic, encryption_enabled
                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                     RETURNING *`,
-                    [tenant_id, branch_id, employee_id || null, uniqueFilename, dropboxPath, file_size_bytes,
+                    [tenant_id, branch_id, employee_id || null, simpleFilename, dropboxPath, file_size_bytes,
                      device_name || 'Desktop', device_id || 'unknown', true, false]
                 );
 
@@ -221,6 +228,153 @@ router.post('/upload-desktop', async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Error al subir backup desde Desktop',
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
+    }
+});
+
+// GET /api/backup/list-desktop/:tenant_id/:branch_id - Listar backups sin JWT (para Desktop)
+router.get('/list-desktop/:tenant_id/:branch_id', async (req, res) => {
+    try {
+        const { tenant_id, branch_id } = req.params;
+        const { limit = 15, offset = 0 } = req.query;
+
+        console.log(`[Backup List Desktop] Request - Tenant: ${tenant_id}, Branch: ${branch_id}`);
+
+        // Validar parámetros
+        if (!tenant_id || !branch_id) {
+            return res.status(400).json({
+                success: false,
+                message: 'tenant_id y branch_id son requeridos'
+            });
+        }
+
+        const result = await pool.query(
+            `SELECT
+                id, backup_filename, backup_path, file_size_bytes,
+                device_name, device_id, encryption_enabled,
+                created_at, expires_at,
+                EXTRACT(EPOCH FROM (NOW() - created_at)) / 3600 as hours_ago
+             FROM backup_metadata
+             WHERE tenant_id = $1 AND branch_id = $2
+             ORDER BY created_at DESC
+             LIMIT $3 OFFSET $4`,
+            [tenant_id, branch_id, limit, offset]
+        );
+
+        console.log(`[Backup List Desktop] Found ${result.rows.length} backups for branch ${branch_id}`);
+
+        res.json({
+            success: true,
+            data: result.rows.map(backup => ({
+                id: backup.id,
+                filename: backup.backup_filename,
+                path: backup.backup_path,
+                file_size_bytes: parseInt(backup.file_size_bytes),
+                file_size_mb: (parseInt(backup.file_size_bytes) / 1024 / 1024).toFixed(2),
+                device_name: backup.device_name,
+                device_id: backup.device_id,
+                encryption_enabled: backup.encryption_enabled,
+                created_at: backup.created_at,
+                expires_at: backup.expires_at,
+                hours_ago: Math.round(parseFloat(backup.hours_ago))
+            }))
+        });
+
+    } catch (error) {
+        console.error('[Backup List Desktop] Error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error al listar backups desde Desktop'
+        });
+    }
+});
+
+// GET /api/backup/download-desktop/:tenant_id/:branch_id/:id - Descargar backup sin JWT (para Desktop)
+router.get('/download-desktop/:tenant_id/:branch_id/:id', async (req, res) => {
+    try {
+        const { tenant_id, branch_id, id } = req.params;
+
+        console.log(`[Backup Download Desktop] Request - Tenant: ${tenant_id}, Branch: ${branch_id}, ID: ${id}`);
+
+        // Obtener metadata del backup
+        const metadataResult = await pool.query(
+            `SELECT * FROM backup_metadata
+             WHERE id = $1 AND tenant_id = $2 AND branch_id = $3`,
+            [id, tenant_id, branch_id]
+        );
+
+        if (metadataResult.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Backup no encontrado'
+            });
+        }
+
+        const metadata = metadataResult.rows[0];
+        const dropboxPath = metadata.backup_path;
+
+        console.log(`[Backup Download Desktop] Descargando: ${dropboxPath}`);
+
+        try {
+            // Descargar desde Dropbox
+            const dbx = getDropboxClient();
+            const downloadResult = await dbx.filesDownload({ path: dropboxPath });
+
+            // downloadResult.result.fileBinary contiene el archivo
+            const fileBuffer = downloadResult.result.fileBinary;
+
+            // Convertir a Base64 para enviarlo al Desktop
+            const base64Data = fileBuffer.toString('base64');
+
+            console.log(`[Backup Download Desktop] ✅ Descargado: ${(fileBuffer.length / 1024 / 1024).toFixed(2)} MB`);
+
+            res.json({
+                success: true,
+                data: {
+                    id: metadata.id,
+                    filename: metadata.backup_filename,
+                    file_size_bytes: parseInt(metadata.file_size_bytes),
+                    backup_base64: base64Data,
+                    created_at: metadata.created_at
+                },
+                message: 'Backup descargado exitosamente'
+            });
+
+        } catch (dropboxError) {
+            // Si el token expiró, refrescarlo y reintentar
+            if (dropboxError.status === 401) {
+                console.log('[Backup Download Desktop] Token expirado, refrescando...');
+                await refreshDropboxToken();
+
+                const dbx = getDropboxClient();
+                const downloadResult = await dbx.filesDownload({ path: dropboxPath });
+                const fileBuffer = downloadResult.result.fileBinary;
+                const base64Data = fileBuffer.toString('base64');
+
+                console.log(`[Backup Download Desktop] ✅ Descargado (reintento): ${(fileBuffer.length / 1024 / 1024).toFixed(2)} MB`);
+
+                return res.json({
+                    success: true,
+                    data: {
+                        id: metadata.id,
+                        filename: metadata.backup_filename,
+                        file_size_bytes: parseInt(metadata.file_size_bytes),
+                        backup_base64: base64Data,
+                        created_at: metadata.created_at
+                    },
+                    message: 'Backup descargado exitosamente (tras refrescar token)'
+                });
+            } else {
+                throw dropboxError;
+            }
+        }
+
+    } catch (error) {
+        console.error('[Backup Download Desktop] ❌ Error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error al descargar backup desde Desktop',
             error: process.env.NODE_ENV === 'development' ? error.message : undefined
         });
     }
