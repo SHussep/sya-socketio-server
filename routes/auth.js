@@ -4,6 +4,10 @@
 
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { Dropbox } = require('dropbox');
+const fetch = require('node-fetch');
+const archiver = require('archiver');
+const { Readable } = require('stream');
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
@@ -366,7 +370,77 @@ module.exports = function(pool) {
 
             await client.query('COMMIT');
 
-            // 9. Generar JWT token
+            // 9. Crear backup inicial (día 0) en Dropbox
+            try {
+                console.log(`[Google Signup] Creando backup inicial para branch ${branch.id}...`);
+
+                // Crear un ZIP vacío con metadata
+                const archive = archiver('zip', { zlib: { level: 9 } });
+                const chunks = [];
+
+                archive.on('data', (chunk) => chunks.push(chunk));
+
+                // Agregar un archivo README indicando que es backup inicial
+                const readmeContent = `SYA Tortillerías - Backup Inicial
+
+Este es el backup automático creado al registrar la cuenta.
+Fecha de creación: ${new Date().toISOString()}
+Tenant: ${tenant.business_name} (${tenant.tenant_code})
+Branch: ${branch.name} (${branch.branch_code})
+Employee: ${employee.full_name} (${employee.email})
+
+Este backup inicial está vacío y se actualizará con el primer respaldo real del sistema.`;
+
+                archive.append(readmeContent, { name: 'README.txt' });
+                archive.finalize();
+
+                await new Promise((resolve) => archive.on('end', resolve));
+
+                const backupBuffer = Buffer.concat(chunks);
+                const filename = `SYA_Backup_Branch_${branch.id}.zip`;
+                const dropboxPath = `/SYA Backups/${tenant.id}/${branch.id}/${filename}`;
+
+                // Subir a Dropbox
+                const dbx = new Dropbox({
+                    accessToken: process.env.DROPBOX_ACCESS_TOKEN,
+                    fetch: fetch
+                });
+
+                await dbx.filesUpload({
+                    path: dropboxPath,
+                    contents: backupBuffer,
+                    mode: { '.tag': 'overwrite' },
+                    autorename: false,
+                    mute: false
+                });
+
+                // Registrar metadata en la BD
+                await pool.query(
+                    `INSERT INTO backup_metadata (
+                        tenant_id, branch_id, employee_id, backup_filename, backup_path,
+                        file_size_bytes, device_name, device_id, is_automatic, encryption_enabled
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+                    [
+                        tenant.id,
+                        branch.id,
+                        employee.id,
+                        filename,
+                        dropboxPath,
+                        backupBuffer.length,
+                        'Sistema',
+                        'initial-signup',
+                        true,
+                        false
+                    ]
+                );
+
+                console.log(`[Google Signup] ✅ Backup inicial creado: ${dropboxPath} (${(backupBuffer.length / 1024).toFixed(2)} KB)`);
+            } catch (backupError) {
+                // No fallar el registro si el backup falla
+                console.error(`[Google Signup] ⚠️ Error al crear backup inicial:`, backupError.message);
+            }
+
+            // 10. Generar JWT token
             const token = jwt.sign(
                 {
                     employeeId: employee.id,
