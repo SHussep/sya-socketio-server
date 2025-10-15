@@ -345,6 +345,13 @@ async function initializeDatabase() {
             console.log('[DB] ⚠️ tenants.is_active:', error.message);
         }
 
+        try {
+            await client.query(`ALTER TABLE tenants ADD COLUMN IF NOT EXISTS subscription_plan VARCHAR(50) DEFAULT 'basic'`);
+            console.log('[DB] ✅ Columna tenants.subscription_plan verificada/agregada');
+        } catch (error) {
+            console.log('[DB] ⚠️ tenants.subscription_plan:', error.message);
+        }
+
         // Migraciones para branches
         try {
             await client.query(`ALTER TABLE branches ADD COLUMN IF NOT EXISTS timezone VARCHAR(50) DEFAULT 'America/Mexico_City'`);

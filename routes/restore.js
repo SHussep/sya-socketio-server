@@ -59,8 +59,7 @@ router.post('/login', async (req, res) => {
                 e.role,
                 e.is_active,
                 e.main_branch_id,
-                t.business_name,
-                t.subscription_plan
+                t.business_name
             FROM employees e
             INNER JOIN tenants t ON e.tenant_id = t.id
             WHERE e.email = $1`,
@@ -127,8 +126,7 @@ router.post('/login', async (req, res) => {
                     username: employee.username,
                     full_name: employee.full_name,
                     role: employee.role,
-                    business_name: employee.business_name,
-                    subscription_plan: employee.subscription_plan
+                    business_name: employee.business_name
                 },
                 tokens: {
                     access_token: accessToken,
