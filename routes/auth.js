@@ -321,12 +321,12 @@ module.exports = function(pool) {
             // 3. Generar tenant_code único
             const tenantCode = `TNT${Date.now()}`;
 
-            // 4. Crear tenant (negocio) - solo columnas esenciales que existen
+            // 4. Crear tenant (negocio) - incluir subscription_id
             const tenantResult = await client.query(`
-                INSERT INTO tenants (tenant_code, business_name, email)
-                VALUES ($1, $2, $3)
+                INSERT INTO tenants (tenant_code, business_name, email, subscription_id)
+                VALUES ($1, $2, $3, $4)
                 RETURNING id, tenant_code, business_name, email
-            `, [tenantCode, businessName, email]);
+            `, [tenantCode, businessName, email, subscriptionId]);
 
             const tenant = tenantResult.rows[0];
 
