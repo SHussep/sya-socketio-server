@@ -26,6 +26,32 @@ async function initializeDatabase() {
     try {
         console.log('[DB] Initializing database schema...');
 
+        // Tabla: subscriptions (planes de subscripción)
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS subscriptions (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR(50) UNIQUE NOT NULL,
+                price DECIMAL(10, 2) NOT NULL,
+                max_branches INTEGER DEFAULT 1,
+                max_devices INTEGER DEFAULT 3,
+                max_employees INTEGER DEFAULT 5,
+                features JSONB,
+                is_active BOOLEAN DEFAULT true,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        // Insertar planes por defecto si no existen
+        await client.query(`
+            INSERT INTO subscriptions (name, price, max_branches, max_devices, max_employees, features)
+            VALUES
+                ('Basic', 0.00, 1, 3, 5, '{"guardian": true, "reports": true}'),
+                ('Pro', 499.00, 3, 10, 20, '{"guardian": true, "reports": true, "advanced_analytics": true}'),
+                ('Enterprise', 999.00, 10, 50, 100, '{"guardian": true, "reports": true, "advanced_analytics": true, "custom_features": true}')
+            ON CONFLICT (name) DO NOTHING
+        `);
+
         // Tabla: tenants
         await client.query(`
             CREATE TABLE IF NOT EXISTS tenants (
@@ -37,11 +63,29 @@ async function initializeDatabase() {
                 address TEXT,
                 subscription_status VARCHAR(50) DEFAULT 'trial',
                 subscription_plan VARCHAR(50) DEFAULT 'basic',
+                subscription_id INTEGER REFERENCES subscriptions(id),
                 subscription_ends_at TIMESTAMP,
                 trial_ends_at TIMESTAMP,
                 max_devices INTEGER DEFAULT 3,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        // Tabla: branches (sucursales) - DEBE IR ANTES DE EMPLOYEES
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS branches (
+                id SERIAL PRIMARY KEY,
+                tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                branch_code VARCHAR(20) NOT NULL,
+                name VARCHAR(255) NOT NULL,
+                address TEXT,
+                phone_number VARCHAR(20),
+                timezone VARCHAR(50) DEFAULT 'America/Mexico_City',
+                is_active BOOLEAN DEFAULT true,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(tenant_id, branch_code)
             )
         `);
 
@@ -55,6 +99,7 @@ async function initializeDatabase() {
                 email VARCHAR(255) NOT NULL,
                 password VARCHAR(255) NOT NULL,
                 role VARCHAR(50) DEFAULT 'employee',
+                main_branch_id INTEGER REFERENCES branches(id) ON DELETE SET NULL,
                 is_active BOOLEAN DEFAULT true,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -93,19 +138,83 @@ async function initializeDatabase() {
             )
         `);
 
-        // Tabla: branches (sucursales)
+        // Tabla: employee_branches (relación muchos a muchos entre employees y branches)
         await client.query(`
-            CREATE TABLE IF NOT EXISTS branches (
+            CREATE TABLE IF NOT EXISTS employee_branches (
+                id SERIAL PRIMARY KEY,
+                employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+                branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+                can_login BOOLEAN DEFAULT true,
+                can_sell BOOLEAN DEFAULT true,
+                can_manage_inventory BOOLEAN DEFAULT false,
+                can_close_shift BOOLEAN DEFAULT false,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(employee_id, branch_id)
+            )
+        `);
+
+        // Tabla: expense_categories (categorías de gastos)
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS expense_categories (
                 id SERIAL PRIMARY KEY,
                 tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-                branch_code VARCHAR(20) NOT NULL,
-                name VARCHAR(255) NOT NULL,
-                address TEXT,
-                phone_number VARCHAR(20),
+                name VARCHAR(100) NOT NULL,
+                description TEXT,
                 is_active BOOLEAN DEFAULT true,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(tenant_id, branch_code)
+                UNIQUE(tenant_id, name)
+            )
+        `);
+
+        // Tabla: suppliers (proveedores para compras)
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS suppliers (
+                id SERIAL PRIMARY KEY,
+                tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                name VARCHAR(255) NOT NULL,
+                contact_name VARCHAR(255),
+                phone_number VARCHAR(20),
+                email VARCHAR(255),
+                address TEXT,
+                is_active BOOLEAN DEFAULT true,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        // Tabla: purchases (compras)
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS purchases (
+                id SERIAL PRIMARY KEY,
+                tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+                supplier_id INTEGER NOT NULL REFERENCES suppliers(id) ON DELETE CASCADE,
+                employee_id INTEGER REFERENCES employees(id) ON DELETE SET NULL,
+                purchase_number VARCHAR(50) NOT NULL,
+                total_amount DECIMAL(10, 2) NOT NULL,
+                payment_status VARCHAR(50) DEFAULT 'pending',
+                notes TEXT,
+                purchase_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(tenant_id, purchase_number)
+            )
+        `);
+
+        // Tabla: shifts (turnos de empleados / cortes de caja)
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS shifts (
+                id SERIAL PRIMARY KEY,
+                tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+                employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+                start_time TIMESTAMP NOT NULL,
+                end_time TIMESTAMP,
+                initial_amount DECIMAL(10, 2) DEFAULT 0,
+                final_amount DECIMAL(10, 2) DEFAULT 0,
+                transaction_counter INTEGER DEFAULT 0,
+                is_cash_cut_open BOOLEAN DEFAULT true,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         `);
 
@@ -119,7 +228,8 @@ async function initializeDatabase() {
                 ticket_number VARCHAR(50) NOT NULL,
                 total_amount DECIMAL(10, 2) NOT NULL,
                 payment_method VARCHAR(50),
-                sale_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                sale_type VARCHAR(50) DEFAULT 'counter',
+                sale_date TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(tenant_id, ticket_number)
             )
@@ -132,10 +242,10 @@ async function initializeDatabase() {
                 tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
                 branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
                 employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
-                category VARCHAR(100) NOT NULL,
+                category_id INTEGER REFERENCES expense_categories(id) ON DELETE SET NULL,
                 description TEXT,
                 amount DECIMAL(10, 2) NOT NULL,
-                expense_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expense_date TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         `);
@@ -197,6 +307,48 @@ async function initializeDatabase() {
         await client.query('CREATE INDEX IF NOT EXISTS idx_guardian_events_branch_id ON guardian_events(branch_id)');
 
         // IMPORTANTE: Agregar columnas faltantes si no existen (para tablas creadas antes de esta versión)
+
+        // Migraciones para tenants
+        try {
+            await client.query(`ALTER TABLE tenants ADD COLUMN IF NOT EXISTS subscription_id INTEGER REFERENCES subscriptions(id)`);
+            console.log('[DB] ✅ Columna tenants.subscription_id verificada/agregada');
+        } catch (error) {
+            console.log('[DB] ⚠️ tenants.subscription_id:', error.message);
+        }
+
+        // Migraciones para branches
+        try {
+            await client.query(`ALTER TABLE branches ADD COLUMN IF NOT EXISTS timezone VARCHAR(50) DEFAULT 'America/Mexico_City'`);
+            console.log('[DB] ✅ Columna branches.timezone verificada/agregada');
+        } catch (error) {
+            console.log('[DB] ⚠️ branches.timezone:', error.message);
+        }
+
+        // Migraciones para employees
+        try {
+            await client.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS main_branch_id INTEGER REFERENCES branches(id) ON DELETE SET NULL`);
+            console.log('[DB] ✅ Columna employees.main_branch_id verificada/agregada');
+        } catch (error) {
+            console.log('[DB] ⚠️ employees.main_branch_id:', error.message);
+        }
+
+        // Migraciones para sales
+        try {
+            await client.query(`ALTER TABLE sales ADD COLUMN IF NOT EXISTS sale_type VARCHAR(50) DEFAULT 'counter'`);
+            console.log('[DB] ✅ Columna sales.sale_type verificada/agregada');
+        } catch (error) {
+            console.log('[DB] ⚠️ sales.sale_type:', error.message);
+        }
+
+        // Migraciones para expenses - agregar category_id
+        try {
+            await client.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS category_id INTEGER REFERENCES expense_categories(id) ON DELETE SET NULL`);
+            console.log('[DB] ✅ Columna expenses.category_id verificada/agregada');
+        } catch (error) {
+            console.log('[DB] ⚠️ expenses.category_id:', error.message);
+        }
+
+        // Migraciones para guardian_events
         try {
             await client.query(`
                 ALTER TABLE guardian_events
