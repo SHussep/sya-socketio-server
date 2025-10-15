@@ -388,10 +388,7 @@ module.exports = function(pool) {
                 tenant: {
                     id: tenant.id,
                     tenantCode: tenant.tenant_code,
-                    businessName: tenant.business_name,
-                    subscriptionStatus: tenant.subscription_status,
-                    subscriptionPlan: 'Basic',
-                    trialEndsAt: tenant.trial_ends_at
+                    businessName: tenant.business_name
                 },
                 employee: {
                     id: employee.id,
