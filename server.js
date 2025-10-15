@@ -171,9 +171,9 @@ app.post('/api/auth/google-signup', async (req, res) => {
         console.log('[Google Signup] Creando usuario con contraseña desde desktop:', password ? '✅' : '❌ (usando 1234 por defecto)');
 
         const employeeResult = await pool.query(
-            `INSERT INTO employees (tenant_id, username, full_name, email, password, role, is_active)
-             VALUES ($1, $2, $3, $4, $5, 'admin', true)
-             RETURNING *`,
+            `INSERT INTO employees (tenant_id, username, full_name, email, password, role)
+             VALUES ($1, $2, $3, $4, $5, 'admin')
+             RETURNING id, tenant_id, username, full_name, email, role`,
             [tenant.id, username, displayName, email, hashedPassword]
         );
 
@@ -183,9 +183,9 @@ app.post('/api/auth/google-signup', async (req, res) => {
         const branchCode = `${tenantCode}-MAIN`;
         const branchTimezone = timezone || 'America/Mexico_City'; // Default: Centro de México
         const branchResult = await pool.query(
-            `INSERT INTO branches (tenant_id, branch_code, name, address, timezone, is_active)
-             VALUES ($1, $2, $3, $4, $5, true)
-             RETURNING *`,
+            `INSERT INTO branches (tenant_id, branch_code, name, address, timezone)
+             VALUES ($1, $2, $3, $4, $5)
+             RETURNING id, tenant_id, branch_code, name, address, timezone`,
             [tenant.id, branchCode, `${businessName} - Principal`, address || 'N/A', branchTimezone]
         );
 
