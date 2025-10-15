@@ -783,7 +783,7 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
 
             // Actualizar main_branch_id del empleado
             await client.query(
-                'UPDATE employees SET main_branch_id = $1, updated_at = NOW() WHERE id = $2',
+                'UPDATE employees SET main_branch_id = $1 WHERE id = $2',
                 [branchId, decoded.employeeId]
             );
 
