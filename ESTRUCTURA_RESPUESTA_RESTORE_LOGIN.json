@@ -1,0 +1,21 @@
+{
+  "success": true,
+  "message": "Autenticación exitosa",
+  "data": {
+    "employee": {
+      "id": 1,
+      "tenant_id": 1,
+      "branch_id": 1,
+      "email": "user@example.com",
+      "username": "username",
+      "full_name": "Full Name",
+      "role": "owner",
+      "business_name": "Business Name"
+    },
+    "tokens": {
+      "access_token": "eyJhbGc...",
+      "refresh_token": "eyJhbGc...",
+      "expires_in": 86400
+    }
+  }
+}

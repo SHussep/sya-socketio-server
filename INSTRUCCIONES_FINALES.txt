@@ -1,0 +1,126 @@
+═══════════════════════════════════════════════════════════════
+INSTRUCCIONES FINALES - Deployment a Producción
+═══════════════════════════════════════════════════════════════
+
+✅ CAMBIOS COMPLETADOS Y PUSHEADOS A GITHUB
+--------------------------------------------
+Commit: 4219b8e
+Branch: main
+Estado: Pusheado exitosamente
+
+🔧 FIXES IMPLEMENTADOS:
+------------------------
+1. ✅ Resuelto error "branch_id null" en CloudRestoreService
+2. ✅ Agregado main_branch_id al crear empleados (google-signup)
+3. ✅ Implementado auto-recuperación para cuentas antiguas sin branch
+4. ✅ Creado Dropbox Manager con auto-refresh de tokens
+5. ✅ Backup inicial ahora usa el manager robusto
+
+📋 PASOS PARA COMPLETAR EL DEPLOYMENT:
+---------------------------------------
+
+PASO 1: ACTUALIZAR TOKEN DE DROPBOX EN RENDER
+----------------------------------------------
+El token de Dropbox expira cada 4 horas. Debes actualizar la variable
+de entorno en Render con el nuevo token.
+
+1.1. Abre el archivo: NUEVO_DROPBOX_TOKEN.txt
+1.2. Copia TODO el contenido (es una sola línea muy larga)
+1.3. Ve a: https://dashboard.render.com
+1.4. Selecciona el servicio: sya-socketio-server
+1.5. Ve a: Environment → Environment Variables
+1.6. Busca: DROPBOX_ACCESS_TOKEN
+1.7. Haz clic en el botón de editar (lápiz)
+1.8. Pega el nuevo token (reemplaza el existente)
+1.9. Haz clic en: Save Changes
+
+⚠️ IMPORTANTE: Render hará un redeploy automático. Espera 2-3 minutos.
+
+PASO 2: VERIFICAR DEPLOYMENT
+-----------------------------
+2.1. En Render Dashboard, ve a la pestaña "Logs"
+2.2. Espera a ver el mensaje: "Server is ready and listening on port XXXX"
+2.3. Verifica que no haya errores en los logs
+
+PASO 3: PROBAR FLUJO COMPLETO
+------------------------------
+3.1. Abre la aplicación Desktop de SYA Tortillerías
+3.2. Intenta hacer un nuevo registro con Google Sign-up:
+     - Email: [usa un email nuevo]
+     - Display Name: [tu nombre]
+     - Business Name: [nombre del negocio]
+     - Password: [tu contraseña]
+
+3.3. Verifica que:
+     ✅ El registro se completa sin errores
+     ✅ No aparece el error "Expected Number but got Null"
+     ✅ Puedes iniciar sesión correctamente
+     ✅ El backup inicial se crea en Dropbox
+
+PASO 4: VERIFICAR BACKUP EN DROPBOX
+------------------------------------
+4.1. Ve a tu cuenta de Dropbox
+4.2. Navega a: /SYA Backups/
+4.3. Verifica que se creó una carpeta con el tenant_id
+4.4. Dentro debe haber una subcarpeta con el branch_id
+4.5. Debe contener un archivo: SYA_Backup_Branch_XXX.zip
+
+═══════════════════════════════════════════════════════════════
+SOLUCIÓN DE PROBLEMAS
+═══════════════════════════════════════════════════════════════
+
+PROBLEMA: Render no hace redeploy automático
+SOLUCIÓN: En Render Dashboard, ve a "Manual Deploy" y haz clic en
+          "Deploy latest commit"
+
+PROBLEMA: El backup sigue fallando
+SOLUCIÓN:
+  1. Verifica que copiaste el token completo sin espacios
+  2. El token debe empezar con: sl.u.AGBOsPh...
+  3. No debe tener saltos de línea ni espacios
+  4. Usa NUEVO_DROPBOX_TOKEN.txt que tiene el formato correcto
+
+PROBLEMA: Sigue apareciendo error de branch_id null
+SOLUCIÓN:
+  1. Verifica que Render terminó el deploy (revisa los logs)
+  2. Intenta con un email NUEVO (no uno que ya intentaste registrar)
+  3. Si usaste un email antes, elimina esa cuenta de la BD primero
+
+PROBLEMA: El token de Dropbox expira muy rápido
+SOLUCIÓN:
+  ✅ ¡Ya está resuelto! El nuevo Dropbox Manager refresca el token
+     automáticamente antes de que expire. No necesitas hacer nada.
+
+═══════════════════════════════════════════════════════════════
+PRÓXIMAS MEJORAS RECOMENDADAS
+═══════════════════════════════════════════════════════════════
+
+1. 📱 Implementar tabla 'devices' para multi-dispositivo
+2. 🔐 Agregar 2FA (Two-Factor Authentication)
+3. 📊 Dashboard de analytics para owners
+4. 🌐 Internacionalización (i18n) para otros idiomas
+5. 🔔 Notificaciones push para eventos críticos
+
+═══════════════════════════════════════════════════════════════
+CONTACTO Y SOPORTE
+═══════════════════════════════════════════════════════════════
+
+Si tienes problemas o preguntas:
+- Revisa los logs en Render Dashboard
+- Consulta FIX_SUMMARY.txt para detalles técnicos
+- Ejecuta los scripts de test en /c/SYA/sya-socketio-server/
+
+Scripts de prueba disponibles:
+- test_simple_dropbox_manager.js (probar Dropbox)
+- test_production_signup.js (probar registro en producción)
+- refresh_dropbox_token.js (refrescar token manualmente si es necesario)
+
+═══════════════════════════════════════════════════════════════
+¡DEPLOYMENT COMPLETADO CON ÉXITO!
+═══════════════════════════════════════════════════════════════
+
+Fecha: 2025-10-15
+Versión: 1.5.0
+Commit: 4219b8e
+
+🎉 ¡Felicitaciones! El sistema está listo para producción.

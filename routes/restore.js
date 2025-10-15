@@ -47,7 +47,7 @@ router.post('/login', async (req, res) => {
 
         console.log(`[Restore] Intento de login: ${email}`);
 
-        // Buscar empleado por email
+        // Buscar empleado por email con información de subscription
         const employeeResult = await pool.query(
             `SELECT
                 e.id,
@@ -59,9 +59,11 @@ router.post('/login', async (req, res) => {
                 e.role,
                 e.is_active,
                 e.main_branch_id,
-                t.business_name
+                t.business_name,
+                s.name as subscription_plan
             FROM employees e
             INNER JOIN tenants t ON e.tenant_id = t.id
+            LEFT JOIN subscriptions s ON t.subscription_id = s.id
             WHERE e.email = $1`,
             [email.toLowerCase()]
         );
@@ -153,7 +155,8 @@ router.post('/login', async (req, res) => {
                     username: employee.username,
                     full_name: employee.full_name,
                     role: employee.role,
-                    business_name: employee.business_name
+                    business_name: employee.business_name,
+                    subscription_plan: employee.subscription_plan || 'Basic'
                 },
                 tokens: {
                     access_token: accessToken,
