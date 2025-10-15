@@ -149,7 +149,7 @@ app.post('/api/auth/google-signup', async (req, res) => {
             `INSERT INTO tenants (tenant_code, business_name, email, phone_number, address,
              subscription_status, subscription_id, trial_ends_at)
              VALUES ($1, $2, $3, $4, $5, 'trial', $6, $7)
-             RETURNING *`,
+             RETURNING id, tenant_code, business_name, email, phone_number, address, subscription_status, subscription_plan, subscription_id, subscription_ends_at, trial_ends_at, max_devices, created_at`,
             [
                 tenantCode,
                 businessName,
