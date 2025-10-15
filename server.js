@@ -209,8 +209,18 @@ app.post('/api/auth/google-signup', async (req, res) => {
         console.log('[Google Signup] ✅ Branch creado:', branchCode);
         console.log('[Google Signup] ✅ Employee ID:', employee.id);
 
+        // ✅ GENERAR JWT TOKEN PARA DESKTOP
+        const token = jwt.sign(
+            { tenantId: tenant.id, employeeId: employee.id, branchId: branch.id, role: 'admin' },
+            JWT_SECRET,
+            { expiresIn: '30d' }
+        );
+
+        console.log('[Google Signup] ✅ JWT Token generado');
+
         res.json({
             success: true,
+            token: token, // ✅ AGREGADO: Token JWT para autenticación
             tenant: {
                 id: tenant.id,
                 tenantCode: tenant.tenant_code,
@@ -244,6 +254,158 @@ app.post('/api/auth/google-signup', async (req, res) => {
         console.error('[Google Signup] ❌ Stack:', error.stack);
 
         // Devolver mensaje más descriptivo
+        const errorMessage = error.code === '23505'
+            ? 'El email ya está registrado'
+            : error.message || 'Error en el servidor';
+
+        res.status(500).json({
+            success: false,
+            message: errorMessage,
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
+    }
+});
+
+// ─────────────────────────────────────────────────────────
+// TENANTS: Registro de Nuevo Tenant (Desktop sin OAuth)
+// ─────────────────────────────────────────────────────────
+app.post('/api/tenants/register', async (req, res) => {
+    try {
+        const { businessName, rfc, ownerEmail, phone, address, password } = req.body;
+
+        console.log('[Tenant Registration] Request:', { businessName, ownerEmail });
+
+        // Validar campos requeridos
+        if (!businessName || !ownerEmail || !password) {
+            return res.status(400).json({
+                success: false,
+                message: 'Datos incompletos. businessName, ownerEmail y password son requeridos.'
+            });
+        }
+
+        // Verificar si ya existe el email
+        const existing = await pool.query(
+            'SELECT id FROM tenants WHERE LOWER(email) = LOWER($1)',
+            [ownerEmail]
+        );
+
+        if (existing.rows.length > 0) {
+            return res.status(409).json({
+                success: false,
+                message: 'El email ya está registrado'
+            });
+        }
+
+        // Generar TenantCode único
+        const tenantCode = `SYA${Date.now().toString().slice(-6)}`;
+
+        // Obtener subscription_id del plan Basic
+        const subscriptionResult = await pool.query(
+            "SELECT id, max_branches, max_devices FROM subscriptions WHERE name = 'Basic' LIMIT 1"
+        );
+
+        if (subscriptionResult.rows.length === 0) {
+            return res.status(500).json({
+                success: false,
+                message: 'No se encontró plan de subscripción Basic. Contacte al administrador.'
+            });
+        }
+
+        const subscription = subscriptionResult.rows[0];
+
+        // Crear tenant con trial de 30 días
+        const tenantResult = await pool.query(
+            `INSERT INTO tenants (tenant_code, business_name, email, phone_number, address,
+             subscription_status, subscription_id, trial_ends_at, max_devices)
+             VALUES ($1, $2, $3, $4, $5, 'trial', $6, $7, $8)
+             RETURNING *`,
+            [
+                tenantCode,
+                businessName,
+                ownerEmail,
+                phone || null,
+                address || null,
+                subscription.id,
+                new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 días trial
+                subscription.max_devices
+            ]
+        );
+
+        const tenant = tenantResult.rows[0];
+
+        // Crear branch principal
+        const branchCode = `${tenantCode}-MAIN`;
+        const branchResult = await pool.query(
+            `INSERT INTO branches (tenant_id, branch_code, name, address, timezone, is_active)
+             VALUES ($1, $2, $3, $4, 'America/Mexico_City', true)
+             RETURNING *`,
+            [tenant.id, branchCode, `${businessName} - Principal`, address || 'N/A']
+        );
+
+        const branch = branchResult.rows[0];
+
+        // Crear empleado admin con password hasheado
+        const hashedPassword = await bcrypt.hash(password, 10);
+        const username = ownerEmail.split('@')[0].replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+
+        const employeeResult = await pool.query(
+            `INSERT INTO employees (tenant_id, username, full_name, email, password, role, main_branch_id, is_active)
+             VALUES ($1, $2, $3, $4, $5, 'admin', $6, true)
+             RETURNING *`,
+            [tenant.id, username, businessName, ownerEmail, hashedPassword, branch.id]
+        );
+
+        const employee = employeeResult.rows[0];
+
+        // Vincular employee a branch con permisos completos
+        await pool.query(
+            `INSERT INTO employee_branches (employee_id, branch_id, can_login, can_sell, can_manage_inventory, can_close_shift)
+             VALUES ($1, $2, true, true, true, true)`,
+            [employee.id, branch.id]
+        );
+
+        console.log('[Tenant Registration] ✅ Tenant creado:', tenantCode);
+        console.log('[Tenant Registration] ✅ Branch creado:', branchCode);
+        console.log('[Tenant Registration] ✅ Employee ID:', employee.id);
+
+        // Retornar respuesta compatible con Desktop
+        res.json({
+            success: true,
+            message: `Registro exitoso. Tu código de tenant es: ${tenantCode}`,
+            tenantId: tenant.id,
+            branchId: branch.id,
+            employeeId: employee.id,
+            subscription: 'Basic',
+            maxBranches: subscription.max_branches,
+            maxDevices: subscription.max_devices,
+            maxEmployees: 5, // Default para plan Basic
+            tenantCode: tenantCode,
+            branchCode: branchCode,
+            tenant: {
+                id: tenant.id,
+                tenantCode: tenant.tenant_code,
+                businessName: tenant.business_name,
+                email: tenant.email,
+                subscriptionStatus: tenant.subscription_status,
+                trialEndsAt: tenant.trial_ends_at
+            },
+            branch: {
+                id: branch.id,
+                branchCode: branch.branch_code,
+                name: branch.name
+            },
+            employee: {
+                id: employee.id,
+                username: employee.username,
+                email: employee.email,
+                fullName: employee.full_name,
+                role: employee.role
+            }
+        });
+    } catch (error) {
+        console.error('[Tenant Registration] ❌ Error completo:', error);
+        console.error('[Tenant Registration] ❌ Stack:', error.stack);
+
         const errorMessage = error.code === '23505'
             ? 'El email ya está registrado'
             : error.message || 'Error en el servidor';
