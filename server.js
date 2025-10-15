@@ -149,7 +149,7 @@ app.post('/api/auth/google-signup', async (req, res) => {
             `INSERT INTO tenants (tenant_code, business_name, email, phone_number, address,
              subscription_status, subscription_id, trial_ends_at)
              VALUES ($1, $2, $3, $4, $5, 'trial', $6, $7)
-             RETURNING id, tenant_code, business_name, email, subscription_status, subscription_plan, subscription_ends_at, trial_ends_at`,
+             RETURNING id, tenant_code, business_name, email, subscription_status, subscription_id, trial_ends_at`,
             [
                 tenantCode,
                 businessName,
@@ -226,8 +226,7 @@ app.post('/api/auth/google-signup', async (req, res) => {
                 tenantCode: tenant.tenant_code,
                 businessName: tenant.business_name,
                 subscriptionStatus: tenant.subscription_status,
-                subscriptionPlan: tenant.subscription_plan,
-                subscriptionEndsAt: tenant.subscription_ends_at,
+                subscriptionId: tenant.subscription_id,
                 trialEndsAt: tenant.trial_ends_at
             },
             employee: {
