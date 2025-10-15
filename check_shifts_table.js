@@ -7,40 +7,61 @@ const pool = new Pool({
 
 async function checkShiftsTable() {
     try {
-        console.log('\n🔍 Verificando tabla shifts...\n');
+        console.log('🔍 Verificando tabla shifts...\n');
 
-        // Verificar si existe
-        const exists = await pool.query(`
-            SELECT EXISTS (
-                SELECT FROM information_schema.tables
-                WHERE table_name = 'shifts'
-            );
+        // 1. Estructura de la tabla
+        const structure = await pool.query(`
+            SELECT column_name, data_type, is_nullable
+            FROM information_schema.columns
+            WHERE table_name = 'shifts'
+            ORDER BY ordinal_position;
         `);
 
-        console.log('¿Existe tabla shifts?', exists.rows[0].exists);
+        console.log('📋 Estructura de la tabla shifts:');
+        structure.rows.forEach(col => {
+            console.log(`  - ${col.column_name}: ${col.data_type} (${col.is_nullable === 'YES' ? 'NULL' : 'NOT NULL'})`);
+        });
 
-        if (exists.rows[0].exists) {
-            console.log('\n📋 Estructura actual de shifts:\n');
-            const columns = await pool.query(`
-                SELECT column_name, data_type, is_nullable, column_default
-                FROM information_schema.columns
-                WHERE table_name = 'shifts'
-                ORDER BY ordinal_position
-            `);
-            console.table(columns.rows);
+        // 2. Turnos del tenant 24
+        const shifts = await pool.query(`
+            SELECT id, tenant_id, branch_id, employee_id, start_time, end_time, is_cash_cut_open
+            FROM shifts
+            WHERE tenant_id = 24
+            ORDER BY start_time DESC
+            LIMIT 10;
+        `);
 
-            console.log('\n📊 Total de registros:', (await pool.query('SELECT COUNT(*) FROM shifts')).rows[0].count);
+        console.log(`\n📊 Turnos del tenant 24 (últimos 10):`);
+        if (shifts.rows.length === 0) {
+            console.log('  ❌ No hay turnos registrados para tenant 24');
         } else {
-            console.log('❌ La tabla shifts NO existe');
+            shifts.rows.forEach(shift => {
+                const status = shift.is_cash_cut_open ? '🟢 ABIERTO' : '🔴 CERRADO';
+                console.log(`  ${status} | ID: ${shift.id} | Branch: ${shift.branch_id} | Emp: ${shift.employee_id} | ${shift.start_time.toISOString()}`);
+            });
         }
 
-        await pool.end();
-        process.exit(0);
+        // 3. Turnos abiertos del branch 45
+        const openShifts = await pool.query(`
+            SELECT id, tenant_id, branch_id, employee_id, start_time, is_cash_cut_open
+            FROM shifts
+            WHERE tenant_id = 24 AND branch_id = 45 AND is_cash_cut_open = true
+            ORDER BY start_time DESC;
+        `);
+
+        console.log(`\n🟢 Turnos ABIERTOS en branch 45:`);
+        if (openShifts.rows.length === 0) {
+            console.log('  ❌ No hay turnos abiertos en branch 45');
+        } else {
+            openShifts.rows.forEach(shift => {
+                console.log(`  ID: ${shift.id} | Emp: ${shift.employee_id} | Inicio: ${shift.start_time.toISOString()}`);
+            });
+        }
 
     } catch (error) {
         console.error('❌ Error:', error.message);
+    } finally {
         await pool.end();
-        process.exit(1);
     }
 }
 

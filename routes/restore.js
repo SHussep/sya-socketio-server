@@ -93,12 +93,39 @@ router.post('/login', async (req, res) => {
             });
         }
 
+        // Si no tiene main_branch_id, obtener la primera sucursal a la que tenga acceso
+        let branchId = employee.main_branch_id;
+
+        if (!branchId) {
+            const firstBranchResult = await pool.query(
+                `SELECT branch_id FROM employee_branches WHERE employee_id = $1 LIMIT 1`,
+                [employee.id]
+            );
+
+            if (firstBranchResult.rows.length > 0) {
+                branchId = firstBranchResult.rows[0].branch_id;
+
+                // Actualizar main_branch_id para futuras llamadas
+                await pool.query(
+                    `UPDATE employees SET main_branch_id = $1 WHERE id = $2`,
+                    [branchId, employee.id]
+                );
+
+                console.log(`[Restore] ⚠️  main_branch_id faltante, asignado: ${branchId}`);
+            } else {
+                return res.status(500).json({
+                    success: false,
+                    message: 'Empleado no tiene sucursales asignadas'
+                });
+            }
+        }
+
         // Generar tokens (usar "employeeId" para consistencia con otros endpoints)
         const accessToken = jwt.sign(
             {
                 employeeId: employee.id,
                 tenantId: employee.tenant_id,
-                branchId: employee.main_branch_id,
+                branchId: branchId,
                 email: employee.email,
                 role: employee.role
             },
@@ -121,7 +148,7 @@ router.post('/login', async (req, res) => {
                 employee: {
                     id: employee.id,
                     tenant_id: employee.tenant_id,
-                    branch_id: employee.main_branch_id,
+                    branch_id: branchId,
                     email: employee.email,
                     username: employee.username,
                     full_name: employee.full_name,

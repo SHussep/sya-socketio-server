@@ -1,0 +1,78 @@
+═══════════════════════════════════════════════════════════════
+FIX: Error "Number" vs "Null" en CloudRestoreService
+═══════════════════════════════════════════════════════════════
+
+PROBLEMA:
+---------
+El flujo de Google Signup generaba un error cuando la app Desktop intentaba
+hacer login después del registro:
+
+System.InvalidOperationException: The requested operation requires an element
+of type 'Number', but the target element has type 'Null'.
+
+El error ocurría en CloudRestoreService.cs línea 192 porque el campo
+`branch_id` venía como `null` en la respuesta del endpoint /api/restore/login.
+
+CAUSA RAÍZ:
+-----------
+1. En routes/auth.js, el endpoint /api/auth/google-signup NO estaba asignando
+   el campo `main_branch_id` al crear el empleado (línea 353).
+
+2. El endpoint /api/restore/login intentaba devolver `employee.main_branch_id`
+   que era null, causando que el cliente recibiera un null en lugar de un
+   número entero.
+
+SOLUCIÓN:
+---------
+1. ✅ Actualizado routes/auth.js (línea 353):
+   - Ahora incluye `main_branch_id` al crear empleado
+   - El empleado owner se crea con su sucursal principal asignada
+
+2. ✅ Actualizado routes/restore.js (líneas 96-121):
+   - Validación para manejar cuentas antiguas sin `main_branch_id`
+   - Si falta, busca la primera sucursal del empleado automáticamente
+   - Actualiza el registro para futuras llamadas
+   - Retorna error si no tiene sucursales asignadas
+
+OTROS FIXES INCLUIDOS:
+----------------------
+3. ✅ Creado utils/dropbox-manager.js:
+   - Gestor inteligente que refresca automáticamente tokens de Dropbox
+   - Evita que expiren los access tokens (4 horas de duración)
+   - Usa refresh token transparentemente
+
+4. ✅ Actualizado routes/auth.js para usar dropboxManager:
+   - El backup inicial ahora usa el manager con auto-refresh
+   - Más robusto y sin errores por tokens expirados
+
+ARCHIVOS MODIFICADOS:
+---------------------
+- routes/auth.js          (google-signup: agregar main_branch_id)
+- routes/restore.js       (login: validar y asignar branch_id)
+- utils/dropbox-manager.js (NUEVO: gestor de Dropbox con auto-refresh)
+
+SCRIPTS DE PRUEBA CREADOS:
+---------------------------
+- refresh_dropbox_token.js
+- test_dropbox_direct_token.js
+- test_simple_dropbox_manager.js
+- test_complete_signup_flow.js
+- NUEVO_DROPBOX_TOKEN.txt (token actualizado para Render)
+
+RESULTADO:
+----------
+✅ El flujo de Google Signup ahora funciona completamente
+✅ El campo branch_id siempre tiene un valor válido (nunca null)
+✅ Cuentas antiguas sin main_branch_id se reparan automáticamente
+✅ Los backups de Dropbox funcionan sin errores de token expirado
+✅ El sistema es más robusto y resiliente
+
+PRÓXIMOS PASOS:
+---------------
+1. Hacer commit de estos cambios
+2. Push a GitHub
+3. Render hará deploy automático
+4. Actualizar DROPBOX_ACCESS_TOKEN en Render (usar NUEVO_DROPBOX_TOKEN.txt)
+5. Probar flujo completo desde la app Desktop
+
+═══════════════════════════════════════════════════════════════

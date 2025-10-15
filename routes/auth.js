@@ -4,10 +4,9 @@
 
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { Dropbox } = require('dropbox');
-const fetch = require('node-fetch');
 const archiver = require('archiver');
 const { Readable } = require('stream');
+const dropboxManager = require('../utils/dropbox-manager');
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
@@ -348,13 +347,13 @@ module.exports = function(pool) {
             // 6. Hash de contraseña
             const passwordHash = await bcrypt.hash(password, 10);
 
-            // 7. Crear empleado owner - solo columnas esenciales
+            // 7. Crear empleado owner - incluir main_branch_id
             const username = displayName.replace(/\s+/g, '').toLowerCase();
             const employeeResult = await client.query(`
-                INSERT INTO employees (tenant_id, email, username, full_name, password, role)
-                VALUES ($1, $2, $3, $4, $5, 'owner')
+                INSERT INTO employees (tenant_id, email, username, full_name, password, role, main_branch_id)
+                VALUES ($1, $2, $3, $4, $5, 'owner', $6)
                 RETURNING id, email, username, full_name, role
-            `, [tenant.id, email, username, displayName, passwordHash]);
+            `, [tenant.id, email, username, displayName, passwordHash, branch.id]);
 
             const employee = employeeResult.rows[0];
 
@@ -400,19 +399,11 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                 const filename = `SYA_Backup_Branch_${branch.id}.zip`;
                 const dropboxPath = `/SYA Backups/${tenant.id}/${branch.id}/${filename}`;
 
-                // Subir a Dropbox
-                const dbx = new Dropbox({
-                    accessToken: process.env.DROPBOX_ACCESS_TOKEN,
-                    fetch: fetch
-                });
+                // Crear carpeta en Dropbox (auto-refresca el token si es necesario)
+                await dropboxManager.createFolder(`/SYA Backups/${tenant.id}/${branch.id}`);
 
-                await dbx.filesUpload({
-                    path: dropboxPath,
-                    contents: backupBuffer,
-                    mode: { '.tag': 'overwrite' },
-                    autorename: false,
-                    mute: false
-                });
+                // Subir a Dropbox usando el manager (auto-refresca el token si es necesario)
+                await dropboxManager.uploadFile(dropboxPath, backupBuffer, true);
 
                 // Registrar metadata en la BD
                 await pool.query(
