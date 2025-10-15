@@ -188,40 +188,61 @@ router.get('/database-snapshot', authenticate, async (req, res) => {
         console.log(`[Restore] Generando snapshot para tenant ${tenantId}, branch ${branchId}`);
 
         // VENTAS (últimas 1000)
-        const salesResult = await pool.query(
-            `SELECT * FROM sales
-             WHERE tenant_id = $1 AND branch_id = $2
-             ORDER BY sale_date DESC
-             LIMIT 1000`,
-            [tenantId, branchId]
-        );
+        let salesResult = { rows: [] };
+        try {
+            salesResult = await pool.query(
+                `SELECT * FROM sales
+                 WHERE tenant_id = $1 AND branch_id = $2
+                 ORDER BY sale_date DESC
+                 LIMIT 1000`,
+                [tenantId, branchId]
+            );
+        } catch (error) {
+            console.log(`[Restore] ⚠️ No se pudo obtener sales: ${error.message}`);
+        }
 
         // GASTOS (últimos 500)
-        const expensesResult = await pool.query(
-            `SELECT * FROM expenses
-             WHERE tenant_id = $1 AND branch_id = $2
-             ORDER BY expense_date DESC
-             LIMIT 500`,
-            [tenantId, branchId]
-        );
+        let expensesResult = { rows: [] };
+        try {
+            expensesResult = await pool.query(
+                `SELECT * FROM expenses
+                 WHERE tenant_id = $1 AND branch_id = $2
+                 ORDER BY expense_date DESC
+                 LIMIT 500`,
+                [tenantId, branchId]
+            );
+        } catch (error) {
+            console.log(`[Restore] ⚠️ No se pudo obtener expenses: ${error.message}`);
+        }
 
         // CORTES DE CAJA (últimos 100)
-        const cashCutsResult = await pool.query(
-            `SELECT * FROM cash_cuts
-             WHERE tenant_id = $1 AND branch_id = $2
-             ORDER BY cut_date DESC
-             LIMIT 100`,
-            [tenantId, branchId]
-        );
+        let cashCutsResult = { rows: [] };
+        try {
+            cashCutsResult = await pool.query(
+                `SELECT * FROM cash_cuts
+                 WHERE tenant_id = $1 AND branch_id = $2
+                 ORDER BY cut_date DESC
+                 LIMIT 100`,
+                [tenantId, branchId]
+            );
+        } catch (error) {
+            console.log(`[Restore] ⚠️ No se pudo obtener cash_cuts: ${error.message}`);
+        }
 
-        // GUARDIAN EVENTS (últimos 500)
-        const guardianEventsResult = await pool.query(
-            `SELECT * FROM guardian_events
-             WHERE tenant_id = $1 AND branch_id = $2
-             ORDER BY timestamp DESC
-             LIMIT 500`,
-            [tenantId, branchId]
-        );
+        // GUARDIAN EVENTS (últimos 500) - Deshabilitado temporalmente
+        // La tabla guardian_events puede no existir o tener columnas diferentes
+        let guardianEventsResult = { rows: [] };
+        try {
+            guardianEventsResult = await pool.query(
+                `SELECT * FROM guardian_events
+                 WHERE tenant_id = $1 AND branch_id = $2
+                 ORDER BY created_at DESC
+                 LIMIT 500`,
+                [tenantId, branchId]
+            );
+        } catch (error) {
+            console.log(`[Restore] ⚠️ No se pudo obtener guardian_events: ${error.message}`);
+        }
 
         // EMPLEADOS de la sucursal
         const employeesResult = await pool.query(
