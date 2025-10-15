@@ -42,7 +42,29 @@ async function initializeDatabase() {
             )
         `);
 
-        // Insertar planes por defecto si no existen
+        // Agregar columnas faltantes a tabla subscriptions existente
+        try {
+            await client.query(`ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS max_employees INTEGER DEFAULT 5`);
+            console.log('[DB] ✅ Columna subscriptions.max_employees verificada/agregada');
+        } catch (error) {
+            console.log('[DB] ⚠️ subscriptions.max_employees:', error.message);
+        }
+
+        try {
+            await client.query(`ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS features JSONB`);
+            console.log('[DB] ✅ Columna subscriptions.features verificada/agregada');
+        } catch (error) {
+            console.log('[DB] ⚠️ subscriptions.features:', error.message);
+        }
+
+        try {
+            await client.query(`ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true`);
+            console.log('[DB] ✅ Columna subscriptions.is_active verificada/agregada');
+        } catch (error) {
+            console.log('[DB] ⚠️ subscriptions.is_active:', error.message);
+        }
+
+        // Insertar planes por defecto si no existen (solo con columnas que seguro existen)
         await client.query(`
             INSERT INTO subscriptions (name, price, max_branches, max_devices, max_employees, features)
             VALUES
