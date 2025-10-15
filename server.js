@@ -144,21 +144,12 @@ app.post('/api/auth/google-signup', async (req, res) => {
 
         const subscriptionId = subscriptionResult.rows[0].id;
 
-        // Crear tenant
+        // Crear tenant - solo usar columnas que seguro existen
         const tenantResult = await pool.query(
-            `INSERT INTO tenants (tenant_code, business_name, email, phone_number, address,
-             subscription_status, subscription_id, trial_ends_at)
-             VALUES ($1, $2, $3, $4, $5, 'trial', $6, $7)
-             RETURNING id, tenant_code, business_name, email, subscription_status, subscription_id, trial_ends_at`,
-            [
-                tenantCode,
-                businessName,
-                email,
-                phoneNumber,
-                address,
-                subscriptionId,
-                new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 días
-            ]
+            `INSERT INTO tenants (tenant_code, business_name, email)
+             VALUES ($1, $2, $3)
+             RETURNING id, tenant_code, business_name, email`,
+            [tenantCode, businessName, email]
         );
 
         const tenant = tenantResult.rows[0];
@@ -183,10 +174,10 @@ app.post('/api/auth/google-signup', async (req, res) => {
         const branchCode = `${tenantCode}-MAIN`;
         const branchTimezone = timezone || 'America/Mexico_City'; // Default: Centro de México
         const branchResult = await pool.query(
-            `INSERT INTO branches (tenant_id, branch_code, name, address, timezone)
-             VALUES ($1, $2, $3, $4, $5)
-             RETURNING id, tenant_id, branch_code, name, address, timezone`,
-            [tenant.id, branchCode, `${businessName} - Principal`, address || 'N/A', branchTimezone]
+            `INSERT INTO branches (tenant_id, branch_code, name)
+             VALUES ($1, $2, $3)
+             RETURNING id, tenant_id, branch_code, name`,
+            [tenant.id, branchCode, `${businessName} - Principal`]
         );
 
         const branch = branchResult.rows[0];
@@ -225,9 +216,9 @@ app.post('/api/auth/google-signup', async (req, res) => {
                 id: tenant.id,
                 tenantCode: tenant.tenant_code,
                 businessName: tenant.business_name,
-                subscriptionStatus: tenant.subscription_status,
-                subscriptionId: tenant.subscription_id,
-                trialEndsAt: tenant.trial_ends_at
+                subscriptionStatus: 'trial',
+                subscriptionId: subscriptionId,
+                trialEndsAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
             },
             employee: {
                 id: employee.id,
