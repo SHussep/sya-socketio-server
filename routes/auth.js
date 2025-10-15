@@ -446,11 +446,14 @@ module.exports = function(pool) {
                     b.is_active,
                     b.created_at,
                     COUNT(DISTINCT eb.employee_id) as employee_count,
-                    COUNT(bm.id) > 0 as has_backup,
-                    MAX(bm.created_at) as last_backup_date
+                    MAX(bm.id) as backup_id,
+                    MAX(bm.backup_filename) as backup_filename,
+                    MAX(bm.file_size_bytes) as backup_size_bytes,
+                    MAX(bm.created_at) as last_backup_date,
+                    MAX(bm.backup_path) as backup_path
                 FROM branches b
                 LEFT JOIN employee_branches eb ON b.id = eb.branch_id
-                LEFT JOIN backup_metadata bm ON b.id = bm.branch_id
+                LEFT JOIN backup_metadata bm ON b.id = bm.branch_id AND b.tenant_id = bm.tenant_id
                 WHERE b.tenant_id = $1 AND b.is_active = true
                 GROUP BY b.id
                 ORDER BY b.created_at ASC
@@ -467,8 +470,15 @@ module.exports = function(pool) {
                     branchCode: b.branch_code,
                     timezone: b.timezone,
                     employeeCount: parseInt(b.employee_count),
-                    hasBackup: b.has_backup,
-                    lastBackupDate: b.last_backup_date,
+                    hasBackup: b.backup_id !== null,
+                    backup: b.backup_id ? {
+                        id: b.backup_id,
+                        filename: b.backup_filename,
+                        sizeBytes: parseInt(b.backup_size_bytes),
+                        sizeMB: (parseInt(b.backup_size_bytes) / 1024 / 1024).toFixed(2),
+                        createdAt: b.last_backup_date,
+                        path: b.backup_path
+                    } : null,
                     createdAt: b.created_at
                 }))
             });
