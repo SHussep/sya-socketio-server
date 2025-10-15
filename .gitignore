@@ -34,3 +34,10 @@ Thumbs.db
 # Temporary files
 *.tmp
 .cache/
+
+# Tokens y credenciales - NUNCA COMMITEAR
+*TOKEN*.txt
+*SECRET*.txt
+*KEY*.txt
+*CREDENTIAL*.txt
+*PASSWORD*.txt
