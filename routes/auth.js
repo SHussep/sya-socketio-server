@@ -273,10 +273,11 @@ module.exports = function(pool) {
 
         const { idToken, email, displayName, businessName, phoneNumber, address, password } = req.body;
 
-        if (!idToken || !email || !displayName || !businessName || !password) {
+        // idToken es opcional - Desktop autentica con Google pero no siempre envía el token
+        if (!email || !displayName || !businessName || !password) {
             return res.status(400).json({
                 success: false,
-                message: 'Faltan campos requeridos: idToken, email, displayName, businessName, password'
+                message: 'Faltan campos requeridos: email, displayName, businessName, password'
             });
         }
 
@@ -317,29 +318,24 @@ module.exports = function(pool) {
             // 3. Generar tenant_code único
             const tenantCode = `TNT${Date.now()}`;
 
-            // 4. Crear tenant (negocio)
+            // 4. Crear tenant (negocio) - solo columnas esenciales que existen
             const tenantResult = await client.query(`
-                INSERT INTO tenants (
-                    tenant_code, business_name, subscription_id,
-                    subscription_status, trial_ends_at, email,
-                    phone_number, address, is_active, created_at, updated_at
-                ) VALUES ($1, $2, $3, 'trial', NOW() + INTERVAL '30 days', $4, $5, $6, true, NOW(), NOW())
-                RETURNING id, tenant_code, business_name, subscription_status, trial_ends_at
-            `, [tenantCode, businessName, subscriptionId, email, phoneNumber, address]);
+                INSERT INTO tenants (tenant_code, business_name, email)
+                VALUES ($1, $2, $3)
+                RETURNING id, tenant_code, business_name, email
+            `, [tenantCode, businessName, email]);
 
             const tenant = tenantResult.rows[0];
 
             console.log(`[Google Signup] ✅ Tenant creado: ${tenant.tenant_code} (ID: ${tenant.id})`);
 
-            // 5. Crear branch por defecto (primera sucursal)
+            // 5. Crear branch por defecto (primera sucursal) - solo columnas esenciales
             const branchCode = `${tenantCode}-MAIN`;
             const branchResult = await client.query(`
-                INSERT INTO branches (
-                    tenant_id, branch_code, name, address,
-                    is_active, created_at, updated_at
-                ) VALUES ($1, $2, $3, $4, true, NOW(), NOW())
+                INSERT INTO branches (tenant_id, branch_code, name)
+                VALUES ($1, $2, $3)
                 RETURNING id, branch_code, name
-            `, [tenant.id, branchCode, businessName + ' - Principal', address || 'N/A']);
+            `, [tenant.id, branchCode, businessName + ' - Principal']);
 
             const branch = branchResult.rows[0];
 
@@ -348,15 +344,13 @@ module.exports = function(pool) {
             // 6. Hash de contraseña
             const passwordHash = await bcrypt.hash(password, 10);
 
-            // 7. Crear empleado owner
+            // 7. Crear empleado owner - solo columnas esenciales
             const username = displayName.replace(/\s+/g, '').toLowerCase();
             const employeeResult = await client.query(`
-                INSERT INTO employees (
-                    tenant_id, email, username, full_name, password,
-                    role, is_active, google_id, main_branch_id, created_at, updated_at
-                ) VALUES ($1, $2, $3, $4, $5, 'owner', true, $6, $7, NOW(), NOW())
+                INSERT INTO employees (tenant_id, email, username, full_name, password, role)
+                VALUES ($1, $2, $3, $4, $5, 'owner')
                 RETURNING id, email, username, full_name, role
-            `, [tenant.id, email, username, displayName, passwordHash, idToken, branch.id]);
+            `, [tenant.id, email, username, displayName, passwordHash]);
 
             const employee = employeeResult.rows[0];
 
@@ -366,8 +360,8 @@ module.exports = function(pool) {
             await client.query(`
                 INSERT INTO employee_branches (
                     employee_id, branch_id, can_login, can_sell,
-                    can_manage_inventory, can_close_shift, assigned_at
-                ) VALUES ($1, $2, true, true, true, true, NOW())
+                    can_manage_inventory, can_close_shift
+                ) VALUES ($1, $2, true, true, true, true)
             `, [employee.id, branch.id]);
 
             await client.query('COMMIT');
