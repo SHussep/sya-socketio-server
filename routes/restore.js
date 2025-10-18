@@ -245,7 +245,7 @@ router.get('/database-snapshot', authenticate, async (req, res) => {
             console.log(`[Restore] ⚠️ No se pudo obtener guardian_events: ${error.message}`);
         }
 
-        // EMPLEADOS de la sucursal
+        // EMPLEADOS de la sucursal (incluir password hasheada para restauración local)
         const employeesResult = await pool.query(
             `SELECT e.* FROM employees e
              INNER JOIN employee_branches eb ON e.id = eb.employee_id
@@ -278,10 +278,7 @@ router.get('/database-snapshot', authenticate, async (req, res) => {
                 expenses: expensesResult.rows,
                 cash_cuts: cashCutsResult.rows,
                 guardian_events: guardianEventsResult.rows,
-                employees: employeesResult.rows.map(e => ({
-                    ...e,
-                    password: undefined // No enviar contraseñas
-                })),
+                employees: employeesResult.rows, // INCLUIR password hasheada para que el cliente pueda restaurar usuarios
                 branch: branchResult.rows[0]
             }
         };
