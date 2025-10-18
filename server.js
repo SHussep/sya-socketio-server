@@ -131,6 +131,77 @@ app.post('/api/database/fix-old-tenants', async (req, res) => {
     }
 });
 
+// Eliminar tenant y todos sus datos relacionados
+app.post('/api/database/delete-tenant-by-email', async (req, res) => {
+    try {
+        const { email } = req.body;
+
+        if (!email) {
+            return res.status(400).json({ success: false, message: 'Email es requerido' });
+        }
+
+        console.log(`[Delete Tenant] Buscando tenant con email: ${email}`);
+
+        // Buscar el tenant por email
+        const tenantResult = await pool.query(
+            'SELECT id, business_name, email FROM tenants WHERE LOWER(email) = LOWER($1)',
+            [email]
+        );
+
+        if (tenantResult.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'No se encontró tenant con ese email'
+            });
+        }
+
+        const tenant = tenantResult.rows[0];
+        const tenantId = tenant.id;
+
+        console.log(`[Delete Tenant] Encontrado: ${tenant.business_name} (ID: ${tenantId})`);
+
+        // Obtener estadísticas antes de borrar
+        const stats = {
+            tenant: tenant,
+            branches: (await pool.query('SELECT COUNT(*) FROM branches WHERE tenant_id = $1', [tenantId])).rows[0].count,
+            employees: (await pool.query('SELECT COUNT(*) FROM employees WHERE tenant_id = $1', [tenantId])).rows[0].count,
+            sales: (await pool.query('SELECT COUNT(*) FROM sales WHERE tenant_id = $1', [tenantId])).rows[0].count,
+            expenses: (await pool.query('SELECT COUNT(*) FROM expenses WHERE tenant_id = $1', [tenantId])).rows[0].count,
+            shifts: (await pool.query('SELECT COUNT(*) FROM shifts WHERE tenant_id = $1', [tenantId])).rows[0].count,
+            backups: (await pool.query('SELECT COUNT(*) FROM backup_metadata WHERE tenant_id = $1', [tenantId])).rows[0].count
+        };
+
+        console.log(`[Delete Tenant] Eliminando datos: ${JSON.stringify(stats)}`);
+
+        // Eliminar en orden correcto (respetando foreign keys)
+        await pool.query('DELETE FROM guardian_events WHERE tenant_id = $1', [tenantId]);
+        await pool.query('DELETE FROM cash_cuts WHERE tenant_id = $1', [tenantId]);
+        await pool.query('DELETE FROM shifts WHERE tenant_id = $1', [tenantId]);
+        await pool.query('DELETE FROM purchases WHERE tenant_id = $1', [tenantId]);
+        await pool.query('DELETE FROM sales WHERE tenant_id = $1', [tenantId]);
+        await pool.query('DELETE FROM expenses WHERE tenant_id = $1', [tenantId]);
+        await pool.query('DELETE FROM backup_metadata WHERE tenant_id = $1', [tenantId]);
+        await pool.query('DELETE FROM employee_branches WHERE employee_id IN (SELECT id FROM employees WHERE tenant_id = $1)', [tenantId]);
+        await pool.query('DELETE FROM employees WHERE tenant_id = $1', [tenantId]);
+        await pool.query('DELETE FROM devices WHERE tenant_id = $1', [tenantId]);
+        await pool.query('DELETE FROM branches WHERE tenant_id = $1', [tenantId]);
+        await pool.query('DELETE FROM sessions WHERE tenant_id = $1', [tenantId]);
+        await pool.query('DELETE FROM tenants WHERE id = $1', [tenantId]);
+
+        console.log(`[Delete Tenant] ✅ Tenant ${tenantId} eliminado completamente`);
+
+        res.json({
+            success: true,
+            message: `Tenant "${tenant.business_name}" eliminado exitosamente`,
+            deleted: stats
+        });
+
+    } catch (error) {
+        console.error('[Delete Tenant] Error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 // ─────────────────────────────────────────────────────────
 // AUTH: Google Signup (desde Desktop)
 // ─────────────────────────────────────────────────────────
