@@ -213,14 +213,38 @@ app.post('/api/auth/google-signup', async (req, res) => {
 
         // Verificar si ya existe
         const existing = await pool.query(
-            'SELECT id FROM tenants WHERE LOWER(email) = LOWER($1)',
+            'SELECT id, tenant_code, business_name FROM tenants WHERE LOWER(email) = LOWER($1)',
             [email]
         );
 
         if (existing.rows.length > 0) {
+            // Email ya existe - obtener sucursales disponibles
+            const tenantId = existing.rows[0].id;
+            const branchesResult = await pool.query(
+                `SELECT id, branch_code, name, timezone
+                 FROM branches
+                 WHERE tenant_id = $1
+                 ORDER BY created_at ASC`,
+                [tenantId]
+            );
+
+            console.log(`[Google Signup] Email ya existe. Tenant: ${existing.rows[0].business_name}, Sucursales: ${branchesResult.rows.length}`);
+
             return res.status(409).json({
                 success: false,
-                message: 'El email ya está registrado'
+                message: 'Este email ya está registrado',
+                emailExists: true,
+                tenant: {
+                    id: existing.rows[0].id,
+                    tenantCode: existing.rows[0].tenant_code,
+                    businessName: existing.rows[0].business_name
+                },
+                branches: branchesResult.rows.map(b => ({
+                    id: b.id,
+                    branchCode: b.branch_code,
+                    name: b.name,
+                    timezone: b.timezone || 'America/Mexico_City'
+                }))
             });
         }
 
@@ -348,6 +372,75 @@ app.post('/api/auth/google-signup', async (req, res) => {
         res.status(500).json({
             success: false,
             message: errorMessage,
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
+    }
+});
+
+// ─────────────────────────────────────────────────────────
+// AUTH: Check Email (Verificar si email existe y obtener sucursales)
+// ─────────────────────────────────────────────────────────
+app.post('/api/auth/check-email', async (req, res) => {
+    try {
+        const { email } = req.body;
+
+        console.log('[Check Email] Request:', { email });
+
+        if (!email) {
+            return res.status(400).json({
+                success: false,
+                message: 'Email es requerido'
+            });
+        }
+
+        // Verificar si el email existe
+        const existing = await pool.query(
+            'SELECT id, tenant_code, business_name FROM tenants WHERE LOWER(email) = LOWER($1)',
+            [email]
+        );
+
+        if (existing.rows.length > 0) {
+            // Email existe - obtener sucursales disponibles
+            const tenantId = existing.rows[0].id;
+            const branchesResult = await pool.query(
+                `SELECT id, branch_code, name, timezone
+                 FROM branches
+                 WHERE tenant_id = $1
+                 ORDER BY created_at ASC`,
+                [tenantId]
+            );
+
+            console.log(`[Check Email] Email existe. Tenant: ${existing.rows[0].business_name}, Sucursales: ${branchesResult.rows.length}`);
+
+            return res.status(409).json({
+                success: false,
+                message: 'Este email ya está registrado',
+                emailExists: true,
+                tenant: {
+                    id: existing.rows[0].id,
+                    tenantCode: existing.rows[0].tenant_code,
+                    businessName: existing.rows[0].business_name
+                },
+                branches: branchesResult.rows.map(b => ({
+                    id: b.id,
+                    branchCode: b.branch_code,
+                    name: b.name,
+                    timezone: b.timezone || 'America/Mexico_City'
+                }))
+            });
+        } else {
+            // Email no existe
+            return res.json({
+                success: true,
+                emailExists: false,
+                message: 'Email disponible'
+            });
+        }
+    } catch (error) {
+        console.error('[Check Email] Error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error al verificar email',
             error: process.env.NODE_ENV === 'development' ? error.message : undefined
         });
     }
