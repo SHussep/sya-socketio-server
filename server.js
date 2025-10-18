@@ -105,6 +105,32 @@ app.get('/api/database/view', async (req, res) => {
     }
 });
 
+// Arreglar tenants antiguos sin subscription_id
+app.post('/api/database/fix-old-tenants', async (req, res) => {
+    try {
+        // Obtener subscription Basic
+        const subResult = await pool.query("SELECT id FROM subscriptions WHERE name = 'Basic' LIMIT 1");
+        if (subResult.rows.length === 0) {
+            return res.status(500).json({ success: false, message: 'Plan Basic no encontrado' });
+        }
+        const basicId = subResult.rows[0].id;
+
+        // Actualizar tenants sin subscription_id
+        const result = await pool.query(
+            'UPDATE tenants SET subscription_id = $1 WHERE subscription_id IS NULL RETURNING id, business_name, email',
+            [basicId]
+        );
+
+        res.json({
+            success: true,
+            message: `${result.rows.length} tenant(s) actualizados`,
+            updated: result.rows
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 // ─────────────────────────────────────────────────────────
 // AUTH: Google Signup (desde Desktop)
 // ─────────────────────────────────────────────────────────
