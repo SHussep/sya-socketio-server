@@ -7,6 +7,7 @@ const router = express.Router();
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { pool } = require('../database');
+const dropboxManager = require('../utils/dropbox-manager');
 
 // ============================================================================
 // MIDDLEWARE: Autenticación JWT
@@ -392,6 +393,82 @@ router.post('/verify-account', async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Error verificando cuenta',
+            error: error.message
+        });
+    }
+});
+
+// ============================================================================
+// GET /api/restore/download-backup/:branchId
+// Descarga el archivo ZIP de backup desde Dropbox
+// ============================================================================
+
+router.get('/download-backup/:branchId', authenticate, async (req, res) => {
+    try {
+        const { tenantId } = req.user;
+        const branchId = parseInt(req.params.branchId);
+
+        console.log(`[Restore] Descargando backup para branch ${branchId}, tenant ${tenantId}`);
+
+        // Verificar que la sucursal pertenece al tenant
+        const branchResult = await pool.query(
+            'SELECT * FROM branches WHERE id = $1 AND tenant_id = $2',
+            [branchId, tenantId]
+        );
+
+        if (branchResult.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Sucursal no encontrada o no pertenece a tu negocio'
+            });
+        }
+
+        // Obtener metadata del backup más reciente
+        const backupResult = await pool.query(
+            `SELECT * FROM backup_metadata
+             WHERE tenant_id = $1 AND branch_id = $2
+             ORDER BY created_at DESC
+             LIMIT 1`,
+            [tenantId, branchId]
+        );
+
+        if (backupResult.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'No se encontró backup para esta sucursal'
+            });
+        }
+
+        const backup = backupResult.rows[0];
+        const dropboxPath = backup.backup_path;
+
+        console.log(`[Restore] Descargando desde Dropbox: ${dropboxPath}`);
+
+        // Descargar archivo desde Dropbox
+        const dbx = dropboxManager.getClient();
+        const response = await dbx.filesDownload({ path: dropboxPath });
+
+        if (!response.result.fileBinary) {
+            throw new Error('No se pudo descargar el archivo de Dropbox');
+        }
+
+        const fileBuffer = response.result.fileBinary;
+
+        console.log(`[Restore] ✅ Backup descargado: ${backup.backup_filename} (${(fileBuffer.length / 1024).toFixed(2)} KB)`);
+
+        // Configurar headers para descarga de archivo
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader('Content-Disposition', `attachment; filename="${backup.backup_filename}"`);
+        res.setHeader('Content-Length', fileBuffer.length);
+
+        // Enviar el archivo
+        res.send(fileBuffer);
+
+    } catch (error) {
+        console.error('[Restore] ❌ Error descargando backup:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error al descargar backup',
             error: error.message
         });
     }
