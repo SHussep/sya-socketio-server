@@ -211,6 +211,14 @@ app.post('/api/auth/google-signup', async (req, res) => {
 
         console.log('[Google Signup] Request:', { email, businessName, timezone });
 
+        // Validar campos requeridos ANTES de hacer queries
+        if (!email || !displayName || !businessName || !password) {
+            return res.status(400).json({
+                success: false,
+                message: 'Faltan campos requeridos: email, displayName, businessName, password'
+            });
+        }
+
         // Verificar si ya existe
         const existing = await pool.query(
             'SELECT id, tenant_code, business_name FROM tenants WHERE LOWER(email) = LOWER($1)',
@@ -362,7 +370,53 @@ app.post('/api/auth/google-signup', async (req, res) => {
         });
     } catch (error) {
         console.error('[Google Signup] ❌ Error completo:', error);
+        console.error('[Google Signup] ❌ Código de error:', error.code);
         console.error('[Google Signup] ❌ Stack:', error.stack);
+
+        // Si es error de email duplicado (código 23505 de PostgreSQL), verificar branches
+        if (error.code === '23505') {
+            try {
+                console.log('[Google Signup] Error 23505 detectado - verificando email existente');
+                const { email } = req.body;
+
+                const existing = await pool.query(
+                    'SELECT id, tenant_code, business_name FROM tenants WHERE LOWER(email) = LOWER($1)',
+                    [email]
+                );
+
+                if (existing.rows.length > 0) {
+                    const tenantId = existing.rows[0].id;
+                    const branchesResult = await pool.query(
+                        `SELECT id, branch_code, name, timezone
+                         FROM branches
+                         WHERE tenant_id = $1
+                         ORDER BY created_at ASC`,
+                        [tenantId]
+                    );
+
+                    console.log(`[Google Signup] Email duplicado capturado en catch. Tenant: ${existing.rows[0].business_name}, Sucursales: ${branchesResult.rows.length}`);
+
+                    return res.status(409).json({
+                        success: false,
+                        message: 'Este email ya está registrado',
+                        emailExists: true,
+                        tenant: {
+                            id: existing.rows[0].id,
+                            tenantCode: existing.rows[0].tenant_code,
+                            businessName: existing.rows[0].business_name
+                        },
+                        branches: branchesResult.rows.map(b => ({
+                            id: b.id,
+                            branchCode: b.branch_code,
+                            name: b.name,
+                            timezone: b.timezone || 'America/Mexico_City'
+                        }))
+                    });
+                }
+            } catch (nestedError) {
+                console.error('[Google Signup] Error al manejar email duplicado:', nestedError);
+            }
+        }
 
         // Devolver mensaje más descriptivo
         const errorMessage = error.code === '23505'
