@@ -195,6 +195,45 @@ module.exports = function(pool) {
     });
 
     // ─────────────────────────────────────────────────────────
+    // DELETE /api/tenants/cleanup-all
+    // SOLO PARA DESARROLLO: Eliminar todos los tenants
+    // ─────────────────────────────────────────────────────────
+    router.delete('/cleanup-all', async (req, res) => {
+        console.log('[Tenant Cleanup] Eliminando todos los tenants...');
+
+        try {
+            await pool.query('BEGIN');
+
+            // Eliminar en orden inverso por las foreign keys
+            await pool.query('DELETE FROM employee_branches');
+            await pool.query('DELETE FROM sales');
+            await pool.query('DELETE FROM expenses');
+            await pool.query('DELETE FROM shifts');
+            await pool.query('DELETE FROM employees');
+            await pool.query('DELETE FROM branches');
+            await pool.query('DELETE FROM tenants');
+
+            await pool.query('COMMIT');
+
+            console.log('[Tenant Cleanup] ✅ Todos los tenants eliminados');
+
+            res.json({
+                success: true,
+                message: 'Todos los tenants han sido eliminados'
+            });
+
+        } catch (error) {
+            await pool.query('ROLLBACK');
+            console.error('[Tenant Cleanup] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al eliminar tenants',
+                error: error.message
+            });
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
     // GET /api/tenants/:id
     // Obtener información de un tenant
     // ─────────────────────────────────────────────────────────
