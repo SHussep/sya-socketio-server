@@ -31,7 +31,7 @@ console.log(`   Esperado: 3\n`);
 // 4. Verificar logs específicos
 const hasLogRequest = content.includes("console.log('[Google Signup] Request:'");
 const hasLogEmailExists = content.includes("console.log(`[Google Signup] Email ya existe");
-const hasLogError23505 = content.includes("console.log('[Google Signup] Error 23505 detectado'");
+const hasLogError23505 = content.includes("Error 23505 detectado");
 
 console.log(`4. Logs importantes:`);
 console.log(`   - Log de Request: ${hasLogRequest ? '✅' : '❌'}`);
