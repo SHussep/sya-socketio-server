@@ -501,6 +501,22 @@ app.post('/api/auth/check-email', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────
+// DEBUG: Version endpoint
+// ─────────────────────────────────────────────────────────
+app.get('/api/version', (req, res) => {
+    res.json({
+        version: '2.0.0-email-exists-fix',
+        commit: '3675e68',
+        timestamp: new Date().toISOString(),
+        features: {
+            emailExistsInGoogleSignup: true,
+            emailExistsInCatchBlock: true,
+            checkEmailEndpoint: true
+        }
+    });
+});
+
+// ─────────────────────────────────────────────────────────
 // TENANTS: Registro de Nuevo Tenant (Desktop sin OAuth)
 // ─────────────────────────────────────────────────────────
 app.post('/api/tenants/register', async (req, res) => {
