@@ -289,17 +289,41 @@ module.exports = function(pool) {
         try {
             await client.query('BEGIN');
 
-            // 1. Verificar si el email ya está registrado
-            const existingEmployee = await client.query(
-                'SELECT id, tenant_id FROM employees WHERE LOWER(email) = LOWER($1)',
+            // 1. Verificar si el email ya está registrado en tenants
+            const existingTenant = await client.query(
+                'SELECT id, tenant_code, business_name FROM tenants WHERE LOWER(email) = LOWER($1)',
                 [email]
             );
 
-            if (existingEmployee.rows.length > 0) {
+            if (existingTenant.rows.length > 0) {
+                // Email ya existe - obtener sucursales disponibles
+                const tenantId = existingTenant.rows[0].id;
+                const branchesResult = await client.query(
+                    `SELECT id, branch_code, name, timezone
+                     FROM branches
+                     WHERE tenant_id = $1
+                     ORDER BY created_at ASC`,
+                    [tenantId]
+                );
+
+                console.log(`[Google Signup] Email ya existe. Tenant: ${existingTenant.rows[0].business_name}, Sucursales: ${branchesResult.rows.length}`);
+
                 await client.query('ROLLBACK');
                 return res.status(409).json({
                     success: false,
-                    message: 'Este email ya está registrado'
+                    message: 'Este email ya está registrado',
+                    emailExists: true,
+                    tenant: {
+                        id: existingTenant.rows[0].id,
+                        tenantCode: existingTenant.rows[0].tenant_code,
+                        businessName: existingTenant.rows[0].business_name
+                    },
+                    branches: branchesResult.rows.map(b => ({
+                        id: b.id,
+                        branchCode: b.branch_code,
+                        name: b.name,
+                        timezone: b.timezone || 'America/Mexico_City'
+                    }))
                 });
             }
 
@@ -471,6 +495,52 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
         } catch (error) {
             await client.query('ROLLBACK');
             console.error('[Google Signup] Error:', error);
+            console.error('[Google Signup] Error code:', error.code);
+
+            // Si es error de email duplicado (código 23505 de PostgreSQL), retornar branches
+            if (error.code === '23505') {
+                try {
+                    console.log('[Google Signup] Error 23505 detectado - verificando email existente');
+                    const existingTenant = await pool.query(
+                        'SELECT id, tenant_code, business_name FROM tenants WHERE LOWER(email) = LOWER($1)',
+                        [req.body.email]
+                    );
+
+                    if (existingTenant.rows.length > 0) {
+                        const tenantId = existingTenant.rows[0].id;
+                        const branchesResult = await pool.query(
+                            `SELECT id, branch_code, name, timezone
+                             FROM branches
+                             WHERE tenant_id = $1
+                             ORDER BY created_at ASC`,
+                            [tenantId]
+                        );
+
+                        console.log(`[Google Signup] Email duplicado capturado en catch. Tenant: ${existingTenant.rows[0].business_name}, Sucursales: ${branchesResult.rows.length}`);
+
+                        client.release();
+                        return res.status(409).json({
+                            success: false,
+                            message: 'Este email ya está registrado',
+                            emailExists: true,
+                            tenant: {
+                                id: existingTenant.rows[0].id,
+                                tenantCode: existingTenant.rows[0].tenant_code,
+                                businessName: existingTenant.rows[0].business_name
+                            },
+                            branches: branchesResult.rows.map(b => ({
+                                id: b.id,
+                                branchCode: b.branch_code,
+                                name: b.name,
+                                timezone: b.timezone || 'America/Mexico_City'
+                            }))
+                        });
+                    }
+                } catch (nestedError) {
+                    console.error('[Google Signup] Error al manejar email duplicado:', nestedError);
+                }
+            }
+
             res.status(500).json({
                 success: false,
                 message: 'Error al registrar usuario',
