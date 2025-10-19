@@ -378,6 +378,7 @@ router.post('/verify-account', async (req, res) => {
             success: true,
             message: 'Cuenta encontrada',
             data: {
+                id: account.id, // Employee ID
                 full_name: account.full_name,
                 email: account.email,
                 business_name: account.business_name,
