@@ -552,6 +552,76 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
     });
 
     // ─────────────────────────────────────────────────────────
+    // POST /api/auth/check-email
+    // Verificar si un email ya está registrado (SIN registrar)
+    // ─────────────────────────────────────────────────────────
+    router.post('/check-email', async (req, res) => {
+        try {
+            const { email } = req.body;
+
+            console.log('[Check Email] Request:', { email });
+
+            if (!email) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Email es requerido'
+                });
+            }
+
+            // Verificar si el email existe
+            const existing = await pool.query(
+                'SELECT id, tenant_code, business_name FROM tenants WHERE LOWER(email) = LOWER($1)',
+                [email]
+            );
+
+            if (existing.rows.length > 0) {
+                // Email existe - obtener sucursales disponibles
+                const tenantId = existing.rows[0].id;
+                const branchesResult = await pool.query(
+                    `SELECT id, branch_code, name, timezone
+                     FROM branches
+                     WHERE tenant_id = $1
+                     ORDER BY created_at ASC`,
+                    [tenantId]
+                );
+
+                console.log(`[Check Email] Email existe. Tenant: ${existing.rows[0].business_name}, Sucursales: ${branchesResult.rows.length}`);
+
+                return res.status(200).json({
+                    success: true,
+                    emailExists: true,
+                    tenant: {
+                        id: existing.rows[0].id,
+                        tenantCode: existing.rows[0].tenant_code,
+                        businessName: existing.rows[0].business_name
+                    },
+                    branches: branchesResult.rows.map(b => ({
+                        id: b.id,
+                        branchCode: b.branch_code,
+                        name: b.name,
+                        timezone: b.timezone || 'America/Mexico_City'
+                    }))
+                });
+            } else {
+                // Email no existe
+                console.log(`[Check Email] Email disponible: ${email}`);
+                return res.json({
+                    success: true,
+                    emailExists: false,
+                    message: 'Email disponible'
+                });
+            }
+        } catch (error) {
+            console.error('[Check Email] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al verificar email',
+                error: process.env.NODE_ENV === 'development' ? error.message : undefined
+            });
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
     // GET /api/auth/branches
     // Obtener lista de sucursales del tenant autenticado
     // ─────────────────────────────────────────────────────────
