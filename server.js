@@ -11,6 +11,7 @@ const bodyParser = require('body-parser');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { pool, initializeDatabase } = require('./database');
+const { runMigrations } = require('./utils/runMigrations');
 require('dotenv').config();
 
 const PORT = process.env.PORT || 3000;
@@ -2362,6 +2363,9 @@ async function startServer() {
     try {
         // Initialize database
         await initializeDatabase();
+
+        // Run migrations
+        await runMigrations();
 
         // Start server
         server.listen(PORT, () => {

@@ -1,0 +1,10 @@
+async function startServer() {
+    try {
+        // Initialize database
+        await initializeDatabase();
+
+        // Run migrations
+        await runMigrations();
+
+        // Start server
+        server.listen(PORT, () => {
