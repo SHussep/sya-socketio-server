@@ -66,6 +66,33 @@ const MIGRATIONS = [
 
             console.log('✅ Migración 016 completada: Columna updated_at agregada a employees');
         }
+    },
+    {
+        id: '017_add_last_seen_to_devices',
+        name: 'Agregar last_seen a devices',
+        async execute(client) {
+            // Verificar si la columna ya existe
+            const checkColumn = await client.query(`
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'devices' AND column_name = 'last_seen'
+            `);
+
+            if (checkColumn.rows.length > 0) {
+                console.log('ℹ️  Migración 017: Columna last_seen ya existe en devices');
+                return;
+            }
+
+            console.log('🔄 Ejecutando migración 017: Agregando last_seen a devices...');
+
+            // Agregar columna last_seen
+            await client.query(`
+                ALTER TABLE devices
+                ADD COLUMN last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            `);
+
+            console.log('✅ Migración 017 completada: Columna last_seen agregada a devices');
+        }
     }
 ];
 
