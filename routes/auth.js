@@ -968,6 +968,262 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
     });
 
     // ─────────────────────────────────────────────────────────
+    // PUT /api/tenants/:id/overwrite
+    // Sobrescribir información de tenant existente con nuevos datos
+    // ─────────────────────────────────────────────────────────
+    router.put('/tenants/:id/overwrite', async (req, res) => {
+        console.log('[Tenant Overwrite] Nueva solicitud de sobrescritura de tenant');
+
+        const authHeader = req.headers['authorization'];
+        const token = authHeader && authHeader.split(' ')[1];
+
+        if (!token) {
+            return res.status(401).json({
+                success: false,
+                message: 'Token no proporcionado'
+            });
+        }
+
+        const tenantId = parseInt(req.params.id);
+        const { businessName, ownerName, phoneNumber, address, password } = req.body;
+
+        if (!tenantId || isNaN(tenantId)) {
+            return res.status(400).json({
+                success: false,
+                message: 'ID de tenant inválido'
+            });
+        }
+
+        if (!businessName || !ownerName || !password) {
+            return res.status(400).json({
+                success: false,
+                message: 'businessName, ownerName y password son requeridos'
+            });
+        }
+
+        const client = await pool.connect();
+
+        try {
+            // Verificar token
+            const decoded = jwt.verify(token, JWT_SECRET);
+
+            // Verificar que el token pertenece al tenant correcto
+            if (decoded.tenantId !== tenantId) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'No autorizado para modificar este tenant'
+                });
+            }
+
+            await client.query('BEGIN');
+
+            // 1. Actualizar información del tenant (solo business_name - phone y address no existen en tenants)
+            await client.query(`
+                UPDATE tenants
+                SET business_name = $1,
+                    updated_at = NOW()
+                WHERE id = $2
+            `, [businessName, tenantId]);
+
+            console.log(`[Tenant Overwrite] ✅ Tenant actualizado: ${businessName} (ID: ${tenantId})`);
+
+            // 2. Actualizar información del empleado owner
+            const passwordHash = await bcrypt.hash(password, 10);
+
+            await client.query(`
+                UPDATE employees
+                SET full_name = $1,
+                    password = $2,
+                    updated_at = NOW()
+                WHERE tenant_id = $3 AND role = 'owner'
+            `, [ownerName, passwordHash, tenantId]);
+
+            console.log(`[Tenant Overwrite] ✅ Empleado owner actualizado: ${ownerName}`);
+
+            await client.query('COMMIT');
+
+            res.json({
+                success: true,
+                message: 'Información del tenant sobrescrita exitosamente',
+                tenant: {
+                    id: tenantId,
+                    businessName: businessName
+                }
+            });
+
+        } catch (error) {
+            await client.query('ROLLBACK');
+
+            if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
+                return res.status(401).json({
+                    success: false,
+                    message: 'Token inválido o expirado'
+                });
+            }
+
+            console.error('[Tenant Overwrite] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al sobrescribir tenant',
+                error: error.message
+            });
+        } finally {
+            client.release();
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
+    // DELETE /api/branches/:id/full-wipe
+    // Eliminar TODOS los datos de una sucursal (empleados, dispositivos, etc.)
+    // MÁS AGRESIVO que /wipe - Solo mantiene el branch vacío
+    // ─────────────────────────────────────────────────────────
+    router.delete('/branches/:id/full-wipe', async (req, res) => {
+        console.log('[Branch Full Wipe] Nueva solicitud de limpieza completa de sucursal');
+
+        const authHeader = req.headers['authorization'];
+        const token = authHeader && authHeader.split(' ')[1];
+
+        if (!token) {
+            return res.status(401).json({
+                success: false,
+                message: 'Token no proporcionado'
+            });
+        }
+
+        const branchId = parseInt(req.params.id);
+
+        if (!branchId || isNaN(branchId)) {
+            return res.status(400).json({
+                success: false,
+                message: 'ID de sucursal inválido'
+            });
+        }
+
+        const client = await pool.connect();
+
+        try {
+            // Verificar token
+            const decoded = jwt.verify(token, JWT_SECRET);
+
+            await client.query('BEGIN');
+
+            // 1. Verificar que la sucursal existe y pertenece al tenant del usuario
+            const branchResult = await client.query(
+                'SELECT * FROM branches WHERE id = $1 AND tenant_id = $2 AND is_active = true',
+                [branchId, decoded.tenantId]
+            );
+
+            if (branchResult.rows.length === 0) {
+                await client.query('ROLLBACK');
+                return res.status(404).json({
+                    success: false,
+                    message: 'Sucursal no encontrada o no pertenece a tu negocio'
+                });
+            }
+
+            const branch = branchResult.rows[0];
+
+            // 2. Verificar permisos (solo owner puede hacer full-wipe)
+            const employeeResult = await client.query(
+                'SELECT role FROM employees WHERE id = $1 AND tenant_id = $2',
+                [decoded.employeeId, decoded.tenantId]
+            );
+
+            if (employeeResult.rows.length === 0) {
+                await client.query('ROLLBACK');
+                return res.status(403).json({
+                    success: false,
+                    message: 'Usuario no encontrado'
+                });
+            }
+
+            const userRole = employeeResult.rows[0].role;
+
+            if (userRole !== 'owner') {
+                await client.query('ROLLBACK');
+                return res.status(403).json({
+                    success: false,
+                    message: 'Solo el propietario puede hacer limpieza completa de sucursales'
+                });
+            }
+
+            console.log(`[Branch Full Wipe] Limpieza completa de branch ${branch.name} (ID: ${branchId})`);
+
+            // 3. ELIMINAR TODOS LOS DATOS relacionados al branch
+
+            // 3.1. Eliminar dispositivos
+            const devicesResult = await client.query(
+                'DELETE FROM devices WHERE branch_id = $1',
+                [branchId]
+            );
+            console.log(`[Branch Full Wipe] ✅ ${devicesResult.rowCount} dispositivos eliminados`);
+
+            // 3.2. Eliminar relaciones employee_branches (permisos de empleados)
+            const employeeBranchesResult = await client.query(
+                'DELETE FROM employee_branches WHERE branch_id = $1',
+                [branchId]
+            );
+            console.log(`[Branch Full Wipe] ✅ ${employeeBranchesResult.rowCount} relaciones empleado-sucursal eliminadas`);
+
+            // 3.3. Eliminar metadata de backups
+            const backupsResult = await client.query(
+                'DELETE FROM backup_metadata WHERE branch_id = $1',
+                [branchId]
+            );
+            console.log(`[Branch Full Wipe] ✅ ${backupsResult.rowCount} registros de backup eliminados`);
+
+            // 3.4. Actualizar empleados que tengan este branch como main_branch
+            const employeesMainBranchResult = await client.query(
+                'UPDATE employees SET main_branch_id = NULL WHERE main_branch_id = $1',
+                [branchId]
+            );
+            console.log(`[Branch Full Wipe] ✅ ${employeesMainBranchResult.rowCount} empleados actualizados (main_branch removido)`);
+
+            // NOTA: NO eliminamos el branch ni el tenant, solo limpiamos los datos
+            // El branch quedará vacío y listo para ser reutilizado
+
+            await client.query('COMMIT');
+
+            console.log(`[Branch Full Wipe] ✅ Sucursal "${branch.name}" completamente limpiada`);
+
+            res.json({
+                success: true,
+                message: `La sucursal "${branch.name}" ha sido completamente limpiada. Puedes iniciar desde cero.`,
+                branch: {
+                    id: branch.id,
+                    name: branch.name,
+                    branchCode: branch.branch_code
+                },
+                deletedItems: {
+                    devices: devicesResult.rowCount,
+                    employeeBranches: employeeBranchesResult.rowCount,
+                    backups: backupsResult.rowCount,
+                    employeesUpdated: employeesMainBranchResult.rowCount
+                }
+            });
+
+        } catch (error) {
+            await client.query('ROLLBACK');
+
+            if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
+                return res.status(401).json({
+                    success: false,
+                    message: 'Token inválido o expirado'
+                });
+            }
+
+            console.error('[Branch Full Wipe] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al limpiar sucursal',
+                error: error.message
+            });
+        } finally {
+            client.release();
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
     // DELETE /api/branches/:id/wipe
     // Limpiar datos transaccionales de una sucursal (iniciar desde cero)
     // ─────────────────────────────────────────────────────────
