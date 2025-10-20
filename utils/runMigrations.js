@@ -17,7 +17,6 @@ const MIGRATIONS = [
         id: '015_add_updated_at_to_tenants',
         name: 'Agregar updated_at a tenants',
         async execute(client) {
-            // Verificar si la columna ya existe
             const checkColumn = await client.query(`
                 SELECT column_name
                 FROM information_schema.columns
@@ -31,7 +30,6 @@ const MIGRATIONS = [
 
             console.log('🔄 Ejecutando migración 015: Agregando updated_at a tenants...');
 
-            // Agregar columna updated_at
             await client.query(`
                 ALTER TABLE tenants
                 ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -44,7 +42,6 @@ const MIGRATIONS = [
         id: '016_add_updated_at_to_employees',
         name: 'Agregar updated_at a employees',
         async execute(client) {
-            // Verificar si la columna ya existe
             const checkColumn = await client.query(`
                 SELECT column_name
                 FROM information_schema.columns
@@ -58,7 +55,6 @@ const MIGRATIONS = [
 
             console.log('🔄 Ejecutando migración 016: Agregando updated_at a employees...');
 
-            // Agregar columna updated_at
             await client.query(`
                 ALTER TABLE employees
                 ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -71,7 +67,6 @@ const MIGRATIONS = [
         id: '017_add_last_seen_to_devices',
         name: 'Agregar last_seen a devices',
         async execute(client) {
-            // Verificar si la columna ya existe
             const checkColumn = await client.query(`
                 SELECT column_name
                 FROM information_schema.columns
@@ -85,7 +80,6 @@ const MIGRATIONS = [
 
             console.log('🔄 Ejecutando migración 017: Agregando last_seen a devices...');
 
-            // Agregar columna last_seen
             await client.query(`
                 ALTER TABLE devices
                 ADD COLUMN last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -93,24 +87,92 @@ const MIGRATIONS = [
 
             console.log('✅ Migración 017 completada: Columna last_seen agregada a devices');
         }
+    },
+    {
+        id: '018_add_branch_id_to_devices',
+        name: 'Agregar branch_id a devices',
+        async execute(client) {
+            const checkColumn = await client.query(`
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'devices' AND column_name = 'branch_id'
+            `);
+
+            if (checkColumn.rows.length > 0) {
+                console.log('ℹ️  Migración 018: Columna branch_id ya existe en devices');
+                return;
+            }
+
+            console.log('🔄 Ejecutando migración 018: Agregando branch_id a devices...');
+
+            await client.query(`
+                ALTER TABLE devices
+                ADD COLUMN branch_id INTEGER REFERENCES branches(id) ON DELETE CASCADE
+            `);
+
+            console.log('✅ Migración 018 completada: Columna branch_id agregada a devices');
+        }
+    },
+    {
+        id: '019_add_device_columns',
+        name: 'Agregar device_name, device_type, is_active a devices',
+        async execute(client) {
+            console.log('🔄 Ejecutando migración 019: Verificando columnas en devices...');
+
+            // Verificar device_name
+            const hasDeviceName = await client.query(`
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'devices' AND column_name = 'device_name'
+            `);
+            if (hasDeviceName.rows.length === 0) {
+                await client.query(`ALTER TABLE devices ADD COLUMN device_name VARCHAR(255)`);
+                console.log('✅ Columna device_name agregada');
+            }
+
+            // Verificar device_type
+            const hasDeviceType = await client.query(`
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'devices' AND column_name = 'device_type'
+            `);
+            if (hasDeviceType.rows.length === 0) {
+                await client.query(`ALTER TABLE devices ADD COLUMN device_type VARCHAR(50)`);
+                console.log('✅ Columna device_type agregada');
+            }
+
+            // Verificar is_active
+            const hasIsActive = await client.query(`
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'devices' AND column_name = 'is_active'
+            `);
+            if (hasIsActive.rows.length === 0) {
+                await client.query(`ALTER TABLE devices ADD COLUMN is_active BOOLEAN DEFAULT true`);
+                console.log('✅ Columna is_active agregada');
+            }
+
+            console.log('✅ Migración 019 completada');
+        }
     }
 ];
 
 async function runMigrations() {
-    const client = await pool.connect();
-
+    let client;
     try {
         console.log('\n╔══════════════════════════════════════════════════════════╗');
         console.log('║         🚀 EJECUTANDO SISTEMA DE MIGRACIONES             ║');
         console.log('╚══════════════════════════════════════════════════════════╝\n');
 
+        client = await pool.connect();
+        console.log('[MIGRATIONS] Conexión a BD establecida');
+
         for (const migration of MIGRATIONS) {
             try {
+                console.log(`[MIGRATIONS] Iniciando migración: ${migration.id}`);
                 await migration.execute(client);
+                console.log(`[MIGRATIONS] ✅ Migración completada: ${migration.id}`);
             } catch (error) {
-                console.error(`❌ Error en migración ${migration.id}:`);
-                console.error(error.message);
-                throw error;
+                console.error(`[MIGRATIONS] ❌ Error en migración ${migration.id}:`);
+                console.error(`[MIGRATIONS] Mensaje: ${error.message}`);
+                // No lanzamos el error, continuamos con las siguientes migraciones
             }
         }
 
@@ -119,11 +181,18 @@ async function runMigrations() {
         console.log('╚══════════════════════════════════════════════════════════╝\n');
 
     } catch (error) {
-        console.error('\n❌ ERROR CRÍTICO en migraciones:');
-        console.error(error);
-        throw error;
+        console.error('\n[MIGRATIONS] ❌ ERROR CRÍTICO iniciando migraciones:');
+        console.error(`[MIGRATIONS] Mensaje: ${error.message}`);
+        // No lanzamos el error para permitir que el servidor continúe
     } finally {
-        client.release();
+        if (client) {
+            try {
+                client.release();
+                console.log('[MIGRATIONS] Conexión liberada');
+            } catch (e) {
+                console.error('[MIGRATIONS] Error liberando conexión:', e.message);
+            }
+        }
     }
 }
 
