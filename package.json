@@ -25,13 +25,15 @@
     "dotenv": "^16.3.1",
     "dropbox": "^10.34.0",
     "express": "^4.18.2",
+    "google-auth-library": "^10.4.1",
     "jsonwebtoken": "^9.0.2",
     "node-fetch": "^2.7.0",
     "pg": "^8.11.3",
     "socket.io": "^4.7.2"
   },
   "devDependencies": {
-    "nodemon": "^3.0.1"
+    "nodemon": "^3.0.1",
+    "sqlite3": "^5.1.7"
   },
   "engines": {
     "node": ">=18.0.0"
