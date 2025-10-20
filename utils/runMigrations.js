@@ -39,6 +39,33 @@ const MIGRATIONS = [
 
             console.log('✅ Migración 015 completada: Columna updated_at agregada a tenants');
         }
+    },
+    {
+        id: '016_add_updated_at_to_employees',
+        name: 'Agregar updated_at a employees',
+        async execute(client) {
+            // Verificar si la columna ya existe
+            const checkColumn = await client.query(`
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'employees' AND column_name = 'updated_at'
+            `);
+
+            if (checkColumn.rows.length > 0) {
+                console.log('ℹ️  Migración 016: Columna updated_at ya existe en employees');
+                return;
+            }
+
+            console.log('🔄 Ejecutando migración 016: Agregando updated_at a employees...');
+
+            // Agregar columna updated_at
+            await client.query(`
+                ALTER TABLE employees
+                ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            `);
+
+            console.log('✅ Migración 016 completada: Columna updated_at agregada a employees');
+        }
     }
 ];
 
