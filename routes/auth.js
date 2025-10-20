@@ -7,8 +7,11 @@ const jwt = require('jsonwebtoken');
 const archiver = require('archiver');
 const { Readable } = require('stream');
 const dropboxManager = require('../utils/dropbox-manager');
+const { OAuth2Client } = require('google-auth-library');
 
 const JWT_SECRET = process.env.JWT_SECRET;
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
 
 module.exports = function(pool) {
     const router = require('express').Router();
@@ -544,6 +547,547 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
             res.status(500).json({
                 success: false,
                 message: 'Error al registrar usuario',
+                error: error.message
+            });
+        } finally {
+            client.release();
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
+    // POST /api/auth/google-login
+    // Verificar Google ID Token y retornar info de cuenta (SIN registrar dispositivo)
+    // ─────────────────────────────────────────────────────────
+    router.post('/google-login', async (req, res) => {
+        console.log('[Google Login] Nueva solicitud de verificación con Google ID Token');
+
+        const { idToken } = req.body;
+
+        if (!idToken) {
+            return res.status(400).json({
+                success: false,
+                message: 'idToken es requerido'
+            });
+        }
+
+        try {
+            // 1. Verificar Google ID Token
+            console.log('[Google Login] Verificando Google ID Token...');
+            let ticket;
+            try {
+                ticket = await googleClient.verifyIdToken({
+                    idToken: idToken,
+                    audience: GOOGLE_CLIENT_ID
+                });
+            } catch (error) {
+                console.error('[Google Login] Error al verificar ID Token:', error.message);
+                return res.status(401).json({
+                    success: false,
+                    message: 'Token de Google inválido o expirado'
+                });
+            }
+
+            const payload = ticket.getPayload();
+            const email = payload.email;
+            const googleName = payload.name;
+
+            console.log(`[Google Login] Token verificado. Email: ${email}`);
+
+            // 2. Buscar empleado por email
+            const employeeResult = await pool.query(
+                'SELECT * FROM employees WHERE LOWER(email) = LOWER($1) AND is_active = true',
+                [email]
+            );
+
+            // 3. Si el email NO EXISTE, retornar info básica
+            if (employeeResult.rows.length === 0) {
+                console.log(`[Google Login] Email no registrado: ${email}`);
+                return res.json({
+                    success: true,
+                    emailExists: false,
+                    email: email,
+                    googleName: googleName
+                });
+            }
+
+            const employee = employeeResult.rows[0];
+
+            // 4. Email EXISTE - Obtener tenant con subscription
+            const tenantResult = await pool.query(
+                `SELECT t.*, s.name as subscription_name, s.max_branches, s.max_employees, s.max_devices_per_branch
+                 FROM tenants t
+                 JOIN subscriptions s ON t.subscription_id = s.id
+                 WHERE t.id = $1 AND t.is_active = true`,
+                [employee.tenant_id]
+            );
+
+            if (tenantResult.rows.length === 0) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Tenant inactivo o no encontrado'
+                });
+            }
+
+            const tenant = tenantResult.rows[0];
+
+            // 5. Obtener todas las sucursales del tenant
+            const branchesResult = await pool.query(`
+                SELECT b.id, b.branch_code, b.name, b.address, b.timezone
+                FROM branches b
+                WHERE b.tenant_id = $1 AND b.is_active = true
+                ORDER BY b.created_at ASC
+            `, [employee.tenant_id]);
+
+            const branches = branchesResult.rows;
+
+            // 6. Generar JWT token (access + refresh) - SIN deviceId
+            const accessToken = jwt.sign(
+                {
+                    employeeId: employee.id,
+                    tenantId: employee.tenant_id,
+                    role: employee.role,
+                    email: employee.email
+                },
+                JWT_SECRET,
+                { expiresIn: '7d' } // Token de acceso de 7 días
+            );
+
+            const refreshToken = jwt.sign(
+                {
+                    employeeId: employee.id,
+                    tenantId: employee.tenant_id
+                },
+                JWT_SECRET,
+                { expiresIn: '30d' }
+            );
+
+            console.log(`[Google Login] ✅ Email existe: ${employee.email} - ${branches.length} sucursales disponibles`);
+
+            res.json({
+                success: true,
+                emailExists: true,
+                email: email,
+                employee: {
+                    id: employee.id,
+                    email: employee.email,
+                    username: employee.username,
+                    fullName: employee.full_name,
+                    role: employee.role
+                },
+                tenant: {
+                    id: tenant.id,
+                    tenantCode: tenant.tenant_code,
+                    businessName: tenant.business_name,
+                    rfc: tenant.rfc,
+                    subscription: tenant.subscription_name
+                },
+                branches: branches.map(b => ({
+                    id: b.id,
+                    branchCode: b.branch_code,
+                    name: b.name,
+                    address: b.address,
+                    timezone: b.timezone || 'America/Mexico_City'
+                })),
+                planLimits: {
+                    maxBranches: tenant.max_branches,
+                    maxEmployees: tenant.max_employees,
+                    maxDevicesPerBranch: tenant.max_devices_per_branch
+                },
+                accessToken,
+                refreshToken
+            });
+
+        } catch (error) {
+            console.error('[Google Login] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error en el servidor',
+                error: error.message
+            });
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
+    // POST /api/devices/register
+    // Registrar dispositivo en una sucursal con validación de límites
+    // ─────────────────────────────────────────────────────────
+    router.post('/devices/register', async (req, res) => {
+        console.log('[Device Register] Nueva solicitud de registro de dispositivo');
+
+        const authHeader = req.headers['authorization'];
+        const token = authHeader && authHeader.split(' ')[1];
+
+        if (!token) {
+            return res.status(401).json({
+                success: false,
+                message: 'Token no proporcionado'
+            });
+        }
+
+        const { tenantId, branchId, employeeId, deviceId, deviceName, deviceType } = req.body;
+
+        if (!tenantId || !branchId || !employeeId || !deviceId) {
+            return res.status(400).json({
+                success: false,
+                message: 'Faltan campos requeridos: tenantId, branchId, employeeId, deviceId'
+            });
+        }
+
+        const client = await pool.connect();
+
+        try {
+            // Verificar token
+            const decoded = jwt.verify(token, JWT_SECRET);
+
+            // Verificar que el token pertenece al tenant correcto
+            if (decoded.tenantId !== tenantId || decoded.employeeId !== employeeId) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'No autorizado para registrar dispositivos en este tenant'
+                });
+            }
+
+            await client.query('BEGIN');
+
+            // 1. Obtener tenant con subscription y límites
+            const tenantResult = await client.query(`
+                SELECT t.id, t.tenant_code, t.business_name,
+                       s.name as subscription_name, s.max_devices_per_branch
+                FROM tenants t
+                JOIN subscriptions s ON t.subscription_id = s.id
+                WHERE t.id = $1 AND t.is_active = true
+            `, [tenantId]);
+
+            if (tenantResult.rows.length === 0) {
+                await client.query('ROLLBACK');
+                return res.status(404).json({
+                    success: false,
+                    message: 'Tenant no encontrado o inactivo'
+                });
+            }
+
+            const tenant = tenantResult.rows[0];
+            const maxDevicesPerBranch = tenant.max_devices_per_branch || 3;
+
+            // 2. Verificar que la sucursal existe y pertenece al tenant
+            const branchResult = await client.query(
+                'SELECT * FROM branches WHERE id = $1 AND tenant_id = $2 AND is_active = true',
+                [branchId, tenantId]
+            );
+
+            if (branchResult.rows.length === 0) {
+                await client.query('ROLLBACK');
+                return res.status(404).json({
+                    success: false,
+                    message: 'Sucursal no encontrada o no pertenece a este tenant'
+                });
+            }
+
+            const branch = branchResult.rows[0];
+
+            // 3. Verificar si el dispositivo ya existe
+            const existingDeviceResult = await client.query(
+                'SELECT * FROM devices WHERE device_id = $1 AND tenant_id = $2',
+                [deviceId, tenantId]
+            );
+
+            if (existingDeviceResult.rows.length > 0) {
+                const existingDevice = existingDeviceResult.rows[0];
+
+                // Si el dispositivo ya está registrado en el MISMO branch y está activo
+                if (existingDevice.branch_id === branchId && existingDevice.is_active) {
+                    await client.query('COMMIT');
+                    console.log(`[Device Register] Dispositivo ya registrado y activo en branch ${branch.name}`);
+                    return res.json({
+                        success: true,
+                        message: 'Dispositivo ya está registrado en esta sucursal',
+                        device: {
+                            id: existingDevice.id,
+                            deviceId: existingDevice.device_id,
+                            deviceName: existingDevice.device_name,
+                            deviceType: existingDevice.device_type,
+                            branchId: existingDevice.branch_id,
+                            branchName: branch.name,
+                            isActive: existingDevice.is_active,
+                            lastSeen: existingDevice.last_seen
+                        }
+                    });
+                }
+
+                // Si el dispositivo está en OTRO branch, desactivarlo allí
+                if (existingDevice.branch_id !== branchId) {
+                    console.log(`[Device Register] Dispositivo se moverá de branch ${existingDevice.branch_id} a ${branchId}`);
+
+                    // Contar dispositivos activos en el nuevo branch (excluyendo el que vamos a mover)
+                    const activeDevicesResult = await client.query(
+                        'SELECT COUNT(*) as count FROM devices WHERE branch_id = $1 AND is_active = true AND device_id != $2',
+                        [branchId, deviceId]
+                    );
+
+                    const activeDevicesCount = parseInt(activeDevicesResult.rows[0].count);
+
+                    if (activeDevicesCount >= maxDevicesPerBranch) {
+                        await client.query('ROLLBACK');
+                        return res.status(403).json({
+                            success: false,
+                            message: `La sucursal "${branch.name}" ha alcanzado el límite de ${maxDevicesPerBranch} dispositivos para el plan ${tenant.subscription_name}. Actualiza tu suscripción para agregar más dispositivos.`
+                        });
+                    }
+
+                    // Actualizar: cambiar a nuevo branch y reactivar
+                    await client.query(
+                        `UPDATE devices
+                         SET branch_id = $1, employee_id = $2, device_name = $3,
+                             device_type = $4, is_active = true, last_seen = NOW(), updated_at = NOW()
+                         WHERE device_id = $5 AND tenant_id = $6`,
+                        [branchId, employeeId, deviceName || existingDevice.device_name, deviceType || existingDevice.device_type, deviceId, tenantId]
+                    );
+                }
+
+                // Si el dispositivo está en el mismo branch pero inactivo, reactivarlo
+                if (existingDevice.branch_id === branchId && !existingDevice.is_active) {
+                    // Contar dispositivos activos en el branch
+                    const activeDevicesResult = await client.query(
+                        'SELECT COUNT(*) as count FROM devices WHERE branch_id = $1 AND is_active = true',
+                        [branchId]
+                    );
+
+                    const activeDevicesCount = parseInt(activeDevicesResult.rows[0].count);
+
+                    if (activeDevicesCount >= maxDevicesPerBranch) {
+                        await client.query('ROLLBACK');
+                        return res.status(403).json({
+                            success: false,
+                            message: `La sucursal "${branch.name}" ha alcanzado el límite de ${maxDevicesPerBranch} dispositivos para el plan ${tenant.subscription_name}. Actualiza tu suscripción para agregar más dispositivos.`
+                        });
+                    }
+
+                    // Reactivar dispositivo
+                    await client.query(
+                        `UPDATE devices
+                         SET is_active = true, employee_id = $1, device_name = $2,
+                             device_type = $3, last_seen = NOW(), updated_at = NOW()
+                         WHERE device_id = $4 AND tenant_id = $5`,
+                        [employeeId, deviceName || existingDevice.device_name, deviceType || existingDevice.device_type, deviceId, tenantId]
+                    );
+                }
+
+                await client.query('COMMIT');
+
+                // Obtener dispositivo actualizado
+                const updatedDeviceResult = await client.query(
+                    'SELECT * FROM devices WHERE device_id = $1 AND tenant_id = $2',
+                    [deviceId, tenantId]
+                );
+
+                const updatedDevice = updatedDeviceResult.rows[0];
+
+                console.log(`[Device Register] ✅ Dispositivo actualizado: ${deviceId} en branch ${branch.name}`);
+
+                return res.json({
+                    success: true,
+                    message: 'Dispositivo registrado exitosamente',
+                    device: {
+                        id: updatedDevice.id,
+                        deviceId: updatedDevice.device_id,
+                        deviceName: updatedDevice.device_name,
+                        deviceType: updatedDevice.device_type,
+                        branchId: updatedDevice.branch_id,
+                        branchName: branch.name,
+                        isActive: updatedDevice.is_active,
+                        lastSeen: updatedDevice.last_seen
+                    }
+                });
+            }
+
+            // 4. Si el dispositivo NO existe, validar límite y crear uno nuevo
+            const activeDevicesResult = await client.query(
+                'SELECT COUNT(*) as count FROM devices WHERE branch_id = $1 AND is_active = true',
+                [branchId]
+            );
+
+            const activeDevicesCount = parseInt(activeDevicesResult.rows[0].count);
+
+            if (activeDevicesCount >= maxDevicesPerBranch) {
+                await client.query('ROLLBACK');
+                return res.status(403).json({
+                    success: false,
+                    message: `La sucursal "${branch.name}" ha alcanzado el límite de ${maxDevicesPerBranch} dispositivos para el plan ${tenant.subscription_name}. Actualiza tu suscripción para agregar más dispositivos.`
+                });
+            }
+
+            // Crear nuevo dispositivo
+            const newDeviceResult = await client.query(`
+                INSERT INTO devices (
+                    tenant_id, branch_id, employee_id, device_id,
+                    device_name, device_type, is_active, last_seen
+                ) VALUES ($1, $2, $3, $4, $5, $6, true, NOW())
+                RETURNING id, device_id, device_name, device_type, branch_id, is_active, last_seen
+            `, [tenantId, branchId, employeeId, deviceId, deviceName || 'Dispositivo', deviceType || 'desktop']);
+
+            const newDevice = newDeviceResult.rows[0];
+
+            await client.query('COMMIT');
+
+            console.log(`[Device Register] ✅ Dispositivo creado: ${deviceId} en branch ${branch.name} (${activeDevicesCount + 1}/${maxDevicesPerBranch})`);
+
+            res.status(201).json({
+                success: true,
+                message: 'Dispositivo registrado exitosamente',
+                device: {
+                    id: newDevice.id,
+                    deviceId: newDevice.device_id,
+                    deviceName: newDevice.device_name,
+                    deviceType: newDevice.device_type,
+                    branchId: newDevice.branch_id,
+                    branchName: branch.name,
+                    isActive: newDevice.is_active,
+                    lastSeen: newDevice.last_seen
+                }
+            });
+
+        } catch (error) {
+            await client.query('ROLLBACK');
+
+            if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
+                return res.status(401).json({
+                    success: false,
+                    message: 'Token inválido o expirado'
+                });
+            }
+
+            console.error('[Device Register] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al registrar dispositivo',
+                error: error.message
+            });
+        } finally {
+            client.release();
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
+    // DELETE /api/branches/:id/wipe
+    // Limpiar datos transaccionales de una sucursal (iniciar desde cero)
+    // ─────────────────────────────────────────────────────────
+    router.delete('/branches/:id/wipe', async (req, res) => {
+        console.log('[Branch Wipe] Nueva solicitud de limpieza de sucursal');
+
+        const authHeader = req.headers['authorization'];
+        const token = authHeader && authHeader.split(' ')[1];
+
+        if (!token) {
+            return res.status(401).json({
+                success: false,
+                message: 'Token no proporcionado'
+            });
+        }
+
+        const branchId = parseInt(req.params.id);
+
+        if (!branchId || isNaN(branchId)) {
+            return res.status(400).json({
+                success: false,
+                message: 'ID de sucursal inválido'
+            });
+        }
+
+        const client = await pool.connect();
+
+        try {
+            // Verificar token
+            const decoded = jwt.verify(token, JWT_SECRET);
+
+            await client.query('BEGIN');
+
+            // 1. Verificar que la sucursal existe y pertenece al tenant del usuario
+            const branchResult = await client.query(
+                'SELECT * FROM branches WHERE id = $1 AND tenant_id = $2 AND is_active = true',
+                [branchId, decoded.tenantId]
+            );
+
+            if (branchResult.rows.length === 0) {
+                await client.query('ROLLBACK');
+                return res.status(404).json({
+                    success: false,
+                    message: 'Sucursal no encontrada o no pertenece a tu negocio'
+                });
+            }
+
+            const branch = branchResult.rows[0];
+
+            // 2. Verificar permisos (solo owner o admin pueden limpiar sucursales)
+            const employeeResult = await client.query(
+                'SELECT role FROM employees WHERE id = $1 AND tenant_id = $2',
+                [decoded.employeeId, decoded.tenantId]
+            );
+
+            if (employeeResult.rows.length === 0) {
+                await client.query('ROLLBACK');
+                return res.status(403).json({
+                    success: false,
+                    message: 'Usuario no encontrado'
+                });
+            }
+
+            const userRole = employeeResult.rows[0].role;
+
+            if (userRole !== 'owner' && userRole !== 'admin') {
+                await client.query('ROLLBACK');
+                return res.status(403).json({
+                    success: false,
+                    message: 'Solo propietarios y administradores pueden limpiar sucursales'
+                });
+            }
+
+            // 3. Limpiar datos transaccionales de la sucursal
+            // NOTA: NO eliminamos el branch, tenant, ni employees, solo datos operacionales
+
+            console.log(`[Branch Wipe] Limpiando datos transaccionales de branch ${branch.name} (ID: ${branchId})`);
+
+            // Desactivar todos los dispositivos del branch (NO eliminar)
+            const devicesResult = await client.query(
+                'UPDATE devices SET is_active = false, updated_at = NOW() WHERE branch_id = $1',
+                [branchId]
+            );
+
+            console.log(`[Branch Wipe] ✅ ${devicesResult.rowCount} dispositivos desactivados`);
+
+            // Aquí se pueden agregar más limpiezas según las tablas que tengas
+            // Por ejemplo: shifts, sales, expenses, inventory_movements, etc.
+            // NOTA: Para este momento solo desactivamos dispositivos ya que los datos
+            // transaccionales están en la BD local SQLite, no en PostgreSQL
+
+            await client.query('COMMIT');
+
+            console.log(`[Branch Wipe] ✅ Sucursal "${branch.name}" limpiada exitosamente`);
+
+            res.json({
+                success: true,
+                message: `La sucursal "${branch.name}" ha sido limpiada. Ahora puedes iniciar desde cero.`,
+                branch: {
+                    id: branch.id,
+                    name: branch.name,
+                    branchCode: branch.branch_code,
+                    devicesDeactivated: devicesResult.rowCount
+                }
+            });
+
+        } catch (error) {
+            await client.query('ROLLBACK');
+
+            if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
+                return res.status(401).json({
+                    success: false,
+                    message: 'Token inválido o expirado'
+                });
+            }
+
+            console.error('[Branch Wipe] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al limpiar sucursal',
                 error: error.message
             });
         } finally {
