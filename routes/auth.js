@@ -1149,38 +1149,81 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
 
             console.log(`[Branch Full Wipe] Limpieza completa de branch ${branch.name} (ID: ${branchId})`);
 
-            // 3. ELIMINAR TODOS LOS DATOS relacionados al branch
+            // 3. ELIMINAR TODOS LOS DATOS relacionados al branch (FULL WIPE COMPLETO)
 
             // 3.1. Eliminar dispositivos
             const devicesResult = await client.query(
                 'DELETE FROM devices WHERE branch_id = $1',
                 [branchId]
             );
-            console.log(`[Branch Full Wipe] ✅ ${devicesResult.rowCount} dispositivos eliminados`);
+            console.log(`[Branch Full Wipe] OK ${devicesResult.rowCount} dispositivos eliminados`);
 
-            // 3.2. Eliminar relaciones employee_branches (permisos de empleados)
+            // 3.2. Eliminar sesiones
+            const sessionsResult = await client.query(
+                `DELETE FROM sessions WHERE employee_id IN (
+                    SELECT id FROM employees WHERE id IN (
+                        SELECT employee_id FROM employee_branches WHERE branch_id = $1
+                    )
+                )`,
+                [branchId]
+            );
+            console.log(`[Branch Full Wipe] OK ${sessionsResult.rowCount} sesiones eliminadas`);
+
+            // 3.3. Eliminar ventas
+            const salesResult = await client.query(
+                'DELETE FROM sales WHERE branch_id = $1',
+                [branchId]
+            );
+            console.log(`[Branch Full Wipe] OK ${salesResult.rowCount} ventas eliminadas`);
+
+            // 3.4. Eliminar gastos
+            const expensesResult = await client.query(
+                'DELETE FROM expenses WHERE branch_id = $1',
+                [branchId]
+            );
+            console.log(`[Branch Full Wipe] OK ${expensesResult.rowCount} gastos eliminados`);
+
+            // 3.5. Eliminar shifts
+            const shiftsResult = await client.query(
+                'DELETE FROM shifts WHERE branch_id = $1',
+                [branchId]
+            );
+            console.log(`[Branch Full Wipe] OK ${shiftsResult.rowCount} shifts eliminados`);
+
+            // 3.6. Eliminar eventos
+            const eventsResult = await client.query(
+                'DELETE FROM guardian_events WHERE branch_id = $1',
+                [branchId]
+            );
+            console.log(`[Branch Full Wipe] OK ${eventsResult.rowCount} eventos eliminados`);
+
+            // 3.7. Eliminar relaciones employee_branches
             const employeeBranchesResult = await client.query(
                 'DELETE FROM employee_branches WHERE branch_id = $1',
                 [branchId]
             );
-            console.log(`[Branch Full Wipe] ✅ ${employeeBranchesResult.rowCount} relaciones empleado-sucursal eliminadas`);
+            console.log(`[Branch Full Wipe] OK ${employeeBranchesResult.rowCount} relaciones eliminadas`);
 
-            // 3.3. Eliminar metadata de backups
-            const backupsResult = await client.query(
-                'DELETE FROM backup_metadata WHERE branch_id = $1',
-                [branchId]
-            );
-            console.log(`[Branch Full Wipe] ✅ ${backupsResult.rowCount} registros de backup eliminados`);
-
-            // 3.4. Actualizar empleados que tengan este branch como main_branch
+            // 3.8. Actualizar empleados
             const employeesMainBranchResult = await client.query(
                 'UPDATE employees SET main_branch_id = NULL WHERE main_branch_id = $1',
                 [branchId]
             );
-            console.log(`[Branch Full Wipe] ✅ ${employeesMainBranchResult.rowCount} empleados actualizados (main_branch removido)`);
+            console.log(`[Branch Full Wipe] OK ${employeesMainBranchResult.rowCount} empleados actualizados`);
 
-            // NOTA: NO eliminamos el branch ni el tenant, solo limpiamos los datos
-            // El branch quedará vacío y listo para ser reutilizado
+            // 3.9. Eliminar backups
+            const backupsResult = await client.query(
+                'DELETE FROM backup_metadata WHERE branch_id = $1',
+                [branchId]
+            );
+            console.log(`[Branch Full Wipe] OK ${backupsResult.rowCount} backups eliminados`);
+
+            // 3.10. Resetear nombre de sucursal
+            await client.query(
+                `UPDATE branches SET name = 'Sucursal Reestablecida' WHERE id = $1`,
+                [branchId]
+            );
+            console.log(`[Branch Full Wipe] OK Sucursal reestablecida`);
 
             await client.query('COMMIT');
 
