@@ -259,7 +259,7 @@ router.get('/list-desktop/:tenant_id/:branch_id', async (req, res) => {
              WHERE tenant_id = $1 AND branch_id = $2
              ORDER BY created_at DESC
              LIMIT $3 OFFSET $4`,
-            [tenant_id, branch_id, limit, offset]
+            [tenant_id, limit, offset]
         );
 
         console.log(`[Backup List Desktop] Found ${result.rows.length} backups for branch ${branch_id}`);
