@@ -1937,6 +1937,105 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
         }
     });
 
+    // ─────────────────────────────────────────────────────────
+    // GET /api/auth/tenant/:tenantId/main-employee
+    // Obtiene el empleado principal (admin) del tenant para reusarlo en nuevas sucursales
+    // ─────────────────────────────────────────────────────────
+    router.get('/tenant/:tenantId/main-employee', async (req, res) => {
+        const { tenantId } = req.params;
+        const authHeader = req.headers['authorization'];
+        const token = authHeader && authHeader.split(' ')[1];
+
+        if (!token) {
+            return res.status(401).json({
+                success: false,
+                message: 'Token no proporcionado'
+            });
+        }
+
+        try {
+            // Verificar token
+            let decoded;
+            try {
+                decoded = jwt.verify(token, JWT_SECRET);
+            } catch (err) {
+                return res.status(401).json({
+                    success: false,
+                    message: 'Token inválido o expirado'
+                });
+            }
+
+            console.log(`[Main Employee] Obteniendo empleado principal del tenant ${tenantId}`);
+
+            // Obtener el empleado principal/admin del tenant (el que tiene is_owner = true)
+            const employeeResult = await pool.query(
+                `SELECT id, username, email, full_name, role
+                 FROM employees
+                 WHERE tenant_id = $1 AND is_active = true AND is_owner = true
+                 LIMIT 1`,
+                [tenantId]
+            );
+
+            if (employeeResult.rows.length === 0) {
+                console.log(`[Main Employee] No se encontró empleado owner para tenant ${tenantId}`);
+
+                // Si no hay owner, obtener el empleado más antiguo (primer registrado)
+                const fallbackResult = await pool.query(
+                    `SELECT id, username, email, full_name, role
+                     FROM employees
+                     WHERE tenant_id = $1 AND is_active = true
+                     ORDER BY created_at ASC
+                     LIMIT 1`,
+                    [tenantId]
+                );
+
+                if (fallbackResult.rows.length === 0) {
+                    return res.status(404).json({
+                        success: false,
+                        message: 'No hay empleados activos en este tenant'
+                    });
+                }
+
+                const employee = fallbackResult.rows[0];
+                console.log(`[Main Employee] ✅ Empleado (fallback) encontrado: ${employee.email} (ID: ${employee.id})`);
+
+                return res.json({
+                    success: true,
+                    employee: {
+                        id: employee.id,
+                        username: employee.username,
+                        email: employee.email,
+                        fullName: employee.full_name,
+                        role: employee.role
+                    }
+                });
+            }
+
+            const employee = employeeResult.rows[0];
+            console.log(`[Main Employee] ✅ Empleado owner encontrado: ${employee.email} (ID: ${employee.id})`);
+
+            res.json({
+                success: true,
+                employee: {
+                    id: employee.id,
+                    username: employee.username,
+                    email: employee.email,
+                    fullName: employee.full_name,
+                    role: employee.role
+                }
+            });
+
+        } catch (error) {
+            console.error(`[Main Employee] Error: ${error.message}`);
+            res.status(500).json({
+                success: false,
+                message: 'Error obteniendo empleado principal',
+                error: error.message
+            });
+        }
+    });
+
+
     // Middleware: Verificar JWT Token
     // ─────────────────────────────────────────────────────────
     router.authenticateToken = function(req, res, next) {
