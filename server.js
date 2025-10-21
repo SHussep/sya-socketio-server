@@ -1161,6 +1161,7 @@ app.get('/api/dashboard/summary', authenticateToken, async (req, res) => {
         }
 
         console.log(`[Dashboard Summary] Using timezone: ${branchTimezone} for branch ${targetBranchId}`);
+        console.log(`[Dashboard Summary] Date filters - start_date: ${start_date}, end_date: ${end_date}`);
 
         // Construir filtros de fecha timezone-aware usando el timezone del branch
         // Las columnas ahora son TIMESTAMP WITH TIME ZONE
@@ -1169,11 +1170,25 @@ app.get('/api/dashboard/summary', authenticateToken, async (req, res) => {
         let expenseDateFilter = `DATE(expense_date AT TIME ZONE '${branchTimezone}') = DATE(NOW() AT TIME ZONE '${branchTimezone}')`;
 
         if (start_date && end_date) {
-            // El cliente envía timestamps con su timezone local
-            // PostgreSQL los convierte automáticamente a UTC internamente
-            // Para filtrar, convertimos de vuelta a la zona horaria del branch
-            dateFilter = `sale_date >= '${start_date}'::timestamptz AND sale_date <= '${end_date}'::timestamptz`;
-            expenseDateFilter = `expense_date >= '${start_date}'::timestamptz AND expense_date <= '${end_date}'::timestamptz`;
+            // El cliente envía timestamps ISO (ej: 2025-10-21T00:00:00.000Z)
+            // Necesitamos asegurar que end_date sea el final del día
+            const startDateTime = new Date(start_date);
+            const endDateTime = new Date(end_date);
+
+            // Si end_date viene a las 00:00:00, cambiar a 23:59:59.999Z del mismo día
+            if (endDateTime.getHours() === 0 && endDateTime.getMinutes() === 0) {
+                endDateTime.setDate(endDateTime.getDate() + 1);
+                endDateTime.setMilliseconds(-1);
+            }
+
+            const startDateISO = startDateTime.toISOString();
+            const endDateISO = endDateTime.toISOString();
+
+            console.log(`[Dashboard Summary] Converted dates - start: ${startDateISO}, end: ${endDateISO}`);
+
+            // PostgreSQL maneja automáticamente la conversión de timezone para timestamptz
+            dateFilter = `sale_date >= '${startDateISO}'::timestamptz AND sale_date < '${endDateISO}'::timestamptz`;
+            expenseDateFilter = `expense_date >= '${startDateISO}'::timestamptz AND expense_date < '${endDateISO}'::timestamptz`;
         }
 
         // Total de ventas
@@ -1183,7 +1198,10 @@ app.get('/api/dashboard/summary', authenticateToken, async (req, res) => {
             salesQuery += ` AND branch_id = $2`;
             salesParams.push(targetBranchId);
         }
+        console.log(`[Dashboard Summary] Sales Query: ${salesQuery}`);
+        console.log(`[Dashboard Summary] Sales Params: ${JSON.stringify(salesParams)}`);
         const salesResult = await pool.query(salesQuery, salesParams);
+        console.log(`[Dashboard Summary] ✅ Total sales: ${salesResult.rows[0].total}`);
 
         // Total de gastos
         let expensesQuery = `SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE tenant_id = $1 AND ${expenseDateFilter}`;
