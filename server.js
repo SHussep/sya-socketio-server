@@ -1306,6 +1306,18 @@ app.get('/api/sales', authenticateToken, async (req, res) => {
         const result = await pool.query(query, params);
 
         console.log(`[Sales] ✅ Ventas encontradas: ${result.rows.length}`);
+
+        // Debug: detectar duplicados en respuesta
+        const idCount = {};
+        result.rows.forEach(row => {
+            idCount[row.id] = (idCount[row.id] || 0) + 1;
+        });
+        const duplicates = Object.entries(idCount).filter(([_, count]) => count > 1);
+        if (duplicates.length > 0) {
+            console.log(`[Sales] ⚠️ DUPLICADOS EN RESPUESTA: ${JSON.stringify(duplicates)}`);
+            console.log(`[Sales] IDs: ${result.rows.map(r => r.id).join(', ')}`);
+        }
+
         res.json({
             success: true,
             data: result.rows
