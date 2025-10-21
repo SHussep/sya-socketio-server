@@ -125,7 +125,7 @@ router.post('/upload-desktop', async (req, res) => {
             // PRIMERO: Eliminar backups viejos de esta branch de la BD (mantener solo el más reciente)
             await pool.query(
                 `DELETE FROM backup_metadata
-                 WHERE tenant_id = $1 AND branch_id = $2`,
+                 WHERE tenant_id = $1`,
                 [tenant_id, branch_id]
             );
 
@@ -256,9 +256,9 @@ router.get('/list-desktop/:tenant_id/:branch_id', async (req, res) => {
                 created_at, expires_at,
                 EXTRACT(EPOCH FROM (NOW() - created_at)) / 3600 as hours_ago
              FROM backup_metadata
-             WHERE tenant_id = $1 AND branch_id = $2
+             WHERE tenant_id = $1
              ORDER BY created_at DESC
-             LIMIT $3 OFFSET $4`,
+             LIMIT $2 OFFSET $3`,
             [tenant_id, limit, offset]
         );
 
