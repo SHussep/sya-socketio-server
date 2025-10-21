@@ -1971,7 +1971,7 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
             const employeeResult = await pool.query(
                 `SELECT id, username, email, full_name, role
                  FROM employees
-                 WHERE tenant_id = $1 AND is_active = true AND is_owner = true
+                 WHERE tenant_id = $1 AND is_active = true AND role = 'owner'
                  LIMIT 1`,
                 [tenantId]
             );
