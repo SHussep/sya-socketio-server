@@ -1318,9 +1318,15 @@ app.get('/api/sales', authenticateToken, async (req, res) => {
             console.log(`[Sales] IDs: ${result.rows.map(r => r.id).join(', ')}`);
         }
 
+        // Normalizar total_amount a número en todas las filas
+        const normalizedRows = result.rows.map(row => ({
+            ...row,
+            total_amount: parseFloat(row.total_amount)
+        }));
+
         res.json({
             success: true,
-            data: result.rows
+            data: normalizedRows
         });
     } catch (error) {
         console.error('[Sales] ❌ Error:', error.message);
@@ -1441,9 +1447,16 @@ app.get('/api/expenses', authenticateToken, async (req, res) => {
         const result = await pool.query(query, params);
 
         console.log(`[Expenses] ✅ Gastos encontrados: ${result.rows.length}`);
+
+        // Normalizar amount a número en todas las filas
+        const normalizedRows = result.rows.map(row => ({
+            ...row,
+            amount: parseFloat(row.amount)
+        }));
+
         res.json({
             success: true,
-            data: result.rows
+            data: normalizedRows
         });
     } catch (error) {
         console.error('[Expenses] ❌ Error:', error.message);
