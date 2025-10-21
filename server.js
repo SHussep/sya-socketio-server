@@ -1474,9 +1474,9 @@ app.post('/api/cash-cuts', authenticateToken, async (req, res) => {
 // POST /api/sync/sales - Alias de /api/sales (para compatibilidad con Desktop)
 app.post('/api/sync/sales', async (req, res) => {
     try {
-        const { tenantId, branchId, employeeId, ticketNumber, totalAmount, paymentMethod, userEmail, sale_type } = req.body;
+        const { tenantId, branchId, employeeId, ticketNumber, totalAmount, paymentMethod, userEmail, sale_type, fechaVenta } = req.body;
 
-        console.log(`[Sync/Sales] Desktop sync - Tenant: ${tenantId}, Branch: ${branchId}, Ticket: ${ticketNumber}, Type: ${sale_type}`);
+        console.log(`[Sync/Sales] Desktop sync - Tenant: ${tenantId}, Branch: ${branchId}, Ticket: ${ticketNumber}, Type: ${sale_type}, FechaVenta: ${fechaVenta}`);
 
         if (!tenantId || !branchId || !ticketNumber || !totalAmount) {
             return res.status(400).json({ success: false, message: 'Datos incompletos (tenantId, branchId, ticketNumber, totalAmount requeridos)' });
@@ -1494,11 +1494,14 @@ app.post('/api/sync/sales', async (req, res) => {
             }
         }
 
+        // Usar fechaVenta del cliente (con zona horaria correcta) o CURRENT_TIMESTAMP si no viene
+        const saleDate = fechaVenta ? new Date(fechaVenta).toISOString() : new Date().toISOString();
+
         const result = await pool.query(
-            `INSERT INTO sales (tenant_id, branch_id, employee_id, ticket_number, total_amount, payment_method, sale_type)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)
+            `INSERT INTO sales (tenant_id, branch_id, employee_id, ticket_number, total_amount, payment_method, sale_type, sale_date)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
              RETURNING *`,
-            [tenantId, branchId, finalEmployeeId, ticketNumber, totalAmount, paymentMethod || 'cash', sale_type || 'counter']
+            [tenantId, branchId, finalEmployeeId, ticketNumber, totalAmount, paymentMethod || 'cash', sale_type || 'counter', saleDate]
         );
 
         console.log(`[Sync/Sales] ✅ Venta sincronizada: ${ticketNumber} - $${totalAmount} (${sale_type || 'counter'})`);
@@ -1512,9 +1515,9 @@ app.post('/api/sync/sales', async (req, res) => {
 // POST /api/sync/expenses - Alias de /api/expenses (para compatibilidad con Desktop)
 app.post('/api/sync/expenses', async (req, res) => {
     try {
-        const { tenantId, branchId, employeeId, category, description, amount, userEmail } = req.body;
+        const { tenantId, branchId, employeeId, category, description, amount, userEmail, fechaGasto } = req.body;
 
-        console.log(`[Sync/Expenses] Desktop sync - Tenant: ${tenantId}, Branch: ${branchId}, Category: ${category}`);
+        console.log(`[Sync/Expenses] Desktop sync - Tenant: ${tenantId}, Branch: ${branchId}, Category: ${category}, FechaGasto: ${fechaGasto}`);
 
         if (!tenantId || !branchId || !category || !amount) {
             return res.status(400).json({ success: false, message: 'Datos incompletos (tenantId, branchId, category, amount requeridos)' });
@@ -1550,11 +1553,14 @@ app.post('/api/sync/expenses', async (req, res) => {
             console.log(`[Sync/Expenses] Categoría creada: ${category} (ID: ${categoryId})`);
         }
 
+        // Usar fechaGasto del cliente (con zona horaria correcta) o CURRENT_TIMESTAMP si no viene
+        const expenseDate = fechaGasto ? new Date(fechaGasto).toISOString() : new Date().toISOString();
+
         const result = await pool.query(
-            `INSERT INTO expenses (tenant_id, branch_id, employee_id, category_id, description, amount)
-             VALUES ($1, $2, $3, $4, $5, $6)
+            `INSERT INTO expenses (tenant_id, branch_id, employee_id, category_id, description, amount, expense_date)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
              RETURNING *`,
-            [tenantId, branchId, finalEmployeeId, categoryId, description || '', amount]
+            [tenantId, branchId, finalEmployeeId, categoryId, description || '', amount, expenseDate]
         );
 
         console.log(`[Sync/Expenses] ✅ Gasto sincronizado: ${category} - $${amount}`);
