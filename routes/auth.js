@@ -1808,6 +1808,135 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
     });
 
     // ─────────────────────────────────────────────────────────
+
+    // ─────────────────────────────────────────────────────────
+    // POST /api/auth/sync-init-after-wipe
+    // Obtiene info de sincronización después del full wipe
+    // Preparado para múltiples sucursales
+    // ─────────────────────────────────────────────────────────
+    router.post('/sync-init-after-wipe', async (req, res) => {
+        const { accessToken } = req.body;
+
+        if (!accessToken) {
+            return res.status(400).json({
+                success: false,
+                message: 'Access token requerido'
+            });
+        }
+
+        const client = await pool.connect();
+
+        try {
+            let decoded;
+            try {
+                decoded = jwt.verify(accessToken, JWT_SECRET);
+            } catch (err) {
+                return res.status(401).json({
+                    success: false,
+                    message: 'Token inválido o expirado'
+                });
+            }
+
+            const { tenantId, employeeId } = decoded;
+
+            console.log(`[Sync Init] Inicializando para tenant ${tenantId}, employee ${employeeId}`);
+
+            // 1. Obtener info del tenant
+            const tenantResult = await client.query(
+                'SELECT id, tenant_code, business_name FROM tenants WHERE id = $1',
+                [tenantId]
+            );
+
+            if (tenantResult.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Tenant no encontrado'
+                });
+            }
+
+            const tenant = tenantResult.rows[0];
+
+            // 2. Obtener info del empleado
+            const employeeResult = await client.query(
+                `SELECT id, email, full_name, role, main_branch_id
+                 FROM employees WHERE id = $1 AND tenant_id = $2`,
+                [employeeId, tenantId]
+            );
+
+            if (employeeResult.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Empleado no encontrado'
+                });
+            }
+
+            const employee = employeeResult.rows[0];
+
+            // 3. Obtener todas las sucursales (PREPARADO PARA MULTISUCURSAL)
+            const branchesResult = await client.query(
+                `SELECT id, branch_code, name, timezone, is_active,
+                        COALESCE(address, '') as address, COALESCE(phone, '') as phone
+                 FROM branches WHERE tenant_id = $1 ORDER BY id ASC`,
+                [tenantId]
+            );
+
+            const branches = branchesResult.rows;
+
+            // 4. Obtener contador de empleados por sucursal
+            const employeeCountResult = await client.query(
+                `SELECT branch_id, COUNT(*) as employee_count
+                 FROM employee_branches
+                 WHERE branch_id IN (SELECT id FROM branches WHERE tenant_id = $1)
+                 GROUP BY branch_id`,
+                [tenantId]
+            );
+
+            const employeeCountByBranch = {};
+            employeeCountResult.rows.forEach(row => {
+                employeeCountByBranch[row.branch_id] = row.employee_count;
+            });
+
+            // Agregar metadata a sucursales
+            const branchesWithMetadata = branches.map(branch => ({
+                ...branch,
+                employee_count: employeeCountByBranch[branch.id] || 0,
+                primary: branch.id === employee.main_branch_id
+            }));
+
+            console.log(`[Sync Init] OK - ${branches.length} sucursales`);
+
+            res.json({
+                success: true,
+                sync: {
+                    tenant: {
+                        id: tenant.id,
+                        code: tenant.tenant_code,
+                        name: tenant.business_name
+                    },
+                    employee: {
+                        id: employee.id,
+                        email: employee.email,
+                        name: employee.full_name,
+                        role: employee.role,
+                        primary_branch_id: employee.main_branch_id
+                    },
+                    branches: branchesWithMetadata,
+                    timestamp: new Date().toISOString()
+                }
+            });
+
+        } catch (error) {
+            console.error('[Sync Init] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error obteniendo información',
+                error: error.message
+            });
+        } finally {
+            client.release();
+        }
+    });
+
     // Middleware: Verificar JWT Token
     // ─────────────────────────────────────────────────────────
     router.authenticateToken = function(req, res, next) {
