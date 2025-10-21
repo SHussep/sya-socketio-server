@@ -1259,7 +1259,7 @@ app.get('/api/sales', authenticateToken, async (req, res) => {
 
         // Filtrar por branch_id solo si no se solicita ver todas las sucursales
         if (all_branches !== 'true' && targetBranchId) {
-            query += ` AND s.branch_id = ${paramIndex}`;
+            query += ` AND s.branch_id = $${paramIndex}`;
             params.push(targetBranchId);
             paramIndex++;
         }
