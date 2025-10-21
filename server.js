@@ -1868,17 +1868,42 @@ app.get('/api/branches', authenticateToken, async (req, res) => {
 app.post('/api/branches', authenticateToken, async (req, res) => {
     try {
         const { tenantId } = req.user;
-        const { branchCode, name, address, phoneNumber } = req.body;
+        const { name, address, phoneNumber, timezone } = req.body;
+
+        if (!name) {
+            return res.status(400).json({ success: false, message: 'name es requerido' });
+        }
+
+        // Obtener tenant_code para generar branch_code
+        const tenantResult = await pool.query('SELECT tenant_code FROM tenants WHERE id = $1', [tenantId]);
+        if (tenantResult.rows.length === 0) {
+            return res.status(404).json({ success: false, message: 'Tenant no encontrado' });
+        }
+
+        // Contar sucursales existentes
+        const countResult = await pool.query(
+            'SELECT COUNT(*) as count FROM branches WHERE tenant_id = $1',
+            [tenantId]
+        );
+        const branchCount = parseInt(countResult.rows[0].count);
+
+        // Generar branch_code único
+        const branchCode = `${tenantResult.rows[0].tenant_code}-BR${branchCount + 1}`;
 
         const result = await pool.query(
-            `INSERT INTO branches (tenant_id, branch_code, name, address, phone_number)
-             VALUES ($1, $2, $3, $4, $5)
+            `INSERT INTO branches (tenant_id, branch_code, name, address, phone_number, timezone, is_active, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, true, NOW(), NOW())
              RETURNING *`,
-            [tenantId, branchCode, name, address, phoneNumber]
+            [tenantId, branchCode, name, address || null, phoneNumber || null, timezone || 'America/Mexico_City']
         );
 
-        console.log(`[Branches] ✅ Sucursal creada: ${name}`);
+        console.log(`[Branches] OK Sucursal creada: ${name} (Code: ${branchCode})`);
         res.json({ success: true, data: result.rows[0] });
+    } catch (error) {
+        console.error('[Branches] Error:', error);
+        res.status(500).json({ success: false, message: 'Error al crear sucursal' });
+    }
+});
     } catch (error) {
         console.error('[Branches] Error:', error);
         res.status(500).json({ success: false, message: 'Error al crear sucursal' });
