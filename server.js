@@ -1230,20 +1230,24 @@ app.get('/api/dashboard/summary', authenticateToken, async (req, res) => {
     }
 });
 
-// GET /api/sales - Lista de ventas
+// GET /api/sales - Lista de ventas (con soporte de timezone)
 app.get('/api/sales', authenticateToken, async (req, res) => {
     try {
         const { tenantId, branchId: userBranchId } = req.user;
-        const { limit = 50, offset = 0, all_branches = 'false', branch_id } = req.query;
+        const { limit = 50, offset = 0, all_branches = 'false', branch_id, timezone, startDate, endDate } = req.query;
 
         // Prioridad: 1. branch_id del query, 2. branchId del JWT
         const targetBranchId = branch_id ? parseInt(branch_id) : userBranchId;
+
+        // Usar timezone si viene en query, sino usar UTC por defecto
+        const userTimezone = timezone || 'UTC';
 
         let query = `
             SELECT s.id, s.ticket_number, s.total_amount, s.payment_method, s.sale_date,
                    s.sale_type,
                    e.full_name as employee_name, e.role as employee_role,
-                   b.name as branch_name, b.id as branch_id
+                   b.name as branch_name, b.id as branch_id,
+                   (s.sale_date AT TIME ZONE '${userTimezone}') as sale_date_display
             FROM sales s
             LEFT JOIN employees e ON s.employee_id = e.id
             LEFT JOIN branches b ON s.branch_id = b.id
@@ -1251,19 +1255,33 @@ app.get('/api/sales', authenticateToken, async (req, res) => {
         `;
 
         const params = [tenantId];
+        let paramIndex = 2;
 
         // Filtrar por branch_id solo si no se solicita ver todas las sucursales
         if (all_branches !== 'true' && targetBranchId) {
-            query += ' AND s.branch_id = $2';
+            query += ` AND s.branch_id = ${paramIndex}`;
             params.push(targetBranchId);
-            query += ' ORDER BY s.sale_date DESC LIMIT $3 OFFSET $4';
-            params.push(limit, offset);
-        } else {
-            query += ' ORDER BY s.sale_date DESC LIMIT $2 OFFSET $3';
-            params.push(limit, offset);
+            paramIndex++;
         }
 
-        console.log(`[Sales] Fetching sales - Tenant: ${tenantId}, Branch: ${targetBranchId}, all_branches: ${all_branches}`);
+        // Filtrar por rango de fechas si se proporciona (en timezone del usuario)
+        if (startDate || endDate) {
+            if (startDate) {
+                query += ` AND (s.sale_date AT TIME ZONE '${userTimezone}')::date >= ${paramIndex}::date`;
+                params.push(startDate);
+                paramIndex++;
+            }
+            if (endDate) {
+                query += ` AND (s.sale_date AT TIME ZONE '${userTimezone}')::date <= ${paramIndex}::date`;
+                params.push(endDate);
+                paramIndex++;
+            }
+        }
+
+        query += ` ORDER BY s.sale_date DESC LIMIT ${paramIndex} OFFSET ${paramIndex + 1}`;
+        params.push(limit, offset);
+
+        console.log(`[Sales] Fetching sales - Tenant: ${tenantId}, Branch: ${targetBranchId}, Timezone: ${userTimezone}, all_branches: ${all_branches}`);
 
         const result = await pool.query(query, params);
 
@@ -1316,19 +1334,23 @@ app.post('/api/sales', async (req, res) => {
     }
 });
 
-// GET /api/expenses - Lista de gastos
+// GET /api/expenses - Lista de gastos (con soporte de timezone)
 app.get('/api/expenses', authenticateToken, async (req, res) => {
     try {
         const { tenantId, branchId: userBranchId } = req.user;
-        const { limit = 50, offset = 0, all_branches = 'false', branch_id } = req.query;
+        const { limit = 50, offset = 0, all_branches = 'false', branch_id, timezone, startDate, endDate } = req.query;
 
         // Prioridad: 1. branch_id del query, 2. branchId del JWT
         const targetBranchId = branch_id ? parseInt(branch_id) : userBranchId;
 
+        // Usar timezone si viene en query, sino usar UTC por defecto
+        const userTimezone = timezone || 'UTC';
+
         let query = `
             SELECT e.id, e.description as concept, e.description, e.amount, e.expense_date,
                    emp.full_name as employee_name, b.name as branch_name, b.id as branch_id,
-                   cat.name as category
+                   cat.name as category,
+                   (e.expense_date AT TIME ZONE '${userTimezone}') as expense_date_display
             FROM expenses e
             LEFT JOIN employees emp ON e.employee_id = emp.id
             LEFT JOIN branches b ON e.branch_id = b.id
@@ -1337,19 +1359,33 @@ app.get('/api/expenses', authenticateToken, async (req, res) => {
         `;
 
         const params = [tenantId];
+        let paramIndex = 2;
 
         // Filtrar por branch_id solo si no se solicita ver todas las sucursales
         if (all_branches !== 'true' && targetBranchId) {
-            query += ' AND e.branch_id = $2';
+            query += ` AND e.branch_id = ${paramIndex}`;
             params.push(targetBranchId);
-            query += ' ORDER BY e.expense_date DESC LIMIT $3 OFFSET $4';
-            params.push(limit, offset);
-        } else {
-            query += ' ORDER BY e.expense_date DESC LIMIT $2 OFFSET $3';
-            params.push(limit, offset);
+            paramIndex++;
         }
 
-        console.log(`[Expenses] Fetching expenses - Tenant: ${tenantId}, Branch: ${targetBranchId}, all_branches: ${all_branches}`);
+        // Filtrar por rango de fechas si se proporciona (en timezone del usuario)
+        if (startDate || endDate) {
+            if (startDate) {
+                query += ` AND (e.expense_date AT TIME ZONE '${userTimezone}')::date >= ${paramIndex}::date`;
+                params.push(startDate);
+                paramIndex++;
+            }
+            if (endDate) {
+                query += ` AND (e.expense_date AT TIME ZONE '${userTimezone}')::date <= ${paramIndex}::date`;
+                params.push(endDate);
+                paramIndex++;
+            }
+        }
+
+        query += ` ORDER BY e.expense_date DESC LIMIT ${paramIndex} OFFSET ${paramIndex + 1}`;
+        params.push(limit, offset);
+
+        console.log(`[Expenses] Fetching expenses - Tenant: ${tenantId}, Branch: ${targetBranchId}, Timezone: ${userTimezone}, all_branches: ${all_branches}`);
 
         const result = await pool.query(query, params);
 
@@ -1476,6 +1512,7 @@ app.post('/api/sync/sales', async (req, res) => {
     try {
         const { tenantId, branchId, employeeId, ticketNumber, totalAmount, paymentMethod, userEmail, sale_type, fechaVenta } = req.body;
 
+        console.log(`[Sync/Sales] ⏮️  RAW REQUEST BODY:`, JSON.stringify(req.body, null, 2));
         console.log(`[Sync/Sales] Desktop sync - Tenant: ${tenantId}, Branch: ${branchId}, Ticket: ${ticketNumber}, Type: ${sale_type}, FechaVenta: ${fechaVenta}`);
 
         if (!tenantId || !branchId || !ticketNumber || !totalAmount) {
@@ -1495,7 +1532,23 @@ app.post('/api/sync/sales', async (req, res) => {
         }
 
         // Usar fechaVenta del cliente (con zona horaria correcta) o CURRENT_TIMESTAMP si no viene
-        const saleDate = fechaVenta ? new Date(fechaVenta).toISOString() : new Date().toISOString();
+        let saleDate;
+        try {
+            if (fechaVenta) {
+                const parsedDate = new Date(fechaVenta);
+                console.log(`[Sync/Sales] 📅 Parsed fecha: ${fechaVenta} -> ${parsedDate} (Invalid: ${isNaN(parsedDate)})`);
+                saleDate = parsedDate.toISOString();
+                console.log(`[Sync/Sales] 📅 ISO String: ${saleDate}`);
+            } else {
+                saleDate = new Date().toISOString();
+                console.log(`[Sync/Sales] 📅 Using current timestamp: ${saleDate}`);
+            }
+        } catch (dateError) {
+            console.error(`[Sync/Sales] ❌ Error parsing date: ${dateError.message}`);
+            saleDate = new Date().toISOString();
+        }
+
+        console.log(`[Sync/Sales] 📤 About to insert - saleDate: ${saleDate} (type: ${typeof saleDate}, null: ${saleDate === null}, empty: ${saleDate === ''})`);
 
         const result = await pool.query(
             `INSERT INTO sales (tenant_id, branch_id, employee_id, ticket_number, total_amount, payment_method, sale_type, sale_date)
