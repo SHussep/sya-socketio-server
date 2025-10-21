@@ -1577,11 +1577,12 @@ app.post('/api/cash-cuts', authenticateToken, async (req, res) => {
 // POST /api/sync/sales - Alias de /api/sales (para compatibilidad con Desktop)
 app.post('/api/sync/sales', async (req, res) => {
     try {
-        const { tenantId, branchId, employeeId, ticketNumber, totalAmount, paymentMethod, userEmail, sale_type, fechaVenta } = req.body;
+        const { tenantId, branchId, employeeId, ticketNumber, totalAmount, paymentMethod, tipoPagoId, userEmail, sale_type, fechaVenta } = req.body;
 
         console.log(`[Sync/Sales] ⏮️  RAW REQUEST BODY:`, JSON.stringify(req.body, null, 2));
         console.log(`[Sync/Sales] Desktop sync - Tenant: ${tenantId}, Branch: ${branchId}, Ticket: ${ticketNumber}, Type: ${sale_type}, FechaVenta: ${fechaVenta}`);
         console.log(`[Sync/Sales] Received totalAmount: ${totalAmount} (type: ${typeof totalAmount})`);
+        console.log(`[Sync/Sales] Received paymentMethod: ${paymentMethod}, tipoPagoId: ${tipoPagoId}`);
 
         if (!tenantId || !branchId || !ticketNumber || totalAmount === null || totalAmount === undefined) {
             return res.status(400).json({ success: false, message: 'Datos incompletos (tenantId, branchId, ticketNumber, totalAmount requeridos)' });
@@ -1591,6 +1592,18 @@ app.post('/api/sync/sales', async (req, res) => {
         const numericTotalAmount = parseFloat(totalAmount);
         if (isNaN(numericTotalAmount)) {
             return res.status(400).json({ success: false, message: 'totalAmount debe ser un número válido' });
+        }
+
+        // Determinar método de pago de manera robusta usando tipoPagoId si viene
+        let finalPaymentMethod = paymentMethod || 'cash';
+        if (tipoPagoId) {
+            const tipoPagoMap = {
+                1: 'cash',      // Efectivo
+                2: 'card',      // Tarjeta
+                3: 'credit'     // Crédito
+            };
+            finalPaymentMethod = tipoPagoMap[tipoPagoId] || paymentMethod || 'cash';
+            console.log(`[Sync/Sales] 💳 Usando tipoPagoId ${tipoPagoId} -> ${finalPaymentMethod}`);
         }
 
         // Usar employeeId del body si viene, sino buscar por email
@@ -1628,7 +1641,7 @@ app.post('/api/sync/sales', async (req, res) => {
             `INSERT INTO sales (tenant_id, branch_id, employee_id, ticket_number, total_amount, payment_method, sale_type, sale_date)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
              RETURNING *`,
-            [tenantId, branchId, finalEmployeeId, ticketNumber, numericTotalAmount, paymentMethod || 'cash', sale_type || 'counter', saleDate]
+            [tenantId, branchId, finalEmployeeId, ticketNumber, numericTotalAmount, finalPaymentMethod, sale_type || 'counter', saleDate]
         );
 
         console.log(`[Sync/Sales] ✅ Venta sincronizada: ${ticketNumber} - $${numericTotalAmount} (${sale_type || 'counter'})`);
