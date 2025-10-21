@@ -1267,31 +1267,36 @@ app.get('/api/sales', authenticateToken, async (req, res) => {
         // Filtrar por rango de fechas si se proporciona (en timezone del usuario)
         if (startDate || endDate) {
             if (startDate) {
-                query += ` AND (s.sale_date AT TIME ZONE '${userTimezone}')::date >= ${paramIndex}::date`;
+                query += ` AND (s.sale_date AT TIME ZONE '${userTimezone}')::date >= $${paramIndex}::date`;
                 params.push(startDate);
                 paramIndex++;
             }
             if (endDate) {
-                query += ` AND (s.sale_date AT TIME ZONE '${userTimezone}')::date <= ${paramIndex}::date`;
+                query += ` AND (s.sale_date AT TIME ZONE '${userTimezone}')::date <= $${paramIndex}::date`;
                 params.push(endDate);
                 paramIndex++;
             }
         }
 
-        query += ` ORDER BY s.sale_date DESC LIMIT ${paramIndex} OFFSET ${paramIndex + 1}`;
+        query += ` ORDER BY s.sale_date DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
         params.push(limit, offset);
 
         console.log(`[Sales] Fetching sales - Tenant: ${tenantId}, Branch: ${targetBranchId}, Timezone: ${userTimezone}, all_branches: ${all_branches}`);
+        console.log(`[Sales] Query: ${query}`);
+        console.log(`[Sales] Params: ${JSON.stringify(params)}`);
 
         const result = await pool.query(query, params);
 
+        console.log(`[Sales] ✅ Ventas encontradas: ${result.rows.length}`);
         res.json({
             success: true,
             data: result.rows
         });
     } catch (error) {
-        console.error('[Sales] Error:', error);
-        res.status(500).json({ success: false, message: 'Error al obtener ventas' });
+        console.error('[Sales] ❌ Error:', error.message);
+        console.error('[Sales] SQL Error Code:', error.code);
+        console.error('[Sales] Full error:', error);
+        res.status(500).json({ success: false, message: 'Error al obtener ventas', error: error.message });
     }
 });
 
@@ -1363,7 +1368,7 @@ app.get('/api/expenses', authenticateToken, async (req, res) => {
 
         // Filtrar por branch_id solo si no se solicita ver todas las sucursales
         if (all_branches !== 'true' && targetBranchId) {
-            query += ` AND e.branch_id = ${paramIndex}`;
+            query += ` AND e.branch_id = $${paramIndex}`;
             params.push(targetBranchId);
             paramIndex++;
         }
@@ -1371,31 +1376,36 @@ app.get('/api/expenses', authenticateToken, async (req, res) => {
         // Filtrar por rango de fechas si se proporciona (en timezone del usuario)
         if (startDate || endDate) {
             if (startDate) {
-                query += ` AND (e.expense_date AT TIME ZONE '${userTimezone}')::date >= ${paramIndex}::date`;
+                query += ` AND (e.expense_date AT TIME ZONE '${userTimezone}')::date >= $${paramIndex}::date`;
                 params.push(startDate);
                 paramIndex++;
             }
             if (endDate) {
-                query += ` AND (e.expense_date AT TIME ZONE '${userTimezone}')::date <= ${paramIndex}::date`;
+                query += ` AND (e.expense_date AT TIME ZONE '${userTimezone}')::date <= $${paramIndex}::date`;
                 params.push(endDate);
                 paramIndex++;
             }
         }
 
-        query += ` ORDER BY e.expense_date DESC LIMIT ${paramIndex} OFFSET ${paramIndex + 1}`;
+        query += ` ORDER BY e.expense_date DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
         params.push(limit, offset);
 
         console.log(`[Expenses] Fetching expenses - Tenant: ${tenantId}, Branch: ${targetBranchId}, Timezone: ${userTimezone}, all_branches: ${all_branches}`);
+        console.log(`[Expenses] Query: ${query}`);
+        console.log(`[Expenses] Params: ${JSON.stringify(params)}`);
 
         const result = await pool.query(query, params);
 
+        console.log(`[Expenses] ✅ Gastos encontrados: ${result.rows.length}`);
         res.json({
             success: true,
             data: result.rows
         });
     } catch (error) {
-        console.error('[Expenses] Error:', error);
-        res.status(500).json({ success: false, message: 'Error al obtener gastos' });
+        console.error('[Expenses] ❌ Error:', error.message);
+        console.error('[Expenses] SQL Error Code:', error.code);
+        console.error('[Expenses] Full error:', error);
+        res.status(500).json({ success: false, message: 'Error al obtener gastos', error: error.message });
     }
 });
 
