@@ -1577,7 +1577,7 @@ app.post('/api/cash-cuts', authenticateToken, async (req, res) => {
 // POST /api/sync/sales - Alias de /api/sales (para compatibilidad con Desktop)
 app.post('/api/sync/sales', async (req, res) => {
     try {
-        const { tenantId, branchId, employeeId, ticketNumber, totalAmount, paymentMethod, tipoPagoId, userEmail, sale_type, fechaVenta } = req.body;
+        const { tenantId, branchId, employeeId, ticketNumber, totalAmount, paymentMethod, tipoPagoId, userEmail, sale_type, ventaTipoId, fechaVenta } = req.body;
 
         console.log(`[Sync/Sales] ⏮️  RAW REQUEST BODY:`, JSON.stringify(req.body, null, 2));
         console.log(`[Sync/Sales] Desktop sync - Tenant: ${tenantId}, Branch: ${branchId}, Ticket: ${ticketNumber}, Type: ${sale_type}, FechaVenta: ${fechaVenta}`);
