@@ -1718,6 +1718,223 @@ app.post('/api/sync/sales-items', async (req, res) => {
     }
 });
 
+// ============================================================================
+// GET ENDPOINTS FOR SALES ITEMS (Mobile App Queries)
+// ============================================================================
+
+// GET /api/sales-items - Obtener artículos por venta específica
+app.get('/api/sales-items', async (req, res) => {
+    try {
+        const { sale_id, tenant_id, branch_id } = req.query;
+
+        if (!sale_id || !tenant_id || !branch_id) {
+            return res.status(400).json({
+                success: false,
+                message: 'Parámetros requeridos: sale_id, tenant_id, branch_id'
+            });
+        }
+
+        const result = await pool.query(
+            `SELECT * FROM sales_items_with_details
+             WHERE sale_id = $1 AND tenant_id = $2 AND branch_id = $3
+             ORDER BY created_at ASC`,
+            [parseInt(sale_id), parseInt(tenant_id), parseInt(branch_id)]
+        );
+
+        // Convertir amounts a números
+        const items = result.rows.map(row => ({
+            ...row,
+            quantity: parseFloat(row.quantity),
+            unit_price: parseFloat(row.unit_price),
+            list_price: parseFloat(row.list_price),
+            customer_discount: parseFloat(row.customer_discount),
+            manual_discount: parseFloat(row.manual_discount),
+            total_discount: parseFloat(row.total_discount),
+            subtotal: parseFloat(row.subtotal),
+            total_amount: row.total_amount ? parseFloat(row.total_amount) : null
+        }));
+
+        res.json({ data: items });
+    } catch (error) {
+        console.error('[SalesItems/GetBySale] Error:', error);
+        res.status(500).json({ success: false, message: 'Error al obtener artículos de venta', error: error.message });
+    }
+});
+
+// GET /api/sales-items/branch - Obtener artículos de una sucursal con paginación
+app.get('/api/sales-items/branch', async (req, res) => {
+    try {
+        const { tenant_id, branch_id, limit = 1000, offset = 0 } = req.query;
+
+        if (!tenant_id || !branch_id) {
+            return res.status(400).json({
+                success: false,
+                message: 'Parámetros requeridos: tenant_id, branch_id'
+            });
+        }
+
+        const result = await pool.query(
+            `SELECT * FROM sales_items_with_details
+             WHERE tenant_id = $1 AND branch_id = $2
+             ORDER BY created_at DESC
+             LIMIT $3 OFFSET $4`,
+            [parseInt(tenant_id), parseInt(branch_id), parseInt(limit), parseInt(offset)]
+        );
+
+        // Convertir amounts a números
+        const items = result.rows.map(row => ({
+            ...row,
+            quantity: parseFloat(row.quantity),
+            unit_price: parseFloat(row.unit_price),
+            list_price: parseFloat(row.list_price),
+            customer_discount: parseFloat(row.customer_discount),
+            manual_discount: parseFloat(row.manual_discount),
+            total_discount: parseFloat(row.total_discount),
+            subtotal: parseFloat(row.subtotal),
+            total_amount: row.total_amount ? parseFloat(row.total_amount) : null
+        }));
+
+        res.json({ data: items });
+    } catch (error) {
+        console.error('[SalesItems/GetByBranch] Error:', error);
+        res.status(500).json({ success: false, message: 'Error al obtener artículos por sucursal', error: error.message });
+    }
+});
+
+// GET /api/sales-items/by-type - Obtener artículos filtrados por tipo de venta
+app.get('/api/sales-items/by-type', async (req, res) => {
+    try {
+        const { tenant_id, branch_id, sale_type, limit = 1000 } = req.query;
+
+        if (!tenant_id || !branch_id || !sale_type) {
+            return res.status(400).json({
+                success: false,
+                message: 'Parámetros requeridos: tenant_id, branch_id, sale_type'
+            });
+        }
+
+        // Mapear sale_type string a sale_type_code
+        const saleTypeCode = sale_type.toLowerCase();
+
+        const result = await pool.query(
+            `SELECT * FROM sales_items_with_details
+             WHERE tenant_id = $1 AND branch_id = $2
+             AND LOWER(sale_type_name) LIKE LOWER($3)
+             ORDER BY created_at DESC
+             LIMIT $4`,
+            [parseInt(tenant_id), parseInt(branch_id), `%${saleTypeCode}%`, parseInt(limit)]
+        );
+
+        // Convertir amounts a números
+        const items = result.rows.map(row => ({
+            ...row,
+            quantity: parseFloat(row.quantity),
+            unit_price: parseFloat(row.unit_price),
+            list_price: parseFloat(row.list_price),
+            customer_discount: parseFloat(row.customer_discount),
+            manual_discount: parseFloat(row.manual_discount),
+            total_discount: parseFloat(row.total_discount),
+            subtotal: parseFloat(row.subtotal),
+            total_amount: row.total_amount ? parseFloat(row.total_amount) : null
+        }));
+
+        res.json({ data: items });
+    } catch (error) {
+        console.error('[SalesItems/GetByType] Error:', error);
+        res.status(500).json({ success: false, message: 'Error al obtener artículos por tipo de venta', error: error.message });
+    }
+});
+
+// GET /api/sales-items/by-payment - Obtener artículos filtrados por tipo de pago
+app.get('/api/sales-items/by-payment', async (req, res) => {
+    try {
+        const { tenant_id, branch_id, payment_type, limit = 1000 } = req.query;
+
+        if (!tenant_id || !branch_id || !payment_type) {
+            return res.status(400).json({
+                success: false,
+                message: 'Parámetros requeridos: tenant_id, branch_id, payment_type'
+            });
+        }
+
+        // Mapear payment_type string a payment_type_code
+        const paymentTypeCode = payment_type.toLowerCase();
+
+        const result = await pool.query(
+            `SELECT * FROM sales_items_with_details
+             WHERE tenant_id = $1 AND branch_id = $2
+             AND LOWER(payment_type_name) LIKE LOWER($3)
+             ORDER BY created_at DESC
+             LIMIT $4`,
+            [parseInt(tenant_id), parseInt(branch_id), `%${paymentTypeCode}%`, parseInt(limit)]
+        );
+
+        // Convertir amounts a números
+        const items = result.rows.map(row => ({
+            ...row,
+            quantity: parseFloat(row.quantity),
+            unit_price: parseFloat(row.unit_price),
+            list_price: parseFloat(row.list_price),
+            customer_discount: parseFloat(row.customer_discount),
+            manual_discount: parseFloat(row.manual_discount),
+            total_discount: parseFloat(row.total_discount),
+            subtotal: parseFloat(row.subtotal),
+            total_amount: row.total_amount ? parseFloat(row.total_amount) : null
+        }));
+
+        res.json({ data: items });
+    } catch (error) {
+        console.error('[SalesItems/GetByPayment] Error:', error);
+        res.status(500).json({ success: false, message: 'Error al obtener artículos por tipo de pago', error: error.message });
+    }
+});
+
+// GET /api/sales-items/stats - Obtener estadísticas de artículos vendidos
+app.get('/api/sales-items/stats', async (req, res) => {
+    try {
+        const { tenant_id, branch_id } = req.query;
+
+        if (!tenant_id || !branch_id) {
+            return res.status(400).json({
+                success: false,
+                message: 'Parámetros requeridos: tenant_id, branch_id'
+            });
+        }
+
+        const result = await pool.query(
+            `SELECT
+                COUNT(*) as total_items,
+                COUNT(DISTINCT sale_id) as total_sales,
+                SUM(quantity) as total_quantity,
+                SUM(subtotal) as total_revenue,
+                SUM(total_discount) as total_discounts,
+                AVG(subtotal) as avg_item_price,
+                MAX(created_at) as last_sale_date
+             FROM sales_items
+             WHERE tenant_id = $1 AND branch_id = $2`,
+            [parseInt(tenant_id), parseInt(branch_id)]
+        );
+
+        const stats = result.rows[0] || {};
+
+        // Convertir amounts a números
+        const formattedStats = {
+            total_items: parseInt(stats.total_items) || 0,
+            total_sales: parseInt(stats.total_sales) || 0,
+            total_quantity: parseFloat(stats.total_quantity) || 0,
+            total_revenue: parseFloat(stats.total_revenue) || 0,
+            total_discounts: parseFloat(stats.total_discounts) || 0,
+            avg_item_price: parseFloat(stats.avg_item_price) || 0,
+            last_sale_date: stats.last_sale_date
+        };
+
+        res.json(formattedStats);
+    } catch (error) {
+        console.error('[SalesItems/GetStats] Error:', error);
+        res.status(500).json({ success: false, message: 'Error al obtener estadísticas', error: error.message });
+    }
+});
+
 // POST /api/sync/expenses - Alias de /api/expenses (para compatibilidad con Desktop)
 app.post('/api/sync/expenses', async (req, res) => {
     try {
