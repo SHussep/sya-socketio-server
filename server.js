@@ -1568,9 +1568,16 @@ app.post('/api/sync/sales', async (req, res) => {
 
         console.log(`[Sync/Sales] ⏮️  RAW REQUEST BODY:`, JSON.stringify(req.body, null, 2));
         console.log(`[Sync/Sales] Desktop sync - Tenant: ${tenantId}, Branch: ${branchId}, Ticket: ${ticketNumber}, Type: ${sale_type}, FechaVenta: ${fechaVenta}`);
+        console.log(`[Sync/Sales] Received totalAmount: ${totalAmount} (type: ${typeof totalAmount})`);
 
-        if (!tenantId || !branchId || !ticketNumber || !totalAmount) {
+        if (!tenantId || !branchId || !ticketNumber || totalAmount === null || totalAmount === undefined) {
             return res.status(400).json({ success: false, message: 'Datos incompletos (tenantId, branchId, ticketNumber, totalAmount requeridos)' });
+        }
+
+        // Convertir totalAmount a número si viene como string
+        const numericTotalAmount = parseFloat(totalAmount);
+        if (isNaN(numericTotalAmount)) {
+            return res.status(400).json({ success: false, message: 'totalAmount debe ser un número válido' });
         }
 
         // Usar employeeId del body si viene, sino buscar por email
@@ -1608,11 +1615,18 @@ app.post('/api/sync/sales', async (req, res) => {
             `INSERT INTO sales (tenant_id, branch_id, employee_id, ticket_number, total_amount, payment_method, sale_type, sale_date)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
              RETURNING *`,
-            [tenantId, branchId, finalEmployeeId, ticketNumber, totalAmount, paymentMethod || 'cash', sale_type || 'counter', saleDate]
+            [tenantId, branchId, finalEmployeeId, ticketNumber, numericTotalAmount, paymentMethod || 'cash', sale_type || 'counter', saleDate]
         );
 
-        console.log(`[Sync/Sales] ✅ Venta sincronizada: ${ticketNumber} - $${totalAmount} (${sale_type || 'counter'})`);
-        res.json({ success: true, data: result.rows[0] });
+        console.log(`[Sync/Sales] ✅ Venta sincronizada: ${ticketNumber} - $${numericTotalAmount} (${sale_type || 'counter'})`);
+
+        // Asegurar que total_amount es un número en la respuesta
+        const responseData = result.rows[0];
+        if (responseData) {
+            responseData.total_amount = parseFloat(responseData.total_amount);
+        }
+
+        res.json({ success: true, data: responseData });
     } catch (error) {
         console.error('[Sync/Sales] Error:', error);
         res.status(500).json({ success: false, message: 'Error al sincronizar venta', error: error.message });
@@ -1625,9 +1639,16 @@ app.post('/api/sync/expenses', async (req, res) => {
         const { tenantId, branchId, employeeId, category, description, amount, userEmail, fechaGasto } = req.body;
 
         console.log(`[Sync/Expenses] Desktop sync - Tenant: ${tenantId}, Branch: ${branchId}, Category: ${category}, FechaGasto: ${fechaGasto}`);
+        console.log(`[Sync/Expenses] Received amount: ${amount} (type: ${typeof amount})`);
 
-        if (!tenantId || !branchId || !category || !amount) {
+        if (!tenantId || !branchId || !category || amount === null || amount === undefined) {
             return res.status(400).json({ success: false, message: 'Datos incompletos (tenantId, branchId, category, amount requeridos)' });
+        }
+
+        // Convertir amount a número si viene como string
+        const numericAmount = parseFloat(amount);
+        if (isNaN(numericAmount)) {
+            return res.status(400).json({ success: false, message: 'amount debe ser un número válido' });
         }
 
         // Usar employeeId del body si viene, sino buscar por email
@@ -1667,11 +1688,18 @@ app.post('/api/sync/expenses', async (req, res) => {
             `INSERT INTO expenses (tenant_id, branch_id, employee_id, category_id, description, amount, expense_date)
              VALUES ($1, $2, $3, $4, $5, $6, $7)
              RETURNING *`,
-            [tenantId, branchId, finalEmployeeId, categoryId, description || '', amount, expenseDate]
+            [tenantId, branchId, finalEmployeeId, categoryId, description || '', numericAmount, expenseDate]
         );
 
-        console.log(`[Sync/Expenses] ✅ Gasto sincronizado: ${category} - $${amount}`);
-        res.json({ success: true, data: result.rows[0] });
+        console.log(`[Sync/Expenses] ✅ Gasto sincronizado: ${category} - $${numericAmount}`);
+
+        // Asegurar que amount es un número en la respuesta
+        const responseData = result.rows[0];
+        if (responseData) {
+            responseData.amount = parseFloat(responseData.amount);
+        }
+
+        res.json({ success: true, data: responseData });
     } catch (error) {
         console.error('[Sync/Expenses] Error:', error);
         res.status(500).json({ success: false, message: 'Error al sincronizar gasto', error: error.message });
