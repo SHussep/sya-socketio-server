@@ -1246,7 +1246,7 @@ app.get('/api/sales', authenticateToken, async (req, res) => {
             SELECT s.id, s.ticket_number, s.total_amount, s.payment_method, s.sale_date,
                    s.sale_type,
                    e.full_name as employee_name, e.role as employee_role,
-                   b.name as branch_name, b.id as branch_id,
+                   b.name as branch_name, b.id as branchId,
                    (s.sale_date AT TIME ZONE '${userTimezone}') as sale_date_display
             FROM sales s
             LEFT JOIN employees e ON s.employee_id = e.id
@@ -1353,7 +1353,7 @@ app.get('/api/expenses', authenticateToken, async (req, res) => {
 
         let query = `
             SELECT e.id, e.description as concept, e.description, e.amount, e.expense_date,
-                   emp.full_name as employee_name, b.name as branch_name, b.id as branch_id,
+                   emp.full_name as employee_name, b.name as branch_name, b.id as branchId,
                    cat.name as category,
                    (e.expense_date AT TIME ZONE '${userTimezone}') as expense_date_display
             FROM expenses e
