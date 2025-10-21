@@ -1336,10 +1336,17 @@ app.post('/api/sales', async (req, res) => {
         const { tenantId, branchId, ticketNumber, totalAmount, paymentMethod, userEmail } = req.body;
 
         console.log(`[Sales] Desktop sync - Tenant: ${tenantId}, Branch: ${branchId}, User: ${userEmail}`);
+        console.log(`[Sales] Received totalAmount: ${totalAmount} (type: ${typeof totalAmount})`);
 
         // Validar datos requeridos
-        if (!tenantId || !branchId || !ticketNumber || !totalAmount) {
+        if (!tenantId || !branchId || !ticketNumber || totalAmount === null || totalAmount === undefined) {
             return res.status(400).json({ success: false, message: 'Datos incompletos' });
+        }
+
+        // Convertir totalAmount a número si viene como string
+        const numericTotalAmount = parseFloat(totalAmount);
+        if (isNaN(numericTotalAmount)) {
+            return res.status(400).json({ success: false, message: 'totalAmount debe ser un número válido' });
         }
 
         // Buscar el empleado por email (opcional, para employee_id)
@@ -1358,11 +1365,18 @@ app.post('/api/sales', async (req, res) => {
             `INSERT INTO sales (tenant_id, branch_id, employee_id, ticket_number, total_amount, payment_method)
              VALUES ($1, $2, $3, $4, $5, $6)
              RETURNING *`,
-            [tenantId, branchId, employeeId, ticketNumber, totalAmount, paymentMethod]
+            [tenantId, branchId, employeeId, ticketNumber, numericTotalAmount, paymentMethod]
         );
 
-        console.log(`[Sales] ✅ Venta creada desde Desktop: ${ticketNumber} - $${totalAmount}`);
-        res.json({ success: true, data: result.rows[0] });
+        console.log(`[Sales] ✅ Venta creada desde Desktop: ${ticketNumber} - $${numericTotalAmount}`);
+
+        // Asegurar que total_amount es un número en la respuesta
+        const responseData = result.rows[0];
+        if (responseData) {
+            responseData.total_amount = parseFloat(responseData.total_amount);
+        }
+
+        res.json({ success: true, data: responseData });
     } catch (error) {
         console.error('[Sales] Error:', error);
         res.status(500).json({ success: false, message: 'Error al crear venta' });
