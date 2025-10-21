@@ -262,7 +262,7 @@ router.get('/list-desktop/:tenant_id/:branch_id', async (req, res) => {
             [tenant_id, limit, offset]
         );
 
-        console.log(`[Backup List Desktop] Found ${result.rows.length} backups for branch ${branch_id}`);
+        console.log(`[Backup List Desktop] Found ${result.rows.length} backups for tenant ${tenant_id} (searched across ALL branches)`);
 
         res.json({
             success: true,
