@@ -1904,11 +1904,6 @@ app.post('/api/branches', authenticateToken, async (req, res) => {
         res.status(500).json({ success: false, message: 'Error al crear sucursal' });
     }
 });
-    } catch (error) {
-        console.error('[Branches] Error:', error);
-        res.status(500).json({ success: false, message: 'Error al crear sucursal' });
-    }
-});
 
 // GET /api/branches - Listar sucursales
 app.get('/api/branches', authenticateToken, async (req, res) => {
