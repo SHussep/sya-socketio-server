@@ -466,7 +466,7 @@ function createRepartidorAssignmentRoutes(io) {
   // GET /api/repartidor-debts/employee/:employeeId
   // Obtener deudas de un repartidor
   // ═══════════════════════════════════════════════════════════════
-  router.get('/debts/employee/:employeeId', async (req, res) => {
+  router.get('/employee/:employeeId', async (req, res) => {
     const { employeeId } = req.params;
     const { branch_id, tenant_id, estado = 'pendiente', limit = 50, offset = 0 } = req.query;
 
@@ -537,7 +537,7 @@ function createRepartidorAssignmentRoutes(io) {
   // GET /api/repartidor-debts/branch/:branchId/summary
   // Obtener resumen de deudas por sucursal
   // ═══════════════════════════════════════════════════════════════
-  router.get('/debts/branch/:branchId/summary', async (req, res) => {
+  router.get('/branch/:branchId/summary', async (req, res) => {
     const { branchId } = req.params;
     const { tenant_id, estado = 'pendiente' } = req.query;
 
