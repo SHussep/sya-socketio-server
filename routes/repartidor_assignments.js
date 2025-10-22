@@ -131,17 +131,17 @@ function createRepartidorAssignmentRoutes(io) {
       // 1. Actualizar asignación con devoluciones
       const updateAssignmentQuery = `
         UPDATE repartidor_assignments
-        SET cantidad_devuelta = $1::DECIMAL,
-            monto_devuelto = $2::DECIMAL,
+        SET cantidad_devuelta = $1,
+            monto_devuelto = $2,
             estado = CASE
-              WHEN $1::DECIMAL = 0 THEN 'completada'
-              WHEN $1::DECIMAL > 0 AND $1::DECIMAL < cantidad_asignada THEN 'parcialmente_devuelta'
+              WHEN $1::NUMERIC = 0 THEN 'completada'
+              WHEN $1::NUMERIC > 0 AND $1::NUMERIC < cantidad_asignada THEN 'parcialmente_devuelta'
               ELSE 'devuelta_completa'
             END,
             fecha_devoluciones = CURRENT_TIMESTAMP,
             fecha_liquidacion = CURRENT_TIMESTAMP,
             updated_at = CURRENT_TIMESTAMP
-        WHERE id = $3::INT
+        WHERE id = $3
         RETURNING *
       `;
 
