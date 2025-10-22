@@ -4,6 +4,9 @@
  * Endpoints:
  *   GET /api/repartidor-debts/employee/:employeeId - Obtener deudas de empleado
  *   GET /api/repartidor-debts/branch/:branchId/summary - Obtener resumen de deudas por sucursal
+ *
+ * 📋 Columnas: id, employee_id, branch_id, tenant_id, liquidation_id, monto_deuda,
+ *              monto_pagado, estado, fecha_deuda, fecha_pago, notas, created_at, updated_at
  */
 
 const express = require('express');
