@@ -53,6 +53,7 @@ const restoreRoutes = require('./routes/restore');
 const backupRoutes = require('./routes/backup');
 const authRoutes = require('./routes/auth')(pool); // Pasar pool al módulo
 const createRepartidorAssignmentRoutes = require('./routes/repartidor_assignments'); // Rutas de asignaciones a repartidores
+const createRepartidorDebtsRoutes = require('./routes/repartidor_debts'); // Rutas de deudas de repartidores
 
 // Registrar rutas
 app.use('/api/restore', restoreRoutes);
@@ -2742,9 +2743,10 @@ let stats = {
 // INICIALIZAR RUTAS CON SOCKET.IO
 // ═══════════════════════════════════════════════════════════════
 const repartidorAssignmentRoutes = createRepartidorAssignmentRoutes(io);
+const repartidorDebtsRoutes = createRepartidorDebtsRoutes(io);
 app.use('/api/repartidor-assignments', repartidorAssignmentRoutes);
 app.use('/api/repartidor-liquidations', repartidorAssignmentRoutes);
-app.use('/api/repartidor-debts', repartidorAssignmentRoutes);
+app.use('/api/repartidor-debts', repartidorDebtsRoutes);
 
 io.on('connection', (socket) => {
     console.log(`[${new Date().toISOString()}] Cliente conectado: ${socket.id}`);
