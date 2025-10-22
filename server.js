@@ -52,11 +52,13 @@ app.use(bodyParser.urlencoded({ extended: true }));
 const restoreRoutes = require('./routes/restore');
 const backupRoutes = require('./routes/backup');
 const authRoutes = require('./routes/auth')(pool); // Pasar pool al módulo
+const createRepartidorAssignmentRoutes = require('./routes/repartidor_assignments'); // Rutas de asignaciones a repartidores
 
 // Registrar rutas
 app.use('/api/restore', restoreRoutes);
 app.use('/api/backup', backupRoutes);
 app.use('/api/auth', authRoutes); // Registrar rutas de autenticación
+
 // Health check
 app.get('/', (req, res) => {
     res.send('Socket.IO Server for SYA Tortillerías - Running ✅');
@@ -2735,6 +2737,13 @@ let stats = {
     totalEvents: 0,
     startTime: new Date(),
 };
+
+// ═══════════════════════════════════════════════════════════════
+// INICIALIZAR RUTAS CON SOCKET.IO
+// ═══════════════════════════════════════════════════════════════
+const repartidorAssignmentRoutes = createRepartidorAssignmentRoutes(io);
+app.use('/api/repartidor-assignments', repartidorAssignmentRoutes);
+app.use('/api/repartidor-liquidations', repartidorAssignmentRoutes);
 
 io.on('connection', (socket) => {
     console.log(`[${new Date().toISOString()}] Cliente conectado: ${socket.id}`);
