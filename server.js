@@ -55,11 +55,17 @@ const backupRoutes = require('./routes/backup');
 const authRoutes = require('./routes/auth')(pool); // Pasar pool al módulo
 const createRepartidorAssignmentRoutes = require('./routes/repartidor_assignments'); // Rutas de asignaciones a repartidores
 const createRepartidorDebtsRoutes = require('./routes/repartidor_debts'); // Rutas de deudas de repartidores
+const notificationRoutes = require('./routes/notifications'); // Rutas de notificaciones FCM
+const { initializeFirebase } = require('./utils/firebaseAdmin'); // Firebase Admin SDK
+
+// Inicializar Firebase para notificaciones push
+initializeFirebase();
 
 // Registrar rutas
 app.use('/api/restore', restoreRoutes);
 app.use('/api/backup', backupRoutes);
 app.use('/api/auth', authRoutes); // Registrar rutas de autenticación
+app.use('/api/notifications', notificationRoutes); // Registrar rutas de notificaciones
 
 // Health check
 app.get('/', (req, res) => {

@@ -33,7 +33,15 @@
       "Bash(timeout 5 node:*)",
       "Bash(pwsh -Command:*)",
       "Bash(timeout 120 flutter pub get:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(git checkout:*)",
+      "Bash(npm install:*)",
+      "Bash(flutter pub add:*)",
+      "Bash(dart pub global activate:*)",
+      "Bash(\"C:\\Users\\saul_\\AppData\\Local\\Pub\\Cache\\bin\\flutterfire.bat\" configure --project=sya-tortillerias --ios-out=ios/Runner --android-out=android/app --windows-out=windows)",
+      "Bash(\"C:\\Users\\saul_\\AppData\\Local\\Pub\\Cache\\bin\\flutterfire.bat\" configure --project=sya-tortillerias)",
+      "Bash(flutterfire configure:*)",
+      "Bash(dart pub global run:*)"
     ],
     "deny": [],
     "ask": []
