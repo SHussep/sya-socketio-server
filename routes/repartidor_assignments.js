@@ -19,7 +19,7 @@ function createRepartidorAssignmentRoutes(io) {
   // POST /api/repartidor-assignments
   // Crear una nueva asignación de kilos a un repartidor
   // ═══════════════════════════════════════════════════════════════
-  router.post('/', async (req, res) => {
+  router.post('/assignments', async (req, res) => {
     const {
       sale_id,
       employee_id,
@@ -32,7 +32,7 @@ function createRepartidorAssignmentRoutes(io) {
     } = req.body;
 
     try {
-      console.log('[API] 📦 POST /api/repartidor-assignments - Crear asignación');
+      console.log('[API] 📦 POST /api/repartidor/assignments - Crear asignación');
       console.log(`  Repartidor: ${employee_id}, Kilos: ${cantidad_asignada}, Monto: $${monto_asignado}`);
 
       // Validar campos requeridos
@@ -92,7 +92,7 @@ function createRepartidorAssignmentRoutes(io) {
   // POST /api/repartidor-assignments/:id/liquidate
   // Liquidar una asignación (procesar devoluciones y entregar dinero)
   // ═══════════════════════════════════════════════════════════════
-  router.post('/:id/liquidate', async (req, res) => {
+  router.post('/assignments/:id/liquidate', async (req, res) => {
     const { id } = req.params;
     const {
       cantidad_devuelta,
@@ -106,7 +106,7 @@ function createRepartidorAssignmentRoutes(io) {
     const client = await pool.connect();
 
     try {
-      console.log('[API] 💰 POST /api/repartidor-assignments/:id/liquidate - Liquidar asignación');
+      console.log('[API] 💰 POST /api/repartidor/assignments/:id/liquidate - Liquidar asignación');
       console.log(`  Assignment ID: ${id}, Devuelto: ${cantidad_devuelta}, Diferencia: $${diferencia_dinero}`);
 
       // Obtener asignación actual
@@ -244,12 +244,12 @@ function createRepartidorAssignmentRoutes(io) {
   // GET /api/repartidor-assignments/employee/:employeeId
   // Obtener asignaciones activas de un repartidor
   // ═══════════════════════════════════════════════════════════════
-  router.get('/employee/:employeeId', async (req, res) => {
+  router.get('/assignments/employee/:employeeId', async (req, res) => {
     const { employeeId } = req.params;
     const { branch_id, tenant_id, estado } = req.query;
 
     try {
-      console.log('[API] 📊 GET /api/repartidor-assignments/employee/:employeeId');
+      console.log('[API] 📊 GET /api/repartidor/assignments/employee/:employeeId');
       console.log(`  Employee: ${employeeId}, Branch: ${branch_id}`);
 
       let query = `
@@ -322,7 +322,7 @@ function createRepartidorAssignmentRoutes(io) {
     const { branch_id, tenant_id, limit = 50, offset = 0 } = req.query;
 
     try {
-      console.log('[API] 📋 GET /api/repartidor-liquidations/employee/:employeeId');
+      console.log('[API] 📋 GET /api/repartidor/liquidations/employee/:employeeId');
       console.log(`  Employee: ${employeeId}, Limit: ${limit}, Offset: ${offset}`);
 
       let query = `
@@ -392,7 +392,7 @@ function createRepartidorAssignmentRoutes(io) {
     const { tenant_id, date_from, date_to } = req.query;
 
     try {
-      console.log('[API] 📊 GET /api/repartidor-liquidations/branch/:branchId/summary');
+      console.log('[API] 📊 GET /api/repartidor/liquidations/branch/:branchId/summary');
       console.log(`  Branch: ${branchId}, From: ${date_from}, To: ${date_to}`);
 
       let query = `
@@ -466,12 +466,12 @@ function createRepartidorAssignmentRoutes(io) {
   // GET /api/repartidor-debts/employee/:employeeId
   // Obtener deudas de un repartidor
   // ═══════════════════════════════════════════════════════════════
-  router.get('/employee/:employeeId', async (req, res) => {
+  router.get('/debts/employee/:employeeId', async (req, res) => {
     const { employeeId } = req.params;
     const { branch_id, tenant_id, estado = 'pendiente', limit = 50, offset = 0 } = req.query;
 
     try {
-      console.log('[API] 💳 GET /api/repartidor-debts/employee/:employeeId');
+      console.log('[API] 💳 GET /api/repartidor/debts/employee/:employeeId');
       console.log(`  Employee: ${employeeId}, Estado: ${estado}`);
 
       let query = `
@@ -537,12 +537,12 @@ function createRepartidorAssignmentRoutes(io) {
   // GET /api/repartidor-debts/branch/:branchId/summary
   // Obtener resumen de deudas por sucursal
   // ═══════════════════════════════════════════════════════════════
-  router.get('/branch/:branchId/summary', async (req, res) => {
+  router.get('/debts/branch/:branchId/summary', async (req, res) => {
     const { branchId } = req.params;
     const { tenant_id, estado = 'pendiente' } = req.query;
 
     try {
-      console.log('[API] 📊 GET /api/repartidor-debts/branch/:branchId/summary');
+      console.log('[API] 📊 GET /api/repartidor/debts/branch/:branchId/summary');
       console.log(`  Branch: ${branchId}, Estado: ${estado}`);
 
       let query = `
