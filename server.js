@@ -1262,7 +1262,7 @@ app.get('/api/sales', authenticateToken, async (req, res) => {
 
         let query = `
             SELECT s.id, s.ticket_number, s.total_amount, s.payment_method, s.sale_date,
-                   s.sale_type,
+                   s.sale_type, s.tenant_id, s.branch_id,
                    e.full_name as employee_name, e.role as employee_role,
                    b.name as branch_name, b.id as "branchId",
                    (s.sale_date AT TIME ZONE '${userTimezone}') as sale_date_display
