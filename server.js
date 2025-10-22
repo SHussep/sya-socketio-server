@@ -2744,6 +2744,7 @@ let stats = {
 const repartidorAssignmentRoutes = createRepartidorAssignmentRoutes(io);
 app.use('/api/repartidor-assignments', repartidorAssignmentRoutes);
 app.use('/api/repartidor-liquidations', repartidorAssignmentRoutes);
+app.use('/api/repartidor-debts', repartidorAssignmentRoutes);
 
 io.on('connection', (socket) => {
     console.log(`[${new Date().toISOString()}] Cliente conectado: ${socket.id}`);
