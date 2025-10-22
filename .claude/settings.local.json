@@ -41,7 +41,8 @@
       "Bash(\"C:\\Users\\saul_\\AppData\\Local\\Pub\\Cache\\bin\\flutterfire.bat\" configure --project=sya-tortillerias --ios-out=ios/Runner --android-out=android/app --windows-out=windows)",
       "Bash(\"C:\\Users\\saul_\\AppData\\Local\\Pub\\Cache\\bin\\flutterfire.bat\" configure --project=sya-tortillerias)",
       "Bash(flutterfire configure:*)",
-      "Bash(dart pub global run:*)"
+      "Bash(dart pub global run:*)",
+      "Bash(cannot be used with type arguments\"\n\n🤖 Generated with Claude Code\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")"
     ],
     "deny": [],
     "ask": []

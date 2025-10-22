@@ -57,6 +57,7 @@ const createRepartidorAssignmentRoutes = require('./routes/repartidor_assignment
 const createRepartidorDebtsRoutes = require('./routes/repartidor_debts'); // Rutas de deudas de repartidores
 const notificationRoutes = require('./routes/notifications'); // Rutas de notificaciones FCM
 const { initializeFirebase } = require('./utils/firebaseAdmin'); // Firebase Admin SDK
+const notificationHelper = require('./utils/notificationHelper'); // Helper para enviar notificaciones en eventos
 
 // Inicializar Firebase para notificaciones push
 initializeFirebase();
@@ -839,7 +840,7 @@ app.post('/api/auth/login', async (req, res) => {
 
         // Broadcast login event via Socket.IO to all connected clients
         // Broadcast to all branches the user has access to
-        branches.forEach(branch => {
+        branches.forEach(async (branch) => {
             const roomName = `branch_${branch.id}`;
             io.to(roomName).emit('user-login', {
                 employeeId: employee.id,
@@ -851,6 +852,13 @@ app.post('/api/auth/login', async (req, res) => {
                 scaleStatus: 'unknown' // Por ahora unknown, se actualiza cuando se conecta la báscula
             });
             console.log(`[Socket.IO] 📢 Broadcast user-login to room ${roomName}`);
+
+            // Enviar notificación FCM a repartidores en la sucursal
+            await notificationHelper.notifyUserLogin(branch.id, {
+                employeeName: employee.full_name,
+                branchName: branch.name,
+                scaleStatus: 'unknown'
+            });
         });
 
         res.json({
