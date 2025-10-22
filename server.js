@@ -1,6 +1,7 @@
 // ═══════════════════════════════════════════════════════════════
 // SERVIDOR SOCKET.IO + REST API PARA SYA TORTILLERÍAS
 // Con PostgreSQL Database
+// ✅ Repartidor system with debts endpoint support
 // ═══════════════════════════════════════════════════════════════
 
 const express = require('express');
