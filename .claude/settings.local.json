@@ -1,0 +1,41 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git log:*)",
+      "Bash(node check_sales_table.js:*)",
+      "Read(//c/Users/saul_/source/repos/SyaTortilleriasWinUi/**)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(node verify_sync_success.js:*)",
+      "Read(//c/SYA/sya_mobile_app/**)",
+      "WebFetch(domain:sya-socketio-server.onrender.com)",
+      "Bash(dotnet build:*)",
+      "Bash(findstr:*)",
+      "Bash(PGPASSWORD=\"$DB_PASSWORD\" psql:*)",
+      "Bash(node run_migration_005.js:*)",
+      "Bash(node -e:*)",
+      "Bash(curl:*)",
+      "Bash(echo:*)",
+      "Bash(flutter pub get:*)",
+      "Bash(flutter analyze:*)",
+      "Bash(test:*)",
+      "Bash(dir:*)",
+      "Bash(node create_repartidor_assignments_tables.js:*)",
+      "Bash(timeout 60 flutter analyze:*)",
+      "Bash(timeout 120 flutter analyze:*)",
+      "Bash(node run_migration_repartidor.js:*)",
+      "Bash(node test_repartidor_flow.js:*)",
+      "Bash(node get_valid_ids.js:*)",
+      "Bash(node list_tables.js:*)",
+      "Bash(node:*)",
+      "Bash(git revert:*)",
+      "Bash(timeout 5 node:*)",
+      "Bash(pwsh -Command:*)",
+      "Bash(timeout 120 flutter pub get:*)",
+      "Bash(python3:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

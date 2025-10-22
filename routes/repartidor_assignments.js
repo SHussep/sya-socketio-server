@@ -462,6 +462,76 @@ function createRepartidorAssignmentRoutes(io) {
     }
   });
 
+  // ═══════════════════════════════════════════════════════════════
+  // GET /api/repartidor-assignments/branch/:branchId/summary
+  // Obtener resumen de asignaciones por repartidor (kilos asignados, devueltos, vendidos)
+  // ═══════════════════════════════════════════════════════════════
+  router.get('/branch/:branchId/summary', async (req, res) => {
+    const { branchId } = req.params;
+    const { tenant_id, date_from, date_to } = req.query;
+
+    try {
+      console.log('[API] 📊 GET /api/repartidor-assignments/branch/:branchId/summary');
+      console.log(`  Branch: ${branchId}, From: ${date_from}, To: ${date_to}`);
+
+      let query = `
+        SELECT
+          ra.employee_id,
+          e.full_name as employee_name,
+          COUNT(DISTINCT ra.id) as total_asignaciones,
+          SUM(ra.cantidad_asignada) as kilos_asignados,
+          COALESCE(SUM(rl.cantidad_devuelta), 0) as kilos_devueltos,
+          SUM(ra.cantidad_asignada) - COALESCE(SUM(rl.cantidad_devuelta), 0) as kilos_vendidos,
+          COALESCE(SUM(rl.gastos), 0) as gastos_totales,
+          SUM(ra.monto_asignado) as monto_asignado,
+          COALESCE(SUM(rl.monto_devuelto), 0) as monto_devuelto,
+          SUM(ra.monto_asignado) - COALESCE(SUM(rl.monto_devuelto), 0) as monto_vendido
+        FROM repartidor_assignments ra
+        LEFT JOIN repartidor_liquidations rl ON ra.id = rl.assignment_id
+        LEFT JOIN employees e ON ra.employee_id = e.id
+        WHERE ra.branch_id = $1
+      `;
+
+      const params = [branchId];
+      let paramIndex = 2;
+
+      if (tenant_id) {
+        query += ` AND ra.tenant_id = $${paramIndex}`;
+        params.push(tenant_id);
+        paramIndex++;
+      }
+
+      if (date_from) {
+        query += ` AND ra.created_at::date >= $${paramIndex}::date`;
+        params.push(date_from);
+        paramIndex++;
+      }
+
+      if (date_to) {
+        query += ` AND ra.created_at::date <= $${paramIndex}::date`;
+        params.push(date_to);
+        paramIndex++;
+      }
+
+      query += ` GROUP BY ra.employee_id, e.full_name ORDER BY kilos_asignados DESC`;
+
+      const result = await pool.query(query, params);
+
+      res.json({
+        success: true,
+        data: result.rows,
+        count: result.rows.length
+      });
+
+    } catch (error) {
+      console.error('❌ Error obteniendo resumen de asignaciones:', error.message);
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  });
+
   return router;
 }
 

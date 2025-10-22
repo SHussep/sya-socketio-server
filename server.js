@@ -831,6 +831,22 @@ app.post('/api/auth/login', async (req, res) => {
         console.log('[Mobile Login] ✅ Login exitoso:', employee.username);
         console.log(`[Mobile Login] Branches accesibles: ${branches.length}`);
 
+        // Broadcast login event via Socket.IO to all connected clients
+        // Broadcast to all branches the user has access to
+        branches.forEach(branch => {
+            const roomName = `branch_${branch.id}`;
+            io.to(roomName).emit('user-login', {
+                employeeId: employee.id,
+                employeeName: employee.full_name,
+                employeeRole: employee.role,
+                branchId: branch.id,
+                branchName: branch.name,
+                timestamp: new Date().toISOString(),
+                scaleStatus: 'unknown' // Por ahora unknown, se actualiza cuando se conecta la báscula
+            });
+            console.log(`[Socket.IO] 📢 Broadcast user-login to room ${roomName}`);
+        });
+
         res.json({
             isSuccess: true,
             token: token,
@@ -1269,10 +1285,12 @@ app.get('/api/sales', authenticateToken, async (req, res) => {
                    s.sale_type, s.employee_id, s.tenant_id, s.branch_id,
                    e.full_name as employee_name, e.role as employee_role,
                    b.name as branch_name, b.id as "branchId",
+                   ra.id as assignment_id,
                    (s.sale_date AT TIME ZONE '${userTimezone}') as sale_date_display
             FROM sales s
             LEFT JOIN employees e ON s.employee_id = e.id
             LEFT JOIN branches b ON s.branch_id = b.id
+            LEFT JOIN repartidor_assignments ra ON s.id = ra.sale_id
             WHERE s.tenant_id = $1
         `;
 
