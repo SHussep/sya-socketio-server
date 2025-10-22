@@ -40,8 +40,8 @@ function createRepartidorDebtsRoutes(io) {
           (rd.monto_deuda - COALESCE(rd.monto_pagado, 0)) as monto_pendiente,
           rd.estado,
           rd.fecha_deuda,
-          rd.fecha_pago,
-          rd.notas
+          rd.fecha_pagado,
+          rd.observaciones
         FROM repartidor_debts rd
         LEFT JOIN employees e ON e.id = rd.employee_id
         LEFT JOIN branches b ON b.id = rd.branch_id
