@@ -2834,18 +2834,111 @@ io.on('connection', (socket) => {
         io.to(roomName).emit('weight_update', { ...data, receivedAt: new Date().toISOString() });
     });
 
-    socket.on('shift_started', (data) => {
+    socket.on('shift_started', async (data) => {
         stats.totalEvents++;
         const roomName = `branch_${data.branchId}`;
         console.log(`[SHIFT] Sucursal ${data.branchId}: ${data.employeeName} inició turno - $${data.initialAmount}`);
+
+        // Broadcast al escritorio y móviles en la sucursal
         io.to(roomName).emit('shift_started', { ...data, receivedAt: new Date().toISOString() });
+
+        // NUEVO: Sincronizar con PostgreSQL y enviar notificaciones FCM
+        try {
+            // Actualizar shift en PostgreSQL: marcar como abierto
+            const updateShiftQuery = `
+                UPDATE shifts
+                SET is_open = true,
+                    start_time = $1,
+                    updated_at = NOW()
+                WHERE id = $2 AND tenant_id = $3
+                RETURNING id;
+            `;
+
+            const shiftResult = await pool.query(updateShiftQuery, [
+                data.startTime || new Date().toISOString(),
+                data.shiftId,
+                data.tenantId
+            ]);
+
+            if (shiftResult.rows.length > 0) {
+                console.log(`[SHIFT] ✅ Turno #${data.shiftId} actualizado en PostgreSQL`);
+
+                // Enviar notificación FCM a todos los repartidores de la sucursal
+                await notificationHelper.notifyShiftStarted(data.branchId, {
+                    employeeName: data.employeeName,
+                    branchName: data.branchName,
+                    initialAmount: data.initialAmount,
+                    startTime: data.startTime
+                });
+
+                console.log(`[FCM] 📨 Notificación de inicio de turno enviada a sucursal ${data.branchId}`);
+            } else {
+                console.log(`[SHIFT] ⚠️ No se encontró turno #${data.shiftId} en PostgreSQL`);
+            }
+        } catch (error) {
+            console.error(`[SHIFT] ❌ Error sincronizando turno con PostgreSQL:`, error.message);
+            // No fallar el broadcast si hay error en la sincronización
+        }
     });
 
-    socket.on('shift_ended', (data) => {
+    socket.on('shift_ended', async (data) => {
         stats.totalEvents++;
         const roomName = `branch_${data.branchId}`;
         console.log(`[SHIFT] Sucursal ${data.branchId}: ${data.employeeName} cerró turno - Diferencia: $${data.difference}`);
+
+        // Broadcast al escritorio y móviles en la sucursal
         io.to(roomName).emit('shift_ended', { ...data, receivedAt: new Date().toISOString() });
+
+        // NUEVO: Sincronizar con PostgreSQL y enviar notificaciones FCM
+        try {
+            // Actualizar shift en PostgreSQL: marcar como cerrado
+            const updateShiftQuery = `
+                UPDATE shifts
+                SET is_open = false,
+                    end_time = $1,
+                    updated_at = NOW()
+                WHERE id = $2 AND tenant_id = $3
+                RETURNING id;
+            `;
+
+            const shiftResult = await pool.query(updateShiftQuery, [
+                data.endTime || new Date().toISOString(),
+                data.shiftId,
+                data.tenantId
+            ]);
+
+            if (shiftResult.rows.length > 0) {
+                console.log(`[SHIFT] ✅ Turno #${data.shiftId} actualizado en PostgreSQL`);
+
+                // Enviar notificación FCM a todos los repartidores de la sucursal
+                const statusIcon = data.difference === 0
+                    ? '✅'
+                    : data.difference > 0
+                        ? '💰'
+                        : '⚠️';
+
+                const differenceText = data.difference === 0
+                    ? 'Sin diferencia'
+                    : data.difference > 0
+                        ? `Sobrante: $${Math.abs(data.difference).toFixed(2)}`
+                        : `Faltante: $${Math.abs(data.difference).toFixed(2)}`;
+
+                await notificationHelper.notifyShiftEnded(data.branchId, {
+                    employeeName: data.employeeName,
+                    branchName: data.branchName,
+                    difference: data.difference,
+                    countedCash: data.countedCash,
+                    expectedCash: data.expectedCashInDrawer
+                });
+
+                console.log(`[FCM] 📨 Notificación de cierre de turno enviada a sucursal ${data.branchId}`);
+            } else {
+                console.log(`[SHIFT] ⚠️ No se encontró turno #${data.shiftId} en PostgreSQL`);
+            }
+        } catch (error) {
+            console.error(`[SHIFT] ❌ Error sincronizando turno con PostgreSQL:`, error.message);
+            // No fallar el broadcast si hay error en la sincronización
+        }
     });
 
     socket.on('get_stats', () => {
