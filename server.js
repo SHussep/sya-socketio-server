@@ -2847,7 +2847,7 @@ io.on('connection', (socket) => {
             // Actualizar shift en PostgreSQL: marcar como abierto
             const updateShiftQuery = `
                 UPDATE shifts
-                SET is_open = true,
+                SET is_cash_cut_open = true,
                     start_time = $1,
                     updated_at = NOW()
                 WHERE id = $2 AND tenant_id = $3
@@ -2895,7 +2895,7 @@ io.on('connection', (socket) => {
             // Actualizar shift en PostgreSQL: marcar como cerrado
             const updateShiftQuery = `
                 UPDATE shifts
-                SET is_open = false,
+                SET is_cash_cut_open = false,
                     end_time = $1,
                     updated_at = NOW()
                 WHERE id = $2 AND tenant_id = $3
