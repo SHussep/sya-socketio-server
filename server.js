@@ -2885,6 +2885,7 @@ io.on('connection', (socket) => {
         stats.totalEvents++;
         const roomName = `branch_${data.branchId}`;
         console.log(`[SHIFT] Sucursal ${data.branchId}: ${data.employeeName} cerró turno - Diferencia: $${data.difference}`);
+        console.log(`[SHIFT] DEBUG - Datos recibidos: shiftId=${data.shiftId}, tenantId=${data.tenantId}, branchId=${data.branchId}, endTime=${data.endTime}`);
 
         // Broadcast al escritorio y móviles en la sucursal
         io.to(roomName).emit('shift_ended', { ...data, receivedAt: new Date().toISOString() });
@@ -2901,11 +2902,15 @@ io.on('connection', (socket) => {
                 RETURNING id;
             `;
 
+            console.log(`[SHIFT] DEBUG - Ejecutando UPDATE con: endTime=$1:${data.endTime || new Date().toISOString()}, shiftId=$2:${data.shiftId}, tenantId=$3:${data.tenantId}`);
+
             const shiftResult = await pool.query(updateShiftQuery, [
                 data.endTime || new Date().toISOString(),
                 data.shiftId,
                 data.tenantId
             ]);
+
+            console.log(`[SHIFT] DEBUG - Resultado del UPDATE: rows.length=${shiftResult.rows.length}, rows=${JSON.stringify(shiftResult.rows)}`);
 
             if (shiftResult.rows.length > 0) {
                 console.log(`[SHIFT] ✅ Turno #${data.shiftId} actualizado en PostgreSQL`);
