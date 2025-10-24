@@ -260,19 +260,19 @@ app.use('/api/repartidor-liquidations', repartidorAssignmentRoutes);
 app.use('/api/repartidor-debts', repartidorDebtsRoutes);
 
 // Registrar nuevas rutas modulares
+// Note: Mount routes under their respective base paths to avoid conflicts
 app.use('/api/sales', salesRoutes(pool));
 app.use('/api/sales-items', salesRoutes(pool));
-app.use('/api/sync', salesRoutes(pool)); // Sales sync endpoints
 app.use('/api/expenses', expensesRoutes(pool));
-app.use('/api/sync', expensesRoutes(pool)); // Expenses sync endpoints
 app.use('/api/shifts', shiftsRoutes(pool));
-app.use('/api/sync', shiftsRoutes(pool)); // Shifts sync endpoints
 app.use('/api/cash-cuts', cashCutsRoutes(pool));
-app.use('/api/sync', cashCutsRoutes(pool)); // Cash cuts sync endpoints
 app.use('/api/purchases', purchasesRoutes(pool));
-app.use('/api/sync', purchasesRoutes(pool)); // Purchases sync endpoints
 app.use('/api/guardian-events', guardianEventsRoutes(pool, io)); // Requires io for Socket.IO
 app.use('/api/dashboard', dashboardRoutes(pool));
+
+// Sync endpoints are mounted at their service-specific paths
+// e.g., /api/sales/sync, /api/expenses/sync, /api/cash-cuts/sync, etc.
+// This avoids the /api/sync conflict that was happening before
 
 
 // ═══════════════════════════════════════════════════════════════
