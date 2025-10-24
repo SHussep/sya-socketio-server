@@ -60,6 +60,15 @@ const { initializeFirebase } = require('./utils/firebaseAdmin'); // Firebase Adm
 const notificationHelper = require('./utils/notificationHelper');
 const { requireAdminCredentials } = require('./middleware/adminAuth'); // Helper para enviar notificaciones en eventos
 
+// NUEVAS RUTAS MODULARES (refactorización de endpoints)
+const salesRoutes = require('./routes/sales');
+const expensesRoutes = require('./routes/expenses');
+const shiftsRoutes = require('./routes/shifts');
+const cashCutsRoutes = require('./routes/cashCuts');
+const purchasesRoutes = require('./routes/purchases');
+const guardianEventsRoutes = require('./routes/guardianEvents');
+const dashboardRoutes = require('./routes/dashboard');
+
 // Inicializar Firebase para notificaciones push
 initializeFirebase();
 
@@ -2784,6 +2793,21 @@ const repartidorDebtsRoutes = createRepartidorDebtsRoutes(io);
 app.use('/api/repartidor-assignments', repartidorAssignmentRoutes);
 app.use('/api/repartidor-liquidations', repartidorAssignmentRoutes);
 app.use('/api/repartidor-debts', repartidorDebtsRoutes);
+
+// Registrar nuevas rutas modulares
+app.use('/api/sales', salesRoutes(pool));
+app.use('/api/sales-items', salesRoutes(pool));
+app.use('/api/sync', salesRoutes(pool)); // Sales sync endpoints
+app.use('/api/expenses', expensesRoutes(pool));
+app.use('/api/sync', expensesRoutes(pool)); // Expenses sync endpoints
+app.use('/api/shifts', shiftsRoutes(pool));
+app.use('/api/sync', shiftsRoutes(pool)); // Shifts sync endpoints
+app.use('/api/cash-cuts', cashCutsRoutes(pool));
+app.use('/api/sync', cashCutsRoutes(pool)); // Cash cuts sync endpoints
+app.use('/api/purchases', purchasesRoutes(pool));
+app.use('/api/sync', purchasesRoutes(pool)); // Purchases sync endpoints
+app.use('/api/guardian-events', guardianEventsRoutes(pool, io)); // Requires io for Socket.IO
+app.use('/api/dashboard', dashboardRoutes(pool));
 
 io.on('connection', (socket) => {
     console.log(`[${new Date().toISOString()}] Cliente conectado: ${socket.id}`);

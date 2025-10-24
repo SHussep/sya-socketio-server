@@ -15,7 +15,9 @@
       "Bash(timeout 180 flutter run:*)",
       "Bash(PGPASSWORD=\"postgres\" psql:*)",
       "Bash(timeout 300 flutter run:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(git reset:*)",
+      "Bash(timeout 10 node:*)"
     ],
     "deny": [],
     "ask": []
