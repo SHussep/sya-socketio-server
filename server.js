@@ -57,7 +57,8 @@ const createRepartidorAssignmentRoutes = require('./routes/repartidor_assignment
 const createRepartidorDebtsRoutes = require('./routes/repartidor_debts'); // Rutas de deudas de repartidores
 const notificationRoutes = require('./routes/notifications'); // Rutas de notificaciones FCM
 const { initializeFirebase } = require('./utils/firebaseAdmin'); // Firebase Admin SDK
-const notificationHelper = require('./utils/notificationHelper'); // Helper para enviar notificaciones en eventos
+const notificationHelper = require('./utils/notificationHelper');
+const { requireAdminCredentials } = require('./middleware/adminAuth'); // Helper para enviar notificaciones en eventos
 
 // Inicializar Firebase para notificaciones push
 initializeFirebase();
@@ -95,7 +96,7 @@ app.get('/health', async (req, res) => {
 });
 
 // Ver todos los datos de la BD (para debugging)
-app.get('/api/database/view', async (req, res) => {
+app.get('/api/database/view', requireAdminCredentials, async (req, res) => {
     try {
         const tenants = await pool.query('SELECT * FROM tenants ORDER BY created_at DESC');
         const employees = await pool.query('SELECT id, tenant_id, username, full_name, email, role, is_active, created_at FROM employees ORDER BY created_at DESC');
@@ -118,7 +119,7 @@ app.get('/api/database/view', async (req, res) => {
 });
 
 // Arreglar tenants antiguos sin subscription_id
-app.post('/api/database/fix-old-tenants', async (req, res) => {
+app.post('/api/database/fix-old-tenants', requireAdminCredentials, async (req, res) => {
     try {
         // Obtener subscription Basic
         const subResult = await pool.query("SELECT id FROM subscriptions WHERE name = 'Basic' LIMIT 1");
@@ -144,7 +145,7 @@ app.post('/api/database/fix-old-tenants', async (req, res) => {
 });
 
 // Eliminar tenant y todos sus datos relacionados
-app.post('/api/database/delete-tenant-by-email', async (req, res) => {
+app.post('/api/database/delete-tenant-by-email', requireAdminCredentials, async (req, res) => {
     try {
         const { email } = req.body;
 
@@ -2047,9 +2048,9 @@ app.post('/api/sync/expenses', async (req, res) => {
 // POST /api/sync/cash-cuts - Alias de /api/cash-cuts (para compatibilidad con Desktop)
 app.post('/api/sync/cash-cuts', async (req, res) => {
     try {
-        const { tenantId, branchId, employeeId, cutNumber, totalSales, totalExpenses, cashInDrawer, expectedCash, difference, userEmail } = req.body;
+        const { tenantId, branchId, employeeId, cutNumber, totalSales, totalExpenses, cashInDrawer, expectedCash, difference, cutDate, userEmail } = req.body;
 
-        console.log(`[Sync/CashCuts] Desktop sync - Tenant: ${tenantId}, Branch: ${branchId}, Cut: ${cutNumber}`);
+        console.log(`[Sync/CashCuts] Desktop sync - Tenant: ${tenantId}, Branch: ${branchId}, Cut: ${cutNumber}, Date: ${cutDate}`);
 
         if (!tenantId || !branchId || !cutNumber) {
             return res.status(400).json({ success: false, message: 'Datos incompletos (tenantId, branchId, cutNumber requeridos)' });
@@ -2067,14 +2068,17 @@ app.post('/api/sync/cash-cuts', async (req, res) => {
             }
         }
 
+        // Usar cutDate del body, o si viene null, usar la fecha actual en UTC
+        const finalCutDate = cutDate || new Date().toISOString();
+
         const result = await pool.query(
-            `INSERT INTO cash_cuts (tenant_id, branch_id, employee_id, cut_number, total_sales, total_expenses, cash_in_drawer, expected_cash, difference)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            `INSERT INTO cash_cuts (tenant_id, branch_id, employee_id, cut_number, total_sales, total_expenses, cash_in_drawer, expected_cash, difference, cut_date)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
              RETURNING *`,
-            [tenantId, branchId, finalEmployeeId, cutNumber, totalSales || 0, totalExpenses || 0, cashInDrawer || 0, expectedCash || 0, difference || 0]
+            [tenantId, branchId, finalEmployeeId, cutNumber, totalSales || 0, totalExpenses || 0, cashInDrawer || 0, expectedCash || 0, difference || 0, finalCutDate]
         );
 
-        console.log(`[Sync/CashCuts] ✅ Corte sincronizado: ${cutNumber}`);
+        console.log(`[Sync/CashCuts] ✅ Corte sincronizado: ${cutNumber} - cut_date: ${finalCutDate}`);
         res.json({ success: true, data: result.rows[0] });
     } catch (error) {
         console.error('[Sync/CashCuts] Error:', error);

@@ -6,7 +6,16 @@
       "Bash(flutter run:*)",
       "Bash(PGPASSWORD=\"$DB_PASSWORD\" psql:*)",
       "Bash(adb shell:*)",
-      "Bash(powershell -Command:*)"
+      "Bash(powershell -Command:*)",
+      "Bash(xargs:*)",
+      "Bash(find:*)",
+      "Bash(flutter clean:*)",
+      "Bash(timeout 120 flutter run:*)",
+      "Bash(git pull:*)",
+      "Bash(timeout 180 flutter run:*)",
+      "Bash(PGPASSWORD=\"postgres\" psql:*)",
+      "Bash(timeout 300 flutter run:*)",
+      "Bash(cat:*)"
     ],
     "deny": [],
     "ask": []
