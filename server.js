@@ -427,6 +427,29 @@ io.on('connection', (socket) => {
         console.log(`[ALERT] Sucursal ${data.branchId}: ${data.eventType} (${data.severity})`);
         console.log(`[ALERT] Emitiendo a room: ${roomName}`);
 
+        // 💾 Guardar evento en PostgreSQL guardian_events
+        try {
+            const timestamp = new Date().toISOString();
+            const result = await pool.query(
+                `INSERT INTO guardian_events (branch_id, event_type, severity, title, description, weight_kg, timestamp)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)
+                 RETURNING *`,
+                [
+                    data.branchId,
+                    data.eventType,
+                    data.severity || 'medium',
+                    data.eventType,
+                    data.details || 'Alerta de báscula detectada',
+                    data.weightDetected || null,
+                    timestamp
+                ]
+            );
+            console.log(`[ALERT] 💾 Evento guardado en PostgreSQL - ID: ${result.rows[0].id}`);
+        } catch (dbError) {
+            console.error(`[ALERT] ⚠️ Error guardando en PostgreSQL: ${dbError.message}`);
+            // No fallar si hay error en DB
+        }
+
         // Emitir evento en tiempo real a la app móvil
         io.to(roomName).emit('scale_alert', { ...data, receivedAt: new Date().toISOString() });
 
