@@ -125,7 +125,7 @@ router.post('/upload-desktop', async (req, res) => {
             // PRIMERO: Eliminar backups viejos de esta branch de la BD (mantener solo el más reciente)
             await pool.query(
                 `DELETE FROM backup_metadata
-                 WHERE tenant_id = $1`,
+                 WHERE tenant_id = $1 AND branch_id = $2`,
                 [tenant_id, branch_id]
             );
 

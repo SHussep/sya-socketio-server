@@ -274,6 +274,14 @@ app.use('/api/dashboard', dashboardRoutes(pool));
 // e.g., /api/sales/sync, /api/expenses/sync, /api/cash-cuts/sync, etc.
 // This avoids the /api/sync conflict that was happening before
 
+// Alias routes for backwards compatibility with Desktop client
+// Desktop expects /api/sync/cash-cuts but we have /api/cash-cuts/sync
+app.post('/api/sync/cash-cuts', (req, res) => {
+    // Forward to the correct endpoint
+    req.url = '/sync';
+    req.baseUrl = '/api/cash-cuts';
+    cashCutsRoutes(pool)(req, res);
+});
 
 // ═══════════════════════════════════════════════════════════════
 // AUTHENTICATION MIDDLEWARE
