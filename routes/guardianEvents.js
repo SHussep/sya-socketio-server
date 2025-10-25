@@ -78,10 +78,15 @@ module.exports = (pool, io) => {
     });
 
     // POST /api/guardian-events - Crear evento Guardian (desde Desktop)
-    router.post('/', authenticateToken, async (req, res) => {
+    // Nota: Sin autenticación porque el evento ya incluye tenantId, branchId y employeeId del payload
+    router.post('/', async (req, res) => {
         try {
-            const { tenantId, employeeId } = req.user;
-            const { branchId, eventType, severity, title, description, weightKg, scaleId, metadata } = req.body;
+            const { tenantId, branchId, employeeId, eventType, severity, title, description, weightKg, scaleId, metadata } = req.body;
+
+            // Validar que tenemos los datos requeridos
+            if (!tenantId || !branchId || !employeeId || !eventType) {
+                return res.status(400).json({ success: false, message: 'Faltan campos requeridos: tenantId, branchId, employeeId, eventType' });
+            }
 
             const result = await pool.query(
                 `INSERT INTO guardian_events (tenant_id, branch_id, employee_id, event_type, severity, title, description, weight_kg, scale_id, metadata)
@@ -95,22 +100,21 @@ module.exports = (pool, io) => {
             console.log(`[Guardian Events] 🚨 Evento creado: ${eventType} - ${title}`);
 
             // ✅ Notificación en tiempo real vía Socket.IO
-            // Emitir evento solo a usuarios del mismo tenant
-            if (io) {
-                io.to(`tenant_${tenantId}`).emit('guardian_event', {
-                    id: event.id,
-                    eventType: event.event_type,
-                    severity: event.severity,
-                    title: event.title,
-                    description: event.description,
+            // Emitir evento al room de la sucursal específica para que móviles lo reciban
+            if (io && event.branch_id) {
+                io.to(`branch_${event.branch_id}`).emit('scale_alert', {
                     branchId: event.branch_id,
-                    weightKg: event.weight_kg,
-                    scaleId: event.scale_id,
-                    eventDate: event.event_date,
-                    timestamp: event.event_date
+                    alertId: event.id,
+                    severity: event.severity,
+                    eventType: event.event_type,
+                    weightDetected: event.weight_kg || 0,
+                    details: event.description || '',
+                    timestamp: event.event_date,
+                    employeeName: `Employee_${employeeId}`,
+                    receivedAt: new Date().toISOString()
                 });
 
-                console.log(`[Guardian Events] 📡 Notificación Socket.IO enviada a tenant_${tenantId}`);
+                console.log(`[Guardian Events] 📡 Evento 'scale_alert' emitido a branch_${event.branch_id} para app móvil`);
             }
 
             res.json({ success: true, data: event });
