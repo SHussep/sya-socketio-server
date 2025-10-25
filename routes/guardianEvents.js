@@ -5,6 +5,7 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const JWT_SECRET = process.env.JWT_SECRET;
+const notificationHelper = require('../utils/notificationHelper');
 
 // Middleware: Autenticación JWT
 function authenticateToken(req, res, next) {
@@ -115,6 +116,21 @@ module.exports = (pool, io) => {
                 });
 
                 console.log(`[Guardian Events] 📡 Evento 'scale_alert' emitido a branch_${event.branch_id} para app móvil`);
+            }
+
+            // ✅ Enviar notificación FCM a dispositivos móviles
+            if (event.branch_id) {
+                try {
+                    await notificationHelper.notifyScaleAlert(event.branch_id, {
+                        severity: event.severity || 'medium',
+                        eventType: event.event_type,
+                        details: event.description || 'Alerta de báscula detectada',
+                        employeeName: `Employee_${employeeId}`
+                    });
+                } catch (fcmError) {
+                    console.error(`[Guardian Events] ⚠️ Error enviando FCM: ${fcmError.message}`);
+                    // No fallar si hay error en FCM
+                }
             }
 
             res.json({ success: true, data: event });
