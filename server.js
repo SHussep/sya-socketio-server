@@ -415,19 +415,31 @@ io.on('connection', (socket) => {
     socket.on('scale_alert', async (data) => {
         stats.totalEvents++;
         const roomName = `branch_${data.branchId}`;
+
+        // DEBUG: Mostrar todos los datos recibidos
+        console.log(`[ALERT] 🔍 Datos recibidos:`, {
+            branchId: data.branchId,
+            eventType: data.eventType,
+            severity: data.severity,
+            employeeName: data.employeeName
+        });
+
         console.log(`[ALERT] Sucursal ${data.branchId}: ${data.eventType} (${data.severity})`);
+        console.log(`[ALERT] Emitiendo a room: ${roomName}`);
 
         // Emitir evento en tiempo real a la app móvil
         io.to(roomName).emit('scale_alert', { ...data, receivedAt: new Date().toISOString() });
 
         // Enviar notificación FCM a dispositivos de la sucursal
         try {
+            console.log(`[ALERT] 📬 Enviando FCM a sucursal ${data.branchId}...`);
             await notificationHelper.notifyScaleAlert(data.branchId, {
                 severity: data.severity || 'medium',
                 eventType: data.eventType,
                 details: data.details || 'Alerta de báscula detectada',
                 employeeName: data.employeeName || 'Unknown'
             });
+            console.log(`[ALERT] ✅ FCM enviado correctamente`);
         } catch (fcmError) {
             console.error(`[ALERT] ⚠️ Error enviando FCM: ${fcmError.message}`);
             // No fallar si hay error en FCM
