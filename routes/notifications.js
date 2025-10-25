@@ -310,8 +310,8 @@ router.post('/send-event', async (req, res) => {
         // Obtener dispositivos activos del empleado
         const result = await pool.query(
             `SELECT id, device_token FROM device_tokens
-             WHERE employee_id = $1 AND tenant_id = $2 AND is_active = true`,
-            [employeeId, tenantId]
+             WHERE employee_id = $1 AND is_active = true`,
+            [employeeId]
         );
 
         const deviceTokens = result.rows.map(row => row.device_token);
