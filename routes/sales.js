@@ -234,17 +234,22 @@ module.exports = (pool) => {
             console.log(`[Sync/Sales] 📤 About to insert - saleDate: ${saleDate} (type: ${typeof saleDate}, null: ${saleDate === null}, empty: ${saleDate === ''})`);
 
             // Determinar sale_type_id basado en ventaTipoId o sale_type
+            // ventaTipoId: 1=Mostrador, 2=Repartidor
             let finalSaleTypeId = ventaTipoId || (sale_type === 'delivery' ? 2 : 1);
             if (!ventaTipoId && !sale_type) finalSaleTypeId = 1; // Default: Mostrador
+
+            // ✅ IMPORTANTE: Mapear correctamente el sale_type TEXT basado en finalSaleTypeId
+            // 1 = 'counter', 2 = 'delivery'
+            const finalSaleType = finalSaleTypeId === 2 ? 'delivery' : 'counter';
 
             const result = await pool.query(
                 `INSERT INTO sales (tenant_id, branch_id, employee_id, ticket_number, total_amount, payment_method, payment_type_id, sale_type, sale_type_id, sale_date)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                  RETURNING *`,
-                [tenantId, branchId, finalEmployeeId, ticketNumber, numericTotalAmount, finalPaymentMethod, tipoPagoId || 1, sale_type || 'counter', finalSaleTypeId, saleDate]
+                [tenantId, branchId, finalEmployeeId, ticketNumber, numericTotalAmount, finalPaymentMethod, tipoPagoId || 1, finalSaleType, finalSaleTypeId, saleDate]
             );
 
-            console.log(`[Sync/Sales] ✅ Venta sincronizada: ${ticketNumber} - $${numericTotalAmount} | Pago: ${tipoPagoId} | Tipo: ${finalSaleTypeId}`);
+            console.log(`[Sync/Sales] ✅ Venta sincronizada: ${ticketNumber} - $${numericTotalAmount} | Pago: ${tipoPagoId} | Tipo: ${finalSaleType} (ID: ${finalSaleTypeId})`);
 
             // Asegurar que total_amount es un número en la respuesta
             const responseData = result.rows[0];
