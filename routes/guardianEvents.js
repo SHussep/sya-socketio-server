@@ -82,7 +82,7 @@ module.exports = (pool, io) => {
     // Nota: Sin autenticación porque el evento ya incluye tenantId, branchId y employeeId del payload
     router.post('/', async (req, res) => {
         try {
-            const { tenantId, branchId, employeeId, eventType, severity, title, description, weightKg, scaleId, metadata } = req.body;
+            const { tenantId, branchId, employeeId, eventType, severity, title, description, weightKg, scaleId, metadata, employeeName } = req.body;
 
             // Validar que tenemos los datos requeridos
             if (!tenantId || !branchId || !employeeId || !eventType) {
@@ -97,8 +97,9 @@ module.exports = (pool, io) => {
             );
 
             const event = result.rows[0];
+            const finalEmployeeName = employeeName || `Employee_${employeeId}`;  // Usar nombre si viene, si no usar ID
 
-            console.log(`[Guardian Events] 🚨 Evento creado: ${eventType} - ${title}`);
+            console.log(`[Guardian Events] 🚨 Evento creado: ${eventType} - ${title} (Empleado: ${finalEmployeeName})`);
 
             // ✅ Notificación en tiempo real vía Socket.IO
             // Emitir evento al room de la sucursal específica para que móviles lo reciban
@@ -111,11 +112,12 @@ module.exports = (pool, io) => {
                     weightDetected: event.weight_kg || 0,
                     details: event.description || '',
                     timestamp: event.event_date,
-                    employeeName: `Employee_${employeeId}`,
-                    receivedAt: new Date().toISOString()
+                    employeeName: finalEmployeeName,  // ← Usar nombre real
+                    receivedAt: new Date().toISOString(),
+                    source: 'api'  // Indicar que viene del endpoint API
                 });
 
-                console.log(`[Guardian Events] 📡 Evento 'scale_alert' emitido a branch_${event.branch_id} para app móvil`);
+                console.log(`[Guardian Events] 📡 Evento 'scale_alert' emitido a branch_${event.branch_id} para app móvil (Empleado: ${finalEmployeeName})`);
             }
 
             // ✅ Enviar notificación FCM a dispositivos móviles
@@ -125,15 +127,16 @@ module.exports = (pool, io) => {
                         severity: event.severity || 'medium',
                         eventType: event.event_type,
                         details: event.description || 'Alerta de báscula detectada',
-                        employeeName: `Employee_${employeeId}`
+                        employeeName: finalEmployeeName  // ← Usar nombre real
                     });
+                    console.log(`[Guardian Events] ✅ FCM enviado: ${eventType} (${finalEmployeeName})`);
                 } catch (fcmError) {
                     console.error(`[Guardian Events] ⚠️ Error enviando FCM: ${fcmError.message}`);
                     // No fallar si hay error en FCM
                 }
             }
 
-            res.json({ success: true, data: event });
+            res.json({ success: true, data: event, message: 'Evento Guardian guardado y notificación enviada' });
         } catch (error) {
             console.error('[Guardian Events] Error:', error);
             res.status(500).json({ success: false, message: 'Error al crear evento Guardian' });

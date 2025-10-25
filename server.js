@@ -427,79 +427,18 @@ io.on('connection', (socket) => {
         console.log(`[ALERT] Sucursal ${data.branchId}: ${data.eventType} (${data.severity})`);
         console.log(`[ALERT] Emitiendo a room: ${roomName}`);
 
-        // 💾 Guardar evento en PostgreSQL guardian_events
-        try {
-            const timestamp = new Date().toISOString();
+        // ⚠️ IMPORTANTE: NO guardar en BD aquí ni enviar FCM
+        // Desktop ya envía los eventos via REST API (/api/guardian-events)
+        // que se encarga del guardado en BD y envío de FCM
+        // Solo emitimos aquí para eventos en TIEMPO REAL (actualizaciones que no fueron guardadas en Desktop)
 
-            // ✅ OBTENER TENANT_ID DEL BRANCH_ID para que app móvil pueda recuperar eventos
-            let tenantId = null;
-            let employeeId = null;
-
-            try {
-                // Obtener tenant_id a partir del branch_id
-                const branchResult = await pool.query(
-                    'SELECT tenant_id FROM branches WHERE id = $1',
-                    [data.branchId]
-                );
-                if (branchResult.rows.length > 0) {
-                    tenantId = branchResult.rows[0].tenant_id;
-                }
-
-                // Obtener employee_id a partir del nombre del empleado si es posible
-                if (data.employeeName) {
-                    const employeeResult = await pool.query(
-                        'SELECT id FROM employees WHERE full_name = $1 AND branch_id = $2 LIMIT 1',
-                        [data.employeeName, data.branchId]
-                    );
-                    if (employeeResult.rows.length > 0) {
-                        employeeId = employeeResult.rows[0].id;
-                    }
-                }
-            } catch (lookupError) {
-                console.warn(`[ALERT] ⚠️ Error buscando tenant/employee: ${lookupError.message}`);
-            }
-
-            const result = await pool.query(
-                `INSERT INTO guardian_events (tenant_id, branch_id, employee_id, event_type, severity, title, description, weight_kg, scale_id, event_date, is_read)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-                 RETURNING *`,
-                [
-                    tenantId,
-                    data.branchId,
-                    employeeId,
-                    data.eventType,
-                    data.severity || 'medium',
-                    data.eventType,
-                    data.details || 'Alerta de báscula detectada',
-                    data.weightDetected || null,
-                    data.alertId || null,  // ← scale_id
-                    timestamp,  // ← event_date (no timestamp)
-                    false  // ← is_read
-                ]
-            );
-            console.log(`[ALERT] 💾 Evento guardado en PostgreSQL - ID: ${result.rows[0].id} (Tenant: ${tenantId}, Employee: ${employeeId})`);
-        } catch (dbError) {
-            console.error(`[ALERT] ❌ Error guardando en PostgreSQL: ${dbError.message}`);
-            // No fallar si hay error en DB
-        }
-
-        // Emitir evento en tiempo real a la app móvil
-        io.to(roomName).emit('scale_alert', { ...data, receivedAt: new Date().toISOString() });
-
-        // Enviar notificación FCM a dispositivos de la sucursal
-        try {
-            console.log(`[ALERT] 📬 Enviando FCM a sucursal ${data.branchId}...`);
-            await notificationHelper.notifyScaleAlert(data.branchId, {
-                severity: data.severity || 'medium',
-                eventType: data.eventType,
-                details: data.details || 'Alerta de báscula detectada',
-                employeeName: data.employeeName || 'Unknown'
-            });
-            console.log(`[ALERT] ✅ FCM enviado correctamente`);
-        } catch (fcmError) {
-            console.error(`[ALERT] ⚠️ Error enviando FCM: ${fcmError.message}`);
-            // No fallar si hay error en FCM
-        }
+        // ✅ Emitir evento en tiempo real a la app móvil (para actualizaciones instantáneas)
+        console.log(`[ALERT] 📡 Emitiendo evento en tiempo real (scale_alert) a branch_${data.branchId}`);
+        io.to(roomName).emit('scale_alert', {
+            ...data,
+            receivedAt: new Date().toISOString(),
+            source: 'realtime'  // Indicar que es un evento en tiempo real
+        });
     });
 
     socket.on('scale_disconnected', (data) => {
