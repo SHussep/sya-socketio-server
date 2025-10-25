@@ -269,4 +269,157 @@ router.post('/send-to-employee', async (req, res) => {
     }
 });
 
+// ═══════════════════════════════════════════════════════════════
+// POST /api/notifications/send-event
+// Envía notificación de evento (login, cash-cut) con timestamp del cliente
+// Soporta offline-first con tracking de sincronización
+// ═══════════════════════════════════════════════════════════════
+router.post('/send-event', async (req, res) => {
+    const {
+        employeeId,
+        tenantId,
+        eventType, // 'login' | 'cash-cut-created' | 'cash-cut-closed'
+        userName,
+        scaleStatus, // 'connected' | 'disconnected' | null
+        eventTime, // ISO timestamp from client
+        data = {}
+    } = req.body;
+
+    // Validaciones
+    if (!employeeId || !tenantId || !eventType || !userName || !eventTime) {
+        return res.status(400).json({
+            success: false,
+            message: 'Missing required fields: employeeId, tenantId, eventType, userName, eventTime'
+        });
+    }
+
+    // Solo enviar notificaciones de login si hay báscula configurada
+    if (eventType === 'login' && scaleStatus === null) {
+        console.log(`[Notifications] ℹ️ Skip login - no scale configured for employee ${employeeId}`);
+        return res.status(200).json({
+            success: true,
+            message: 'No scale configured - notification not sent',
+            isSynced: false,
+            sent: 0
+        });
+    }
+
+    try {
+        console.log(`[Notifications] 📤 Processing event: ${eventType} for employee ${employeeId}`);
+
+        // Obtener dispositivos activos del empleado
+        const result = await pool.query(
+            `SELECT id, device_token FROM device_tokens
+             WHERE employee_id = $1 AND tenant_id = $2 AND is_active = true`,
+            [employeeId, tenantId]
+        );
+
+        const deviceTokens = result.rows.map(row => row.device_token);
+
+        if (deviceTokens.length === 0) {
+            console.log(`[Notifications] ℹ️ No active devices for employee ${employeeId}`);
+            return res.status(200).json({
+                success: true,
+                message: 'No active devices found',
+                isSynced: false,
+                sent: 0
+            });
+        }
+
+        // Construir título y body según el tipo de evento
+        let notificationTitle = '';
+        let notificationBody = '';
+
+        switch (eventType) {
+            case 'login':
+                const scaleText = scaleStatus === 'connected' ? 'conectada' : 'desconectada';
+                notificationTitle = 'Nuevo Acceso';
+                notificationBody = `${userName} inició sesión (báscula ${scaleText})`;
+                break;
+
+            case 'cash-cut-created':
+                notificationTitle = 'Cierre de Caja Iniciado';
+                notificationBody = `${userName} inició un cierre de caja`;
+                break;
+
+            case 'cash-cut-closed':
+                notificationTitle = 'Cierre de Caja Completado';
+                notificationBody = `${userName} completó el cierre de caja`;
+                break;
+
+            default:
+                notificationTitle = 'Notificación';
+                notificationBody = `Evento: ${eventType}`;
+        }
+
+        // Intentar enviar notificaciones FCM
+        let successCount = 0;
+        let failureCount = 0;
+        const invalidTokens = [];
+
+        const notificationData = {
+            eventType: eventType,
+            eventTime: eventTime, // Usar timestamp del cliente
+            userName: userName,
+            scaleStatus: scaleStatus || 'none',
+            isSynced: 'true',
+            ...data
+        };
+
+        // Intentar enviar a cada dispositivo
+        for (const token of deviceTokens) {
+            try {
+                const sendResult = await sendNotificationToDevice(token, {
+                    title: notificationTitle,
+                    body: notificationBody,
+                    data: notificationData
+                });
+
+                if (sendResult.success) {
+                    successCount++;
+                } else {
+                    failureCount++;
+                    if (sendResult.result === 'INVALID_TOKEN') {
+                        invalidTokens.push(token);
+                    }
+                }
+            } catch (err) {
+                console.error(`[Notifications] ❌ Error sending to token: ${err.message}`);
+                failureCount++;
+            }
+        }
+
+        // Deactivar tokens inválidos
+        if (invalidTokens.length > 0) {
+            await pool.query(
+                `UPDATE device_tokens SET is_active = false
+                 WHERE device_token = ANY($1)`,
+                [invalidTokens]
+            );
+            console.log(`[Notifications] 🧹 Deactivated ${invalidTokens.length} invalid tokens`);
+        }
+
+        console.log(`[Notifications] ✅ Event ${eventType} sent: ${successCount}/${deviceTokens.length}`);
+
+        res.status(200).json({
+            success: true,
+            message: 'Notification sent successfully',
+            eventType: eventType,
+            eventTime: eventTime,
+            sent: successCount,
+            failed: failureCount,
+            isSynced: true
+        });
+
+    } catch (error) {
+        console.error('[Notifications] ❌ Error in send-event:', error.message);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to send notification',
+            error: error.message,
+            isSynced: false
+        });
+    }
+});
+
 module.exports = router;
