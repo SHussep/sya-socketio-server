@@ -4,6 +4,10 @@
 // ✅ Repartidor system with debts endpoint support
 // ═══════════════════════════════════════════════════════════════
 
+// 🔴 CRITICAL: Forzar timezone UTC en el servidor
+// Sin esto, new Date().toISOString() usa la timezone del sistema (Sydney en Render)
+process.env.TZ = 'UTC';
+
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
