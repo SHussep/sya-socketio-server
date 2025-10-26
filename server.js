@@ -68,6 +68,7 @@ const cashCutsRoutes = require('./routes/cashCuts');
 const purchasesRoutes = require('./routes/purchases');
 const guardianEventsRoutes = require('./routes/guardianEvents');
 const dashboardRoutes = require('./routes/dashboard');
+const adminRoutes = require('./routes/admin');
 
 // Inicializar Firebase para notificaciones push
 initializeFirebase();
@@ -269,6 +270,7 @@ app.use('/api/cash-cuts', cashCutsRoutes(pool));
 app.use('/api/purchases', purchasesRoutes(pool));
 app.use('/api/guardian-events', guardianEventsRoutes(pool, io)); // Requires io for Socket.IO
 app.use('/api/dashboard', dashboardRoutes(pool));
+app.use('/api/admin', adminRoutes(pool)); // Rutas de administración
 
 // Sync endpoints are mounted at their service-specific paths
 // e.g., /api/sales/sync, /api/expenses/sync, /api/cash-cuts/sync, etc.
