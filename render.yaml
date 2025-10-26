@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: sya-socketio-server
+    env: node
+    plan: standard
+    startCommand: npm start
+    envVars:
+      - key: TZ
+        value: UTC
+      - key: NODE_ENV
+        value: production
