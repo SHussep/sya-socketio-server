@@ -68,9 +68,15 @@ module.exports = (pool, io) => {
 
             const result = await pool.query(query, params);
 
+            // Format timestamps as ISO strings in UTC
+            const formattedRows = result.rows.map(row => ({
+                ...row,
+                event_date: row.event_date ? new Date(row.event_date).toISOString() : null
+            }));
+
             res.json({
                 success: true,
-                data: result.rows
+                data: formattedRows
             });
         } catch (error) {
             console.error('[Guardian Events] Error:', error);

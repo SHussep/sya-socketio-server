@@ -59,9 +59,16 @@ module.exports = (pool) => {
             const shift = result.rows[0];
             console.log(`[Shifts] 🚀 Turno abierto: ID ${shift.id} - Empleado ${employeeId} - Sucursal ${branchId}`);
 
+            // Format timestamps as ISO strings in UTC
+            const formattedShift = {
+                ...shift,
+                start_time: shift.start_time ? new Date(shift.start_time).toISOString() : null,
+                created_at: shift.created_at ? new Date(shift.created_at).toISOString() : null
+            };
+
             res.json({
                 success: true,
-                data: shift,
+                data: formattedShift,
                 message: 'Turno abierto exitosamente'
             });
 
@@ -106,9 +113,16 @@ module.exports = (pool) => {
             const shift = result.rows[0];
             console.log(`[Shifts] 🔒 Turno cerrado: ID ${shift.id} - Empleado ${employeeId}`);
 
+            // Format timestamps as ISO strings in UTC
+            const formattedShift = {
+                ...shift,
+                start_time: shift.start_time ? new Date(shift.start_time).toISOString() : null,
+                end_time: shift.end_time ? new Date(shift.end_time).toISOString() : null
+            };
+
             res.json({
                 success: true,
-                data: shift,
+                data: formattedShift,
                 message: 'Turno cerrado exitosamente'
             });
 
@@ -159,9 +173,16 @@ module.exports = (pool) => {
 
             console.log(`[Shifts Current] ✅ Found shift ID ${result.rows[0].id} in branch ${result.rows[0].branch_name}`);
 
+            // Format timestamps as ISO strings in UTC
+            const formattedShift = result.rows[0] ? {
+                ...result.rows[0],
+                start_time: result.rows[0].start_time ? new Date(result.rows[0].start_time).toISOString() : null,
+                end_time: result.rows[0].end_time ? new Date(result.rows[0].end_time).toISOString() : null
+            } : null;
+
             res.json({
                 success: true,
-                data: result.rows[0]
+                data: formattedShift
             });
 
         } catch (error) {
@@ -209,9 +230,16 @@ module.exports = (pool) => {
 
             const result = await pool.query(query, params);
 
+            // Format timestamps as ISO strings in UTC
+            const formattedRows = result.rows.map(row => ({
+                ...row,
+                start_time: row.start_time ? new Date(row.start_time).toISOString() : null,
+                end_time: row.end_time ? new Date(row.end_time).toISOString() : null
+            }));
+
             res.json({
                 success: true,
-                data: result.rows
+                data: formattedRows
             });
 
         } catch (error) {
@@ -263,13 +291,20 @@ module.exports = (pool) => {
 
             const result = await pool.query(query, params);
 
+            // Format timestamps as ISO strings in UTC
+            const formattedRows = result.rows.map(row => ({
+                ...row,
+                start_time: row.start_time ? new Date(row.start_time).toISOString() : null,
+                end_time: row.end_time ? new Date(row.end_time).toISOString() : null
+            }));
+
             // Calcular totales
             const summary = {
-                total_shifts: result.rows.length,
-                total_transactions: result.rows.reduce((sum, shift) => sum + (shift.transaction_counter || 0), 0),
-                total_initial: result.rows.reduce((sum, shift) => sum + parseFloat(shift.initial_amount || 0), 0),
-                total_final: result.rows.reduce((sum, shift) => sum + parseFloat(shift.final_amount || 0), 0),
-                shifts: result.rows
+                total_shifts: formattedRows.length,
+                total_transactions: formattedRows.reduce((sum, shift) => sum + (shift.transaction_counter || 0), 0),
+                total_initial: formattedRows.reduce((sum, shift) => sum + parseFloat(shift.initial_amount || 0), 0),
+                total_final: formattedRows.reduce((sum, shift) => sum + parseFloat(shift.final_amount || 0), 0),
+                shifts: formattedRows
             };
 
             summary.total_difference = summary.total_final - summary.total_initial;

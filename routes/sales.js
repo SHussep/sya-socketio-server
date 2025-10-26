@@ -99,10 +99,14 @@ module.exports = (pool) => {
                 console.log(`[Sales] IDs: ${result.rows.map(r => r.id).join(', ')}`);
             }
 
-            // Normalizar total_amount a número en todas las filas
+            // Normalizar total_amount a número y formatear timestamps en UTC
             const normalizedRows = result.rows.map(row => ({
                 ...row,
-                total_amount: parseFloat(row.total_amount)
+                total_amount: parseFloat(row.total_amount),
+                // Ensure sale_date is always sent as ISO string in UTC (Z suffix)
+                sale_date: row.sale_date ? new Date(row.sale_date).toISOString() : null,
+                // Convert sale_date_display to ISO string as well
+                sale_date_display: row.sale_date_display ? new Date(row.sale_date_display).toISOString() : null
             }));
 
             res.json({
@@ -251,10 +255,14 @@ module.exports = (pool) => {
 
             console.log(`[Sync/Sales] ✅ Venta sincronizada: ${ticketNumber} - $${numericTotalAmount} | Pago: ${tipoPagoId} | Tipo: ${finalSaleType} (ID: ${finalSaleTypeId})`);
 
-            // Asegurar que total_amount es un número en la respuesta
+            // Asegurar que total_amount es un número y formatear timestamps en UTC
             const responseData = result.rows[0];
             if (responseData) {
                 responseData.total_amount = parseFloat(responseData.total_amount);
+                // Format timestamps as ISO strings in UTC
+                if (responseData.sale_date) {
+                    responseData.sale_date = new Date(responseData.sale_date).toISOString();
+                }
             }
 
             res.json({ success: true, data: responseData });

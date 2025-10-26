@@ -46,9 +46,15 @@ module.exports = (pool) => {
                 [tenantId, limit, offset]
             );
 
+            // Format timestamps as ISO strings in UTC
+            const formattedRows = result.rows.map(row => ({
+                ...row,
+                cut_date: row.cut_date ? new Date(row.cut_date).toISOString() : null
+            }));
+
             res.json({
                 success: true,
-                data: result.rows
+                data: formattedRows
             });
         } catch (error) {
             console.error('[Cash Cuts] Error:', error);
@@ -70,7 +76,14 @@ module.exports = (pool) => {
             );
 
             console.log(`[Cash Cuts] ✅ Corte creado: ${cutNumber}`);
-            res.json({ success: true, data: result.rows[0] });
+
+            // Format timestamps as ISO strings in UTC
+            const formattedData = {
+                ...result.rows[0],
+                cut_date: result.rows[0].cut_date ? new Date(result.rows[0].cut_date).toISOString() : null
+            };
+
+            res.json({ success: true, data: formattedData });
         } catch (error) {
             console.error('[Cash Cuts] Error:', error);
             res.status(500).json({ success: false, message: 'Error al crear corte de caja' });
@@ -111,7 +124,14 @@ module.exports = (pool) => {
             );
 
             console.log(`[Sync/CashCuts] ✅ Corte sincronizado: ${cutNumber} - cut_date: ${finalCutDate}`);
-            res.json({ success: true, data: result.rows[0] });
+
+            // Format timestamps as ISO strings in UTC
+            const formattedData = {
+                ...result.rows[0],
+                cut_date: result.rows[0].cut_date ? new Date(result.rows[0].cut_date).toISOString() : null
+            };
+
+            res.json({ success: true, data: formattedData });
         } catch (error) {
             console.error('[Sync/CashCuts] Error:', error);
             res.status(500).json({ success: false, message: 'Error al sincronizar corte', error: error.message });

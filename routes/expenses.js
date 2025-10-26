@@ -86,10 +86,14 @@ module.exports = (pool) => {
 
             console.log(`[Expenses] ✅ Gastos encontrados: ${result.rows.length}`);
 
-            // Normalizar amount a número en todas las filas
+            // Normalizar amount a número y formatear timestamps en UTC
             const normalizedRows = result.rows.map(row => ({
                 ...row,
-                amount: parseFloat(row.amount)
+                amount: parseFloat(row.amount),
+                // Ensure expense_date is always sent as ISO string in UTC (Z suffix)
+                expense_date: row.expense_date ? new Date(row.expense_date).toISOString() : null,
+                // Convert expense_date_display to ISO string as well
+                expense_date_display: row.expense_date_display ? new Date(row.expense_date_display).toISOString() : null
             }));
 
             res.json({

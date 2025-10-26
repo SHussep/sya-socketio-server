@@ -57,9 +57,15 @@ module.exports = (pool) => {
 
             const result = await pool.query(query, params);
 
+            // Format timestamps as ISO strings in UTC
+            const formattedRows = result.rows.map(row => ({
+                ...row,
+                purchase_date: row.purchase_date ? new Date(row.purchase_date).toISOString() : null
+            }));
+
             res.json({
                 success: true,
-                data: result.rows
+                data: formattedRows
             });
         } catch (error) {
             console.error('[Purchases] Error:', error);
@@ -96,7 +102,14 @@ module.exports = (pool) => {
             );
 
             console.log(`[Purchases] ✅ Compra creada desde Desktop: ${purchaseNumber} - $${totalAmount}`);
-            res.json({ success: true, data: result.rows[0] });
+
+            // Format timestamps as ISO strings in UTC
+            const formattedData = {
+                ...result.rows[0],
+                purchase_date: result.rows[0].purchase_date ? new Date(result.rows[0].purchase_date).toISOString() : null
+            };
+
+            res.json({ success: true, data: formattedData });
         } catch (error) {
             console.error('[Purchases] Error:', error);
             res.status(500).json({ success: false, message: 'Error al crear compra' });
