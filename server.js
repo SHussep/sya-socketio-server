@@ -73,6 +73,9 @@ const purchasesRoutes = require('./routes/purchases');
 const guardianEventsRoutes = require('./routes/guardianEvents');
 const dashboardRoutes = require('./routes/dashboard');
 const adminRoutes = require('./routes/admin');
+const depositsRoutes = require('./routes/deposits');
+const withdrawalsRoutes = require('./routes/withdrawals');
+const newCashCutsRoutes = require('./routes/cash-cuts');
 
 // Inicializar Firebase para notificaciones push
 initializeFirebase();
@@ -318,6 +321,11 @@ app.use('/api/guardian-events', guardianEventsRoutes(pool, io)); // Requires io 
 app.use('/api/dashboard', dashboardRoutes(pool));
 app.use('/api/admin', adminRoutes(pool)); // Rutas de administración
 
+// FASE 1: Cash Management Routes (Deposits, Withdrawals, Cash Cuts)
+app.use('/api/deposits', depositsRoutes(pool));
+app.use('/api/withdrawals', withdrawalsRoutes(pool));
+app.use('/api/cash-cuts-new', newCashCutsRoutes(pool)); // New comprehensive cash cuts endpoint
+
 // Sync endpoints are mounted at their service-specific paths
 // e.g., /api/sales/sync, /api/expenses/sync, /api/cash-cuts/sync, etc.
 // This avoids the /api/sync conflict that was happening before
@@ -329,6 +337,25 @@ app.post('/api/sync/cash-cuts', (req, res) => {
     req.url = '/sync';
     req.baseUrl = '/api/cash-cuts';
     cashCutsRoutes(pool)(req, res);
+});
+
+// Alias routes for FASE 1 cash management endpoints
+app.post('/api/deposits/sync', (req, res) => {
+    req.url = '/sync';
+    req.baseUrl = '/api/deposits';
+    depositsRoutes(pool)(req, res);
+});
+
+app.post('/api/withdrawals/sync', (req, res) => {
+    req.url = '/sync';
+    req.baseUrl = '/api/withdrawals';
+    withdrawalsRoutes(pool)(req, res);
+});
+
+app.post('/api/cash-cuts-new/sync', (req, res) => {
+    req.url = '/sync';
+    req.baseUrl = '/api/cash-cuts-new';
+    newCashCutsRoutes(pool)(req, res);
 });
 
 // ═══════════════════════════════════════════════════════════════
