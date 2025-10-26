@@ -110,7 +110,7 @@ app.get('/health', async (req, res) => {
 });
 
 // 🔍 Diagnostic endpoint to verify timezone configuration
-app.get('/timezone-diagnostic', async (req, res) => {
+app.get('/timezone-diagnostic', (req, res) => {
     try {
         const now = new Date();
         const tzEnvVar = process.env.TZ;
@@ -124,13 +124,6 @@ app.get('/timezone-diagnostic', async (req, res) => {
 
         // Test a known timestamp
         const testDate = new Date('2025-10-26T19:35:13.276Z'); // Known Sydney time
-
-        // Query database to verify storage format
-        const dbTimeTest = await pool.query(
-            "SELECT NOW() as server_time, NOW()::text as server_time_text, " +
-            "NOW() AT TIME ZONE 'UTC' as utc_time, " +
-            "NOW() AT TIME ZONE 'Australia/Sydney' as sydney_time"
-        );
 
         res.json({
             diagnostic: {
@@ -146,19 +139,15 @@ app.get('/timezone-diagnostic', async (req, res) => {
                     javascript_utc_string: now.toUTCString(),
                     test_timestamp_iso: testDate.toISOString()
                 },
-                database_times: {
-                    server_now: dbTimeTest.rows[0].server_time,
-                    server_now_text: dbTimeTest.rows[0].server_time_text,
-                    utc_view: dbTimeTest.rows[0].utc_time,
-                    sydney_view: dbTimeTest.rows[0].sydney_time
-                },
+                node_version: process.version,
+                platform: process.platform,
                 critical_issue: tzOffset !== '+00:00' ?
                     '⚠️ TIMEZONE NOT SET TO UTC! Data will be stored with wrong offset.' :
                     '✅ Timezone is correctly set to UTC'
             }
         });
     } catch (error) {
-        res.status(500).json({ status: 'error', message: error.message });
+        res.status(500).json({ status: 'error', message: error.message, stack: error.stack });
     }
 });
 
