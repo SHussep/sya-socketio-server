@@ -5,31 +5,97 @@
 -- 1. SALES - Convert sale_date to TIMESTAMP WITH TIME ZONE in UTC
 -- This fixes the timezone issue where sales were saved with server timezone (+1100)
 -- instead of UTC (+0000)
-ALTER TABLE sales
-  ALTER COLUMN sale_date TYPE TIMESTAMP WITH TIME ZONE
-    USING sale_date AT TIME ZONE 'UTC';
+-- Note: Using CREATE/DROP approach because views depend on this column
+DO $$
+BEGIN
+  -- Check if sale_date is already TIMESTAMP WITH TIME ZONE
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'sales' AND column_name = 'sale_date'
+    AND data_type = 'timestamp without time zone'
+  ) THEN
+    -- Create temporary column with correct type
+    ALTER TABLE sales ADD COLUMN sale_date_tmp TIMESTAMP WITH TIME ZONE;
+    -- Copy data with timezone conversion
+    UPDATE sales SET sale_date_tmp = sale_date AT TIME ZONE 'UTC';
+    -- Drop old column
+    ALTER TABLE sales DROP COLUMN sale_date;
+    -- Rename temporary column
+    ALTER TABLE sales RENAME COLUMN sale_date_tmp TO sale_date;
+  END IF;
+END $$;
 
 -- 2. EXPENSES - Convert expense_date to TIMESTAMP WITH TIME ZONE in UTC
-ALTER TABLE expenses
-  ALTER COLUMN expense_date TYPE TIMESTAMP WITH TIME ZONE
-    USING expense_date AT TIME ZONE 'UTC';
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'expenses' AND column_name = 'expense_date' AND data_type = 'timestamp without time zone') THEN
+    ALTER TABLE expenses ADD COLUMN expense_date_tmp TIMESTAMP WITH TIME ZONE;
+    UPDATE expenses SET expense_date_tmp = expense_date AT TIME ZONE 'UTC';
+    ALTER TABLE expenses DROP COLUMN expense_date;
+    ALTER TABLE expenses RENAME COLUMN expense_date_tmp TO expense_date;
+  END IF;
+END $$;
 
 -- 3. PURCHASES - Also convert purchase_date for consistency
-ALTER TABLE purchases
-  ALTER COLUMN purchase_date TYPE TIMESTAMP WITH TIME ZONE
-    USING purchase_date AT TIME ZONE 'UTC';
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'purchases' AND column_name = 'purchase_date' AND data_type = 'timestamp without time zone') THEN
+    ALTER TABLE purchases ADD COLUMN purchase_date_tmp TIMESTAMP WITH TIME ZONE;
+    UPDATE purchases SET purchase_date_tmp = purchase_date AT TIME ZONE 'UTC';
+    ALTER TABLE purchases DROP COLUMN purchase_date;
+    ALTER TABLE purchases RENAME COLUMN purchase_date_tmp TO purchase_date;
+  END IF;
+END $$;
 
 -- 4. CASH_DRAWER_SESSIONS - Convert all session timestamps
-ALTER TABLE cash_drawer_sessions
-  ALTER COLUMN start_time TYPE TIMESTAMP WITH TIME ZONE USING start_time AT TIME ZONE 'UTC',
-  ALTER COLUMN close_time TYPE TIMESTAMP WITH TIME ZONE USING close_time AT TIME ZONE 'UTC',
-  ALTER COLUMN opened_at TYPE TIMESTAMP WITH TIME ZONE USING opened_at AT TIME ZONE 'UTC',
-  ALTER COLUMN closed_at TYPE TIMESTAMP WITH TIME ZONE USING closed_at AT TIME ZONE 'UTC';
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'cash_drawer_sessions' AND column_name = 'start_time' AND data_type = 'timestamp without time zone') THEN
+    ALTER TABLE cash_drawer_sessions ADD COLUMN start_time_tmp TIMESTAMP WITH TIME ZONE;
+    UPDATE cash_drawer_sessions SET start_time_tmp = start_time AT TIME ZONE 'UTC';
+    ALTER TABLE cash_drawer_sessions DROP COLUMN start_time;
+    ALTER TABLE cash_drawer_sessions RENAME COLUMN start_time_tmp TO start_time;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'cash_drawer_sessions' AND column_name = 'close_time' AND data_type = 'timestamp without time zone') THEN
+    ALTER TABLE cash_drawer_sessions ADD COLUMN close_time_tmp TIMESTAMP WITH TIME ZONE;
+    UPDATE cash_drawer_sessions SET close_time_tmp = close_time AT TIME ZONE 'UTC';
+    ALTER TABLE cash_drawer_sessions DROP COLUMN close_time;
+    ALTER TABLE cash_drawer_sessions RENAME COLUMN close_time_tmp TO close_time;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'cash_drawer_sessions' AND column_name = 'opened_at' AND data_type = 'timestamp without time zone') THEN
+    ALTER TABLE cash_drawer_sessions ADD COLUMN opened_at_tmp TIMESTAMP WITH TIME ZONE;
+    UPDATE cash_drawer_sessions SET opened_at_tmp = opened_at AT TIME ZONE 'UTC';
+    ALTER TABLE cash_drawer_sessions DROP COLUMN opened_at;
+    ALTER TABLE cash_drawer_sessions RENAME COLUMN opened_at_tmp TO opened_at;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'cash_drawer_sessions' AND column_name = 'closed_at' AND data_type = 'timestamp without time zone') THEN
+    ALTER TABLE cash_drawer_sessions ADD COLUMN closed_at_tmp TIMESTAMP WITH TIME ZONE;
+    UPDATE cash_drawer_sessions SET closed_at_tmp = closed_at AT TIME ZONE 'UTC';
+    ALTER TABLE cash_drawer_sessions DROP COLUMN closed_at;
+    ALTER TABLE cash_drawer_sessions RENAME COLUMN closed_at_tmp TO closed_at;
+  END IF;
+END $$;
 
 -- 5. CASH_TRANSACTIONS - Convert transaction timestamps
-ALTER TABLE cash_transactions
-  ALTER COLUMN transaction_timestamp TYPE TIMESTAMP WITH TIME ZONE USING transaction_timestamp AT TIME ZONE 'UTC',
-  ALTER COLUMN voided_at TYPE TIMESTAMP WITH TIME ZONE USING voided_at AT TIME ZONE 'UTC';
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'cash_transactions' AND column_name = 'transaction_timestamp' AND data_type = 'timestamp without time zone') THEN
+    ALTER TABLE cash_transactions ADD COLUMN transaction_timestamp_tmp TIMESTAMP WITH TIME ZONE;
+    UPDATE cash_transactions SET transaction_timestamp_tmp = transaction_timestamp AT TIME ZONE 'UTC';
+    ALTER TABLE cash_transactions DROP COLUMN transaction_timestamp;
+    ALTER TABLE cash_transactions RENAME COLUMN transaction_timestamp_tmp TO transaction_timestamp;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'cash_transactions' AND column_name = 'voided_at' AND data_type = 'timestamp without time zone') THEN
+    ALTER TABLE cash_transactions ADD COLUMN voided_at_tmp TIMESTAMP WITH TIME ZONE;
+    UPDATE cash_transactions SET voided_at_tmp = voided_at AT TIME ZONE 'UTC';
+    ALTER TABLE cash_transactions DROP COLUMN voided_at;
+    ALTER TABLE cash_transactions RENAME COLUMN voided_at_tmp TO voided_at;
+  END IF;
+END $$;
 
 -- Create indexes for better performance
 CREATE INDEX IF NOT EXISTS idx_sales_sale_date ON sales(sale_date DESC);

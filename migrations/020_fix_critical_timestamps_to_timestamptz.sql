@@ -5,8 +5,7 @@
 
 -- 1. GUARDIAN_EVENTS - Real-time scale alert detection
 ALTER TABLE guardian_events
-  ALTER COLUMN event_date TYPE TIMESTAMP WITH TIME ZONE USING event_date AT TIME ZONE 'UTC',
-  ALTER COLUMN timestamp TYPE TIMESTAMP WITH TIME ZONE USING timestamp AT TIME ZONE 'UTC';
+  ALTER COLUMN event_date TYPE TIMESTAMP WITH TIME ZONE USING event_date AT TIME ZONE 'UTC';
 
 -- 2. SHIFTS - Real-time shift start/end tracking
 ALTER TABLE shifts
