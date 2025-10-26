@@ -10,9 +10,15 @@ const pool = new Pool({
     ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 });
 
-// Test connection
-pool.on('connect', () => {
-    console.log('✅ Connected to PostgreSQL database');
+// 🌍 CRITICAL: Set timezone to UTC for ALL connections
+// This ensures PostgreSQL interprets all timestamps in UTC, not in system timezone
+pool.on('connect', async (client) => {
+    try {
+        await client.query("SET timezone = 'UTC'");
+        console.log('✅ Connected to PostgreSQL database (timezone: UTC)');
+    } catch (error) {
+        console.error('❌ Error setting timezone:', error.message);
+    }
 });
 
 pool.on('error', (err) => {
