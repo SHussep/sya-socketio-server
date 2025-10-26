@@ -90,8 +90,10 @@ async function sendNotificationToDevice(deviceToken, {
         console.error(`[FCM] ❌ Error enviando notificación: ${error.message}`);
         // Si el token es inválido, debería ser removido
         if (error.code === 'messaging/invalid-registration-token' ||
-            error.code === 'messaging/registration-token-not-registered') {
-            console.warn(`[FCM] ⚠️ Token inválido, debería ser removido de BD`);
+            error.code === 'messaging/registration-token-not-registered' ||
+            error.code === 'messaging/third-party-auth-error' ||
+            error.message?.includes('Requested entity was not found')) {
+            console.warn(`[FCM] ⚠️ Token inválido, debería ser removido de BD (${error.code})`);
             return 'INVALID_TOKEN';
         }
         return null;

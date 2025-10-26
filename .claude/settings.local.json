@@ -17,7 +17,11 @@
       "Bash(timeout 300 flutter run:*)",
       "Bash(cat:*)",
       "Bash(git reset:*)",
-      "Bash(timeout 10 node:*)"
+      "Bash(timeout 10 node:*)",
+      "Bash(timeout 30 dart analyze:*)",
+      "Bash(PGPASSWORD=\"$DB_PASSWORD\" psql -U postgres -d sya_db -c \"SELECT id, email, username, role FROM employees WHERE email = ''entretierras.podcast@gmail.com'' OR username = ''entretierras.podcast@gmail.com'' LIMIT 5;\")",
+      "Bash(dart test_login_parsing.dart:*)",
+      "Bash(dotnet clean:*)"
     ],
     "deny": [],
     "ask": []

@@ -33,12 +33,31 @@ async function sendNotificationToBranch(branchId, { title, body, data = {} }) {
         });
 
         const successCount = results.filter(r => r.success).length;
+        const invalidTokens = results
+            .filter(r => r.result === 'INVALID_TOKEN')
+            .map(r => r.deviceToken);
+
         console.log(`[NotificationHelper] ✅ Notificaciones enviadas a sucursal ${branchId}: ${successCount}/${deviceTokens.length}`);
+
+        // Desactivar tokens inválidos
+        if (invalidTokens.length > 0) {
+            try {
+                await pool.query(
+                    `UPDATE device_tokens SET is_active = false
+                     WHERE device_token = ANY($1)`,
+                    [invalidTokens]
+                );
+                console.log(`[NotificationHelper] 🧹 Deactivated ${invalidTokens.length} invalid tokens from branch ${branchId}`);
+            } catch (updateError) {
+                console.error(`[NotificationHelper] ⚠️ Error updating invalid tokens:`, updateError.message);
+            }
+        }
 
         return {
             sent: successCount,
             failed: deviceTokens.length - successCount,
-            total: deviceTokens.length
+            total: deviceTokens.length,
+            invalidTokensRemoved: invalidTokens.length
         };
     } catch (error) {
         console.error('[NotificationHelper] ❌ Error enviando notificaciones:', error.message);

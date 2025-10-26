@@ -74,15 +74,18 @@ module.exports = function(pool) {
             // Iniciar transacción
             await pool.query('BEGIN');
 
-            // 1. Crear Tenant
+            // 1. Crear Tenant con fecha de expiración del trial (30 días)
+            const trialEndsAt = new Date();
+            trialEndsAt.setDate(trialEndsAt.getDate() + 30); // Agregar 30 días
+
             const tenantResult = await pool.query(
                 `INSERT INTO tenants (
                     business_name, rfc, owner_email, phone, address,
-                    subscription_id, is_active
+                    subscription_id, subscription_expires_at, is_active
                 )
-                VALUES ($1, $2, $3, $4, $5, 1, true)
+                VALUES ($1, $2, $3, $4, $5, 1, $6, true)
                 RETURNING *`,
-                [businessName, rfc || null, ownerEmail, phone || null, address || null]
+                [businessName, rfc || null, ownerEmail, phone || null, address || null, trialEndsAt]
             );
 
             const tenant = tenantResult.rows[0];
@@ -147,7 +150,15 @@ module.exports = function(pool) {
 
             console.log(`[Tenant Register] ✅ Registro completado exitosamente`);
 
-            // Respuesta
+            // Respuesta - Incluir información del trial
+            const trialInfo = {
+                startDate: new Date(),
+                expiresAt: trialEndsAt,
+                daysRemaining: 30,
+                isActive: true,
+                status: 'trial'
+            };
+
             res.status(201).json({
                 success: true,
                 message: 'Negocio registrado exitosamente',
@@ -158,7 +169,8 @@ module.exports = function(pool) {
                         ownerEmail: tenant.owner_email,
                         rfc: tenant.rfc,
                         phone: tenant.phone,
-                        address: tenant.address
+                        address: tenant.address,
+                        subscriptionExpiresAt: tenant.subscription_expires_at
                     },
                     branch: {
                         id: branch.id,
@@ -176,7 +188,8 @@ module.exports = function(pool) {
                         plan: plan.name,
                         maxBranches: plan.max_branches,
                         maxDevices: plan.max_devices,
-                        maxEmployees: plan.max_employees
+                        maxEmployees: plan.max_employees,
+                        trial: trialInfo
                     }
                 }
             });
@@ -273,6 +286,20 @@ module.exports = function(pool) {
                 [id]
             );
 
+            // Calcular información del trial
+            const now = new Date();
+            const expiresAt = new Date(tenant.subscription_expires_at);
+            const isExpired = expiresAt < now;
+            const daysRemaining = Math.ceil((expiresAt - now) / (1000 * 60 * 60 * 24));
+
+            const trialStatus = {
+                isActive: !isExpired && daysRemaining > 0,
+                isExpired: isExpired,
+                daysRemaining: Math.max(0, daysRemaining),
+                expiresAt: expiresAt.toISOString(),
+                status: isExpired ? 'expired' : (daysRemaining <= 7 ? 'expiring_soon' : 'active')
+            };
+
             res.json({
                 success: true,
                 data: {
@@ -287,13 +314,14 @@ module.exports = function(pool) {
                         maxBranches: tenant.max_branches,
                         maxDevices: tenant.max_devices,
                         maxEmployees: tenant.max_employees,
-                        expiresAt: tenant.subscription_expires_at
+                        expiresAt: tenant.subscription_expires_at,
+                        trial: trialStatus
                     },
                     stats: {
                         branches: parseInt(branchCount.rows[0].count),
                         employees: parseInt(employeeCount.rows[0].count)
                     },
-                    isActive: tenant.is_active,
+                    isActive: tenant.is_active && trialStatus.isActive,
                     createdAt: tenant.created_at
                 }
             });
