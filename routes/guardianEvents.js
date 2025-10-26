@@ -91,7 +91,7 @@ module.exports = (pool, io) => {
 
             const result = await pool.query(
                 `INSERT INTO guardian_events (tenant_id, branch_id, employee_id, event_type, severity, title, description, weight_kg, scale_id, metadata, event_date)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CURRENT_TIMESTAMP AT TIME ZONE 'UTC')
                  RETURNING *`,
                 [tenantId, branchId, employeeId, eventType, severity, title, description, weightKg, scaleId, metadata ? JSON.stringify(metadata) : null]
             );
