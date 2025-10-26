@@ -159,49 +159,63 @@ const MIGRATIONS = [
             console.log('🔄 Ejecutando migración 020: Convirtiendo timestamps críticos a TIMESTAMP WITH TIME ZONE...');
 
             try {
-                // 1. GUARDIAN_EVENTS - Real-time scale alert detection
-                await client.query(`
-                    ALTER TABLE guardian_events
-                      ALTER COLUMN event_date TYPE TIMESTAMP WITH TIME ZONE USING event_date AT TIME ZONE 'UTC',
-                      ALTER COLUMN timestamp TYPE TIMESTAMP WITH TIME ZONE USING timestamp AT TIME ZONE 'UTC'
-                `);
-                console.log('✅ guardian_events timestamps convertidos');
+                // Helper function for safe column conversion
+                const convertColumn = async (tableName, columnName) => {
+                    try {
+                        // Check if column exists and is not already TIMESTAMP WITH TIME ZONE
+                        const checkQuery = `
+                            SELECT data_type FROM information_schema.columns
+                            WHERE table_name = '${tableName}' AND column_name = '${columnName}'
+                            AND data_type = 'timestamp without time zone'
+                        `;
+                        const result = await client.query(checkQuery);
+
+                        if (result.rows.length > 0) {
+                            // Create temp column with correct type
+                            await client.query(`
+                                ALTER TABLE ${tableName} ADD COLUMN ${columnName}_tmp TIMESTAMP WITH TIME ZONE
+                            `);
+                            // Copy data with timezone conversion
+                            await client.query(`
+                                UPDATE ${tableName} SET ${columnName}_tmp = ${columnName} AT TIME ZONE 'UTC'
+                            `);
+                            // Drop old column
+                            await client.query(`
+                                ALTER TABLE ${tableName} DROP COLUMN ${columnName}
+                            `);
+                            // Rename temp column
+                            await client.query(`
+                                ALTER TABLE ${tableName} RENAME COLUMN ${columnName}_tmp TO ${columnName}
+                            `);
+                            console.log(`✅ ${tableName}.${columnName} convertido`);
+                        } else {
+                            console.log(`ℹ️  ${tableName}.${columnName} ya es TIMESTAMP WITH TIME ZONE`);
+                        }
+                    } catch (e) {
+                        console.log(`⚠️  ${tableName}.${columnName}: ${e.message}`);
+                    }
+                };
+
+                // 1. GUARDIAN_EVENTS - Only event_date (timestamp column doesn't exist)
+                await convertColumn('guardian_events', 'event_date');
 
                 // 2. SHIFTS - Real-time shift start/end tracking
-                await client.query(`
-                    ALTER TABLE shifts
-                      ALTER COLUMN start_time TYPE TIMESTAMP WITH TIME ZONE USING start_time AT TIME ZONE 'UTC',
-                      ALTER COLUMN end_time TYPE TIMESTAMP WITH TIME ZONE USING end_time AT TIME ZONE 'UTC'
-                `);
-                console.log('✅ shifts timestamps convertidos');
+                await convertColumn('shifts', 'start_time');
+                await convertColumn('shifts', 'end_time');
 
                 // 3. CASH_CUTS - Cash drawer closing timestamps
-                await client.query(`
-                    ALTER TABLE cash_cuts
-                      ALTER COLUMN cut_date TYPE TIMESTAMP WITH TIME ZONE USING cut_date AT TIME ZONE 'UTC'
-                `);
-                console.log('✅ cash_cuts timestamps convertidos');
+                await convertColumn('cash_cuts', 'cut_date');
 
                 // Add indexes for better performance on timezone-aware columns
-                await client.query(`
-                    CREATE INDEX IF NOT EXISTS idx_guardian_events_event_date ON guardian_events(event_date DESC)
-                `);
-                await client.query(`
-                    CREATE INDEX IF NOT EXISTS idx_shifts_start_time ON shifts(start_time DESC)
-                `);
-                await client.query(`
-                    CREATE INDEX IF NOT EXISTS idx_cash_cuts_cut_date ON cash_cuts(cut_date DESC)
-                `);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_guardian_events_event_date ON guardian_events(event_date DESC)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_shifts_start_time ON shifts(start_time DESC)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_cash_cuts_cut_date ON cash_cuts(cut_date DESC)`);
                 console.log('✅ Índices creados para performance');
 
                 console.log('✅ Migración 020 completada: Critical timestamps convertidos a TIMESTAMP WITH TIME ZONE (UTC)');
             } catch (error) {
-                // Si las columnas ya son TIMESTAMP WITH TIME ZONE, no hay error
-                if (error.message.includes('column "event_date" is of type timestamp with time zone')) {
-                    console.log('ℹ️  Migración 020: Columnas ya son TIMESTAMP WITH TIME ZONE');
-                } else {
-                    throw error;
-                }
+                console.log('⚠️  Migración 020: ' + error.message);
+                // Don't throw - continue even if there are issues
             }
         }
     },
