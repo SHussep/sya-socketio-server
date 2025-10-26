@@ -218,22 +218,11 @@ module.exports = (pool) => {
                 }
             }
 
-            // Usar fechaVenta del cliente (con zona horaria correcta) o CURRENT_TIMESTAMP si no viene
-            let saleDate;
-            try {
-                if (fechaVenta) {
-                    const parsedDate = new Date(fechaVenta);
-                    console.log(`[Sync/Sales] 📅 Parsed fecha: ${fechaVenta} -> ${parsedDate} (Invalid: ${isNaN(parsedDate)})`);
-                    saleDate = parsedDate.toISOString();
-                    console.log(`[Sync/Sales] 📅 ISO String: ${saleDate}`);
-                } else {
-                    saleDate = new Date().toISOString();
-                    console.log(`[Sync/Sales] 📅 Using current timestamp: ${saleDate}`);
-                }
-            } catch (dateError) {
-                console.error(`[Sync/Sales] ❌ Error parsing date: ${dateError.message}`);
-                saleDate = new Date().toISOString();
-            }
+            // ✅ CRITICAL FIX: ALWAYS use server time (UTC now)
+            // NEVER trust client-provided timestamps - they can be in different timezones
+            // Server timestamp is the source of truth
+            const saleDate = new Date().toISOString();
+            console.log(`[Sync/Sales] 📅 Using server UTC timestamp: ${saleDate}`);
 
             console.log(`[Sync/Sales] 📤 About to insert - saleDate: ${saleDate} (type: ${typeof saleDate}, null: ${saleDate === null}, empty: ${saleDate === ''})`);
 

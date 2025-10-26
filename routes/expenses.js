@@ -210,8 +210,11 @@ module.exports = (pool) => {
                 console.log(`[Sync/Expenses] Categoría creada: ${category} (ID: ${categoryId})`);
             }
 
-            // Usar fechaGasto del cliente (con zona horaria correcta) o CURRENT_TIMESTAMP si no viene
-            const expenseDate = fechaGasto ? new Date(fechaGasto).toISOString() : new Date().toISOString();
+            // ✅ CRITICAL FIX: ALWAYS use server time (UTC now)
+            // NEVER trust client-provided timestamps - they can be in different timezones
+            // Server timestamp is the source of truth
+            const expenseDate = new Date().toISOString();
+            console.log(`[Sync/Expenses] 📅 Using server UTC timestamp: ${expenseDate}`);
 
             const result = await pool.query(
                 `INSERT INTO expenses (tenant_id, branch_id, employee_id, category_id, description, amount, expense_date)
