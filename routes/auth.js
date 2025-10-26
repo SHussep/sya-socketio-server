@@ -1574,6 +1574,10 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
             });
         }
 
+        // Timezone es ahora opcional - usa default si no se proporciona
+        // La app móvil detecta automáticamente la zona horaria del dispositivo
+        const finalTimezone = timezone || 'UTC';
+
         const client = await pool.connect();
 
         try {
@@ -1641,7 +1645,7 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                 branchCode,
                 branchName,
                 address || null,
-                timezone || 'America/Mexico_City'
+                finalTimezone
             ]);
 
             const newBranch = branchResult.rows[0];
