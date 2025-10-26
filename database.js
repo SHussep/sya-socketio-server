@@ -444,7 +444,52 @@ async function initializeDatabase() {
     }
 }
 
+// 🌍 WRAPPER: Ensure EVERY query sets timezone to UTC
+// This is more reliable than pool.on('connect') which can have timing issues
+class UTCPoolWrapper {
+    constructor(pgPool) {
+        this.pool = pgPool;
+    }
+
+    async query(text, values) {
+        const client = await this.pool.connect();
+        try {
+            // CRITICAL: Always set timezone to UTC before ANY query
+            await client.query("SET timezone = 'UTC'");
+            return await client.query(text, values);
+        } finally {
+            client.release();
+        }
+    }
+
+    // For code that uses pool.connect() directly
+    async connect() {
+        const client = await this.pool.connect();
+        // Wrap the client's query method to also set timezone
+        const originalQuery = client.query.bind(client);
+        let firstQuery = true;
+
+        client.query = async function(text, values) {
+            if (firstQuery) {
+                firstQuery = false;
+                await originalQuery("SET timezone = 'UTC'");
+            }
+            return await originalQuery(text, values);
+        };
+
+        return client;
+    }
+
+    // Expose other pool methods
+    on(event, callback) {
+        return this.pool.on(event, callback);
+    }
+}
+
+// Create wrapped pool
+const wrappedPool = new UTCPoolWrapper(pool);
+
 module.exports = {
-    pool,
+    pool: wrappedPool,
     initializeDatabase
 };
