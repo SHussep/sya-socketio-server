@@ -444,17 +444,18 @@ async function initializeDatabase() {
     }
 }
 
-// 🌍 WRAPPER: Ensure EVERY query sets timezone to UTC
-// This is more reliable than pool.on('connect') which can have timing issues
+// 🌍 WRAPPER: Ensure timezone is UTC for EVERY database operation
+// This wrapper intercepts all queries and ensures UTC timezone by beginning each session with SET timezone
 class UTCPoolWrapper {
     constructor(pgPool) {
         this.pool = pgPool;
     }
 
+    // For queries that don't need a persistent connection
     async query(text, values) {
         const client = await this.pool.connect();
         try {
-            // CRITICAL: Always set timezone to UTC before ANY query
+            // CRITICAL: Set timezone to UTC before executing ANY query
             await client.query("SET timezone = 'UTC'");
             return await client.query(text, values);
         } finally {
@@ -462,19 +463,27 @@ class UTCPoolWrapper {
         }
     }
 
-    // For code that uses pool.connect() directly
+    // For code that uses pool.connect() directly and needs persistent connection
     async connect() {
         const client = await this.pool.connect();
-        // Wrap the client's query method to also set timezone
-        const originalQuery = client.query.bind(client);
-        let firstQuery = true;
+        // Set timezone once for this connection session
+        try {
+            await client.query("SET timezone = 'UTC'");
+        } catch (error) {
+            console.error('❌ Error setting timezone on connected client:', error.message);
+            client.release();
+            throw error;
+        }
 
-        client.query = async function(text, values) {
-            if (firstQuery) {
-                firstQuery = false;
-                await originalQuery("SET timezone = 'UTC'");
+        // Optionally wrap the query method for safety
+        const originalQuery = client.query.bind(client);
+        client.query = function(text, values, callback) {
+            // If using callback style (legacy), handle it
+            if (typeof callback === 'function') {
+                return originalQuery(text, values, callback);
             }
-            return await originalQuery(text, values);
+            // Modern promise-based
+            return originalQuery(text, values);
         };
 
         return client;
