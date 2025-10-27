@@ -86,13 +86,14 @@ module.exports = (pool) => {
         }
     });
 
-    // POST /api/withdrawals - Create new withdrawal
-    router.post('/', authenticateToken, async (req, res) => {
+    // POST /api/withdrawals - Create new withdrawal (SIN AUTENTICACIÓN - para Desktop offline-first)
+    router.post('/', async (req, res) => {
         try {
-            const { tenantId, branchId: userBranchId, id: employeeId } = req.user;
-            const { amount, description, withdrawal_type = 'manual', shiftId, branchId } = req.body;
+            const { tenantId, branchId, employeeId, amount, description, withdrawal_type = 'manual', shiftId } = req.body;
 
-            const targetBranchId = branchId || userBranchId;
+            if (!tenantId || !branchId) {
+                return res.status(400).json({ success: false, message: 'tenantId y branchId son requeridos' });
+            }
 
             if (!amount || amount <= 0) {
                 return res.status(400).json({ success: false, message: 'Amount must be greater than 0' });
@@ -125,11 +126,16 @@ module.exports = (pool) => {
         }
     });
 
-    // POST /api/withdrawals/sync - Sync withdrawals from mobile/desktop
-    router.post('/sync', authenticateToken, async (req, res) => {
+    // POST /api/withdrawals/sync - Sync withdrawals from mobile/desktop (SIN AUTENTICACIÓN - para Desktop offline-first)
+    router.post('/sync', async (req, res) => {
         try {
-            const { tenantId } = req.user;
             const withdrawals = Array.isArray(req.body) ? req.body : [req.body];
+
+            // Obtener tenantId del primer retiro
+            if (withdrawals.length === 0 || !withdrawals[0].tenantId) {
+                return res.status(400).json({ success: false, message: 'tenantId es requerido' });
+            }
+            const { tenantId } = withdrawals[0];
 
             console.log(`[Withdrawals/Sync] Syncing ${withdrawals.length} withdrawals for tenant ${tenantId}`);
 

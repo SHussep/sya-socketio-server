@@ -86,13 +86,14 @@ module.exports = (pool) => {
         }
     });
 
-    // POST /api/deposits - Create new deposit
-    router.post('/', authenticateToken, async (req, res) => {
+    // POST /api/deposits - Create new deposit (SIN AUTENTICACIÓN - para Desktop offline-first)
+    router.post('/', async (req, res) => {
         try {
-            const { tenantId, branchId: userBranchId, id: employeeId } = req.user;
-            const { amount, description, deposit_type = 'manual', shiftId, branchId } = req.body;
+            const { tenantId, branchId, employeeId, amount, description, deposit_type = 'manual', shiftId } = req.body;
 
-            const targetBranchId = branchId || userBranchId;
+            if (!tenantId || !branchId) {
+                return res.status(400).json({ success: false, message: 'tenantId y branchId son requeridos' });
+            }
 
             if (!amount || amount <= 0) {
                 return res.status(400).json({ success: false, message: 'Amount must be greater than 0' });
@@ -125,11 +126,16 @@ module.exports = (pool) => {
         }
     });
 
-    // POST /api/deposits/sync - Sync deposits from mobile/desktop
-    router.post('/sync', authenticateToken, async (req, res) => {
+    // POST /api/deposits/sync - Sync deposits from mobile/desktop (SIN AUTENTICACIÓN - para Desktop offline-first)
+    router.post('/sync', async (req, res) => {
         try {
-            const { tenantId } = req.user;
             const deposits = Array.isArray(req.body) ? req.body : [req.body];
+
+            // Obtener tenantId del primer depósito
+            if (deposits.length === 0 || !deposits[0].tenantId) {
+                return res.status(400).json({ success: false, message: 'tenantId es requerido' });
+            }
+            const { tenantId } = deposits[0];
 
             console.log(`[Deposits/Sync] Syncing ${deposits.length} deposits for tenant ${tenantId}`);
 
