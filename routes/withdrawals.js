@@ -105,11 +105,11 @@ module.exports = (pool) => {
                 `INSERT INTO withdrawals (tenant_id, branch_id, shift_id, employee_id, amount, description, withdrawal_type, withdrawal_date)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
                  RETURNING *`,
-                [tenantId, targetBranchId, shiftId || null, employeeId, numericAmount, description || '', withdrawal_type]
+                [tenantId, branchId, shiftId || null, employeeId, numericAmount, description || '', withdrawal_type]
             );
 
             const withdrawal = result.rows[0];
-            console.log(`[Withdrawals] ✅ Withdrawal created: $${numericAmount} in branch ${targetBranchId}`);
+            console.log(`[Withdrawals] ✅ Withdrawal created: $${numericAmount} in branch ${branchId}`);
 
             res.json({
                 success: true,
