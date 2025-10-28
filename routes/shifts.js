@@ -351,11 +351,12 @@ module.exports = (pool) => {
     });
 
     // POST /api/sync/shifts/open - Abrir turno desde Desktop (sin JWT)
+    // Implementa smart UPSERT con auto-close para offline-first sync
     router.post('/sync/open', async (req, res) => {
         try {
-            const { tenantId, branchId, employeeId, initialAmount, userEmail } = req.body;
+            const { tenantId, branchId, employeeId, initialAmount, userEmail, localShiftId } = req.body;
 
-            console.log(`[Sync/Shifts] Desktop sync - Tenant: ${tenantId}, Branch: ${branchId}, Employee: ${employeeId}`);
+            console.log(`[Sync/Shifts] Desktop sync - Tenant: ${tenantId}, Branch: ${branchId}, Employee: ${employeeId}, LocalShiftId: ${localShiftId}`);
 
             if (!tenantId || !branchId || !employeeId) {
                 return res.status(400).json({
@@ -364,32 +365,38 @@ module.exports = (pool) => {
                 });
             }
 
-            // Verificar si hay un turno abierto para este empleado
+            // PASO 1: Verificar si hay un turno abierto con DIFERENTE local_shift_id
+            // Si existe, significa que fue cerrado offline y necesita auto-cerrarse en PostgreSQL
             const existingShift = await pool.query(
-                `SELECT id FROM shifts
-                 WHERE tenant_id = $1 AND branch_id = $2 AND employee_id = $3 AND is_cash_cut_open = true`,
-                [tenantId, branchId, employeeId]
+                `SELECT id, local_shift_id, start_time FROM shifts
+                 WHERE employee_id = $1 AND end_time IS NULL AND local_shift_id IS NOT NULL AND local_shift_id != $2`,
+                [employeeId, localShiftId]
             );
 
             if (existingShift.rows.length > 0) {
-                console.log(`[Sync/Shifts] ⚠️ Ya existe turno abierto: ID ${existingShift.rows[0].id}`);
-                return res.status(400).json({
-                    success: false,
-                    message: 'Ya hay un turno abierto para este empleado',
-                    existingShiftId: existingShift.rows[0].id
-                });
+                const oldShift = existingShift.rows[0];
+                console.log(`[Sync/Shifts] 🔄 Detectado cierre offline - Auto-cerrando shift ${oldShift.id} (localShiftId: ${oldShift.local_shift_id})`);
+
+                // Auto-cerrar el turno anterior (fue cerrado en Desktop offline)
+                await pool.query(
+                    `UPDATE shifts SET end_time = CURRENT_TIMESTAMP, is_cash_cut_open = false
+                     WHERE id = $1`,
+                    [oldShift.id]
+                );
+
+                console.log(`[Sync/Shifts] ✅ Shift ${oldShift.id} auto-cerrado por sincronización offline`);
             }
 
-            // Crear nuevo turno
+            // PASO 2: Crear nuevo turno con el local_shift_id
             const result = await pool.query(
-                `INSERT INTO shifts (tenant_id, branch_id, employee_id, start_time, initial_amount, transaction_counter, is_cash_cut_open)
-                 VALUES ($1, $2, $3, CURRENT_TIMESTAMP, $4, 0, true)
-                 RETURNING id, tenant_id, branch_id, employee_id, start_time, initial_amount, transaction_counter, is_cash_cut_open, created_at`,
-                [tenantId, branchId, employeeId, initialAmount || 0]
+                `INSERT INTO shifts (tenant_id, branch_id, employee_id, local_shift_id, start_time, initial_amount, transaction_counter, is_cash_cut_open)
+                 VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, $5, 0, true)
+                 RETURNING id, tenant_id, branch_id, employee_id, local_shift_id, start_time, initial_amount, transaction_counter, is_cash_cut_open, created_at`,
+                [tenantId, branchId, employeeId, localShiftId, initialAmount || 0]
             );
 
             const shift = result.rows[0];
-            console.log(`[Sync/Shifts] ✅ Turno sincronizado desde Desktop: ID ${shift.id} - Employee ${employeeId} - Branch ${branchId} - Initial $${initialAmount}`);
+            console.log(`[Sync/Shifts] ✅ Turno sincronizado desde Desktop: ID ${shift.id} (localShiftId: ${shift.local_shift_id}) - Employee ${employeeId} - Branch ${branchId} - Initial $${initialAmount}`);
 
             res.json({
                 success: true,

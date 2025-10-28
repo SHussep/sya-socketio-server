@@ -163,11 +163,12 @@ module.exports = (pool) => {
     });
 
     // POST /api/sync/expenses - Alias de /api/expenses (para compatibilidad con Desktop)
+    // Ahora también acepta localShiftId para offline-first reconciliation
     router.post('/sync', async (req, res) => {
         try {
-            const { tenantId, branchId, employeeId, category, description, amount, userEmail, fechaGasto } = req.body;
+            const { tenantId, branchId, employeeId, category, description, amount, userEmail, fechaGasto, localShiftId } = req.body;
 
-            console.log(`[Sync/Expenses] Desktop sync - Tenant: ${tenantId}, Branch: ${branchId}, Category: ${category}, FechaGasto: ${fechaGasto}`);
+            console.log(`[Sync/Expenses] Desktop sync - Tenant: ${tenantId}, Branch: ${branchId}, Category: ${category}, FechaGasto: ${fechaGasto}, LocalShiftId: ${localShiftId}`);
             console.log(`[Sync/Expenses] Received amount: ${amount} (type: ${typeof amount})`);
 
             if (!tenantId || !branchId || !category || amount === null || amount === undefined) {
@@ -217,13 +218,13 @@ module.exports = (pool) => {
             console.log(`[Sync/Expenses] 📅 Using server UTC timestamp: ${expenseDate}`);
 
             const result = await pool.query(
-                `INSERT INTO expenses (tenant_id, branch_id, employee_id, category_id, description, amount, expense_date)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7)
+                `INSERT INTO expenses (tenant_id, branch_id, employee_id, local_shift_id, category_id, description, amount, expense_date)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                  RETURNING *`,
-                [tenantId, branchId, finalEmployeeId, categoryId, description || '', numericAmount, expenseDate]
+                [tenantId, branchId, finalEmployeeId, localShiftId || null, categoryId, description || '', numericAmount, expenseDate]
             );
 
-            console.log(`[Sync/Expenses] ✅ Gasto sincronizado: ${category} - $${numericAmount}`);
+            console.log(`[Sync/Expenses] ✅ Gasto sincronizado: ${category} - $${numericAmount} | LocalShiftId: ${localShiftId}`);
 
             // Asegurar que amount es un número en la respuesta
             const responseData = result.rows[0];

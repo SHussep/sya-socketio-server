@@ -127,6 +127,7 @@ module.exports = (pool) => {
     });
 
     // POST /api/withdrawals/sync - Sync withdrawals from mobile/desktop (SIN AUTENTICACIÓN - para Desktop offline-first)
+    // Ahora también acepta localShiftId para offline-first reconciliation
     router.post('/sync', async (req, res) => {
         try {
             const withdrawals = Array.isArray(req.body) ? req.body : [req.body];
@@ -143,7 +144,7 @@ module.exports = (pool) => {
 
             for (const withdrawal of withdrawals) {
                 try {
-                    const { branchId, shiftId, employeeId, amount, description, withdrawalType = 'manual', withdrawalDate } = withdrawal;
+                    const { branchId, shiftId, employeeId, amount, description, withdrawalType = 'manual', withdrawalDate, localShiftId } = withdrawal;
 
                     if (!amount || amount <= 0 || !branchId) {
                         results.push({ success: false, error: 'Missing required fields' });
@@ -152,14 +153,14 @@ module.exports = (pool) => {
 
                     const numericAmount = parseFloat(amount);
                     const result = await pool.query(
-                        `INSERT INTO withdrawals (tenant_id, branch_id, shift_id, employee_id, amount, description, withdrawal_type, withdrawal_date)
-                         VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, NOW()))
+                        `INSERT INTO withdrawals (tenant_id, branch_id, shift_id, local_shift_id, employee_id, amount, description, withdrawal_type, withdrawal_date)
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9, NOW()))
                          RETURNING *`,
-                        [tenantId, branchId, shiftId || null, employeeId || null, numericAmount, description || '', withdrawalType, withdrawalDate]
+                        [tenantId, branchId, shiftId || null, localShiftId || null, employeeId || null, numericAmount, description || '', withdrawalType, withdrawalDate]
                     );
 
                     results.push({ success: true, data: result.rows[0] });
-                    console.log(`[Withdrawals/Sync] ✅ Withdrawal synced: $${numericAmount}`);
+                    console.log(`[Withdrawals/Sync] ✅ Withdrawal synced: $${numericAmount} (localShiftId: ${localShiftId})`);
                 } catch (error) {
                     results.push({ success: false, error: error.message });
                     console.error(`[Withdrawals/Sync] ❌ Error:`, error.message);

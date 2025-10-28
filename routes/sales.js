@@ -175,12 +175,13 @@ module.exports = (pool) => {
     });
 
     // POST /api/sync/sales - Alias de /api/sales (para compatibilidad con Desktop)
+    // Ahora también acepta localShiftId para offline-first reconciliation
     router.post('/sync', async (req, res) => {
         try {
-            const { tenantId, branchId, employeeId, ticketNumber, totalAmount, paymentMethod, tipoPagoId, userEmail, sale_type, ventaTipoId, fechaVenta } = req.body;
+            const { tenantId, branchId, employeeId, ticketNumber, totalAmount, paymentMethod, tipoPagoId, userEmail, sale_type, ventaTipoId, fechaVenta, localShiftId } = req.body;
 
             console.log(`[Sync/Sales] ⏮️  RAW REQUEST BODY:`, JSON.stringify(req.body, null, 2));
-            console.log(`[Sync/Sales] Desktop sync - Tenant: ${tenantId}, Branch: ${branchId}, Ticket: ${ticketNumber}, Type: ${sale_type}, FechaVenta: ${fechaVenta}`);
+            console.log(`[Sync/Sales] Desktop sync - Tenant: ${tenantId}, Branch: ${branchId}, Ticket: ${ticketNumber}, Type: ${sale_type}, FechaVenta: ${fechaVenta}, LocalShiftId: ${localShiftId}`);
             console.log(`[Sync/Sales] Received totalAmount: ${totalAmount} (type: ${typeof totalAmount})`);
             console.log(`[Sync/Sales] Received paymentMethod: ${paymentMethod}, tipoPagoId: ${tipoPagoId}`);
 
@@ -236,13 +237,13 @@ module.exports = (pool) => {
             const finalSaleType = finalSaleTypeId === 2 ? 'delivery' : 'counter';
 
             const result = await pool.query(
-                `INSERT INTO sales (tenant_id, branch_id, employee_id, ticket_number, total_amount, payment_method, payment_type_id, sale_type, sale_type_id, sale_date)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                `INSERT INTO sales (tenant_id, branch_id, employee_id, local_shift_id, ticket_number, total_amount, payment_method, payment_type_id, sale_type, sale_type_id, sale_date)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                  RETURNING *`,
-                [tenantId, branchId, finalEmployeeId, ticketNumber, numericTotalAmount, finalPaymentMethod, tipoPagoId || 1, finalSaleType, finalSaleTypeId, saleDate]
+                [tenantId, branchId, finalEmployeeId, localShiftId || null, ticketNumber, numericTotalAmount, finalPaymentMethod, tipoPagoId || 1, finalSaleType, finalSaleTypeId, saleDate]
             );
 
-            console.log(`[Sync/Sales] ✅ Venta sincronizada: ${ticketNumber} - $${numericTotalAmount} | Pago: ${tipoPagoId} | Tipo: ${finalSaleType} (ID: ${finalSaleTypeId})`);
+            console.log(`[Sync/Sales] ✅ Venta sincronizada: ${ticketNumber} - $${numericTotalAmount} | Pago: ${tipoPagoId} | Tipo: ${finalSaleType} (ID: ${finalSaleTypeId}) | LocalShiftId: ${localShiftId}`);
 
             // Asegurar que total_amount es un número y formatear timestamps en UTC
             const responseData = result.rows[0];
