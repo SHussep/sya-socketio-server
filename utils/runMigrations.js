@@ -14,6 +14,104 @@ const pool = new Pool({
 // Definición de migraciones (en orden de ejecución)
 const MIGRATIONS = [
     {
+        id: '004_add_local_shift_id',
+        name: 'Agregar local_shift_id para offline-first synchronization',
+        async execute(client) {
+            console.log('🔄 Ejecutando migración 004: Agregando local_shift_id para offline sync...');
+
+            try {
+                // Check if shifts.local_shift_id already exists
+                const checkShifts = await client.query(`
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'shifts' AND column_name = 'local_shift_id'
+                `);
+
+                if (checkShifts.rows.length > 0) {
+                    console.log('ℹ️  Migración 004: Columna local_shift_id ya existe en shifts');
+                    return; // Already migrated
+                }
+
+                // Add local_shift_id to shifts table (UNIQUE constraint)
+                await client.query(`
+                    ALTER TABLE shifts
+                    ADD COLUMN local_shift_id INT UNIQUE
+                `);
+                console.log('✅ Columna local_shift_id agregada a shifts (UNIQUE)');
+
+                // Add local_shift_id to sales table
+                await client.query(`
+                    ALTER TABLE sales
+                    ADD COLUMN local_shift_id INT
+                `);
+                console.log('✅ Columna local_shift_id agregada a sales');
+
+                // Add local_shift_id to expenses table
+                await client.query(`
+                    ALTER TABLE expenses
+                    ADD COLUMN local_shift_id INT
+                `);
+                console.log('✅ Columna local_shift_id agregada a expenses');
+
+                // Add local_shift_id to deposits table (if exists)
+                try {
+                    const checkDeposits = await client.query(`
+                        SELECT table_name
+                        FROM information_schema.tables
+                        WHERE table_name = 'deposits'
+                    `);
+                    if (checkDeposits.rows.length > 0) {
+                        await client.query(`
+                            ALTER TABLE deposits
+                            ADD COLUMN local_shift_id INT
+                        `);
+                        console.log('✅ Columna local_shift_id agregada a deposits');
+                    }
+                } catch (e) {
+                    console.log(`ℹ️  Tabla deposits no existe o error al agregar columna: ${e.message}`);
+                }
+
+                // Add local_shift_id to withdrawals table (if exists)
+                try {
+                    const checkWithdrawals = await client.query(`
+                        SELECT table_name
+                        FROM information_schema.tables
+                        WHERE table_name = 'withdrawals'
+                    `);
+                    if (checkWithdrawals.rows.length > 0) {
+                        await client.query(`
+                            ALTER TABLE withdrawals
+                            ADD COLUMN local_shift_id INT
+                        `);
+                        console.log('✅ Columna local_shift_id agregada a withdrawals');
+                    }
+                } catch (e) {
+                    console.log(`ℹ️  Tabla withdrawals no existe o error al agregar columna: ${e.message}`);
+                }
+
+                // Create indexes for faster lookups
+                await client.query(`
+                    CREATE INDEX IF NOT EXISTS idx_shifts_local_shift_id ON shifts(local_shift_id)
+                `);
+                await client.query(`
+                    CREATE INDEX IF NOT EXISTS idx_shifts_employee_open ON shifts(employee_id) WHERE end_time IS NULL
+                `);
+                await client.query(`
+                    CREATE INDEX IF NOT EXISTS idx_sales_local_shift_id ON sales(local_shift_id)
+                `);
+                await client.query(`
+                    CREATE INDEX IF NOT EXISTS idx_expenses_local_shift_id ON expenses(local_shift_id)
+                `);
+                console.log('✅ Índices creados para local_shift_id');
+
+                console.log('✅ Migración 004 completada: local_shift_id agregado para offline-first sync');
+            } catch (error) {
+                console.log('⚠️  Migración 004: ' + error.message);
+                // Don't throw - continue even if there are issues
+            }
+        }
+    },
+    {
         id: '015_add_updated_at_to_tenants',
         name: 'Agregar updated_at a tenants',
         async execute(client) {
