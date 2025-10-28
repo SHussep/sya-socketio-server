@@ -594,9 +594,17 @@ io.on('connection', (socket) => {
         const roomName = `branch_${data.branchId}`;
         console.log(`[SHIFT] Sucursal ${data.branchId}: ${data.employeeName} cerró turno - Diferencia: $${data.difference}`);
         console.log(`[SHIFT] DEBUG - Datos recibidos: shiftId=${data.shiftId}, tenantId=${data.tenantId}, branchId=${data.branchId}, endTime=${data.endTime}`);
+        console.log(`[SHIFT] DEBUG - Desglose: cash=$${data.totalCashSales}, card=$${data.totalCardSales}, credit=$${data.totalCreditSales}`);
+
+        // Contar clientes conectados en este room
+        const clientsInRoom = io.sockets.adapter.rooms.get(roomName);
+        const clientCount = clientsInRoom ? clientsInRoom.size : 0;
+        console.log(`[SHIFT] 📡 Room '${roomName}' tiene ${clientCount} clientes conectados (socket.id=${socket.id}, clientType=${socket.clientType})`);
 
         // Broadcast al escritorio y móviles en la sucursal
+        console.log(`[SHIFT] 📤 Retransmitiendo shift_ended a ${roomName}...`);
         io.to(roomName).emit('shift_ended', { ...data, receivedAt: new Date().toISOString() });
+        console.log(`[SHIFT] ✅ shift_ended retransmitido a ${roomName}`);
 
         // NUEVO: Sincronizar con PostgreSQL y enviar notificaciones FCM
         try {
