@@ -76,7 +76,75 @@ const adminRoutes = require('./routes/admin');
 const depositsRoutes = require('./routes/deposits');
 const withdrawalsRoutes = require('./routes/withdrawals');
 const newCashCutsRoutes = require('./routes/cash-cuts');
-const employeesRoutes = require('./routes/employees');
+
+// Inline employee sync endpoint (avoids file loading issues)
+const employeesRoutes = (() => {
+    const express = require('express');
+    const router = express.Router();
+
+    router.post('/', async (req, res) => {
+        const client = await pool.connect();
+        try {
+            const { tenantId, branchId, fullName, username, email, roleId, isActive, isOwner, mainBranchId, googleUserIdentifier } = req.body;
+
+            console.log(`[Employees/Sync] 🔄 Sincronizando: ${fullName} (${username})`);
+
+            if (!tenantId || !fullName || !username || !email) {
+                return res.status(400).json({ success: false, message: 'Faltan campos requeridos' });
+            }
+
+            // Check if exists
+            const existingResult = await client.query(
+                `SELECT id FROM employees WHERE (LOWER(email) = LOWER($1) OR LOWER(username) = LOWER($2)) AND tenant_id = $3`,
+                [email, username, tenantId]
+            );
+
+            if (existingResult.rows.length > 0) {
+                // Update
+                const result = await client.query(
+                    `UPDATE employees SET full_name = $1, main_branch_id = COALESCE($2, main_branch_id), is_active = COALESCE($3, is_active), updated_at = NOW() WHERE id = $4 AND tenant_id = $5 RETURNING *`,
+                    [fullName, branchId || mainBranchId, isActive !== false, existingResult.rows[0].id, tenantId]
+                );
+                const emp = result.rows[0];
+                console.log(`[Employees/Sync] ✅ Actualizado: ${fullName} (ID: ${emp.id})`);
+                return res.json({ success: true, data: emp, id: emp.id, employeeId: emp.id, remoteId: emp.id });
+            }
+
+            // Create
+            const result = await client.query(
+                `INSERT INTO employees (tenant_id, full_name, username, email, main_branch_id, is_active, updated_at, created_at) VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW()) RETURNING *`,
+                [tenantId, fullName, username, email, branchId || mainBranchId, isActive !== false]
+            );
+            const emp = result.rows[0];
+            console.log(`[Employees/Sync] ✅ Creado: ${fullName} (ID: ${emp.id})`);
+            res.json({ success: true, data: emp, id: emp.id, employeeId: emp.id, remoteId: emp.id });
+
+        } catch (error) {
+            console.error('[Employees/Sync] ❌ Error:', error.message);
+            res.status(500).json({ success: false, message: 'Error al sincronizar empleado', error: error.message });
+        } finally {
+            client.release();
+        }
+    });
+
+    router.get('/', async (req, res) => {
+        try {
+            const { tenantId } = req.query;
+            if (!tenantId) return res.status(400).json({ success: false, message: 'Se requiere tenantId' });
+
+            const result = await pool.query(
+                `SELECT id, tenant_id, full_name, username, email, is_active, created_at, updated_at FROM employees WHERE tenant_id = $1 ORDER BY full_name ASC`,
+                [tenantId]
+            );
+            res.json({ success: true, data: result.rows });
+        } catch (error) {
+            console.error('[Employees] Error:', error);
+            res.status(500).json({ success: false, message: 'Error al obtener empleados' });
+        }
+    });
+
+    return router;
+})();
 
 // Inicializar Firebase para notificaciones push
 initializeFirebase();
