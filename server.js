@@ -76,6 +76,7 @@ const adminRoutes = require('./routes/admin');
 const depositsRoutes = require('./routes/deposits');
 const withdrawalsRoutes = require('./routes/withdrawals');
 const newCashCutsRoutes = require('./routes/cash-cuts');
+const employeesRoutes = require('./routes/employees');
 
 // Inicializar Firebase para notificaciones push
 initializeFirebase();
@@ -320,6 +321,7 @@ app.use('/api/purchases', purchasesRoutes(pool));
 app.use('/api/guardian-events', guardianEventsRoutes(pool, io)); // Requires io for Socket.IO
 app.use('/api/dashboard', dashboardRoutes(pool));
 app.use('/api/admin', adminRoutes(pool)); // Rutas de administración
+app.use('/api/employees', employeesRoutes(pool)); // Rutas de sincronización de empleados desde Desktop
 
 // FASE 1: Cash Management Routes (Deposits, Withdrawals, Cash Cuts)
 app.use('/api/deposits', depositsRoutes(pool));
