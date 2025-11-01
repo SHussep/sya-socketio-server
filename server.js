@@ -110,9 +110,9 @@ const employeesRoutes = (() => {
                 return res.json({ success: true, data: emp, id: emp.id, employeeId: emp.id, remoteId: emp.id });
             }
 
-            // Create
+            // Create - password is required in table but empty for sync from Desktop
             const result = await client.query(
-                `INSERT INTO employees (tenant_id, full_name, username, email, main_branch_id, is_active, updated_at, created_at) VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW()) RETURNING *`,
+                `INSERT INTO employees (tenant_id, full_name, username, email, password, main_branch_id, is_active, updated_at, created_at) VALUES ($1, $2, $3, $4, '', $5, $6, NOW(), NOW()) RETURNING *`,
                 [tenantId, fullName, username, email, branchId || mainBranchId, isActive !== false]
             );
             const emp = result.rows[0];
