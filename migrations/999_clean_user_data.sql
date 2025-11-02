@@ -7,10 +7,10 @@
 --              Descomenta solo cuando sea necesario limpiar la base de datos.
 -- ═══════════════════════════════════════════════════════════════════════════
 
--- COMMENTED OUT TO PRESERVE DATA ON REDEPLOY
--- Uncomment only when manual database cleanup is needed
+-- RE-ENABLED FOR TESTING: Clean all user data on every redeploy
+-- This allows for fresh testing without stale data
+-- Will be disabled once we move to production
 
-/*
 BEGIN;
 
 -- Deshabilitar temporalmente los triggers de foreign keys
@@ -88,6 +88,6 @@ SELECT
     (SELECT COUNT(*) FROM devices) as devices,
     (SELECT COUNT(*) FROM sales) as sales;
 
-SELECT 
+SELECT
     'Tablas maestras preservadas:' as mensaje,
     (SELECT COUNT(*) FROM subscriptions) as subscriptions;
