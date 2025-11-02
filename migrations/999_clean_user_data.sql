@@ -2,10 +2,15 @@
 -- Script de Limpieza: Eliminar datos de usuarios pero preservar tablas master
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Fecha: 2025-10-19
--- Descripción: Elimina todos los datos de usuarios y transacciones,
---              pero PRESERVA las tablas maestras como subscriptions.
+-- Descripción: COMMENTED OUT - This script deletes all user data on every deploy
+--              which breaks data persistence. Only enable for manual cleanup.
+--              Descomenta solo cuando sea necesario limpiar la base de datos.
 -- ═══════════════════════════════════════════════════════════════════════════
 
+-- COMMENTED OUT TO PRESERVE DATA ON REDEPLOY
+-- Uncomment only when manual database cleanup is needed
+
+/*
 BEGIN;
 
 -- Deshabilitar temporalmente los triggers de foreign keys
