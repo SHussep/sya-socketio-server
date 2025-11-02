@@ -364,8 +364,8 @@ module.exports = function(pool) {
 
             // Create Administrador role
             const adminRoleResult = await client.query(`
-                INSERT INTO roles (tenant_id, name, description, is_system)
-                VALUES ($1, 'Administrador', 'Acceso completo al sistema y todos los datos', true)
+                INSERT INTO roles (tenant_id, name, description)
+                VALUES ($1, 'Administrador', 'Acceso completo al sistema y todos los datos')
                 RETURNING id
             `, [tenant.id]);
 
@@ -384,8 +384,8 @@ module.exports = function(pool) {
 
             // Create Repartidor role
             const repartidorRoleResult = await client.query(`
-                INSERT INTO roles (tenant_id, name, description, is_system)
-                VALUES ($1, 'Repartidor', 'Acceso limitado para reparto y ventas', true)
+                INSERT INTO roles (tenant_id, name, description)
+                VALUES ($1, 'Repartidor', 'Acceso limitado para reparto y ventas')
                 RETURNING id
             `, [tenant.id]);
 
