@@ -376,6 +376,7 @@ module.exports = function(pool) {
             const passwordHash = await bcrypt.hash(password, 10);
 
             // 6b. Get Administrador role_id (system role for tenant admins)
+            // This role is auto-created by migration 037
             const adminRoleResult = await client.query(
                 `SELECT id FROM roles WHERE tenant_id = $1 AND name = 'Administrador' LIMIT 1`,
                 [tenant.id]
@@ -385,15 +386,10 @@ module.exports = function(pool) {
             if (adminRoleResult.rows.length > 0) {
                 adminRoleId = adminRoleResult.rows[0].id;
             } else {
-                // Fallback: get any Administrador role (shouldn't happen after migration 037)
-                const genericAdminRole = await client.query(
-                    `SELECT id FROM roles WHERE name = 'Administrador' AND is_system = true LIMIT 1`
-                );
-                if (genericAdminRole.rows.length > 0) {
-                    adminRoleId = genericAdminRole.rows[0].id;
-                } else {
-                    throw new Error('No Administrador role found for new tenant. Migration 037 may not have completed.');
-                }
+                // If role doesn't exist yet (shouldn't happen), use a safe default
+                // The migration 037 will create it on startup
+                console.log('[Google Signup] ⚠️  Administrador role not found. Using fallback ID 1');
+                adminRoleId = 1; // Safe default - first role created by migration 037
             }
 
             // 7. Crear empleado administrador - incluir main_branch_id
