@@ -824,10 +824,11 @@ const MIGRATIONS = [
                         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                         updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                         UNIQUE(tenant_id, name)
-                    );
-                    CREATE INDEX IF NOT EXISTS idx_roles_tenant_id ON roles(tenant_id);
-                    CREATE INDEX IF NOT EXISTS idx_roles_is_system ON roles(is_system);
+                    )
                 `);
+                // Create indexes separately (can't combine with CREATE TABLE)
+                await client.query('CREATE INDEX IF NOT EXISTS idx_roles_tenant_id ON roles(tenant_id)');
+                await client.query('CREATE INDEX IF NOT EXISTS idx_roles_is_system ON roles(is_system)');
                 console.log('   ✅ Tabla roles creada');
 
                 // Step 2: Create permissions table
@@ -880,10 +881,11 @@ const MIGRATIONS = [
                         permission_id INTEGER NOT NULL REFERENCES permissions(id) ON DELETE CASCADE,
                         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                         UNIQUE(role_id, permission_id)
-                    );
-                    CREATE INDEX IF NOT EXISTS idx_role_permissions_role_id ON role_permissions(role_id);
-                    CREATE INDEX IF NOT EXISTS idx_role_permissions_permission_id ON role_permissions(permission_id);
+                    )
                 `);
+                // Create indexes separately (can't combine with CREATE TABLE)
+                await client.query('CREATE INDEX IF NOT EXISTS idx_role_permissions_role_id ON role_permissions(role_id)');
+                await client.query('CREATE INDEX IF NOT EXISTS idx_role_permissions_permission_id ON role_permissions(permission_id)');
                 console.log('   ✅ Tabla role_permissions creada');
 
                 // Step 5: Create system roles for all existing tenants
@@ -902,8 +904,8 @@ const MIGRATIONS = [
                     if (adminRoleCheck.rows.length === 0) {
                         // Create Administrador role
                         const adminRoleResult = await client.query(
-                            `INSERT INTO roles (tenant_id, name, description, is_system)
-                             VALUES ($1, $2, $3, true)
+                            `INSERT INTO roles (tenant_id, name, description)
+                             VALUES ($1, $2, $3)
                              RETURNING id`,
                             [tenant.id, 'Administrador', 'Acceso completo al sistema y todos los datos']
                         );
@@ -931,8 +933,8 @@ const MIGRATIONS = [
                     if (repartidorRoleCheck.rows.length === 0) {
                         // Create Repartidor role
                         const repartidorRoleResult = await client.query(
-                            `INSERT INTO roles (tenant_id, name, description, is_system)
-                             VALUES ($1, $2, $3, true)
+                            `INSERT INTO roles (tenant_id, name, description)
+                             VALUES ($1, $2, $3)
                              RETURNING id`,
                             [tenant.id, 'Repartidor', 'Acceso limitado para reparto y ventas']
                         );
