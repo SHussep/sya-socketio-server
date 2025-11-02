@@ -776,6 +776,34 @@ const MIGRATIONS = [
                 // Don't throw - continue even if there are issues
             }
         }
+    },
+    {
+        id: '036_add_removed_at_to_employee_branches',
+        name: 'Add removed_at column to employee_branches for soft deletes',
+        async execute(client) {
+            console.log('🔄 Ejecutando migración 036: Agregando removed_at a employee_branches...');
+
+            try {
+                // Add removed_at column
+                console.log('   📝 Agregando columna removed_at...');
+                await client.query(`
+                    ALTER TABLE employee_branches ADD COLUMN IF NOT EXISTS removed_at TIMESTAMP WITH TIME ZONE;
+                `);
+                console.log('   ✅ Columna removed_at agregada');
+
+                // Create index
+                console.log('   📝 Creando índice...');
+                await client.query(`
+                    CREATE INDEX IF NOT EXISTS idx_employee_branches_removed_at ON employee_branches(removed_at);
+                `);
+                console.log('   ✅ Índice creado');
+
+                console.log('✅ Migración 036 completada: removed_at agregado a employee_branches');
+            } catch (error) {
+                console.log('⚠️  Migración 036: ' + error.message);
+                // Don't throw - continue even if there are issues
+            }
+        }
     }
 ];
 
