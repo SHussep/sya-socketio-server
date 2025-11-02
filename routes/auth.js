@@ -359,63 +359,28 @@ module.exports = function(pool) {
 
             console.log(`[Google Signup] ✅ Tenant creado: ${tenant.tenant_code} (ID: ${tenant.id})`);
 
-            // 4b. Create system roles for new tenant (Administrador and Repartidor)
+            // 4b. Create system roles for new tenant (simplified: only 2 roles)
             console.log(`[Google Signup] 📝 Creando roles del sistema para nuevo tenant...`);
 
-            // Create Administrador role
-            const adminRoleResult = await client.query(`
+            // Create "Acceso Total" role
+            const accesoTotalResult = await client.query(`
                 INSERT INTO roles (tenant_id, name, description)
-                VALUES ($1, 'Administrador', 'Acceso completo al sistema y todos los datos')
+                VALUES ($1, $2, $3)
                 RETURNING id
-            `, [tenant.id]);
+            `, [tenant.id, 'Acceso Total', 'Acceso completo al sistema - Administrador']);
 
-            const adminRoleId = adminRoleResult.rows[0].id;
+            const accesoTotalRoleId = accesoTotalResult.rows[0].id;
 
-            // Get all permissions and assign to Administrador role
-            const permissionsResult = await client.query('SELECT id FROM permissions');
-            for (const perm of permissionsResult.rows) {
-                await client.query(
-                    `INSERT INTO role_permissions (role_id, permission_id)
-                     VALUES ($1, $2)
-                     ON CONFLICT (role_id, permission_id) DO NOTHING`,
-                    [adminRoleId, perm.id]
-                );
-            }
-
-            // Create Repartidor role
-            const repartidorRoleResult = await client.query(`
+            // Create "Acceso Repartidor" role
+            const accesoRepartidorResult = await client.query(`
                 INSERT INTO roles (tenant_id, name, description)
-                VALUES ($1, 'Repartidor', 'Acceso limitado para reparto y ventas')
+                VALUES ($1, $2, $3)
                 RETURNING id
-            `, [tenant.id]);
+            `, [tenant.id, 'Acceso Repartidor', 'Acceso limitado - Repartidor']);
 
-            const repartidorRoleId = repartidorRoleResult.rows[0].id;
+            const accesoRepartidorRoleId = accesoRepartidorResult.rows[0].id;
 
-            // Assign limited permissions to Repartidor
-            const limitedPermsCodes = [
-                'mobile_app_access',
-                'create_sale',
-                'view_sales',
-                'view_inventory',
-                'view_cash_drawer',
-                'close_shift'
-            ];
-
-            const limitedPermsResult = await client.query(
-                `SELECT id FROM permissions WHERE code = ANY($1)`,
-                [limitedPermsCodes]
-            );
-
-            for (const perm of limitedPermsResult.rows) {
-                await client.query(
-                    `INSERT INTO role_permissions (role_id, permission_id)
-                     VALUES ($1, $2)
-                     ON CONFLICT (role_id, permission_id) DO NOTHING`,
-                    [repartidorRoleId, perm.id]
-                );
-            }
-
-            console.log(`[Google Signup] ✅ Roles creados para nuevo tenant`);
+            console.log(`[Google Signup] ✅ Roles creados para nuevo tenant (Acceso Total: ${accesoTotalRoleId}, Acceso Repartidor: ${accesoRepartidorRoleId})`);
 
             // 5. Crear branch por defecto (primera sucursal) - solo columnas esenciales
             // Use short code to stay within varchar(20) limit: tenant_id suffixed with -M for main
@@ -443,7 +408,7 @@ module.exports = function(pool) {
                 )
                 VALUES ($1, $2, $3, $4, $5, $6, $7, true, true, $8, NOW(), NOW(), NOW())
                 RETURNING id, email, username, full_name, role_id, is_active, created_at
-            `, [tenant.id, email, username, displayName, passwordHash, adminRoleId, branch.id, email]);
+            `, [tenant.id, email, username, displayName, passwordHash, accesoTotalRoleId, branch.id, email]);
 
             const employee = employeeResult.rows[0];
 

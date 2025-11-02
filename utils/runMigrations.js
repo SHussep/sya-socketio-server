@@ -807,12 +807,12 @@ const MIGRATIONS = [
     },
     {
         id: '037_create_roles_and_permissions_system',
-        name: 'Create comprehensive roles and permissions system',
+        name: 'Create simplified roles system with 2 fixed roles',
         async execute(client) {
-            console.log('🔄 Ejecutando migración 037: Creando sistema de roles y permisos...');
+            console.log('🔄 Ejecutando migración 037: Creando sistema de roles simplificado...');
 
             try {
-                // Step 1: Create roles table
+                // Step 1: Create roles table (simplified - no complex permissions)
                 console.log('   📝 Creando tabla roles...');
                 await client.query(`
                     CREATE TABLE IF NOT EXISTS roles (
@@ -820,7 +820,6 @@ const MIGRATIONS = [
                         tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
                         name VARCHAR(255) NOT NULL,
                         description TEXT,
-                        is_system BOOLEAN DEFAULT false,
                         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                         updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                         UNIQUE(tenant_id, name)
@@ -828,169 +827,50 @@ const MIGRATIONS = [
                 `);
                 // Create indexes separately (can't combine with CREATE TABLE)
                 await client.query('CREATE INDEX IF NOT EXISTS idx_roles_tenant_id ON roles(tenant_id)');
-                await client.query('CREATE INDEX IF NOT EXISTS idx_roles_is_system ON roles(is_system)');
                 console.log('   ✅ Tabla roles creada');
 
-                // Step 2: Create permissions table
-                console.log('   📝 Creando tabla permissions...');
-                await client.query(`
-                    CREATE TABLE IF NOT EXISTS permissions (
-                        id SERIAL PRIMARY KEY,
-                        code VARCHAR(255) NOT NULL UNIQUE,
-                        name VARCHAR(255) NOT NULL,
-                        description TEXT,
-                        category VARCHAR(100),
-                        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-                    );
-                `);
-                console.log('   ✅ Tabla permissions creada');
-
-                // Step 3: Seed permissions
-                console.log('   📝 Poblando permisos del sistema...');
-                await client.query(`
-                    INSERT INTO permissions (code, name, description, category) VALUES
-                    ('mobile_app_access', 'Acceso a App Móvil', 'Permite acceso completo a la app móvil y todos los datos en PostgreSQL', 'access'),
-                    ('desktop_app_access', 'Acceso a App Desktop', 'Permite usar la aplicación Desktop', 'access'),
-                    ('create_sale', 'Crear Ventas', 'Registrar nuevas ventas', 'sales'),
-                    ('view_sales', 'Ver Ventas', 'Ver historial de ventas', 'sales'),
-                    ('edit_sale', 'Editar Ventas', 'Modificar ventas existentes', 'sales'),
-                    ('void_sale', 'Anular Ventas', 'Anular transacciones de venta', 'sales'),
-                    ('view_inventory', 'Ver Inventario', 'Ver stocks y productos', 'inventory'),
-                    ('manage_inventory', 'Gestionar Inventario', 'Actualizar stocks y crear productos', 'inventory'),
-                    ('view_cash_drawer', 'Ver Caja', 'Ver estado de caja', 'cash'),
-                    ('manage_cash_drawer', 'Gestionar Caja', 'Abrir/cerrar caja y registrar transacciones', 'cash'),
-                    ('close_shift', 'Cerrar Turno', 'Cerrar turno y arqueos', 'cash'),
-                    ('view_employees', 'Ver Empleados', 'Ver listado de empleados', 'employees'),
-                    ('manage_employees', 'Gestionar Empleados', 'Crear, editar, eliminar empleados', 'employees'),
-                    ('manage_roles', 'Gestionar Roles', 'Asignar roles y permisos a empleados', 'employees'),
-                    ('view_reports', 'Ver Reportes', 'Acceder a reportes y análisis', 'reports'),
-                    ('export_data', 'Exportar Datos', 'Exportar datos en múltiples formatos', 'reports'),
-                    ('manage_branches', 'Gestionar Sucursales', 'Crear y editar sucursales', 'admin'),
-                    ('manage_settings', 'Gestionar Configuración', 'Cambiar configuración del sistema', 'admin'),
-                    ('view_audit_log', 'Ver Log de Auditoría', 'Ver historial de cambios', 'admin')
-                    ON CONFLICT (code) DO NOTHING;
-                `);
-                console.log('   ✅ Permisos poblados');
-
-                // Step 4: Create role_permissions table
-                console.log('   📝 Creando tabla role_permissions...');
-                await client.query(`
-                    CREATE TABLE IF NOT EXISTS role_permissions (
-                        id SERIAL PRIMARY KEY,
-                        role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
-                        permission_id INTEGER NOT NULL REFERENCES permissions(id) ON DELETE CASCADE,
-                        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                        UNIQUE(role_id, permission_id)
-                    )
-                `);
-                // Create indexes separately (can't combine with CREATE TABLE)
-                await client.query('CREATE INDEX IF NOT EXISTS idx_role_permissions_role_id ON role_permissions(role_id)');
-                await client.query('CREATE INDEX IF NOT EXISTS idx_role_permissions_permission_id ON role_permissions(permission_id)');
-                console.log('   ✅ Tabla role_permissions creada');
-
-                // Step 5: Create system roles for all existing tenants
-                console.log('   📝 Creando roles Administrador y Repartidor...');
+                // Step 2: Create system roles for all existing tenants
+                console.log('   📝 Creando 2 roles fijos: "Acceso Total" y "Acceso Repartidor"...');
 
                 // Get all tenants
                 const tenantsResult = await client.query('SELECT id FROM tenants');
 
                 for (const tenant of tenantsResult.rows) {
-                    // Check if Administrador role exists
-                    const adminRoleCheck = await client.query(
+                    // Check if "Acceso Total" role exists
+                    const accesoTotalCheck = await client.query(
                         'SELECT id FROM roles WHERE tenant_id = $1 AND name = $2',
-                        [tenant.id, 'Administrador']
+                        [tenant.id, 'Acceso Total']
                     );
 
-                    if (adminRoleCheck.rows.length === 0) {
-                        // Create Administrador role
-                        const adminRoleResult = await client.query(
+                    if (accesoTotalCheck.rows.length === 0) {
+                        // Create "Acceso Total" role
+                        await client.query(
                             `INSERT INTO roles (tenant_id, name, description)
-                             VALUES ($1, $2, $3)
-                             RETURNING id`,
-                            [tenant.id, 'Administrador', 'Acceso completo al sistema y todos los datos']
+                             VALUES ($1, $2, $3)`,
+                            [tenant.id, 'Acceso Total', 'Acceso completo al sistema - Administrador']
                         );
-
-                        const adminRoleId = adminRoleResult.rows[0].id;
-
-                        // Assign ALL permissions to Administrador
-                        const permissionsResult = await client.query('SELECT id FROM permissions');
-                        for (const perm of permissionsResult.rows) {
-                            await client.query(
-                                `INSERT INTO role_permissions (role_id, permission_id)
-                                 VALUES ($1, $2)
-                                 ON CONFLICT (role_id, permission_id) DO NOTHING`,
-                                [adminRoleId, perm.id]
-                            );
-                        }
+                        console.log(`   ✅ Rol "Acceso Total" creado para tenant ${tenant.id}`);
                     }
 
-                    // Check if Repartidor role exists
-                    const repartidorRoleCheck = await client.query(
+                    // Check if "Acceso Repartidor" role exists
+                    const accesoRepartidorCheck = await client.query(
                         'SELECT id FROM roles WHERE tenant_id = $1 AND name = $2',
-                        [tenant.id, 'Repartidor']
+                        [tenant.id, 'Acceso Repartidor']
                     );
 
-                    if (repartidorRoleCheck.rows.length === 0) {
-                        // Create Repartidor role
-                        const repartidorRoleResult = await client.query(
+                    if (accesoRepartidorCheck.rows.length === 0) {
+                        // Create "Acceso Repartidor" role
+                        await client.query(
                             `INSERT INTO roles (tenant_id, name, description)
-                             VALUES ($1, $2, $3)
-                             RETURNING id`,
-                            [tenant.id, 'Repartidor', 'Acceso limitado para reparto y ventas']
+                             VALUES ($1, $2, $3)`,
+                            [tenant.id, 'Acceso Repartidor', 'Acceso limitado - Repartidor']
                         );
-
-                        const repartidorRoleId = repartidorRoleResult.rows[0].id;
-
-                        // Assign limited permissions to Repartidor
-                        const limitedPermsCodes = [
-                            'mobile_app_access',
-                            'create_sale',
-                            'view_sales',
-                            'view_inventory',
-                            'view_cash_drawer',
-                            'close_shift'
-                        ];
-
-                        const limitedPermsResult = await client.query(
-                            `SELECT id FROM permissions WHERE code = ANY($1)`,
-                            [limitedPermsCodes]
-                        );
-
-                        for (const perm of limitedPermsResult.rows) {
-                            await client.query(
-                                `INSERT INTO role_permissions (role_id, permission_id)
-                                 VALUES ($1, $2)
-                                 ON CONFLICT (role_id, permission_id) DO NOTHING`,
-                                [repartidorRoleId, perm.id]
-                            );
-                        }
+                        console.log(`   ✅ Rol "Acceso Repartidor" creado para tenant ${tenant.id}`);
                     }
                 }
-                console.log('   ✅ Roles Administrador y Repartidor creados para todos los tenants');
+                console.log('   ✅ Ambos roles creados para todos los tenants');
 
-                // Step 6: Create employee_permissions view
-                console.log('   📝 Creando vista employee_permissions_view...');
-                await client.query(`
-                    CREATE OR REPLACE VIEW employee_permissions_view AS
-                    SELECT
-                        e.id as employee_id,
-                        e.tenant_id,
-                        e.email,
-                        e.full_name,
-                        r.id as role_id,
-                        r.name as role_name,
-                        p.code as permission_code,
-                        p.name as permission_name,
-                        p.category as permission_category
-                    FROM employees e
-                    JOIN roles r ON e.role_id = r.id
-                    JOIN role_permissions rp ON r.id = rp.role_id
-                    JOIN permissions p ON rp.permission_id = p.id
-                    WHERE e.is_active = true;
-                `);
-                console.log('   ✅ Vista employee_permissions_view creada');
-
-                console.log('✅ Migración 037 completada: Sistema de roles y permisos creado');
+                console.log('✅ Migración 037 completada: Sistema de roles simplificado creado');
             } catch (error) {
                 console.log('⚠️  Migración 037: ' + error.message);
                 // Don't throw - continue even if there are issues
