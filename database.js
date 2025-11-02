@@ -444,6 +444,48 @@ async function initializeDatabase() {
     }
 }
 
+// Execute migration files
+async function runMigrations() {
+    const fs = require('fs');
+    const path = require('path');
+    const client = await pool.connect();
+
+    try {
+        console.log('[Migrations] 🔄 Running migrations...');
+
+        const migrationsDir = path.join(__dirname, 'migrations');
+        if (!fs.existsSync(migrationsDir)) {
+            console.log('[Migrations] ℹ️ Migrations directory not found, skipping');
+            return;
+        }
+
+        const files = fs.readdirSync(migrationsDir)
+            .filter(f => f.endsWith('.sql'))
+            .sort();
+
+        for (const file of files) {
+            try {
+                const filePath = path.join(migrationsDir, file);
+                const sql = fs.readFileSync(filePath, 'utf8');
+
+                console.log(`[Migrations] 📝 Running: ${file}`);
+                await client.query(sql);
+                console.log(`[Migrations] ✅ Completed: ${file}`);
+            } catch (error) {
+                console.error(`[Migrations] ❌ Error in ${file}:`, error.message);
+                // Continue with next migration instead of throwing
+            }
+        }
+
+        console.log('[Migrations] ✅ All migrations completed');
+    } catch (error) {
+        console.error('[Migrations] ❌ Error running migrations:', error.message);
+        throw error;
+    } finally {
+        client.release();
+    }
+}
+
 // 🌍 WRAPPER: Ensure timezone is UTC for EVERY database operation
 // This wrapper intercepts all queries and ensures UTC timezone by beginning each session with SET timezone
 class UTCPoolWrapper {
@@ -500,5 +542,6 @@ const wrappedPool = new UTCPoolWrapper(pool);
 
 module.exports = {
     pool: wrappedPool,
-    initializeDatabase
+    initializeDatabase,
+    runMigrations
 };

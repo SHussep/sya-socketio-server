@@ -15,8 +15,7 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const { pool, initializeDatabase } = require('./database');
-const { runMigrations } = require('./utils/runMigrations');
+const { pool, initializeDatabase, runMigrations } = require('./database');
 require('dotenv').config();
 
 const PORT = process.env.PORT || 3000;
