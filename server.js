@@ -739,6 +739,149 @@ io.on('connection', (socket) => {
         });
     });
 
+    // ═══════════════════════════════════════════════════════════════
+    // MOBILE REPARTIDOR LISTENERS (Assignment Sync Architecture)
+    // ═══════════════════════════════════════════════════════════════
+
+    // EVENT 1: Mobile notifies that cash drawer was opened by repartidor
+    // (Optional - if using Option B: Mobile initiates cash drawer opening)
+    socket.on('cashier:drawer-opened-by-repartidor', (data) => {
+        const repartidorId = socket.handshake.auth?.repartidorId;
+
+        // Verify the mobile user is actually this repartidor
+        if (repartidorId && repartidorId !== data.repartidorId) {
+            console.log(`[CASHIER] ❌ Security violation: Socket repartidorId=${repartidorId} tried to open drawer for repartidorId=${data.repartidorId}`);
+            return;
+        }
+
+        console.log(`[CASHIER] 💰 Repartidor ${data.repartidorId} abrió caja desde Mobile con $${data.initialAmount}`);
+
+        // Forward to Desktop (if connected to same branch)
+        const branchRoom = `branch_${data.branchId}`;
+        io.to(branchRoom).emit('cashier:drawer-opened-by-repartidor', {
+            ...data,
+            source: 'mobile',
+            receivedAt: new Date().toISOString()
+        });
+
+        // Acknowledge to Mobile
+        socket.emit('cashier:drawer-acknowledged', { success: true });
+    });
+
+    // EVENT 2: Mobile sends expense created notification
+    socket.on('repartidor:expense-created', (data) => {
+        const repartidorId = socket.handshake.auth?.repartidorId;
+
+        // Verify the mobile user is this repartidor
+        if (repartidorId && repartidorId !== data.repartidorId) {
+            console.log(`[EXPENSE] ❌ Security violation: Socket repartidorId=${repartidorId} tried to create expense for ${data.repartidorId}`);
+            return;
+        }
+
+        console.log(`[EXPENSE] 💸 Repartidor ${data.repartidorId} registró gasto: $${data.amount} (${data.category})`);
+        console.log(`[EXPENSE] 📝 Descripción: ${data.description}`);
+
+        // Forward to Desktop so it can sync to Backend
+        const branchRoom = `branch_${data.branchId}`;
+        io.to(branchRoom).emit('repartidor:expense-created', {
+            ...data,
+            source: 'mobile',
+            receivedAt: new Date().toISOString()
+        });
+
+        // Acknowledge to Mobile
+        socket.emit('expense:received', {
+            success: true,
+            expenseId: data.expenseId,
+            message: 'Gasto recibido por servidor, Desktop sincronizará a Backend'
+        });
+    });
+
+    // EVENT 3: Mobile notifies assignment was completed
+    socket.on('repartidor:assignment-completed', (data) => {
+        const repartidorId = socket.handshake.auth?.repartidorId;
+
+        // Verify the mobile user is this repartidor
+        if (repartidorId && repartidorId !== data.repartidorId) {
+            console.log(`[ASSIGNMENT] ❌ Security violation: Socket repartidorId=${repartidorId} tried to complete assignment for ${data.repartidorId}`);
+            return;
+        }
+
+        console.log(`[ASSIGNMENT] ✅ Repartidor ${data.repartidorId} completó asignación: ${data.kilosVendidos}kg vendidos (${data.kilosDevueltos}kg devueltos)`);
+
+        // Forward to Desktop so it can create sale and sync to Backend
+        const branchRoom = `branch_${data.branchId}`;
+        io.to(branchRoom).emit('repartidor:assignment-completed', {
+            ...data,
+            source: 'mobile',
+            receivedAt: new Date().toISOString()
+        });
+
+        // Acknowledge to Mobile
+        socket.emit('assignment:completion-received', {
+            success: true,
+            assignmentId: data.assignmentId,
+            message: 'Asignación completada, Desktop creará venta'
+        });
+    });
+
+    // EVENT 4: Mobile requests current assignments (for offline recovery)
+    socket.on('request:my-assignments', (data) => {
+        const repartidorId = socket.handshake.auth?.repartidorId;
+
+        // Verify the mobile user is this repartidor
+        if (repartidorId && repartidorId !== data.repartidorId) {
+            console.log(`[REQUEST] ❌ Security violation: Socket repartidorId=${repartidorId} tried to request assignments for ${data.repartidorId}`);
+            return;
+        }
+
+        console.log(`[REQUEST] 📋 Repartidor ${data.repartidorId} solicitó sus asignaciones actuales`);
+
+        // Forward to Desktop to query assignments
+        const branchRoom = `branch_${data.branchId}`;
+        io.to(branchRoom).emit('request:my-assignments', {
+            repartidorId: data.repartidorId,
+            tenantId: data.tenantId,
+            branchId: data.branchId,
+            lastSyncAt: data.lastSyncAt,
+            mobileSocketId: socket.id,  // Desktop sends response back via this ID
+            source: 'mobile-recovery',
+            requestedAt: new Date().toISOString()
+        });
+    });
+
+    // EVENT 5: Mobile notifies cash drawer closing
+    socket.on('cashier:drawer-closed', (data) => {
+        const repartidorId = socket.handshake.auth?.repartidorId;
+
+        // Verify the mobile user is this repartidor
+        if (repartidorId && repartidorId !== data.repartidorId) {
+            console.log(`[CASHIER] ❌ Security violation: Socket repartidorId=${repartidorId} tried to close drawer for ${data.repartidorId}`);
+            return;
+        }
+
+        console.log(`[CASHIER] 🔒 Repartidor ${data.repartidorId} cerró caja con $${data.finalAmount}`);
+
+        // Forward to Desktop
+        const branchRoom = `branch_${data.branchId}`;
+        io.to(branchRoom).emit('cashier:drawer-closed', {
+            ...data,
+            source: 'mobile',
+            receivedAt: new Date().toISOString()
+        });
+
+        // Acknowledge to Mobile
+        socket.emit('cashier:closure-acknowledged', {
+            success: true,
+            drawerId: data.drawerId,
+            message: 'Cierre de caja registrado'
+        });
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // END MOBILE LISTENERS
+    // ═══════════════════════════════════════════════════════════════
+
     socket.on('disconnect', () => {
         if (socket.clientType === 'desktop') stats.desktopClients = Math.max(0, stats.desktopClients - 1);
         else if (socket.clientType === 'mobile') stats.mobileClients = Math.max(0, stats.mobileClients - 1);
