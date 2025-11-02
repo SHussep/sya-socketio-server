@@ -448,7 +448,6 @@ async function initializeDatabase() {
 async function runMigrations() {
     const fs = require('fs');
     const path = require('path');
-    const client = await pool.connect();
 
     try {
         console.log('[Migrations] 🔄 Running migrations...');
@@ -463,26 +462,40 @@ async function runMigrations() {
             .filter(f => f.endsWith('.sql'))
             .sort();
 
+        let successCount = 0;
+        let failureCount = 0;
+
         for (const file of files) {
+            const client = await pool.connect();
             try {
                 const filePath = path.join(migrationsDir, file);
                 const sql = fs.readFileSync(filePath, 'utf8');
 
                 console.log(`[Migrations] 📝 Running: ${file}`);
+                // Each migration runs in its own transaction
+                await client.query('BEGIN');
                 await client.query(sql);
+                await client.query('COMMIT');
                 console.log(`[Migrations] ✅ Completed: ${file}`);
+                successCount++;
             } catch (error) {
+                try {
+                    await client.query('ROLLBACK');
+                } catch (rollbackError) {
+                    // Ignore rollback errors
+                }
                 console.error(`[Migrations] ❌ Error in ${file}:`, error.message);
+                failureCount++;
                 // Continue with next migration instead of throwing
+            } finally {
+                client.release();
             }
         }
 
-        console.log('[Migrations] ✅ All migrations completed');
+        console.log(`[Migrations] ✅ All migrations completed (${successCount} successful, ${failureCount} failed)`);
     } catch (error) {
         console.error('[Migrations] ❌ Error running migrations:', error.message);
-        throw error;
-    } finally {
-        client.release();
+        // Don't throw - let server start even if migrations fail
     }
 }
 
