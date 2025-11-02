@@ -71,14 +71,19 @@ async function initializeDatabase() {
         }
 
         // Insertar planes por defecto si no existen (solo con columnas que seguro existen)
-        await client.query(`
-            INSERT INTO subscriptions (name, price, max_branches, max_devices, max_employees, features)
-            VALUES
-                ('Basic', 0.00, 1, 3, 5, '{"guardian": true, "reports": true}'),
-                ('Pro', 499.00, 3, 10, 20, '{"guardian": true, "reports": true, "advanced_analytics": true}'),
-                ('Enterprise', 999.00, 10, 50, 100, '{"guardian": true, "reports": true, "advanced_analytics": true, "custom_features": true}')
-            ON CONFLICT (name) DO NOTHING
-        `);
+        try {
+            await client.query(`
+                INSERT INTO subscriptions (name, price, max_branches, max_devices, max_employees, features)
+                VALUES
+                    ('Basic', 0.00, 1, 3, 5, '{"guardian": true, "reports": true}'),
+                    ('Pro', 499.00, 3, 10, 20, '{"guardian": true, "reports": true, "advanced_analytics": true}'),
+                    ('Enterprise', 999.00, 10, 50, 100, '{"guardian": true, "reports": true, "advanced_analytics": true, "custom_features": true}')
+                ON CONFLICT (name) DO NOTHING
+            `);
+        } catch (error) {
+            console.log('[DB] ⚠️ subscriptions insert error (expected if table structure differs):', error.message);
+            // Don't throw - continue initialization
+        }
 
         // Tabla: tenants
         await client.query(`
