@@ -387,13 +387,12 @@ module.exports = function(pool) {
 
             console.log(`[Google Signup] ✅ Employee creado: ${employee.email} (ID: ${employee.id}, Role: ${employee.role})`);
 
-            // 8. Asignar permisos completos al owner en el branch
+            // 8. Asignar empleado a la sucursal (employee-branch many-to-many relationship)
             await client.query(`
                 INSERT INTO employee_branches (
-                    employee_id, branch_id, can_login, can_sell,
-                    can_manage_inventory, can_close_shift
-                ) VALUES ($1, $2, true, true, true, true)
-            `, [employee.id, branch.id]);
+                    tenant_id, employee_id, branch_id, is_active
+                ) VALUES ($1, $2, $3, true)
+            `, [tenant.id, employee.id, branch.id]);
 
             await client.query('COMMIT');
 

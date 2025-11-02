@@ -523,6 +523,84 @@ const MIGRATIONS = [
                 // Don't throw - continue even if there are issues
             }
         }
+    },
+    {
+        id: '032_fix_backend_schema_cleanup',
+        name: 'Fix Backend Schema - Remove Desktop-only fields from PostgreSQL',
+        async execute(client) {
+            console.log('🔄 Ejecutando migración 032: Limpieza de schema del backend...');
+
+            try {
+                // Step 1: Remove sync fields from employees table (ONLY Backend PostgreSQL should have these)
+                console.log('   📝 Removiendo campos de sync de tabla employees...');
+                await client.query(`
+                    ALTER TABLE employees DROP COLUMN IF EXISTS synced CASCADE;
+                    ALTER TABLE employees DROP COLUMN IF EXISTS synced_at CASCADE;
+                    ALTER TABLE employees DROP COLUMN IF EXISTS remote_id CASCADE;
+                `);
+                console.log('   ✅ Columnas de sync removidas de employees');
+
+                // Step 2: Add branch_id context to roles table for proper role-branch-tenant relationship
+                console.log('   📝 Agregando branch_id a tabla roles...');
+                await client.query(`
+                    ALTER TABLE roles ADD COLUMN IF NOT EXISTS branch_id INTEGER REFERENCES branches(id) ON DELETE CASCADE;
+                `);
+                console.log('   ✅ Columna branch_id agregada a roles');
+
+                // Step 3: Create index on roles branch_id
+                await client.query(`
+                    CREATE INDEX IF NOT EXISTS idx_roles_branch_id ON roles(branch_id);
+                `);
+                console.log('   ✅ Índice en roles.branch_id creado');
+
+                // Step 4: Create unique constraint for roles to prevent duplicates per branch
+                console.log('   📝 Agregando constrainta UNIQUE a roles...');
+                try {
+                    await client.query(`
+                        ALTER TABLE roles DROP CONSTRAINT IF EXISTS unique_role_per_branch_tenant CASCADE;
+                    `);
+                } catch (e) {
+                    // Constraint might not exist, that's OK
+                }
+
+                await client.query(`
+                    ALTER TABLE roles ADD CONSTRAINT unique_role_per_branch_tenant UNIQUE NULLS NOT DISTINCT (tenant_id, branch_id, name);
+                `);
+                console.log('   ✅ Constrainta UNIQUE agregada a roles');
+
+                // Step 5: Ensure employee_branches junction table is properly structured
+                console.log('   📝 Asegurando tabla employee_branches...');
+                await client.query(`
+                    CREATE TABLE IF NOT EXISTS employee_branches (
+                        id SERIAL PRIMARY KEY,
+                        tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                        employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+                        branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+                        is_active BOOLEAN DEFAULT true,
+                        assigned_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(tenant_id, employee_id, branch_id)
+                    );
+                `);
+                console.log('   ✅ Tabla employee_branches creada/verificada');
+
+                // Step 6: Create indices for employee_branches
+                console.log('   📝 Creando índices en employee_branches...');
+                await client.query(`
+                    CREATE INDEX IF NOT EXISTS idx_employee_branches_tenant_id ON employee_branches(tenant_id);
+                    CREATE INDEX IF NOT EXISTS idx_employee_branches_employee_id ON employee_branches(employee_id);
+                    CREATE INDEX IF NOT EXISTS idx_employee_branches_branch_id ON employee_branches(branch_id);
+                    CREATE INDEX IF NOT EXISTS idx_employee_branches_is_active ON employee_branches(is_active);
+                `);
+                console.log('   ✅ Índices en employee_branches creados');
+
+                console.log('✅ Migración 032 completada: Backend schema cleanup successful');
+            } catch (error) {
+                console.log('⚠️  Migración 032: ' + error.message);
+                // Don't throw - continue even if there are issues
+            }
+        }
     }
 ];
 
