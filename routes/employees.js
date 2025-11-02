@@ -382,5 +382,124 @@ module.exports = (pool) => {
         }
     });
 
+    // POST /api/employees/:id/sync-role - Sync employee role from Desktop app
+    // When Desktop assigns a role to an employee, sync it to PostgreSQL
+    router.post('/:id/sync-role', async (req, res) => {
+        const client = await pool.connect();
+        try {
+            const employeeId = req.params.id;
+            const { tenantId, roleId, canUseMobileApp } = req.body;
+
+            console.log(`[Employees/SyncRole] 🔄 Sincronizando rol para empleado ${employeeId}: roleId=${roleId}, mobile=${canUseMobileApp}`);
+
+            // Validate required fields
+            if (!tenantId) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Se requiere tenantId'
+                });
+            }
+
+            // Verify employee exists
+            const employeeCheck = await client.query(
+                `SELECT id, full_name, role_id FROM employees WHERE id = $1 AND tenant_id = $2`,
+                [employeeId, tenantId]
+            );
+
+            if (employeeCheck.rows.length === 0) {
+                console.log(`[Employees/SyncRole] ❌ Empleado no encontrado: ${employeeId}`);
+                return res.status(404).json({
+                    success: false,
+                    message: 'Empleado no encontrado'
+                });
+            }
+
+            const employee = employeeCheck.rows[0];
+
+            // If roleId provided, validate it exists
+            let finalRoleId = employee.role_id;  // Keep existing role if not provided
+            if (roleId) {
+                const roleCheck = await client.query(
+                    `SELECT id, name FROM roles WHERE id = $1 AND tenant_id = $2`,
+                    [roleId, tenantId]
+                );
+
+                if (roleCheck.rows.length === 0) {
+                    console.log(`[Employees/SyncRole] ❌ Rol no válido: ${roleId}`);
+                    return res.status(400).json({
+                        success: false,
+                        message: `Rol no válido: ${roleId}`
+                    });
+                }
+                finalRoleId = roleId;
+            }
+
+            // Only update role if canUseMobileApp is true
+            // If false, we don't grant access to mobile
+            if (canUseMobileApp === true && roleId) {
+                // Update employee's role_id (enables mobile app access with this role)
+                const updateResult = await client.query(
+                    `UPDATE employees
+                     SET role_id = $1,
+                         updated_at = NOW()
+                     WHERE id = $2 AND tenant_id = $3
+                     RETURNING id, full_name, role_id`,
+                    [finalRoleId, employeeId, tenantId]
+                );
+
+                if (updateResult.rows.length > 0) {
+                    const updated = updateResult.rows[0];
+                    console.log(`[Employees/SyncRole] ✅ Rol sincronizado para ${updated.full_name}: role_id=${updated.role_id}`);
+
+                    return res.json({
+                        success: true,
+                        message: 'Rol sincronizado exitosamente',
+                        data: {
+                            employeeId: updated.id,
+                            fullName: updated.full_name,
+                            roleId: updated.role_id,
+                            canUseMobileApp: true
+                        }
+                    });
+                }
+            } else if (canUseMobileApp === false) {
+                // If canUseMobileApp is false, don't assign a role (no mobile access)
+                console.log(`[Employees/SyncRole] ℹ️  Empleado ${employee.full_name} sin acceso a App Móvil`);
+                return res.json({
+                    success: true,
+                    message: 'Configuración actualizada',
+                    data: {
+                        employeeId: employee.id,
+                        fullName: employee.full_name,
+                        roleId: employee.role_id,
+                        canUseMobileApp: false,
+                        note: 'Empleado sin acceso a App Móvil'
+                    }
+                });
+            } else {
+                // No role or canUseMobileApp provided, just return current state
+                return res.json({
+                    success: true,
+                    message: 'Estado actual',
+                    data: {
+                        employeeId: employee.id,
+                        fullName: employee.full_name,
+                        roleId: employee.role_id
+                    }
+                });
+            }
+
+        } catch (error) {
+            console.error('[Employees/SyncRole] ❌ Error:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Error al sincronizar rol',
+                error: error.message
+            });
+        } finally {
+            client.release();
+        }
+    });
+
     return router;
 };
