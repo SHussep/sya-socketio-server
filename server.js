@@ -76,6 +76,7 @@ const depositsRoutes = require('./routes/deposits');
 const withdrawalsRoutes = require('./routes/withdrawals');
 const newCashCutsRoutes = require('./routes/cash-cuts');
 const employeeBranchesRoutes = require('./routes/employee_branches')(pool); // Rutas de relaciones empleado-sucursal
+const employeeRolesRoutes = require('./routes/employee_roles'); // Rutas para gestionar roles y permisos
 
 // Inline employee sync endpoint (avoids file loading issues)
 const employeesRoutes = (() => {
@@ -391,6 +392,7 @@ app.use('/api/guardian-events', guardianEventsRoutes(pool, io)); // Requires io 
 app.use('/api/dashboard', dashboardRoutes(pool));
 app.use('/api/admin', adminRoutes(pool)); // Rutas de administración
 app.use('/api/employees', employeesRoutes); // Rutas de sincronización de empleados desde Desktop
+app.use('/api/employee-roles', employeeRolesRoutes); // Rutas para gestionar roles y permisos
 
 // FASE 1: Cash Management Routes (Deposits, Withdrawals, Cash Cuts)
 app.use('/api/deposits', depositsRoutes(pool));

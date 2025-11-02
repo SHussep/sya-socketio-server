@@ -375,26 +375,28 @@ module.exports = function(pool) {
             // 6. Hash de contraseña
             const passwordHash = await bcrypt.hash(password, 10);
 
-            // 6b. Get owner role_id (assume ID 1 for owner role)
-            const ownerRoleResult = await client.query(
-                `SELECT id FROM roles WHERE name = 'owner' AND tenant_id = $1 LIMIT 1`,
+            // 6b. Get Administrador role_id (system role for tenant admins)
+            const adminRoleResult = await client.query(
+                `SELECT id FROM roles WHERE tenant_id = $1 AND name = 'Administrador' LIMIT 1`,
                 [tenant.id]
             );
 
-            let ownerRoleId = 1; // Default to ID 1
-            if (ownerRoleResult.rows.length > 0) {
-                ownerRoleId = ownerRoleResult.rows[0].id;
+            let adminRoleId;
+            if (adminRoleResult.rows.length > 0) {
+                adminRoleId = adminRoleResult.rows[0].id;
             } else {
-                // If no owner role exists, try generic owner role
-                const genericOwnerRole = await client.query(
-                    `SELECT id FROM roles WHERE name = 'owner' LIMIT 1`
+                // Fallback: get any Administrador role (shouldn't happen after migration 037)
+                const genericAdminRole = await client.query(
+                    `SELECT id FROM roles WHERE name = 'Administrador' AND is_system = true LIMIT 1`
                 );
-                if (genericOwnerRole.rows.length > 0) {
-                    ownerRoleId = genericOwnerRole.rows[0].id;
+                if (genericAdminRole.rows.length > 0) {
+                    adminRoleId = genericAdminRole.rows[0].id;
+                } else {
+                    throw new Error('No Administrador role found for new tenant. Migration 037 may not have completed.');
                 }
             }
 
-            // 7. Crear empleado owner - incluir main_branch_id
+            // 7. Crear empleado administrador - incluir main_branch_id
             const username = displayName.replace(/\s+/g, '').toLowerCase();
             const employeeResult = await client.query(`
                 INSERT INTO employees (
@@ -404,7 +406,7 @@ module.exports = function(pool) {
                 )
                 VALUES ($1, $2, $3, $4, $5, $6, $7, true, true, $8, NOW(), NOW(), NOW())
                 RETURNING id, email, username, full_name, role_id, is_active, created_at
-            `, [tenant.id, email, username, displayName, passwordHash, ownerRoleId, branch.id, email]);
+            `, [tenant.id, email, username, displayName, passwordHash, adminRoleId, branch.id, email]);
 
             const employee = employeeResult.rows[0];
 

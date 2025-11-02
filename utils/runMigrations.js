@@ -804,6 +804,27 @@ const MIGRATIONS = [
                 // Don't throw - continue even if there are issues
             }
         }
+    },
+    {
+        id: '037_create_roles_and_permissions_system',
+        name: 'Create comprehensive roles and permissions system',
+        async execute(client) {
+            console.log('🔄 Ejecutando migración 037: Creando sistema de roles y permisos...');
+
+            try {
+                // Read and execute the migration SQL file
+                const fs = require('fs');
+                const path = require('path');
+                const migrationPath = path.join(__dirname, '..', 'migrations', '037_create_roles_and_permissions_system.sql');
+                const migrationSQL = fs.readFileSync(migrationPath, 'utf8');
+
+                await client.query(migrationSQL);
+                console.log('✅ Migración 037 completada: Sistema de roles y permisos creado');
+            } catch (error) {
+                console.log('⚠️  Migración 037: ' + error.message);
+                // Don't throw - continue even if there are issues
+            }
+        }
     }
 ];
 
