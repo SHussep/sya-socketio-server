@@ -375,17 +375,40 @@ module.exports = function(pool) {
             // 6. Hash de contraseña
             const passwordHash = await bcrypt.hash(password, 10);
 
+            // 6b. Get owner role_id (assume ID 1 for owner role)
+            const ownerRoleResult = await client.query(
+                `SELECT id FROM roles WHERE name = 'owner' AND tenant_id = $1 LIMIT 1`,
+                [tenant.id]
+            );
+
+            let ownerRoleId = 1; // Default to ID 1
+            if (ownerRoleResult.rows.length > 0) {
+                ownerRoleId = ownerRoleResult.rows[0].id;
+            } else {
+                // If no owner role exists, try generic owner role
+                const genericOwnerRole = await client.query(
+                    `SELECT id FROM roles WHERE name = 'owner' LIMIT 1`
+                );
+                if (genericOwnerRole.rows.length > 0) {
+                    ownerRoleId = genericOwnerRole.rows[0].id;
+                }
+            }
+
             // 7. Crear empleado owner - incluir main_branch_id
             const username = displayName.replace(/\s+/g, '').toLowerCase();
             const employeeResult = await client.query(`
-                INSERT INTO employees (tenant_id, email, username, full_name, password, role, main_branch_id)
-                VALUES ($1, $2, $3, $4, $5, 'owner', $6)
-                RETURNING id, email, username, full_name, role
-            `, [tenant.id, email, username, displayName, passwordHash, branch.id]);
+                INSERT INTO employees (
+                    tenant_id, email, username, full_name, password_hash,
+                    role_id, main_branch_id, is_active, is_owner,
+                    google_user_identifier, password_updated_at, created_at, updated_at
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, true, true, $8, NOW(), NOW(), NOW())
+                RETURNING id, email, username, full_name, role_id, is_active, created_at
+            `, [tenant.id, email, username, displayName, passwordHash, ownerRoleId, branch.id, email]);
 
             const employee = employeeResult.rows[0];
 
-            console.log(`[Google Signup] ✅ Employee creado: ${employee.email} (ID: ${employee.id}, Role: ${employee.role})`);
+            console.log(`[Google Signup] ✅ Employee creado: ${employee.email} (ID: ${employee.id}, RoleId: ${employee.role_id})`);
 
             // 8. Asignar empleado a la sucursal (employee-branch many-to-many relationship)
             await client.query(`
