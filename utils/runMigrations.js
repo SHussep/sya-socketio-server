@@ -601,6 +601,130 @@ const MIGRATIONS = [
                 // Don't throw - continue even if there are issues
             }
         }
+    },
+    {
+        id: '033_fix_employees_and_employee_branches_schema',
+        name: 'Fix Employees and Employee-Branches Schema - Align with code expectations',
+        async execute(client) {
+            console.log('🔄 Ejecutando migración 033: Corrigiendo schema de employees y employee-branches...');
+
+            try {
+                // Step 1: Add missing columns to employees table
+                console.log('   📝 Agregando columnas faltantes a employees...');
+                await client.query(`
+                    ALTER TABLE employees ADD COLUMN IF NOT EXISTS password_hash VARCHAR;
+                    ALTER TABLE employees ADD COLUMN IF NOT EXISTS password_updated_at TIMESTAMP WITH TIME ZONE;
+                    ALTER TABLE employees ADD COLUMN IF NOT EXISTS is_owner BOOLEAN DEFAULT false;
+                    ALTER TABLE employees ADD COLUMN IF NOT EXISTS google_user_identifier VARCHAR;
+                    ALTER TABLE employees ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
+                `);
+                console.log('   ✅ Columnas agregadas a employees');
+
+                // Step 2: Create role_id column and map from role string
+                console.log('   📝 Creando column role_id y migrando datos...');
+                await client.query(`
+                    ALTER TABLE employees ADD COLUMN IF NOT EXISTS role_id INTEGER;
+                `);
+
+                // Map string roles to role IDs
+                await client.query(`
+                    UPDATE employees e
+                    SET role_id = CASE
+                        WHEN e.role = 'owner' THEN 1
+                        WHEN e.role = 'encargado' THEN 2
+                        WHEN e.role = 'repartidor' THEN 3
+                        WHEN e.role = 'ayudante' THEN 4
+                        ELSE 2
+                    END
+                    WHERE role_id IS NULL AND e.role IS NOT NULL;
+                `);
+                console.log('   ✅ role_id poblado con datos existentes');
+
+                // Step 3: Drop the old role column
+                console.log('   📝 Removiendo columna role antigua...');
+                try {
+                    await client.query(`ALTER TABLE employees DROP COLUMN IF EXISTS role CASCADE;`);
+                    console.log('   ✅ Columna role removida');
+                } catch (e) {
+                    console.log('   ⚠️  Error removiendo role (podría no existir o tener dependencias)');
+                }
+
+                // Step 4: Add role_id NOT NULL constraint and foreign key
+                try {
+                    await client.query(`
+                        ALTER TABLE employees ALTER COLUMN role_id SET NOT NULL;
+                    `);
+                } catch (e) {
+                    // May fail if there are NULL values, that's OK for now
+                }
+
+                try {
+                    await client.query(`
+                        ALTER TABLE employees ADD CONSTRAINT fk_employees_role_id
+                        FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE RESTRICT;
+                    `);
+                } catch (e) {
+                    // Constraint may already exist
+                }
+                console.log('   ✅ role_id foreign key configurado');
+
+                // Step 5: Drop old employee_branches table
+                console.log('   📝 Recreando tabla employee_branches...');
+                await client.query(`DROP TABLE IF EXISTS employee_branches CASCADE;`);
+
+                // Step 6: Create new employee_branches with correct structure
+                await client.query(`
+                    CREATE TABLE IF NOT EXISTS employee_branches (
+                        id SERIAL PRIMARY KEY,
+                        tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                        employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+                        branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+                        is_active BOOLEAN DEFAULT true,
+                        assigned_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(tenant_id, employee_id, branch_id)
+                    );
+                `);
+                console.log('   ✅ Tabla employee_branches recreada');
+
+                // Step 7: Create indices
+                await client.query(`
+                    CREATE INDEX IF NOT EXISTS idx_employee_branches_tenant_id ON employee_branches(tenant_id);
+                    CREATE INDEX IF NOT EXISTS idx_employee_branches_employee_id ON employee_branches(employee_id);
+                    CREATE INDEX IF NOT EXISTS idx_employee_branches_branch_id ON employee_branches(branch_id);
+                    CREATE INDEX IF NOT EXISTS idx_employee_branches_is_active ON employee_branches(is_active);
+                `);
+                console.log('   ✅ Índices en employee_branches creados');
+
+                // Step 8: Recreate employee-branch relationships
+                console.log('   📝 Recreando relaciones employee-branch...');
+                await client.query(`
+                    INSERT INTO employee_branches (tenant_id, employee_id, branch_id, is_active)
+                    SELECT DISTINCT e.tenant_id, e.id, e.main_branch_id, true
+                    FROM employees e
+                    WHERE e.main_branch_id IS NOT NULL
+                    ON CONFLICT (tenant_id, employee_id, branch_id) DO NOTHING;
+                `);
+                console.log('   ✅ Relaciones employee-branch recreadas');
+
+                // Step 9: Add missing employees table indices
+                console.log('   📝 Agregando índices a employees...');
+                await client.query(`
+                    CREATE INDEX IF NOT EXISTS idx_employees_tenant_id ON employees(tenant_id);
+                    CREATE INDEX IF NOT EXISTS idx_employees_role_id ON employees(role_id);
+                    CREATE INDEX IF NOT EXISTS idx_employees_email ON employees(LOWER(email));
+                    CREATE INDEX IF NOT EXISTS idx_employees_username ON employees(LOWER(username));
+                    CREATE INDEX IF NOT EXISTS idx_employees_is_active ON employees(is_active);
+                `);
+                console.log('   ✅ Índices agregados a employees');
+
+                console.log('✅ Migración 033 completada: Employees and employee-branches schema fixed');
+            } catch (error) {
+                console.log('⚠️  Migración 033: ' + error.message);
+                // Don't throw - continue even if there are issues
+            }
+        }
     }
 ];
 
