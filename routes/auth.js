@@ -360,7 +360,8 @@ module.exports = function(pool) {
             console.log(`[Google Signup] ✅ Tenant creado: ${tenant.tenant_code} (ID: ${tenant.id})`);
 
             // 5. Crear branch por defecto (primera sucursal) - solo columnas esenciales
-            const branchCode = `${tenantCode}-MAIN`;
+            // Use short code to stay within varchar(20) limit: tenant_id suffixed with -M for main
+            const branchCode = `B${tenant.id}M`;
             const branchResult = await client.query(`
                 INSERT INTO branches (tenant_id, branch_code, name)
                 VALUES ($1, $2, $3)
