@@ -75,6 +75,7 @@ const adminRoutes = require('./routes/admin');
 const depositsRoutes = require('./routes/deposits');
 const withdrawalsRoutes = require('./routes/withdrawals');
 const newCashCutsRoutes = require('./routes/cash-cuts');
+const employeeBranchesRoutes = require('./routes/employee_branches')(pool); // Rutas de relaciones empleado-sucursal
 
 // Inline employee sync endpoint (avoids file loading issues)
 const employeesRoutes = (() => {
@@ -153,6 +154,7 @@ app.use('/api/restore', restoreRoutes);
 app.use('/api/backup', backupRoutes);
 app.use('/api/auth', authRoutes); // Registrar rutas de autenticación
 app.use('/api/notifications', notificationRoutes); // Registrar rutas de notificaciones
+app.use('/api/employee-branches', employeeBranchesRoutes); // Registrar rutas de relaciones empleado-sucursal
 
 // Health check
 app.get('/', (req, res) => {

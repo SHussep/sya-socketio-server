@@ -1650,13 +1650,15 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
 
             const newBranch = branchResult.rows[0];
 
-            // Asignar al empleado owner permisos completos en la nueva sucursal
+            // ⭐ NUEVO: Asignar automáticamente el owner (empleado actual) a la nueva sucursal
+            // Esto vincula al dueño/owner con la rama que acaba de crear
             await client.query(`
                 INSERT INTO employee_branches (
-                    employee_id, branch_id, can_login, can_sell,
-                    can_manage_inventory, can_close_shift, assigned_at
-                ) VALUES ($1, $2, true, true, true, true, NOW())
-            `, [decoded.employeeId, newBranch.id]);
+                    tenant_id, employee_id, branch_id, is_active, assigned_at, synced
+                ) VALUES ($1, $2, $3, true, NOW(), false)
+            `, [tenantId, decoded.employeeId, newBranch.id]);
+
+            console.log(`[Create Branch] ✅ EmployeeBranch creado automáticamente: Empleado ${decoded.employeeId} → Sucursal ${newBranch.id}`);
 
             await client.query('COMMIT');
 
