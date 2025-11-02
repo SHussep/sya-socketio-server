@@ -725,6 +725,36 @@ const MIGRATIONS = [
                 // Don't throw - continue even if there are issues
             }
         }
+    },
+    {
+        id: '034_add_local_shift_id_to_shifts',
+        name: 'Add local_shift_id column to shifts table',
+        async execute(client) {
+            console.log('🔄 Ejecutando migración 034: Agregando local_shift_id a shifts...');
+
+            try {
+                // Add local_shift_id column
+                console.log('   📝 Agregando columna local_shift_id...');
+                await client.query(`
+                    ALTER TABLE shifts ADD COLUMN IF NOT EXISTS local_shift_id INTEGER UNIQUE;
+                `);
+                console.log('   ✅ Columna local_shift_id agregada');
+
+                // Create indices
+                console.log('   📝 Creando índices...');
+                await client.query(`
+                    CREATE INDEX IF NOT EXISTS idx_shifts_local_shift_id ON shifts(local_shift_id);
+                    CREATE INDEX IF NOT EXISTS idx_shifts_tenant_branch_employee ON shifts(tenant_id, branch_id, employee_id);
+                    CREATE INDEX IF NOT EXISTS idx_shifts_start_time ON shifts(start_time DESC);
+                `);
+                console.log('   ✅ Índices creados');
+
+                console.log('✅ Migración 034 completada: local_shift_id agregado a shifts');
+            } catch (error) {
+                console.log('⚠️  Migración 034: ' + error.message);
+                // Don't throw - continue even if there are issues
+            }
+        }
     }
 ];
 
