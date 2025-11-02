@@ -359,6 +359,64 @@ module.exports = function(pool) {
 
             console.log(`[Google Signup] ✅ Tenant creado: ${tenant.tenant_code} (ID: ${tenant.id})`);
 
+            // 4b. Create system roles for new tenant (Administrador and Repartidor)
+            console.log(`[Google Signup] 📝 Creando roles del sistema para nuevo tenant...`);
+
+            // Create Administrador role
+            const adminRoleResult = await client.query(`
+                INSERT INTO roles (tenant_id, name, description, is_system)
+                VALUES ($1, 'Administrador', 'Acceso completo al sistema y todos los datos', true)
+                RETURNING id
+            `, [tenant.id]);
+
+            const adminRoleId = adminRoleResult.rows[0].id;
+
+            // Get all permissions and assign to Administrador role
+            const permissionsResult = await client.query('SELECT id FROM permissions');
+            for (const perm of permissionsResult.rows) {
+                await client.query(
+                    `INSERT INTO role_permissions (role_id, permission_id)
+                     VALUES ($1, $2)
+                     ON CONFLICT (role_id, permission_id) DO NOTHING`,
+                    [adminRoleId, perm.id]
+                );
+            }
+
+            // Create Repartidor role
+            const repartidorRoleResult = await client.query(`
+                INSERT INTO roles (tenant_id, name, description, is_system)
+                VALUES ($1, 'Repartidor', 'Acceso limitado para reparto y ventas', true)
+                RETURNING id
+            `, [tenant.id]);
+
+            const repartidorRoleId = repartidorRoleResult.rows[0].id;
+
+            // Assign limited permissions to Repartidor
+            const limitedPermsCodes = [
+                'mobile_app_access',
+                'create_sale',
+                'view_sales',
+                'view_inventory',
+                'view_cash_drawer',
+                'close_shift'
+            ];
+
+            const limitedPermsResult = await client.query(
+                `SELECT id FROM permissions WHERE code = ANY($1)`,
+                [limitedPermsCodes]
+            );
+
+            for (const perm of limitedPermsResult.rows) {
+                await client.query(
+                    `INSERT INTO role_permissions (role_id, permission_id)
+                     VALUES ($1, $2)
+                     ON CONFLICT (role_id, permission_id) DO NOTHING`,
+                    [repartidorRoleId, perm.id]
+                );
+            }
+
+            console.log(`[Google Signup] ✅ Roles creados para nuevo tenant`);
+
             // 5. Crear branch por defecto (primera sucursal) - solo columnas esenciales
             // Use short code to stay within varchar(20) limit: tenant_id suffixed with -M for main
             const branchCode = `B${tenant.id}M`;
@@ -374,23 +432,6 @@ module.exports = function(pool) {
 
             // 6. Hash de contraseña
             const passwordHash = await bcrypt.hash(password, 10);
-
-            // 6b. Get Administrador role_id (system role for tenant admins)
-            // This role is auto-created by migration 037
-            const adminRoleResult = await client.query(
-                `SELECT id FROM roles WHERE tenant_id = $1 AND name = 'Administrador' LIMIT 1`,
-                [tenant.id]
-            );
-
-            let adminRoleId;
-            if (adminRoleResult.rows.length > 0) {
-                adminRoleId = adminRoleResult.rows[0].id;
-            } else {
-                // If role doesn't exist yet (shouldn't happen), use a safe default
-                // The migration 037 will create it on startup
-                console.log('[Google Signup] ⚠️  Administrador role not found. Using fallback ID 1');
-                adminRoleId = 1; // Safe default - first role created by migration 037
-            }
 
             // 7. Crear empleado administrador - incluir main_branch_id
             const username = displayName.replace(/\s+/g, '').toLowerCase();
