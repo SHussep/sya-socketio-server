@@ -755,6 +755,27 @@ const MIGRATIONS = [
                 // Don't throw - continue even if there are issues
             }
         }
+    },
+    {
+        id: '035_fix_employees_password_column',
+        name: 'Fix employees password column - make nullable',
+        async execute(client) {
+            console.log('🔄 Ejecutando migración 035: Haciendo password nullable...');
+
+            try {
+                // Make password column nullable
+                console.log('   📝 Haciendo password column nullable...');
+                await client.query(`
+                    ALTER TABLE employees ALTER COLUMN password DROP NOT NULL;
+                `);
+                console.log('   ✅ Password column es ahora nullable');
+
+                console.log('✅ Migración 035 completada: Password column fixed');
+            } catch (error) {
+                console.log('⚠️  Migración 035: ' + error.message);
+                // Don't throw - continue even if there are issues
+            }
+        }
     }
 ];
 
