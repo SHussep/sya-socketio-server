@@ -876,6 +876,50 @@ const MIGRATIONS = [
                 // Don't throw - continue even if there are issues
             }
         }
+    },
+    {
+        id: '038_remove_complex_permissions_system',
+        name: 'Remove unused role_permissions and permissions tables',
+        async execute(client) {
+            console.log('🔄 Ejecutando migración 038: Eliminando tablas redundantes...');
+
+            try {
+                // Check if tables exist before dropping
+                const checkRolePerms = await client.query(`
+                    SELECT EXISTS(
+                        SELECT FROM information_schema.tables
+                        WHERE table_name = 'role_permissions'
+                    )
+                `);
+
+                const checkPerms = await client.query(`
+                    SELECT EXISTS(
+                        SELECT FROM information_schema.tables
+                        WHERE table_name = 'permissions'
+                    )
+                `);
+
+                // Drop role_permissions table if it exists
+                if (checkRolePerms.rows[0].exists) {
+                    console.log('   📝 Eliminando tabla role_permissions...');
+                    await client.query('DROP TABLE IF EXISTS role_permissions CASCADE');
+                    console.log('   ✅ Tabla role_permissions eliminada');
+                }
+
+                // Drop permissions table if it exists
+                if (checkPerms.rows[0].exists) {
+                    console.log('   📝 Eliminando tabla permissions...');
+                    await client.query('DROP TABLE IF EXISTS permissions CASCADE');
+                    console.log('   ✅ Tabla permissions eliminada');
+                }
+
+                console.log('✅ Migración 038 completada: Tablas redundantes eliminadas');
+                console.log('   ℹ️  La tabla roles es suficiente - role_id en employees determina acceso');
+            } catch (error) {
+                console.log('⚠️  Migración 038: ' + error.message);
+                // Don't throw - continue even if there are issues
+            }
+        }
     }
 ];
 
