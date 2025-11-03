@@ -1012,17 +1012,18 @@ const MIGRATIONS = [
                     `);
                     console.log('   ✅ Nueva tabla roles creada (sin tenant_id, sin branch_id)');
 
-                    // Insert all 4 fixed roles matching Desktop
+                    // Insert all 4 fixed roles matching Desktop + generic "Otro" role
                     await client.query(`
                         INSERT INTO roles (id, name, description, created_at, updated_at)
                         VALUES
                             (1, 'Administrador', 'Acceso total al sistema', NOW(), NOW()),
                             (2, 'Encargado', 'Gerente de turno - permisos extensos', NOW(), NOW()),
                             (3, 'Repartidor', 'Acceso limitado como repartidor', NOW(), NOW()),
-                            (4, 'Ayudante', 'Soporte - acceso limitado', NOW(), NOW())
+                            (4, 'Ayudante', 'Soporte - acceso limitado', NOW(), NOW()),
+                            (99, 'Otro', 'Rol genérico para roles personalizados desde Desktop', NOW(), NOW())
                         ON CONFLICT (id) DO NOTHING
                     `);
-                    console.log('   ✅ Los 4 roles fijos insertados (1=Admin, 2=Encargado, 3=Repartidor, 4=Ayudante)');
+                    console.log('   ✅ Los 4 roles fijos + Otro insertados (1=Admin, 2=Encargado, 3=Repartidor, 4=Ayudante, 99=Otro)');
 
                     // Recreate role_permissions table if needed
                     const checkRolePerms = await client.query(`
@@ -1052,20 +1053,25 @@ const MIGRATIONS = [
                         SELECT COUNT(*) as count FROM roles WHERE id IN (1, 2, 3, 4)
                     `);
 
-                    if (parseInt(checkRoles.rows[0].count) < 4) {
-                        console.log('   ⚠️  Roles fijos no completos - insertando...');
+                    const checkAllRoles = await client.query(`
+                        SELECT COUNT(*) as count FROM roles WHERE id IN (1, 2, 3, 4, 99)
+                    `);
+
+                    if (parseInt(checkAllRoles.rows[0].count) < 5) {
+                        console.log('   ⚠️  Roles no completos - insertando...');
                         await client.query(`
                             INSERT INTO roles (id, name, description, created_at, updated_at)
                             VALUES
                                 (1, 'Administrador', 'Acceso total al sistema', NOW(), NOW()),
                                 (2, 'Encargado', 'Gerente de turno - permisos extensos', NOW(), NOW()),
                                 (3, 'Repartidor', 'Acceso limitado como repartidor', NOW(), NOW()),
-                                (4, 'Ayudante', 'Soporte - acceso limitado', NOW(), NOW())
+                                (4, 'Ayudante', 'Soporte - acceso limitado', NOW(), NOW()),
+                                (99, 'Otro', 'Rol genérico para roles personalizados desde Desktop', NOW(), NOW())
                             ON CONFLICT (id) DO UPDATE SET updated_at = NOW()
                         `);
-                        console.log('   ✅ Los 4 roles fijos insertados/actualizados');
+                        console.log('   ✅ Todos los roles insertados/actualizados');
                     } else {
-                        console.log('   ✅ Los 4 roles fijos ya existen');
+                        console.log('   ✅ Todos los roles ya existen');
                     }
                 }
 

@@ -37,19 +37,25 @@ module.exports = (pool) => {
                 });
             }
 
-            // Validate role_id if provided
-            // Roles are now global (no tenant_id): 1=Admin, 2=Encargado, 3=Repartidor, 4=Ayudante
+            // Map role_id: if not 1-4, use "Otro" (99) for custom roles from Desktop
+            let mappedRoleId = roleId;
             if (roleId) {
+                if (![1, 2, 3, 4, 99].includes(roleId)) {
+                    // Custom role from Desktop → map to "Otro"
+                    console.log(`[Employees/Sync] ℹ️  Rol custom detectado: ${roleId} → mapeando a "Otro" (99)`);
+                    mappedRoleId = 99;
+                }
+
                 const roleCheck = await client.query(
                     `SELECT id, name FROM roles WHERE id = $1`,
-                    [roleId]
+                    [mappedRoleId]
                 );
 
                 if (roleCheck.rows.length === 0) {
-                    console.log(`[Employees/Sync] ❌ Rol no válido: ${roleId} (debe ser 1=Admin, 2=Encargado, 3=Repartidor, 4=Ayudante)`);
+                    console.log(`[Employees/Sync] ❌ Rol no válido: ${mappedRoleId}`);
                     return res.status(400).json({
                         success: false,
-                        message: 'El roleId no existe. Debe ser 1 (Admin), 2 (Encargado), 3 (Repartidor) o 4 (Ayudante)'
+                        message: `Rol no válido. Roles válidos: 1 (Admin), 2 (Encargado), 3 (Repartidor), 4 (Ayudante), o cualquier custom (mapeará a Otro)`
                     });
                 }
             }
@@ -391,9 +397,9 @@ module.exports = (pool) => {
         const client = await pool.connect();
         try {
             const employeeId = req.params.id;
-            const { tenantId, roleId, canUseMobileApp } = req.body;
+            const { tenantId, roleId, canUseMobileApp, mobileAppPermissionOverride } = req.body;
 
-            console.log(`[Employees/SyncRole] 🔄 Sincronizando empleado ${employeeId}: roleId=${roleId}, mobile=${canUseMobileApp}`);
+            console.log(`[Employees/SyncRole] 🔄 Sincronizando empleado ${employeeId}: roleId=${roleId}, mobile=${canUseMobileApp}${mobileAppPermissionOverride ? `, override=${mobileAppPermissionOverride}` : ''}`);
 
             // Validate required fields
             if (!tenantId) {
@@ -420,7 +426,7 @@ module.exports = (pool) => {
             const employee = employeeCheck.rows[0];
 
             // If roleId provided, validate it exists and get role name
-            // Roles are now global (no tenant_id): 1=Admin, 2=Encargado, 3=Repartidor, 4=Ayudante
+            // Roles are now global: 1=Admin, 2=Encargado, 3=Repartidor, 4=Ayudante, 99=Otro (custom roles)
             let finalRoleId = employee.role_id;  // Keep existing role if not provided
             let roleName = null;
             if (roleId) {
@@ -430,10 +436,10 @@ module.exports = (pool) => {
                 );
 
                 if (roleCheck.rows.length === 0) {
-                    console.log(`[Employees/SyncRole] ❌ Rol no válido: ${roleId} (debe ser 1=Admin, 2=Encargado, 3=Repartidor, 4=Ayudante)`);
+                    console.log(`[Employees/SyncRole] ❌ Rol no válido: ${roleId}`);
                     return res.status(400).json({
                         success: false,
-                        message: `Rol no válido: ${roleId}. Debe ser 1 (Admin), 2 (Encargado), 3 (Repartidor) o 4 (Ayudante)`
+                        message: `Rol no válido: ${roleId}. Roles válidos: 1 (Admin), 2 (Encargado), 3 (Repartidor), 4 (Ayudante), 99 (Otro)`
                     });
                 }
                 finalRoleId = roleId;
@@ -469,22 +475,39 @@ module.exports = (pool) => {
                 );
 
                 // Determine which mobile permission to assign based on role name
-                // Roles: 1=Administrador, 2=Encargado, 3=Repartidor, 4=Ayudante
-                // Ayudante (4) nunca tiene acceso a la app
-                let mobilePermission = null;
-                if (roleName === 'Administrador') {
-                    mobilePermission = 'AccessMobileAppAsAdmin';
-                } else if (roleName === 'Encargado') {
-                    mobilePermission = 'AccessMobileAppAsAdmin';  // Encargado by default gets Admin access
-                } else if (roleName === 'Repartidor') {
-                    mobilePermission = 'AccessMobileAppAsDistributor';
-                } else if (roleName === 'Ayudante') {
-                    // Ayudante never gets mobile app access
-                    mobilePermission = null;
+                // If mobileAppPermissionOverride is provided, use it (for custom roles like "Otro")
+                // Otherwise, determine automatically based on role
+                // Roles: 1=Administrador, 2=Encargado, 3=Repartidor, 4=Ayudante, 99=Otro
+                let mobilePermission = mobileAppPermissionOverride || null;
+
+                if (!mobilePermission) {
+                    // Auto-assign based on role name if no override provided
+                    if (roleName === 'Administrador') {
+                        mobilePermission = 'AccessMobileAppAsAdmin';
+                    } else if (roleName === 'Encargado') {
+                        mobilePermission = 'AccessMobileAppAsAdmin';  // Encargado by default gets Admin access
+                    } else if (roleName === 'Repartidor') {
+                        mobilePermission = 'AccessMobileAppAsDistributor';
+                    } else if (roleName === 'Ayudante') {
+                        // Ayudante never gets mobile app access
+                        mobilePermission = null;
+                    } else if (roleName === 'Otro') {
+                        // Custom role: admin must decide manually via mobileAppPermissionOverride
+                        mobilePermission = null;
+                    }
                 }
 
                 // Assign the appropriate permission (if role allows mobile access)
                 if (mobilePermission) {
+                    // Validate permission value
+                    const validPermissions = ['AccessMobileAppAsAdmin', 'AccessMobileAppAsDistributor'];
+                    if (!validPermissions.includes(mobilePermission)) {
+                        return res.status(400).json({
+                            success: false,
+                            message: `Permiso inválido: ${mobilePermission}. Debe ser AccessMobileAppAsAdmin o AccessMobileAppAsDistributor`
+                        });
+                    }
+
                     await client.query(
                         `INSERT INTO employee_mobile_app_permissions (tenant_id, employee_id, permission_key, created_at, updated_at)
                          VALUES ($1, $2, $3, NOW(), NOW())
@@ -493,7 +516,7 @@ module.exports = (pool) => {
                     );
                     console.log(`[Employees/SyncRole] 📱 Permiso de app móvil asignado: ${mobilePermission}`);
                 } else {
-                    console.log(`[Employees/SyncRole] ℹ️  Rol "${roleName}" no tiene permiso de app móvil (Ayudante no tiene acceso)`);
+                    console.log(`[Employees/SyncRole] ℹ️  Rol "${roleName}" no tiene permiso de app móvil asignado (Ayudante/Otro requieren configuración manual)`);
                 }
 
                 await client.query('COMMIT');
