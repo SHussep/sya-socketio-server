@@ -359,28 +359,13 @@ module.exports = function(pool) {
 
             console.log(`[Google Signup] ✅ Tenant creado: ${tenant.tenant_code} (ID: ${tenant.id})`);
 
-            // 4b. Create system roles for new tenant (simplified: only 2 roles)
-            console.log(`[Google Signup] 📝 Creando roles del sistema para nuevo tenant...`);
-
-            // Create "Acceso Total" role
-            const accesoTotalResult = await client.query(`
-                INSERT INTO roles (tenant_id, name, description)
-                VALUES ($1, $2, $3)
-                RETURNING id
-            `, [tenant.id, 'Acceso Total', 'Acceso completo al sistema - Administrador']);
-
-            const accesoTotalRoleId = accesoTotalResult.rows[0].id;
-
-            // Create "Acceso Repartidor" role
-            const accesoRepartidorResult = await client.query(`
-                INSERT INTO roles (tenant_id, name, description)
-                VALUES ($1, $2, $3)
-                RETURNING id
-            `, [tenant.id, 'Acceso Repartidor', 'Acceso limitado - Repartidor']);
-
-            const accesoRepartidorRoleId = accesoRepartidorResult.rows[0].id;
-
-            console.log(`[Google Signup] ✅ Roles creados para nuevo tenant (Acceso Total: ${accesoTotalRoleId}, Acceso Repartidor: ${accesoRepartidorRoleId})`);
+            // 4b. Roles are now GLOBAL (not tenant-scoped) with fixed IDs
+            // Migration 037 created: 1=Administrador, 2=Encargado, 3=Repartidor, 4=Ayudante, 99=Otro
+            // Owner/first signup gets role ID 1 (Administrador)
+            console.log(`[Google Signup] 📝 Usando roles globales del sistema...`);
+            const accesoTotalRoleId = 1;  // Global role: Administrador
+            const accesoRepartidorRoleId = 3;  // Global role: Repartidor
+            console.log(`[Google Signup] ✅ Roles globales asignados: Administrador (ID: ${accesoTotalRoleId}), Repartidor (ID: ${accesoRepartidorRoleId})`);
 
             // 5. Crear branch por defecto (primera sucursal) - solo columnas esenciales
             // Use short code to stay within varchar(20) limit: tenant_id suffixed with -M for main
