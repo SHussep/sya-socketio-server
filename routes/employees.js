@@ -383,14 +383,16 @@ module.exports = (pool) => {
     });
 
     // POST /api/employees/:id/sync-role - Sync employee role and mobile app permissions from Desktop app
-    // When Desktop assigns a role to an employee, sync role AND mobile app permissions to PostgreSQL
+    // Automatically assigns mobile app permission based on role (ONLY ONE permission allowed)
+    // - Administrador role → AccessMobileAppAsAdmin
+    // - Repartidor role → AccessMobileAppAsDistributor
     router.post('/:id/sync-role', async (req, res) => {
         const client = await pool.connect();
         try {
             const employeeId = req.params.id;
-            const { tenantId, roleId, canUseMobileApp, mobileAppPermissions } = req.body;
+            const { tenantId, roleId, canUseMobileApp } = req.body;
 
-            console.log(`[Employees/SyncRole] 🔄 Sincronizando empleado ${employeeId}: roleId=${roleId}, mobile=${canUseMobileApp}, perms=${mobileAppPermissions?.join(',')}`);
+            console.log(`[Employees/SyncRole] 🔄 Sincronizando empleado ${employeeId}: roleId=${roleId}, mobile=${canUseMobileApp}`);
 
             // Validate required fields
             if (!tenantId) {
@@ -416,8 +418,9 @@ module.exports = (pool) => {
 
             const employee = employeeCheck.rows[0];
 
-            // If roleId provided, validate it exists
+            // If roleId provided, validate it exists and get role name
             let finalRoleId = employee.role_id;  // Keep existing role if not provided
+            let roleName = null;
             if (roleId) {
                 const roleCheck = await client.query(
                     `SELECT id, name FROM roles WHERE id = $1 AND tenant_id = $2`,
@@ -432,6 +435,7 @@ module.exports = (pool) => {
                     });
                 }
                 finalRoleId = roleId;
+                roleName = roleCheck.rows[0].name;
             }
 
             // Only update role and permissions if canUseMobileApp is true
@@ -453,32 +457,44 @@ module.exports = (pool) => {
                 const updated = updateResult.rows[0];
                 console.log(`[Employees/SyncRole] ✅ Rol actualizado para ${updated.full_name}: role_id=${updated.role_id}`);
 
-                // Sync mobile app permissions (if provided)
-                let syncedPermissions = [];
-                if (Array.isArray(mobileAppPermissions) && mobileAppPermissions.length > 0) {
-                    console.log(`[Employees/SyncRole] 📝 Sincronizando ${mobileAppPermissions.length} permisos de app móvil...`);
+                // IMPORTANT: Only ONE mobile app permission per employee
+                // Delete both first, then assign the correct one based on role
+                await client.query(
+                    `DELETE FROM employee_mobile_app_permissions
+                     WHERE employee_id = $1 AND tenant_id = $2
+                     AND permission_key IN ('AccessMobileAppAsAdmin', 'AccessMobileAppAsDistributor')`,
+                    [employeeId, tenantId]
+                );
 
-                    // Delete old permissions
+                // Determine which mobile permission to assign based on role name
+                let mobilePermission = null;
+                if (roleName === 'Administrador') {
+                    mobilePermission = 'AccessMobileAppAsAdmin';
+                } else if (roleName === 'Repartidor') {
+                    mobilePermission = 'AccessMobileAppAsDistributor';
+                }
+
+                // Assign the appropriate permission (if role matches)
+                if (mobilePermission) {
                     await client.query(
-                        `DELETE FROM employee_mobile_app_permissions WHERE employee_id = $1 AND tenant_id = $2`,
-                        [employeeId, tenantId]
+                        `INSERT INTO employee_mobile_app_permissions (tenant_id, employee_id, permission_key, created_at, updated_at)
+                         VALUES ($1, $2, $3, NOW(), NOW())
+                         ON CONFLICT (tenant_id, employee_id, permission_key) DO UPDATE SET updated_at = NOW()`,
+                        [tenantId, employeeId, mobilePermission]
                     );
-
-                    // Insert new permissions
-                    for (const permission of mobileAppPermissions) {
-                        await client.query(
-                            `INSERT INTO employee_mobile_app_permissions (tenant_id, employee_id, permission_key, created_at, updated_at)
-                             VALUES ($1, $2, $3, NOW(), NOW())
-                             ON CONFLICT (tenant_id, employee_id, permission_key) DO UPDATE SET updated_at = NOW()`,
-                            [tenantId, employeeId, permission]
-                        );
-                        syncedPermissions.push(permission);
-                    }
-
-                    console.log(`[Employees/SyncRole] ✅ Permisos sincronizados: ${syncedPermissions.join(', ')}`);
+                    console.log(`[Employees/SyncRole] 📱 Permiso de app móvil asignado: ${mobilePermission}`);
+                } else {
+                    console.log(`[Employees/SyncRole] ℹ️  Rol "${roleName}" no tiene permiso de app móvil automático`);
                 }
 
                 await client.query('COMMIT');
+
+                // Get final permissions
+                const finalPermsResult = await client.query(
+                    `SELECT permission_key FROM employee_mobile_app_permissions WHERE employee_id = $1 AND tenant_id = $2`,
+                    [employeeId, tenantId]
+                );
+                const finalPermissions = finalPermsResult.rows.map(r => r.permission_key);
 
                 return res.json({
                     success: true,
@@ -487,8 +503,10 @@ module.exports = (pool) => {
                         employeeId: updated.id,
                         fullName: updated.full_name,
                         roleId: updated.role_id,
+                        roleName: roleName,
                         canUseMobileApp: true,
-                        mobileAppPermissions: syncedPermissions
+                        mobileAppPermissions: finalPermissions,
+                        note: `Permiso de app móvil asignado automáticamente según rol: ${mobilePermission}`
                     }
                 });
 
