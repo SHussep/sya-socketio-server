@@ -38,17 +38,18 @@ module.exports = (pool) => {
             }
 
             // Validate role_id if provided
+            // Roles are now global (no tenant_id): 1=Administrador, 2=Repartidor
             if (roleId) {
                 const roleCheck = await client.query(
-                    `SELECT id, name FROM roles WHERE id = $1 AND tenant_id = $2`,
-                    [roleId, tenantId]
+                    `SELECT id, name FROM roles WHERE id = $1`,
+                    [roleId]
                 );
 
                 if (roleCheck.rows.length === 0) {
-                    console.log(`[Employees/Sync] ❌ Rol no válido: ${roleId}`);
+                    console.log(`[Employees/Sync] ❌ Rol no válido: ${roleId} (debe ser 1=Administrador o 2=Repartidor)`);
                     return res.status(400).json({
                         success: false,
-                        message: 'El roleId no existe o no pertenece al tenant'
+                        message: 'El roleId no existe. Debe ser 1 (Administrador) o 2 (Repartidor)'
                     });
                 }
             }
@@ -419,19 +420,20 @@ module.exports = (pool) => {
             const employee = employeeCheck.rows[0];
 
             // If roleId provided, validate it exists and get role name
+            // Roles are now global (no tenant_id): 1=Administrador, 2=Repartidor
             let finalRoleId = employee.role_id;  // Keep existing role if not provided
             let roleName = null;
             if (roleId) {
                 const roleCheck = await client.query(
-                    `SELECT id, name FROM roles WHERE id = $1 AND tenant_id = $2`,
-                    [roleId, tenantId]
+                    `SELECT id, name FROM roles WHERE id = $1`,
+                    [roleId]
                 );
 
                 if (roleCheck.rows.length === 0) {
-                    console.log(`[Employees/SyncRole] ❌ Rol no válido: ${roleId}`);
+                    console.log(`[Employees/SyncRole] ❌ Rol no válido: ${roleId} (debe ser 1=Administrador o 2=Repartidor)`);
                     return res.status(400).json({
                         success: false,
-                        message: `Rol no válido: ${roleId}`
+                        message: `Rol no válido: ${roleId}. Debe ser 1 (Administrador) o 2 (Repartidor)`
                     });
                 }
                 finalRoleId = roleId;
