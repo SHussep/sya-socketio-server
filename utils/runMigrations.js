@@ -920,6 +920,53 @@ const MIGRATIONS = [
                 // Don't throw - continue even if there are issues
             }
         }
+    },
+    {
+        id: '039_create_mobile_app_permissions_table',
+        name: 'Create table to track mobile app permissions by employee',
+        async execute(client) {
+            console.log('🔄 Ejecutando migración 039: Creando tabla de permisos de app móvil...');
+
+            try {
+                // Check if table exists
+                const checkTable = await client.query(`
+                    SELECT EXISTS(
+                        SELECT FROM information_schema.tables
+                        WHERE table_name = 'employee_mobile_app_permissions'
+                    )
+                `);
+
+                if (checkTable.rows[0].exists) {
+                    console.log('ℹ️  Tabla employee_mobile_app_permissions ya existe');
+                    return;
+                }
+
+                // Create employee_mobile_app_permissions table
+                console.log('   📝 Creando tabla employee_mobile_app_permissions...');
+                await client.query(`
+                    CREATE TABLE IF NOT EXISTS employee_mobile_app_permissions (
+                        id SERIAL PRIMARY KEY,
+                        tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                        employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+                        permission_key VARCHAR(255) NOT NULL,
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(tenant_id, employee_id, permission_key)
+                    )
+                `);
+
+                // Create indexes
+                await client.query('CREATE INDEX IF NOT EXISTS idx_employee_mobile_permissions_tenant ON employee_mobile_app_permissions(tenant_id)');
+                await client.query('CREATE INDEX IF NOT EXISTS idx_employee_mobile_permissions_employee ON employee_mobile_app_permissions(employee_id)');
+                await client.query('CREATE INDEX IF NOT EXISTS idx_employee_mobile_permissions_key ON employee_mobile_app_permissions(permission_key)');
+
+                console.log('   ✅ Tabla employee_mobile_app_permissions creada exitosamente');
+                console.log('✅ Migración 039 completada');
+            } catch (error) {
+                console.log('⚠️  Migración 039: ' + error.message);
+                // Don't throw - continue even if there are issues
+            }
+        }
     }
 ];
 

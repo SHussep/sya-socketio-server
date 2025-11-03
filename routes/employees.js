@@ -382,15 +382,15 @@ module.exports = (pool) => {
         }
     });
 
-    // POST /api/employees/:id/sync-role - Sync employee role from Desktop app
-    // When Desktop assigns a role to an employee, sync it to PostgreSQL
+    // POST /api/employees/:id/sync-role - Sync employee role and mobile app permissions from Desktop app
+    // When Desktop assigns a role to an employee, sync role AND mobile app permissions to PostgreSQL
     router.post('/:id/sync-role', async (req, res) => {
         const client = await pool.connect();
         try {
             const employeeId = req.params.id;
-            const { tenantId, roleId, canUseMobileApp } = req.body;
+            const { tenantId, roleId, canUseMobileApp, mobileAppPermissions } = req.body;
 
-            console.log(`[Employees/SyncRole] 🔄 Sincronizando rol para empleado ${employeeId}: roleId=${roleId}, mobile=${canUseMobileApp}`);
+            console.log(`[Employees/SyncRole] 🔄 Sincronizando empleado ${employeeId}: roleId=${roleId}, mobile=${canUseMobileApp}, perms=${mobileAppPermissions?.join(',')}`);
 
             // Validate required fields
             if (!tenantId) {
@@ -434,9 +434,12 @@ module.exports = (pool) => {
                 finalRoleId = roleId;
             }
 
-            // Only update role if canUseMobileApp is true
+            // Only update role and permissions if canUseMobileApp is true
             // If false, we don't grant access to mobile
             if (canUseMobileApp === true && roleId) {
+                // Start transaction
+                await client.query('BEGIN');
+
                 // Update employee's role_id (enables mobile app access with this role)
                 const updateResult = await client.query(
                     `UPDATE employees
@@ -447,24 +450,61 @@ module.exports = (pool) => {
                     [finalRoleId, employeeId, tenantId]
                 );
 
-                if (updateResult.rows.length > 0) {
-                    const updated = updateResult.rows[0];
-                    console.log(`[Employees/SyncRole] ✅ Rol sincronizado para ${updated.full_name}: role_id=${updated.role_id}`);
+                const updated = updateResult.rows[0];
+                console.log(`[Employees/SyncRole] ✅ Rol actualizado para ${updated.full_name}: role_id=${updated.role_id}`);
 
-                    return res.json({
-                        success: true,
-                        message: 'Rol sincronizado exitosamente',
-                        data: {
-                            employeeId: updated.id,
-                            fullName: updated.full_name,
-                            roleId: updated.role_id,
-                            canUseMobileApp: true
-                        }
-                    });
+                // Sync mobile app permissions (if provided)
+                let syncedPermissions = [];
+                if (Array.isArray(mobileAppPermissions) && mobileAppPermissions.length > 0) {
+                    console.log(`[Employees/SyncRole] 📝 Sincronizando ${mobileAppPermissions.length} permisos de app móvil...`);
+
+                    // Delete old permissions
+                    await client.query(
+                        `DELETE FROM employee_mobile_app_permissions WHERE employee_id = $1 AND tenant_id = $2`,
+                        [employeeId, tenantId]
+                    );
+
+                    // Insert new permissions
+                    for (const permission of mobileAppPermissions) {
+                        await client.query(
+                            `INSERT INTO employee_mobile_app_permissions (tenant_id, employee_id, permission_key, created_at, updated_at)
+                             VALUES ($1, $2, $3, NOW(), NOW())
+                             ON CONFLICT (tenant_id, employee_id, permission_key) DO UPDATE SET updated_at = NOW()`,
+                            [tenantId, employeeId, permission]
+                        );
+                        syncedPermissions.push(permission);
+                    }
+
+                    console.log(`[Employees/SyncRole] ✅ Permisos sincronizados: ${syncedPermissions.join(', ')}`);
                 }
+
+                await client.query('COMMIT');
+
+                return res.json({
+                    success: true,
+                    message: 'Rol y permisos sincronizados exitosamente',
+                    data: {
+                        employeeId: updated.id,
+                        fullName: updated.full_name,
+                        roleId: updated.role_id,
+                        canUseMobileApp: true,
+                        mobileAppPermissions: syncedPermissions
+                    }
+                });
+
             } else if (canUseMobileApp === false) {
-                // If canUseMobileApp is false, don't assign a role (no mobile access)
-                console.log(`[Employees/SyncRole] ℹ️  Empleado ${employee.full_name} sin acceso a App Móvil`);
+                // If canUseMobileApp is false, clear mobile app permissions
+                await client.query('BEGIN');
+
+                // Delete mobile app permissions
+                await client.query(
+                    `DELETE FROM employee_mobile_app_permissions WHERE employee_id = $1 AND tenant_id = $2`,
+                    [employeeId, tenantId]
+                );
+
+                await client.query('COMMIT');
+
+                console.log(`[Employees/SyncRole] ℹ️  Permisos de app móvil eliminados para ${employee.full_name}`);
                 return res.json({
                     success: true,
                     message: 'Configuración actualizada',
@@ -473,27 +513,37 @@ module.exports = (pool) => {
                         fullName: employee.full_name,
                         roleId: employee.role_id,
                         canUseMobileApp: false,
+                        mobileAppPermissions: [],
                         note: 'Empleado sin acceso a App Móvil'
                     }
                 });
             } else {
                 // No role or canUseMobileApp provided, just return current state
+                const permsResult = await client.query(
+                    `SELECT permission_key FROM employee_mobile_app_permissions WHERE employee_id = $1 AND tenant_id = $2`,
+                    [employeeId, tenantId]
+                );
+
+                const currentPerms = permsResult.rows.map(r => r.permission_key);
+
                 return res.json({
                     success: true,
                     message: 'Estado actual',
                     data: {
                         employeeId: employee.id,
                         fullName: employee.full_name,
-                        roleId: employee.role_id
+                        roleId: employee.role_id,
+                        mobileAppPermissions: currentPerms
                     }
                 });
             }
 
         } catch (error) {
+            await client.query('ROLLBACK').catch(() => {});
             console.error('[Employees/SyncRole] ❌ Error:', error.message);
             res.status(500).json({
                 success: false,
-                message: 'Error al sincronizar rol',
+                message: 'Error al sincronizar rol y permisos',
                 error: error.message
             });
         } finally {
