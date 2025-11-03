@@ -970,7 +970,7 @@ const MIGRATIONS = [
     },
     {
         id: '040_fix_roles_to_global_fixed_roles',
-        name: 'Fix roles table to be global with fixed IDs (1=Administrador, 2=Repartidor)',
+        name: 'Fix roles table to be global with fixed IDs matching Desktop (1=Admin, 2=Encargado, 3=Repartidor, 4=Ayudante)',
         async execute(client) {
             console.log('🔄 Ejecutando migración 040: Arreglando tabla roles a roles globales fijos...');
 
@@ -1012,15 +1012,17 @@ const MIGRATIONS = [
                     `);
                     console.log('   ✅ Nueva tabla roles creada (sin tenant_id, sin branch_id)');
 
-                    // Insert fixed roles
+                    // Insert all 4 fixed roles matching Desktop
                     await client.query(`
                         INSERT INTO roles (id, name, description, created_at, updated_at)
                         VALUES
                             (1, 'Administrador', 'Acceso total al sistema', NOW(), NOW()),
-                            (2, 'Repartidor', 'Acceso limitado como repartidor', NOW(), NOW())
+                            (2, 'Encargado', 'Gerente de turno - permisos extensos', NOW(), NOW()),
+                            (3, 'Repartidor', 'Acceso limitado como repartidor', NOW(), NOW()),
+                            (4, 'Ayudante', 'Soporte - acceso limitado', NOW(), NOW())
                         ON CONFLICT (id) DO NOTHING
                     `);
-                    console.log('   ✅ Roles fijos insertados (1=Administrador, 2=Repartidor)');
+                    console.log('   ✅ Los 4 roles fijos insertados (1=Admin, 2=Encargado, 3=Repartidor, 4=Ayudante)');
 
                     // Recreate role_permissions table if needed
                     const checkRolePerms = await client.query(`
@@ -1028,7 +1030,6 @@ const MIGRATIONS = [
                     `);
 
                     if (checkRolePerms.rows[0].exists) {
-                        // Recreate with proper foreign key
                         await client.query('DROP TABLE IF EXISTS role_permissions');
                     }
 
@@ -1046,23 +1047,25 @@ const MIGRATIONS = [
                 } else {
                     console.log('   ℹ️  Roles table ya está en formato correcto (sin tenant_id/branch_id)');
 
-                    // Just ensure the fixed roles exist
+                    // Just ensure the 4 fixed roles exist
                     const checkRoles = await client.query(`
-                        SELECT COUNT(*) as count FROM roles WHERE id IN (1, 2)
+                        SELECT COUNT(*) as count FROM roles WHERE id IN (1, 2, 3, 4)
                     `);
 
-                    if (parseInt(checkRoles.rows[0].count) < 2) {
+                    if (parseInt(checkRoles.rows[0].count) < 4) {
                         console.log('   ⚠️  Roles fijos no completos - insertando...');
                         await client.query(`
                             INSERT INTO roles (id, name, description, created_at, updated_at)
                             VALUES
                                 (1, 'Administrador', 'Acceso total al sistema', NOW(), NOW()),
-                                (2, 'Repartidor', 'Acceso limitado como repartidor', NOW(), NOW())
+                                (2, 'Encargado', 'Gerente de turno - permisos extensos', NOW(), NOW()),
+                                (3, 'Repartidor', 'Acceso limitado como repartidor', NOW(), NOW()),
+                                (4, 'Ayudante', 'Soporte - acceso limitado', NOW(), NOW())
                             ON CONFLICT (id) DO UPDATE SET updated_at = NOW()
                         `);
-                        console.log('   ✅ Roles fijos insertados/actualizados');
+                        console.log('   ✅ Los 4 roles fijos insertados/actualizados');
                     } else {
-                        console.log('   ✅ Roles fijos ya existen');
+                        console.log('   ✅ Los 4 roles fijos ya existen');
                     }
                 }
 
