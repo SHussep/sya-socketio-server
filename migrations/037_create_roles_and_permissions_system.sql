@@ -93,14 +93,25 @@ CREATE INDEX IF NOT EXISTS idx_employee_mobile_permissions_key ON employee_mobil
 -- Add role_id column if not exists
 ALTER TABLE employees ADD COLUMN IF NOT EXISTS role_id INTEGER;
 
--- Update role_id to reference global roles (map old tenant-scoped IDs if needed)
--- For now, set all NULL role_ids to 1 (Administrador)
-UPDATE employees
-SET role_id = 1
-WHERE role_id IS NULL;
-
--- Add/update FK constraint to point to global roles table
+-- IMPORTANT: Drop FK constraint BEFORE updating role IDs
+-- This prevents constraint violations when updating old role IDs
 ALTER TABLE employees DROP CONSTRAINT IF EXISTS fk_employees_role_id;
+
+-- Update role_id to reference global roles - map old IDs to new ones
+-- Old schema had auto-increment role IDs per tenant (14, 15, etc)
+-- New schema has GLOBAL fixed IDs (1, 2, 3, 4, 99)
+UPDATE employees
+SET role_id = CASE
+    WHEN role_id = 14 THEN 1      -- Old "Acceso Total" → Administrador
+    WHEN role_id = 15 THEN 3      -- Old "Acceso Repartidor" → Repartidor
+    WHEN role_id = 16 THEN 1      -- Additional old role → Administrador (from Google signup)
+    WHEN role_id = 17 THEN 3      -- Additional old role → Repartidor (from Google signup)
+    WHEN role_id IS NULL THEN 1   -- NULL → Administrador
+    ELSE 1                         -- Any other old role → Administrador (default)
+END
+WHERE role_id IS NOT NULL OR role_id IS NULL;  -- Update ALL rows to ensure consistency
+
+-- NOW add the FK constraint after all updates are complete
 ALTER TABLE employees ADD CONSTRAINT fk_employees_role_id
     FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE RESTRICT;
 
