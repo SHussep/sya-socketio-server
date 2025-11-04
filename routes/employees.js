@@ -7,6 +7,27 @@ const express = require('express');
 module.exports = (pool) => {
     const router = express.Router();
 
+    // ═════════════════════════════════════════════════════════════
+    // HELPER: Derive mobile access type from role_id and boolean
+    // ═════════════════════════════════════════════════════════════
+    const getMobileAccessType = (roleId, canUseMobileApp) => {
+        if (!canUseMobileApp) return 'none';
+
+        switch (roleId) {
+            case 1:
+            case 2:
+                return 'admin';      // Administrador, Encargado
+            case 3:
+                return 'distributor'; // Repartidor
+            case 4:
+                return 'none';        // Ayudante (cannot use mobile)
+            case 99:
+                return 'none';        // Otro (undefined)
+            default:
+                return 'none';
+        }
+    };
+
     // POST /api/employees - Sync employee from Desktop app with roles and passwords
     // Accepts the payload from WinUI and saves to PostgreSQL
     router.post('/', async (req, res) => {
@@ -60,31 +81,29 @@ module.exports = (pool) => {
                 }
             }
 
-            // Determine mobile_access_type based on role
-            // If mobileAccessType is explicitly provided, use it; otherwise determine from role
-            let determinedMobileAccessType = req.body.mobileAccessType || null;
+            // Determine if employee can use mobile app
+            // If canUseMobileApp is explicitly provided, use it; otherwise determine from role
+            let canUseMobileApp = req.body.canUseMobileApp;
 
-            if (!determinedMobileAccessType && mappedRoleId) {
+            if (canUseMobileApp === undefined || canUseMobileApp === null) {
                 // Auto-assign based on role if not explicitly provided
-                if ([1, 2].includes(mappedRoleId)) {  // Administrador, Encargado
-                    determinedMobileAccessType = 'admin';
-                } else if (mappedRoleId === 3) {  // Repartidor
-                    determinedMobileAccessType = 'distributor';
-                } else {  // Ayudante (4), Otro (99), or any custom role
-                    determinedMobileAccessType = 'none';
-                }
+                // Roles 1, 2, 3 can use mobile app by default; 4 and 99 cannot
+                canUseMobileApp = [1, 2, 3].includes(mappedRoleId) ? true : false;
             }
 
-            // Validate mobile_access_type if provided
-            if (determinedMobileAccessType && !['admin', 'distributor', 'none'].includes(determinedMobileAccessType)) {
-                console.log(`[Employees/Sync] ❌ mobileAccessType inválido: ${determinedMobileAccessType}`);
+            // Validate canUseMobileApp is boolean
+            if (typeof canUseMobileApp !== 'boolean') {
+                console.log(`[Employees/Sync] ❌ canUseMobileApp debe ser boolean: ${canUseMobileApp}`);
                 return res.status(400).json({
                     success: false,
-                    message: `mobileAccessType inválido. Valores válidos: admin, distributor, none`
+                    message: `canUseMobileApp debe ser true o false`
                 });
             }
 
-            console.log(`[Employees/Sync] 📱 Mobile Access Type: ${determinedMobileAccessType || 'none'} (Role: ${mappedRoleId})`);
+            // Derive the access type from role + boolean
+            const mobileAccessType = getMobileAccessType(mappedRoleId, canUseMobileApp);
+
+            console.log(`[Employees/Sync] 📱 Mobile Access: ${mobileAccessType} (Role: ${mappedRoleId}, Can Use: ${canUseMobileApp})`);
 
             // Check if employee already exists by email or username
             const existingResult = await client.query(
@@ -107,10 +126,10 @@ module.exports = (pool) => {
                          role_id = COALESCE($4, role_id),
                          password_hash = COALESCE($5, password_hash),
                          password_updated_at = CASE WHEN $5 IS NOT NULL THEN NOW() ELSE password_updated_at END,
-                         mobile_access_type = COALESCE($8, mobile_access_type),
+                         can_use_mobile_app = COALESCE($8, can_use_mobile_app),
                          updated_at = NOW()
                      WHERE id = $6 AND tenant_id = $7
-                     RETURNING id, tenant_id, full_name, username, email, main_branch_id, is_active, role_id, mobile_access_type, created_at, updated_at`,
+                     RETURNING id, tenant_id, full_name, username, email, main_branch_id, is_active, role_id, can_use_mobile_app, created_at, updated_at`,
                     [
                         fullName,
                         branchId || mainBranchId,
@@ -119,7 +138,7 @@ module.exports = (pool) => {
                         password || null,
                         existingId,
                         tenantId,
-                        determinedMobileAccessType
+                        canUseMobileApp
                     ]
                 );
 
@@ -166,9 +185,9 @@ module.exports = (pool) => {
 
             const insertResult = await client.query(
                 `INSERT INTO employees
-                 (tenant_id, full_name, username, email, password_hash, main_branch_id, role_id, mobile_access_type, is_active, updated_at, created_at)
+                 (tenant_id, full_name, username, email, password_hash, main_branch_id, role_id, can_use_mobile_app, is_active, updated_at, created_at)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
-                 RETURNING id, tenant_id, full_name, username, email, main_branch_id, role_id, mobile_access_type, is_active, created_at, updated_at`,
+                 RETURNING id, tenant_id, full_name, username, email, main_branch_id, role_id, can_use_mobile_app, is_active, created_at, updated_at`,
                 [
                     tenantId,
                     fullName,
@@ -177,7 +196,7 @@ module.exports = (pool) => {
                     password || null,  // Can be null if not provided
                     branchId || mainBranchId,
                     roleId || null,
-                    determinedMobileAccessType,
+                    canUseMobileApp,
                     isActive !== false
                 ]
             );
@@ -646,7 +665,7 @@ module.exports = (pool) => {
             }
 
             const result = await client.query(
-                `SELECT id, email, full_name, role_id, mobile_access_type FROM employees
+                `SELECT id, email, full_name, role_id, can_use_mobile_app FROM employees
                  WHERE id = $1 AND tenant_id = $2 AND is_active = true`,
                 [employeeId, tenantId]
             );
@@ -659,10 +678,10 @@ module.exports = (pool) => {
             }
 
             const employee = result.rows[0];
-            const accessType = employee.mobile_access_type || 'none';
 
-            // Determine if has mobile access
-            const hasMobileAccess = accessType !== 'none';
+            // Derive access type from role_id + can_use_mobile_app
+            const accessType = getMobileAccessType(employee.role_id, employee.can_use_mobile_app);
+            const hasMobileAccess = accessType !== 'none' && employee.can_use_mobile_app;
 
             return res.json({
                 success: true,
@@ -671,6 +690,7 @@ module.exports = (pool) => {
                     email: employee.email,
                     fullName: employee.full_name,
                     roleId: employee.role_id,
+                    canUseMobileApp: employee.can_use_mobile_app,
                     mobileAccessType: accessType,
                     hasMobileAccess: hasMobileAccess,
                     message: hasMobileAccess
@@ -699,7 +719,7 @@ module.exports = (pool) => {
             const employeeId = parseInt(req.params.id);
             const {
                 tenantId,
-                mobileAccessType  // 'admin', 'distributor', or 'none'
+                canUseMobileApp  // true or false
             } = req.body;
 
             // Validate parameters
@@ -710,16 +730,16 @@ module.exports = (pool) => {
                 });
             }
 
-            if (mobileAccessType && !['admin', 'distributor', 'none'].includes(mobileAccessType)) {
+            if (canUseMobileApp !== undefined && typeof canUseMobileApp !== 'boolean') {
                 return res.status(400).json({
                     success: false,
-                    message: 'mobileAccessType inválido. Valores válidos: admin, distributor, none'
+                    message: 'canUseMobileApp debe ser true o false'
                 });
             }
 
             // Verify employee exists and belongs to tenant
             const employeeCheck = await client.query(
-                `SELECT id, email, full_name, role_id, mobile_access_type FROM employees
+                `SELECT id, email, full_name, role_id, can_use_mobile_app FROM employees
                  WHERE id = $1 AND tenant_id = $2`,
                 [employeeId, tenantId]
             );
@@ -733,19 +753,21 @@ module.exports = (pool) => {
 
             const employee = employeeCheck.rows[0];
 
-            // Update mobile_access_type
+            // Update can_use_mobile_app if provided
             const updateResult = await client.query(
                 `UPDATE employees
-                 SET mobile_access_type = $1,
+                 SET can_use_mobile_app = $1,
                      updated_at = NOW()
                  WHERE id = $2 AND tenant_id = $3
-                 RETURNING id, email, full_name, role_id, mobile_access_type, updated_at`,
-                [mobileAccessType || null, employeeId, tenantId]
+                 RETURNING id, email, full_name, role_id, can_use_mobile_app, updated_at`,
+                [canUseMobileApp !== undefined ? canUseMobileApp : employee.can_use_mobile_app, employeeId, tenantId]
             );
 
             if (updateResult.rows.length > 0) {
                 const updatedEmployee = updateResult.rows[0];
-                console.log(`[Employees/UpdateMobileAccess] ✅ Acceso móvil actualizado: ${updatedEmployee.full_name} → ${mobileAccessType || 'none'}`);
+                const accessType = getMobileAccessType(updatedEmployee.role_id, updatedEmployee.can_use_mobile_app);
+
+                console.log(`[Employees/UpdateMobileAccess] ✅ Acceso móvil actualizado: ${updatedEmployee.full_name} → ${accessType} (canUse: ${updatedEmployee.can_use_mobile_app})`);
 
                 return res.json({
                     success: true,
@@ -755,7 +777,8 @@ module.exports = (pool) => {
                         email: updatedEmployee.email,
                         fullName: updatedEmployee.full_name,
                         roleId: updatedEmployee.role_id,
-                        mobileAccessType: updatedEmployee.mobile_access_type || 'none',
+                        canUseMobileApp: updatedEmployee.can_use_mobile_app,
+                        mobileAccessType: accessType,
                         updatedAt: updatedEmployee.updated_at
                     }
                 });

@@ -383,16 +383,16 @@ module.exports = function(pool) {
             // 6. Hash de contraseña
             const passwordHash = await bcrypt.hash(password, 10);
 
-            // 7. Crear empleado administrador - incluir main_branch_id
+            // 7. Crear empleado administrador - incluir main_branch_id y can_use_mobile_app
             const username = displayName.replace(/\s+/g, '').toLowerCase();
             const employeeResult = await client.query(`
                 INSERT INTO employees (
                     tenant_id, email, username, full_name, password_hash,
-                    role_id, main_branch_id, is_active, is_owner,
+                    role_id, main_branch_id, can_use_mobile_app, is_active, is_owner,
                     google_user_identifier, password_updated_at, created_at, updated_at
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, true, true, $8, NOW(), NOW(), NOW())
-                RETURNING id, email, username, full_name, role_id, is_active, created_at
+                VALUES ($1, $2, $3, $4, $5, $6, $7, true, true, true, $8, NOW(), NOW(), NOW())
+                RETURNING id, email, username, full_name, role_id, can_use_mobile_app, is_active, created_at
             `, [tenant.id, email, username, displayName, passwordHash, accesoTotalRoleId, branch.id, email]);
 
             const employee = employeeResult.rows[0];
