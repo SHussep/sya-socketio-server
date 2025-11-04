@@ -60,6 +60,32 @@ module.exports = (pool) => {
                 }
             }
 
+            // Determine mobile_access_type based on role
+            // If mobileAccessType is explicitly provided, use it; otherwise determine from role
+            let determinedMobileAccessType = req.body.mobileAccessType || null;
+
+            if (!determinedMobileAccessType && mappedRoleId) {
+                // Auto-assign based on role if not explicitly provided
+                if ([1, 2].includes(mappedRoleId)) {  // Administrador, Encargado
+                    determinedMobileAccessType = 'admin';
+                } else if (mappedRoleId === 3) {  // Repartidor
+                    determinedMobileAccessType = 'distributor';
+                } else {  // Ayudante (4), Otro (99), or any custom role
+                    determinedMobileAccessType = 'none';
+                }
+            }
+
+            // Validate mobile_access_type if provided
+            if (determinedMobileAccessType && !['admin', 'distributor', 'none'].includes(determinedMobileAccessType)) {
+                console.log(`[Employees/Sync] ❌ mobileAccessType inválido: ${determinedMobileAccessType}`);
+                return res.status(400).json({
+                    success: false,
+                    message: `mobileAccessType inválido. Valores válidos: admin, distributor, none`
+                });
+            }
+
+            console.log(`[Employees/Sync] 📱 Mobile Access Type: ${determinedMobileAccessType || 'none'} (Role: ${mappedRoleId})`);
+
             // Check if employee already exists by email or username
             const existingResult = await client.query(
                 `SELECT id, password_hash FROM employees WHERE
@@ -81,9 +107,10 @@ module.exports = (pool) => {
                          role_id = COALESCE($4, role_id),
                          password_hash = COALESCE($5, password_hash),
                          password_updated_at = CASE WHEN $5 IS NOT NULL THEN NOW() ELSE password_updated_at END,
+                         mobile_access_type = COALESCE($8, mobile_access_type),
                          updated_at = NOW()
                      WHERE id = $6 AND tenant_id = $7
-                     RETURNING id, tenant_id, full_name, username, email, main_branch_id, is_active, role_id, created_at, updated_at`,
+                     RETURNING id, tenant_id, full_name, username, email, main_branch_id, is_active, role_id, mobile_access_type, created_at, updated_at`,
                     [
                         fullName,
                         branchId || mainBranchId,
@@ -91,7 +118,8 @@ module.exports = (pool) => {
                         roleId || null,
                         password || null,
                         existingId,
-                        tenantId
+                        tenantId,
+                        determinedMobileAccessType
                     ]
                 );
 
@@ -138,9 +166,9 @@ module.exports = (pool) => {
 
             const insertResult = await client.query(
                 `INSERT INTO employees
-                 (tenant_id, full_name, username, email, password_hash, main_branch_id, role_id, is_active, updated_at, created_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
-                 RETURNING id, tenant_id, full_name, username, email, main_branch_id, role_id, is_active, created_at, updated_at`,
+                 (tenant_id, full_name, username, email, password_hash, main_branch_id, role_id, mobile_access_type, is_active, updated_at, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
+                 RETURNING id, tenant_id, full_name, username, email, main_branch_id, role_id, mobile_access_type, is_active, created_at, updated_at`,
                 [
                     tenantId,
                     fullName,
@@ -149,6 +177,7 @@ module.exports = (pool) => {
                     password || null,  // Can be null if not provided
                     branchId || mainBranchId,
                     roleId || null,
+                    determinedMobileAccessType,
                     isActive !== false
                 ]
             );
@@ -594,6 +623,154 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al sincronizar rol y permisos',
+                error: error.message
+            });
+        } finally {
+            client.release();
+        }
+    });
+
+    // GET /api/employees/:id/mobile-access - Get mobile app access type
+    // Called by mobile app after login to verify access level
+    router.get('/:id/mobile-access', async (req, res) => {
+        const client = await pool.connect();
+        try {
+            const employeeId = parseInt(req.params.id);
+            const { tenantId } = req.query;
+
+            if (!employeeId || !tenantId) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Parámetros requeridos: employeeId en URL, tenantId en query'
+                });
+            }
+
+            const result = await client.query(
+                `SELECT id, email, full_name, role_id, mobile_access_type FROM employees
+                 WHERE id = $1 AND tenant_id = $2 AND is_active = true`,
+                [employeeId, tenantId]
+            );
+
+            if (result.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Empleado no encontrado o inactivo'
+                });
+            }
+
+            const employee = result.rows[0];
+            const accessType = employee.mobile_access_type || 'none';
+
+            // Determine if has mobile access
+            const hasMobileAccess = accessType !== 'none';
+
+            return res.json({
+                success: true,
+                data: {
+                    employeeId: employee.id,
+                    email: employee.email,
+                    fullName: employee.full_name,
+                    roleId: employee.role_id,
+                    mobileAccessType: accessType,
+                    hasMobileAccess: hasMobileAccess,
+                    message: hasMobileAccess
+                        ? `Acceso aprobado como ${accessType === 'admin' ? 'Administrador' : 'Repartidor'}`
+                        : 'No tiene acceso a la aplicación móvil'
+                }
+            });
+
+        } catch (error) {
+            console.error('[Employees/MobileAccess] ❌ Error:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Error al verificar acceso móvil',
+                error: error.message
+            });
+        } finally {
+            client.release();
+        }
+    });
+
+    // PUT /api/employees/:id - Update employee mobile access
+    // Allows updating mobile app access for an employee
+    router.put('/:id', async (req, res) => {
+        const client = await pool.connect();
+        try {
+            const employeeId = parseInt(req.params.id);
+            const {
+                tenantId,
+                mobileAccessType  // 'admin', 'distributor', or 'none'
+            } = req.body;
+
+            // Validate parameters
+            if (!employeeId || !tenantId) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Parámetros requeridos: employeeId, tenantId'
+                });
+            }
+
+            if (mobileAccessType && !['admin', 'distributor', 'none'].includes(mobileAccessType)) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'mobileAccessType inválido. Valores válidos: admin, distributor, none'
+                });
+            }
+
+            // Verify employee exists and belongs to tenant
+            const employeeCheck = await client.query(
+                `SELECT id, email, full_name, role_id, mobile_access_type FROM employees
+                 WHERE id = $1 AND tenant_id = $2`,
+                [employeeId, tenantId]
+            );
+
+            if (employeeCheck.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Empleado no encontrado'
+                });
+            }
+
+            const employee = employeeCheck.rows[0];
+
+            // Update mobile_access_type
+            const updateResult = await client.query(
+                `UPDATE employees
+                 SET mobile_access_type = $1,
+                     updated_at = NOW()
+                 WHERE id = $2 AND tenant_id = $3
+                 RETURNING id, email, full_name, role_id, mobile_access_type, updated_at`,
+                [mobileAccessType || null, employeeId, tenantId]
+            );
+
+            if (updateResult.rows.length > 0) {
+                const updatedEmployee = updateResult.rows[0];
+                console.log(`[Employees/UpdateMobileAccess] ✅ Acceso móvil actualizado: ${updatedEmployee.full_name} → ${mobileAccessType || 'none'}`);
+
+                return res.json({
+                    success: true,
+                    message: 'Acceso a app móvil actualizado',
+                    data: {
+                        employeeId: updatedEmployee.id,
+                        email: updatedEmployee.email,
+                        fullName: updatedEmployee.full_name,
+                        roleId: updatedEmployee.role_id,
+                        mobileAccessType: updatedEmployee.mobile_access_type || 'none',
+                        updatedAt: updatedEmployee.updated_at
+                    }
+                });
+            } else {
+                return res.status(500).json({
+                    success: false,
+                    message: 'No se pudo actualizar el empleado'
+                });
+            }
+
+        } catch (error) {
+            console.error('[Employees/UpdateMobileAccess] ❌ Error:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Error al actualizar acceso a app móvil',
                 error: error.message
             });
         } finally {
