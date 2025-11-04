@@ -866,5 +866,76 @@ module.exports = (pool) => {
         }
     });
 
+    // PUT /api/employees/:id/password - Update employee password
+    router.put('/:id/password', async (req, res) => {
+        const client = await pool.connect();
+        try {
+            const employeeId = parseInt(req.params.id);
+            const { tenantId, passwordHash } = req.body;
+
+            console.log(`[Employees/Password] 🔐 Actualizando contraseña para empleado ID: ${employeeId}`);
+
+            // Validate parameters
+            if (!employeeId || !tenantId || !passwordHash) {
+                console.log(`[Employees/Password] ❌ Parámetros faltantes`);
+                return res.status(400).json({
+                    success: false,
+                    message: 'Parámetros requeridos: employeeId, tenantId, passwordHash'
+                });
+            }
+
+            // Verify employee exists and belongs to tenant
+            const employeeCheck = await client.query(
+                `SELECT id FROM employees WHERE id = $1 AND tenant_id = $2`,
+                [employeeId, tenantId]
+            );
+
+            if (employeeCheck.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Empleado no encontrado'
+                });
+            }
+
+            // Update password
+            const updateResult = await client.query(
+                `UPDATE employees
+                 SET password_hash = $1,
+                     password_updated_at = NOW(),
+                     updated_at = NOW()
+                 WHERE id = $2 AND tenant_id = $3
+                 RETURNING id, updated_at`,
+                [passwordHash, employeeId, tenantId]
+            );
+
+            if (updateResult.rows.length > 0) {
+                console.log(`[Employees/Password] ✅ Contraseña actualizada para empleado ID: ${employeeId}`);
+                return res.json({
+                    success: true,
+                    message: 'Contraseña actualizada exitosamente',
+                    data: {
+                        employeeId: updateResult.rows[0].id,
+                        updatedAt: updateResult.rows[0].updated_at
+                    }
+                });
+            } else {
+                return res.status(500).json({
+                    success: false,
+                    message: 'No se pudo actualizar la contraseña'
+                });
+            }
+
+        } catch (error) {
+            console.error('[Employees/Password] ❌ Error:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Error al actualizar contraseña',
+                error: error.message
+            });
+        } finally {
+            client.release();
+        }
+    });
+
     return router;
 };
