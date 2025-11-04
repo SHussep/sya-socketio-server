@@ -711,15 +711,18 @@ module.exports = (pool) => {
         }
     });
 
-    // PUT /api/employees/:id - Update employee mobile access
-    // Allows updating mobile app access for an employee
+    // PUT /api/employees/:id - Update employee (role, mobile access, name, status)
+    // Flexible endpoint to update multiple fields when Desktop edits an employee
     router.put('/:id', async (req, res) => {
         const client = await pool.connect();
         try {
             const employeeId = parseInt(req.params.id);
             const {
                 tenantId,
-                canUseMobileApp  // true or false
+                roleId,
+                canUseMobileApp,
+                fullName,
+                isActive
             } = req.body;
 
             // Validate parameters
@@ -730,10 +733,18 @@ module.exports = (pool) => {
                 });
             }
 
+            // Validate types if provided
             if (canUseMobileApp !== undefined && typeof canUseMobileApp !== 'boolean') {
                 return res.status(400).json({
                     success: false,
                     message: 'canUseMobileApp debe ser true o false'
+                });
+            }
+
+            if (roleId !== undefined && ![1, 2, 3, 4, 99].includes(roleId)) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'roleId inválido. Roles válidos: 1, 2, 3, 4, 99'
                 });
             }
 
@@ -753,25 +764,80 @@ module.exports = (pool) => {
 
             const employee = employeeCheck.rows[0];
 
-            // Update can_use_mobile_app if provided
-            const updateResult = await client.query(
-                `UPDATE employees
-                 SET can_use_mobile_app = $1,
-                     updated_at = NOW()
-                 WHERE id = $2 AND tenant_id = $3
-                 RETURNING id, email, full_name, role_id, can_use_mobile_app, updated_at`,
-                [canUseMobileApp !== undefined ? canUseMobileApp : employee.can_use_mobile_app, employeeId, tenantId]
-            );
+            // If roleId is being updated, verify it exists
+            if (roleId !== undefined && roleId !== employee.role_id) {
+                const roleCheck = await client.query(
+                    `SELECT id FROM roles WHERE id = $1`,
+                    [roleId]
+                );
+
+                if (roleCheck.rows.length === 0) {
+                    return res.status(400).json({
+                        success: false,
+                        message: `Rol ${roleId} no encontrado`
+                    });
+                }
+            }
+
+            // Build dynamic UPDATE statement
+            const updates = [];
+            const params = [];
+            let paramIndex = 1;
+
+            if (fullName !== undefined) {
+                updates.push(`full_name = $${paramIndex}`);
+                params.push(fullName);
+                paramIndex++;
+            }
+
+            if (roleId !== undefined) {
+                updates.push(`role_id = $${paramIndex}`);
+                params.push(roleId);
+                paramIndex++;
+            }
+
+            if (canUseMobileApp !== undefined) {
+                updates.push(`can_use_mobile_app = $${paramIndex}`);
+                params.push(canUseMobileApp);
+                paramIndex++;
+            }
+
+            if (isActive !== undefined) {
+                updates.push(`is_active = $${paramIndex}`);
+                params.push(isActive);
+                paramIndex++;
+            }
+
+            // Always update timestamp
+            updates.push(`updated_at = NOW()`);
+
+            // Add WHERE clause parameters
+            params.push(employeeId);
+            params.push(tenantId);
+
+            const query = `UPDATE employees
+                          SET ${updates.join(', ')}
+                          WHERE id = $${paramIndex} AND tenant_id = $${paramIndex + 1}
+                          RETURNING id, email, full_name, role_id, can_use_mobile_app, is_active, updated_at`;
+
+            const updateResult = await client.query(query, params);
 
             if (updateResult.rows.length > 0) {
                 const updatedEmployee = updateResult.rows[0];
                 const accessType = getMobileAccessType(updatedEmployee.role_id, updatedEmployee.can_use_mobile_app);
 
-                console.log(`[Employees/UpdateMobileAccess] ✅ Acceso móvil actualizado: ${updatedEmployee.full_name} → ${accessType} (canUse: ${updatedEmployee.can_use_mobile_app})`);
+                // Log what was updated
+                const changes = [];
+                if (fullName !== undefined) changes.push(`nombre: ${fullName}`);
+                if (roleId !== undefined) changes.push(`rol: ${roleId}`);
+                if (canUseMobileApp !== undefined) changes.push(`acceso_móvil: ${canUseMobileApp}`);
+                if (isActive !== undefined) changes.push(`activo: ${isActive}`);
+
+                console.log(`[Employees/Update] ✅ Empleado actualizado: ${updatedEmployee.full_name} (ID: ${employeeId}) - Cambios: ${changes.join(', ')}`);
 
                 return res.json({
                     success: true,
-                    message: 'Acceso a app móvil actualizado',
+                    message: 'Empleado actualizado exitosamente',
                     data: {
                         employeeId: updatedEmployee.id,
                         email: updatedEmployee.email,
@@ -779,6 +845,7 @@ module.exports = (pool) => {
                         roleId: updatedEmployee.role_id,
                         canUseMobileApp: updatedEmployee.can_use_mobile_app,
                         mobileAccessType: accessType,
+                        isActive: updatedEmployee.is_active,
                         updatedAt: updatedEmployee.updated_at
                     }
                 });
@@ -790,10 +857,10 @@ module.exports = (pool) => {
             }
 
         } catch (error) {
-            console.error('[Employees/UpdateMobileAccess] ❌ Error:', error.message);
+            console.error('[Employees/Update] ❌ Error:', error.message);
             res.status(500).json({
                 success: false,
-                message: 'Error al actualizar acceso a app móvil',
+                message: 'Error al actualizar empleado',
                 error: error.message
             });
         } finally {
