@@ -114,36 +114,68 @@ module.exports = (pool) => {
             );
 
             if (existingResult.rows.length > 0) {
-                // Update existing employee
+                // Update existing employee with transaction
                 const existingId = existingResult.rows[0].id;
                 console.log(`[Employees/Sync] ⚠️ Empleado ya existe (ID: ${existingId}), actualizando...`);
 
-                const updateResult = await client.query(
-                    `UPDATE employees
-                     SET full_name = $1,
-                         main_branch_id = COALESCE($2, main_branch_id),
-                         is_active = COALESCE($3, is_active),
-                         role_id = COALESCE($4, role_id),
-                         password_hash = COALESCE($5, password_hash),
-                         password_updated_at = CASE WHEN $5 IS NOT NULL THEN NOW() ELSE password_updated_at END,
-                         can_use_mobile_app = COALESCE($8, can_use_mobile_app),
-                         updated_at = NOW()
-                     WHERE id = $6 AND tenant_id = $7
-                     RETURNING id, tenant_id, full_name, username, email, main_branch_id, is_active, role_id, can_use_mobile_app, created_at, updated_at`,
-                    [
-                        fullName,
-                        branchId || mainBranchId,
-                        isActive !== false,
-                        roleId || null,
-                        password || null,
-                        existingId,
-                        tenantId,
-                        canUseMobileApp
-                    ]
-                );
+                try {
+                    await client.query('BEGIN');
 
-                if (updateResult.rows.length > 0) {
+                    const updateResult = await client.query(
+                        `UPDATE employees
+                         SET full_name = $1,
+                             main_branch_id = COALESCE($2, main_branch_id),
+                             is_active = COALESCE($3, is_active),
+                             role_id = COALESCE($4, role_id),
+                             password_hash = COALESCE($5, password_hash),
+                             password_updated_at = CASE WHEN $5 IS NOT NULL THEN NOW() ELSE password_updated_at END,
+                             can_use_mobile_app = COALESCE($8, can_use_mobile_app),
+                             updated_at = NOW()
+                         WHERE id = $6 AND tenant_id = $7
+                         RETURNING id, tenant_id, full_name, username, email, main_branch_id, is_active, role_id, can_use_mobile_app, created_at, updated_at`,
+                        [
+                            fullName,
+                            branchId || mainBranchId,
+                            isActive !== false,
+                            mappedRoleId || null,
+                            password || null,
+                            existingId,
+                            tenantId,
+                            canUseMobileApp
+                        ]
+                    );
+
+                    if (updateResult.rows.length === 0) {
+                        await client.query('ROLLBACK');
+                        return res.status(500).json({
+                            success: false,
+                            message: 'No se pudo actualizar el empleado'
+                        });
+                    }
+
                     const employee = updateResult.rows[0];
+
+                    // Update or create employee_branches relationship
+                    if (employee.main_branch_id) {
+                        const branchCheck = await client.query(
+                            `SELECT id FROM branches WHERE id = $1 AND tenant_id = $2`,
+                            [employee.main_branch_id, tenantId]
+                        );
+
+                        if (branchCheck.rows.length > 0) {
+                            await client.query(
+                                `INSERT INTO employee_branches (tenant_id, employee_id, branch_id, created_at, updated_at)
+                                 VALUES ($1, $2, $3, NOW(), NOW())
+                                 ON CONFLICT (tenant_id, employee_id, branch_id) DO UPDATE SET updated_at = NOW()`,
+                                [tenantId, employee.id, employee.main_branch_id]
+                            );
+
+                            console.log(`[Employees/Sync] ✓ Relación employee_branches actualizada: Empleado ${employee.id} → Sucursal ${employee.main_branch_id}`);
+                        }
+                    }
+
+                    await client.query('COMMIT');
+
                     console.log(`[Employees/Sync] ✅ Empleado actualizado: ${fullName} (ID: ${employee.id})`);
 
                     // Get role with permissions if roleId is set
@@ -175,34 +207,81 @@ module.exports = (pool) => {
                         id: employee.id,
                         employeeId: employee.id,
                         remoteId: employee.id,
-                        role: roleData
+                        role: roleData,
+                        synced: true  // Desktop can now mark as Sincronizado
+                    });
+
+                } catch (txError) {
+                    await client.query('ROLLBACK').catch(() => {});
+                    console.error(`[Employees/Sync] ❌ Error al actualizar empleado:`, txError.message);
+                    return res.status(500).json({
+                        success: false,
+                        message: 'Error al sincronizar empleado (transacción revertida)',
+                        error: txError.message
                     });
                 }
             }
 
-            // Create new employee
+            // Create new employee with transaction (BEGIN/COMMIT/ROLLBACK)
+            // Ensures employee_branches is created atomically
             console.log(`[Employees/Sync] 📝 Creando nuevo empleado: ${fullName}`);
 
-            const insertResult = await client.query(
-                `INSERT INTO employees
-                 (tenant_id, full_name, username, email, password_hash, main_branch_id, role_id, can_use_mobile_app, is_active, updated_at, created_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
-                 RETURNING id, tenant_id, full_name, username, email, main_branch_id, role_id, can_use_mobile_app, is_active, created_at, updated_at`,
-                [
-                    tenantId,
-                    fullName,
-                    username,
-                    email,
-                    password || null,  // Can be null if not provided
-                    branchId || mainBranchId,
-                    roleId || null,
-                    canUseMobileApp,
-                    isActive !== false
-                ]
-            );
+            try {
+                await client.query('BEGIN');
 
-            if (insertResult.rows.length > 0) {
+                const insertResult = await client.query(
+                    `INSERT INTO employees
+                     (tenant_id, full_name, username, email, password_hash, main_branch_id, role_id, can_use_mobile_app, is_active, updated_at, created_at)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
+                     RETURNING id, tenant_id, full_name, username, email, main_branch_id, role_id, can_use_mobile_app, is_active, created_at, updated_at`,
+                    [
+                        tenantId,
+                        fullName,
+                        username,
+                        email,
+                        password || null,  // Can be null if not provided
+                        branchId || mainBranchId,
+                        mappedRoleId || null,
+                        canUseMobileApp,
+                        isActive !== false
+                    ]
+                );
+
+                if (insertResult.rows.length === 0) {
+                    await client.query('ROLLBACK');
+                    console.log(`[Employees/Sync] ❌ Error: No se insertó empleado`);
+                    return res.status(500).json({
+                        success: false,
+                        message: 'No se pudo guardar el empleado'
+                    });
+                }
+
                 const employee = insertResult.rows[0];
+
+                // Add employee to main branch (create employee_branches relationship)
+                if (employee.main_branch_id) {
+                    const branchCheck = await client.query(
+                        `SELECT id FROM branches WHERE id = $1 AND tenant_id = $2`,
+                        [employee.main_branch_id, tenantId]
+                    );
+
+                    if (branchCheck.rows.length > 0) {
+                        // Insert into employee_branches
+                        await client.query(
+                            `INSERT INTO employee_branches (tenant_id, employee_id, branch_id, created_at, updated_at)
+                             VALUES ($1, $2, $3, NOW(), NOW())
+                             ON CONFLICT (tenant_id, employee_id, branch_id) DO UPDATE SET updated_at = NOW()`,
+                            [tenantId, employee.id, employee.main_branch_id]
+                        );
+
+                        console.log(`[Employees/Sync] ✓ Relación employee_branches creada: Empleado ${employee.id} → Sucursal ${employee.main_branch_id}`);
+                    } else {
+                        console.log(`[Employees/Sync] ⚠️ Sucursal ${employee.main_branch_id} no encontrada, saltando relación employee_branches`);
+                    }
+                }
+
+                await client.query('COMMIT');
+
                 console.log(`[Employees/Sync] ✅ Empleado sincronizado exitosamente: ${fullName} (ID: ${employee.id})`);
 
                 // Get role with permissions if roleId is set
@@ -234,15 +313,19 @@ module.exports = (pool) => {
                     id: employee.id,
                     employeeId: employee.id,
                     remoteId: employee.id,
-                    role: roleData
+                    role: roleData,
+                    synced: true  // Desktop can now mark as Sincronizado
+                });
+
+            } catch (txError) {
+                await client.query('ROLLBACK').catch(() => {});
+                console.error(`[Employees/Sync] ❌ Error en transacción:`, txError.message);
+                return res.status(500).json({
+                    success: false,
+                    message: 'Error al sincronizar empleado (transacción revertida)',
+                    error: txError.message
                 });
             }
-
-            console.log(`[Employees/Sync] ❌ Error: No se insertó empleado`);
-            res.status(500).json({
-                success: false,
-                message: 'No se pudo guardar el empleado'
-            });
 
         } catch (error) {
             console.error(`[Employees/Sync] ❌ Error:`, error.message);
@@ -437,34 +520,30 @@ module.exports = (pool) => {
         }
     });
 
-    // POST /api/employees/:id/sync-role - Sync employee role and mobile app permissions from Desktop app
-    // Automatically assigns mobile app permission based on role (ONLY ONE permission allowed)
-    // - Administrador role → AccessMobileAppAsAdmin
-    // - Repartidor role → AccessMobileAppAsDistributor
-    router.post('/:id/sync-role', async (req, res) => {
+    // DELETE /api/employees/:id - Delete employee and all related data
+    // Deletes employee from employees table and cascades to employee_branches
+    router.delete('/:id', async (req, res) => {
         const client = await pool.connect();
         try {
-            const employeeId = req.params.id;
-            const { tenantId, roleId, canUseMobileApp, mobileAppPermissionOverride } = req.body;
+            const employeeId = parseInt(req.params.id);
+            const { tenantId } = req.body;
 
-            console.log(`[Employees/SyncRole] 🔄 Sincronizando empleado ${employeeId}: roleId=${roleId}, mobile=${canUseMobileApp}${mobileAppPermissionOverride ? `, override=${mobileAppPermissionOverride}` : ''}`);
-
-            // Validate required fields
-            if (!tenantId) {
+            // Validate parameters
+            if (!employeeId || !tenantId) {
                 return res.status(400).json({
                     success: false,
-                    message: 'Se requiere tenantId'
+                    message: 'Parámetros requeridos: employeeId en URL, tenantId en body'
                 });
             }
 
-            // Verify employee exists
+            // Verify employee exists and belongs to tenant
             const employeeCheck = await client.query(
-                `SELECT id, full_name, role_id FROM employees WHERE id = $1 AND tenant_id = $2`,
+                `SELECT id, email, full_name FROM employees
+                 WHERE id = $1 AND tenant_id = $2`,
                 [employeeId, tenantId]
             );
 
             if (employeeCheck.rows.length === 0) {
-                console.log(`[Employees/SyncRole] ❌ Empleado no encontrado: ${employeeId}`);
                 return res.status(404).json({
                     success: false,
                     message: 'Empleado no encontrado'
@@ -473,175 +552,52 @@ module.exports = (pool) => {
 
             const employee = employeeCheck.rows[0];
 
-            // If roleId provided, validate it exists and get role name
-            // Roles are now global: 1=Admin, 2=Encargado, 3=Repartidor, 4=Ayudante, 99=Otro (custom roles)
-            let finalRoleId = employee.role_id;  // Keep existing role if not provided
-            let roleName = null;
-            if (roleId) {
-                const roleCheck = await client.query(
-                    `SELECT id, name FROM roles WHERE id = $1`,
-                    [roleId]
-                );
+            // Start transaction
+            await client.query('BEGIN');
 
-                if (roleCheck.rows.length === 0) {
-                    console.log(`[Employees/SyncRole] ❌ Rol no válido: ${roleId}`);
-                    return res.status(400).json({
-                        success: false,
-                        message: `Rol no válido: ${roleId}. Roles válidos: 1 (Admin), 2 (Encargado), 3 (Repartidor), 4 (Ayudante), 99 (Otro)`
-                    });
-                }
-                finalRoleId = roleId;
-                roleName = roleCheck.rows[0].name;
-            }
-
-            // Only update role and permissions if canUseMobileApp is true
-            // If false, we don't grant access to mobile
-            if (canUseMobileApp === true && roleId) {
-                // Start transaction
-                await client.query('BEGIN');
-
-                // Update employee's role_id (enables mobile app access with this role)
-                const updateResult = await client.query(
-                    `UPDATE employees
-                     SET role_id = $1,
-                         updated_at = NOW()
-                     WHERE id = $2 AND tenant_id = $3
-                     RETURNING id, full_name, role_id`,
-                    [finalRoleId, employeeId, tenantId]
-                );
-
-                const updated = updateResult.rows[0];
-                console.log(`[Employees/SyncRole] ✅ Rol actualizado para ${updated.full_name}: role_id=${updated.role_id}`);
-
-                // IMPORTANT: Only ONE mobile app permission per employee
-                // Delete both first, then assign the correct one based on role
-                await client.query(
-                    `DELETE FROM employee_mobile_app_permissions
-                     WHERE employee_id = $1 AND tenant_id = $2
-                     AND permission_key IN ('AccessMobileAppAsAdmin', 'AccessMobileAppAsDistributor')`,
+            try {
+                // Delete employee_branches entries first (foreign key reference)
+                const branchesDeleteResult = await client.query(
+                    `DELETE FROM employee_branches
+                     WHERE employee_id = $1 AND tenant_id = $2`,
                     [employeeId, tenantId]
                 );
 
-                // Determine which mobile permission to assign based on role name
-                // If mobileAppPermissionOverride is provided, use it (for custom roles like "Otro")
-                // Otherwise, determine automatically based on role
-                // Roles: 1=Administrador, 2=Encargado, 3=Repartidor, 4=Ayudante, 99=Otro
-                let mobilePermission = mobileAppPermissionOverride || null;
-
-                if (!mobilePermission) {
-                    // Auto-assign based on role name if no override provided
-                    if (roleName === 'Administrador') {
-                        mobilePermission = 'AccessMobileAppAsAdmin';
-                    } else if (roleName === 'Encargado') {
-                        mobilePermission = 'AccessMobileAppAsAdmin';  // Encargado by default gets Admin access
-                    } else if (roleName === 'Repartidor') {
-                        mobilePermission = 'AccessMobileAppAsDistributor';
-                    } else if (roleName === 'Ayudante') {
-                        // Ayudante never gets mobile app access
-                        mobilePermission = null;
-                    } else if (roleName === 'Otro') {
-                        // Custom role: admin must decide manually via mobileAppPermissionOverride
-                        mobilePermission = null;
-                    }
-                }
-
-                // Assign the appropriate permission (if role allows mobile access)
-                if (mobilePermission) {
-                    // Validate permission value
-                    const validPermissions = ['AccessMobileAppAsAdmin', 'AccessMobileAppAsDistributor'];
-                    if (!validPermissions.includes(mobilePermission)) {
-                        return res.status(400).json({
-                            success: false,
-                            message: `Permiso inválido: ${mobilePermission}. Debe ser AccessMobileAppAsAdmin o AccessMobileAppAsDistributor`
-                        });
-                    }
-
-                    await client.query(
-                        `INSERT INTO employee_mobile_app_permissions (tenant_id, employee_id, permission_key, created_at, updated_at)
-                         VALUES ($1, $2, $3, NOW(), NOW())
-                         ON CONFLICT (tenant_id, employee_id, permission_key) DO UPDATE SET updated_at = NOW()`,
-                        [tenantId, employeeId, mobilePermission]
-                    );
-                    console.log(`[Employees/SyncRole] 📱 Permiso de app móvil asignado: ${mobilePermission}`);
-                } else {
-                    console.log(`[Employees/SyncRole] ℹ️  Rol "${roleName}" no tiene permiso de app móvil asignado (Ayudante/Otro requieren configuración manual)`);
-                }
-
-                await client.query('COMMIT');
-
-                // Get final permissions
-                const finalPermsResult = await client.query(
-                    `SELECT permission_key FROM employee_mobile_app_permissions WHERE employee_id = $1 AND tenant_id = $2`,
-                    [employeeId, tenantId]
-                );
-                const finalPermissions = finalPermsResult.rows.map(r => r.permission_key);
-
-                return res.json({
-                    success: true,
-                    message: 'Rol y permisos sincronizados exitosamente',
-                    data: {
-                        employeeId: updated.id,
-                        fullName: updated.full_name,
-                        roleId: updated.role_id,
-                        roleName: roleName,
-                        canUseMobileApp: true,
-                        mobileAppPermissions: finalPermissions,
-                        note: `Permiso de app móvil asignado automáticamente según rol: ${mobilePermission}`
-                    }
-                });
-
-            } else if (canUseMobileApp === false) {
-                // If canUseMobileApp is false, clear mobile app permissions
-                await client.query('BEGIN');
-
-                // Delete mobile app permissions
-                await client.query(
-                    `DELETE FROM employee_mobile_app_permissions WHERE employee_id = $1 AND tenant_id = $2`,
+                // Delete the employee
+                const employeeDeleteResult = await client.query(
+                    `DELETE FROM employees
+                     WHERE id = $1 AND tenant_id = $2
+                     RETURNING id, full_name, email`,
                     [employeeId, tenantId]
                 );
 
                 await client.query('COMMIT');
 
-                console.log(`[Employees/SyncRole] ℹ️  Permisos de app móvil eliminados para ${employee.full_name}`);
-                return res.json({
-                    success: true,
-                    message: 'Configuración actualizada',
-                    data: {
-                        employeeId: employee.id,
-                        fullName: employee.full_name,
-                        roleId: employee.role_id,
-                        canUseMobileApp: false,
-                        mobileAppPermissions: [],
-                        note: 'Empleado sin acceso a App Móvil'
-                    }
-                });
-            } else {
-                // No role or canUseMobileApp provided, just return current state
-                const permsResult = await client.query(
-                    `SELECT permission_key FROM employee_mobile_app_permissions WHERE employee_id = $1 AND tenant_id = $2`,
-                    [employeeId, tenantId]
-                );
-
-                const currentPerms = permsResult.rows.map(r => r.permission_key);
+                console.log(`[Employees/Delete] ✅ Empleado eliminado: ${employee.full_name} (ID: ${employeeId})`);
+                console.log(`[Employees/Delete] ℹ️  Se eliminaron ${branchesDeleteResult.rowCount} relaciones de sucursales`);
 
                 return res.json({
                     success: true,
-                    message: 'Estado actual',
+                    message: 'Empleado eliminado exitosamente',
                     data: {
-                        employeeId: employee.id,
+                        employeeId: employeeId,
                         fullName: employee.full_name,
-                        roleId: employee.role_id,
-                        mobileAppPermissions: currentPerms
+                        email: employee.email,
+                        branchesDeleted: branchesDeleteResult.rowCount,
+                        deletedAt: new Date().toISOString()
                     }
                 });
+
+            } catch (innerError) {
+                await client.query('ROLLBACK');
+                throw innerError;
             }
 
         } catch (error) {
-            await client.query('ROLLBACK').catch(() => {});
-            console.error('[Employees/SyncRole] ❌ Error:', error.message);
+            console.error('[Employees/Delete] ❌ Error:', error.message);
             res.status(500).json({
                 success: false,
-                message: 'Error al sincronizar rol y permisos',
+                message: 'Error al eliminar empleado',
                 error: error.message
             });
         } finally {
