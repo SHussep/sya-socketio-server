@@ -528,8 +528,12 @@ module.exports = (pool) => {
             const employeeId = parseInt(req.params.id);
             const { tenantId } = req.body;
 
+            console.log(`[Employees/Delete] 🗑️  [DELETE RECIBIDO] Eliminando empleado ID: ${employeeId}`);
+            console.log(`[Employees/Delete] 📝 Payload: ${JSON.stringify({ tenantId })}`);
+
             // Validate parameters
             if (!employeeId || !tenantId) {
+                console.log(`[Employees/Delete] ❌ Parámetros faltantes: employeeId=${employeeId}, tenantId=${tenantId}`);
                 return res.status(400).json({
                     success: false,
                     message: 'Parámetros requeridos: employeeId en URL, tenantId en body'
@@ -681,8 +685,12 @@ module.exports = (pool) => {
                 isActive
             } = req.body;
 
+            console.log(`[Employees/Update] 🔄 [UPDATE RECIBIDO] Actualizando empleado ID: ${employeeId}`);
+            console.log(`[Employees/Update] 📝 Payload: ${JSON.stringify({ tenantId, roleId, canUseMobileApp, fullName, isActive })}`);
+
             // Validate parameters
             if (!employeeId || !tenantId) {
+                console.log(`[Employees/Update] ❌ Parámetros faltantes: employeeId=${employeeId}, tenantId=${tenantId}`);
                 return res.status(400).json({
                     success: false,
                     message: 'Parámetros requeridos: employeeId, tenantId'
