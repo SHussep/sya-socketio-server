@@ -402,8 +402,8 @@ module.exports = function(pool) {
             // 8. Asignar empleado a la sucursal (employee-branch many-to-many relationship)
             await client.query(`
                 INSERT INTO employee_branches (
-                    tenant_id, employee_id, branch_id, is_active
-                ) VALUES ($1, $2, $3, true)
+                    tenant_id, employee_id, branch_id
+                ) VALUES ($1, $2, $3)
             `, [tenant.id, employee.id, branch.id]);
 
             await client.query('COMMIT');
@@ -1666,8 +1666,8 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
             // Esto vincula al dueño/owner con la rama que acaba de crear
             await client.query(`
                 INSERT INTO employee_branches (
-                    tenant_id, employee_id, branch_id, is_active, assigned_at, synced
-                ) VALUES ($1, $2, $3, true, NOW(), false)
+                    tenant_id, employee_id, branch_id, assigned_at, synced
+                ) VALUES ($1, $2, $3, NOW(), false)
             `, [tenantId, decoded.employeeId, newBranch.id]);
 
             console.log(`[Create Branch] ✅ EmployeeBranch creado automáticamente: Empleado ${decoded.employeeId} → Sucursal ${newBranch.id}`);
