@@ -17,72 +17,159 @@ function createRepartidorAssignmentRoutes(io) {
 
   // ═══════════════════════════════════════════════════════════════
   // POST /api/repartidor-assignments
-  // Crear una nueva asignación de kilos a un repartidor
+  // Crear una nueva asignación de kilos a un repartidor (desde Desktop sync)
   // ═══════════════════════════════════════════════════════════════
   router.post('/', async (req, res) => {
     const {
-      sale_id,
-      employee_id,
-      branch_id,
-      tenant_id,
-      cantidad_asignada,
-      monto_asignado,
-      turno_repartidor_id,
+      // Support both camelCase (Desktop) and snake_case (old format)
+      saleId, sale_id,
+      employeeId, employee_id,
+      branchId, branch_id,
+      tenantId, tenant_id,
+      cantidadAsignada, cantidad_asignada,
+      cantidadDevuelta, cantidad_devuelta,
+      montoAsignado, monto_asignado,
+      montoDevuelto, monto_devuelto,
+      estado,
+      fechaAsignacion, fecha_asignacion,
+      fechaDevoluciones, fecha_devoluciones,
+      fechaLiquidacion, fecha_liquidacion,
+      turnoRepartidorId, turno_repartidor_id,
       observaciones
     } = req.body;
 
     try {
-      console.log('[API] 📦 POST /api/repartidor-assignments - Crear asignación');
-      console.log(`  Repartidor: ${employee_id}, Kilos: ${cantidad_asignada}, Monto: $${monto_asignado}`);
+      // Normalize field names (prefer camelCase)
+      const normalizedSaleId = saleId || sale_id;
+      const normalizedEmployeeId = employeeId || employee_id;
+      const normalizedBranchId = branchId || branch_id;
+      const normalizedTenantId = tenantId || tenant_id;
+      const normalizedCantidadAsignada = cantidadAsignada || cantidad_asignada;
+      const normalizedCantidadDevuelta = cantidadDevuelta || cantidad_devuelta || 0;
+      const normalizedMontoAsignado = montoAsignado || monto_asignado;
+      const normalizedMontoDevuelto = montoDevuelto || monto_devuelto || 0;
+      const normalizedEstado = estado || 'asignada';
+      const normalizedFechaAsignacion = fechaAsignacion || fecha_asignacion;
+      const normalizedFechaDevoluciones = fechaDevoluciones || fecha_devoluciones || null;
+      const normalizedFechaLiquidacion = fechaLiquidacion || fecha_liquidacion || null;
+      const normalizedTurnoRepartidorId = turnoRepartidorId || turno_repartidor_id || null;
+
+      console.log('[RepartidorAssignments] 📦 POST /api/repartidor-assignments - Crear asignación');
+      console.log(`  Repartidor: ${normalizedEmployeeId}, Sale: ${normalizedSaleId}, Kilos: ${normalizedCantidadAsignada}, Monto: $${normalizedMontoAsignado}`);
 
       // Validar campos requeridos
-      if (!sale_id || !employee_id || !branch_id || !tenant_id || !cantidad_asignada || !monto_asignado) {
+      if (!normalizedTenantId || !normalizedBranchId || !normalizedSaleId || !normalizedEmployeeId) {
         return res.status(400).json({
           success: false,
-          error: 'Campos requeridos: sale_id, employee_id, branch_id, tenant_id, cantidad_asignada, monto_asignado'
+          message: 'tenantId, branchId, saleId y employeeId son requeridos'
+        });
+      }
+
+      if (!normalizedCantidadAsignada || normalizedCantidadAsignada <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'cantidadAsignada debe ser mayor que 0'
+        });
+      }
+
+      if (!normalizedMontoAsignado || normalizedMontoAsignado <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'montoAsignado debe ser mayor que 0'
+        });
+      }
+
+      // Verificar que la venta existe
+      const saleCheck = await pool.query(
+        'SELECT id FROM sales WHERE id = $1 AND tenant_id = $2',
+        [normalizedSaleId, normalizedTenantId]
+      );
+
+      if (saleCheck.rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: `Venta ${normalizedSaleId} no encontrada en tenant ${normalizedTenantId}`
+        });
+      }
+
+      // Verificar que el empleado existe
+      const employeeCheck = await pool.query(
+        'SELECT id FROM employees WHERE id = $1 AND tenant_id = $2',
+        [normalizedEmployeeId, normalizedTenantId]
+      );
+
+      if (employeeCheck.rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: `Empleado ${normalizedEmployeeId} no encontrado en tenant ${normalizedTenantId}`
         });
       }
 
       // Insertar asignación
       const query = `
         INSERT INTO repartidor_assignments (
-          sale_id, employee_id, branch_id, tenant_id,
-          cantidad_asignada, monto_asignado,
-          turno_repartidor_id, observaciones,
-          estado, fecha_asignacion
+          tenant_id, branch_id, sale_id, employee_id,
+          cantidad_asignada, cantidad_devuelta,
+          monto_asignado, monto_devuelto,
+          estado, fecha_asignacion, fecha_devoluciones, fecha_liquidacion,
+          turno_repartidor_id, observaciones, synced, created_at, updated_at
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, 'asignada', CURRENT_TIMESTAMP
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, true, NOW(), NOW()
         )
-        RETURNING id, sale_id, employee_id, cantidad_asignada, monto_asignado,
-                  estado, fecha_asignacion, synced
+        RETURNING *
       `;
 
       const result = await pool.query(query, [
-        sale_id, employee_id, branch_id, tenant_id,
-        cantidad_asignada, monto_asignado,
-        turno_repartidor_id, observaciones
+        normalizedTenantId,
+        normalizedBranchId,
+        normalizedSaleId,
+        normalizedEmployeeId,
+        parseFloat(normalizedCantidadAsignada),
+        parseFloat(normalizedCantidadDevuelta),
+        parseFloat(normalizedMontoAsignado),
+        parseFloat(normalizedMontoDevuelto),
+        normalizedEstado,
+        normalizedFechaAsignacion || new Date().toISOString(),
+        normalizedFechaDevoluciones,
+        normalizedFechaLiquidacion,
+        normalizedTurnoRepartidorId,
+        observaciones
       ]);
 
       const assignment = result.rows[0];
 
       // Emitir evento en tiempo real
-      io.to(`branch_${branch_id}`).emit('assignment_created', {
+      io.to(`branch_${normalizedBranchId}`).emit('assignment_created', {
         assignment,
         timestamp: new Date().toISOString()
       });
 
-      console.log(`✅ Asignación creada: ID=${assignment.id}, Estado=asignada`);
+      console.log(`[RepartidorAssignments] ✅ Assignment created: ${assignment.cantidad_asignada} kg for employee ${normalizedEmployeeId} (sale ${normalizedSaleId})`);
 
       res.status(201).json({
         success: true,
-        data: assignment,
+        data: {
+          ...assignment,
+          cantidad_asignada: parseFloat(assignment.cantidad_asignada),
+          cantidad_devuelta: parseFloat(assignment.cantidad_devuelta),
+          cantidad_vendida: parseFloat(assignment.cantidad_vendida),
+          monto_asignado: parseFloat(assignment.monto_asignado),
+          monto_devuelto: parseFloat(assignment.monto_devuelto),
+          monto_vendido: parseFloat(assignment.monto_vendido),
+          fecha_asignacion: new Date(assignment.fecha_asignacion).toISOString(),
+          fecha_devoluciones: assignment.fecha_devoluciones ? new Date(assignment.fecha_devoluciones).toISOString() : null,
+          fecha_liquidacion: assignment.fecha_liquidacion ? new Date(assignment.fecha_liquidacion).toISOString() : null,
+          created_at: new Date(assignment.created_at).toISOString(),
+          updated_at: new Date(assignment.updated_at).toISOString()
+        },
         message: 'Asignación creada exitosamente'
       });
 
     } catch (error) {
-      console.error('❌ Error creando asignación:', error.message);
+      console.error('[RepartidorAssignments] ❌ Error creando asignación:', error.message);
       res.status(500).json({
         success: false,
+        message: 'Error al crear asignación de repartidor',
         error: error.message
       });
     }
