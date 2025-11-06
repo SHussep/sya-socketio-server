@@ -336,16 +336,21 @@ async function initializeDatabase() {
         await client.query('CREATE INDEX IF NOT EXISTS idx_devices_tenant_id ON devices(tenant_id)');
         await client.query('CREATE INDEX IF NOT EXISTS idx_sessions_tenant_id ON sessions(tenant_id)');
         await client.query('CREATE INDEX IF NOT EXISTS idx_branches_tenant_id ON branches(tenant_id)');
-        await client.query('CREATE INDEX IF NOT EXISTS idx_sales_tenant_id ON sales(tenant_id)');
-        await client.query('CREATE INDEX IF NOT EXISTS idx_sales_branch_id ON sales(branch_id)');
-        await client.query('CREATE INDEX IF NOT EXISTS idx_sales_date ON sales(sale_date DESC)');
+
+        // ⚠️ ÍNDICES OBSOLETOS: sales → ahora se usan índices en 'ventas' (migration 046)
+        // await client.query('CREATE INDEX IF NOT EXISTS idx_sales_tenant_id ON sales(tenant_id)');
+        // await client.query('CREATE INDEX IF NOT EXISTS idx_sales_branch_id ON sales(branch_id)');
+        // await client.query('CREATE INDEX IF NOT EXISTS idx_sales_date ON sales(sale_date DESC)');
+
         await client.query('CREATE INDEX IF NOT EXISTS idx_expenses_tenant_id ON expenses(tenant_id)');
         await client.query('CREATE INDEX IF NOT EXISTS idx_expenses_branch_id ON expenses(branch_id)');
         await client.query('CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(expense_date DESC)');
         await client.query('CREATE INDEX IF NOT EXISTS idx_cash_cuts_tenant_id ON cash_cuts(tenant_id)');
         await client.query('CREATE INDEX IF NOT EXISTS idx_cash_cuts_branch_id ON cash_cuts(branch_id)');
-        await client.query('CREATE INDEX IF NOT EXISTS idx_guardian_events_tenant_id ON guardian_events(tenant_id)');
-        await client.query('CREATE INDEX IF NOT EXISTS idx_guardian_events_branch_id ON guardian_events(branch_id)');
+
+        // ⚠️ ÍNDICES OBSOLETOS: guardian_events → ahora se usan tablas específicas (migration 057)
+        // await client.query('CREATE INDEX IF NOT EXISTS idx_guardian_events_tenant_id ON guardian_events(tenant_id)');
+        // await client.query('CREATE INDEX IF NOT EXISTS idx_guardian_events_branch_id ON guardian_events(branch_id)');
 
         // IMPORTANTE: Agregar columnas faltantes si no existen (para tablas creadas antes de esta versión)
 
@@ -387,13 +392,15 @@ async function initializeDatabase() {
             console.log('[DB] ⚠️ employees.main_branch_id:', error.message);
         }
 
-        // Migraciones para sales
+        // ⚠️ MIGRACIÓN OBSOLETA: sales → ahora se usa 'ventas' (migration 046)
+        /*
         try {
             await client.query(`ALTER TABLE sales ADD COLUMN IF NOT EXISTS sale_type VARCHAR(50) DEFAULT 'counter'`);
             console.log('[DB] ✅ Columna sales.sale_type verificada/agregada');
         } catch (error) {
             console.log('[DB] ⚠️ sales.sale_type:', error.message);
         }
+        */
 
         // Migraciones para expenses - agregar category_id
         try {
@@ -403,7 +410,8 @@ async function initializeDatabase() {
             console.log('[DB] ⚠️ expenses.category_id:', error.message);
         }
 
-        // Migraciones para guardian_events
+        // ⚠️ MIGRACIONES OBSOLETAS: guardian_events → ahora se usan tablas específicas (migration 057)
+        /*
         try {
             await client.query(`
                 ALTER TABLE guardian_events
@@ -444,9 +452,10 @@ async function initializeDatabase() {
             console.log('[DB] ⚠️ metadata:', error.message);
         }
 
-        // Ahora sí crear los índices (después de asegurar que las columnas existen)
+        // Índices para guardian_events
         await client.query('CREATE INDEX IF NOT EXISTS idx_guardian_events_date ON guardian_events(event_date DESC)');
         await client.query('CREATE INDEX IF NOT EXISTS idx_guardian_events_unread ON guardian_events(tenant_id, is_read) WHERE is_read = false');
+        */
 
         console.log('[DB] ✅ Database schema initialized successfully');
     } catch (error) {
