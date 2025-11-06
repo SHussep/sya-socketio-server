@@ -21,6 +21,7 @@ async function cleanDatabase() {
     const tablesToClean = [
       'guardian_events',
       'cash_cuts',
+      'repartidor_assignments',
       'shifts',
       'purchase_items',
       'purchases',
@@ -28,8 +29,6 @@ async function cleanDatabase() {
       'sales',
       'expenses',
       'expense_categories',
-      'delivery_person_branches',
-      'delivery_persons',
       'suppliers',
       'customers',
       'branch_inventory',
