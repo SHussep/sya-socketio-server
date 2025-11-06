@@ -251,7 +251,10 @@ async function initializeDatabase() {
             )
         `);
 
-        // Tabla: sales (ventas - resumen para móvil)
+        // ⚠️ TABLA OBSOLETA: sales → ahora se usa 'ventas' (creada en migration 046)
+        // Migration 046 renombró 'sales' a 'ventas' con esquema 1:1 con Desktop
+        // NO crear tabla 'sales' aquí para evitar conflictos
+        /*
         await client.query(`
             CREATE TABLE IF NOT EXISTS sales (
                 id SERIAL PRIMARY KEY,
@@ -267,6 +270,7 @@ async function initializeDatabase() {
                 UNIQUE(tenant_id, ticket_number)
             )
         `);
+        */
 
         // Tabla: expenses (gastos)
         await client.query(`
@@ -302,7 +306,10 @@ async function initializeDatabase() {
             )
         `);
 
-        // Tabla: guardian_events (eventos del modo guardián - MUY IMPORTANTE)
+        // ⚠️ TABLA OBSOLETA: guardian_events → ahora se usan tablas específicas (migration 057)
+        // Migration 057 crea: scale_disconnections, suspicious_weighing_events, guardian_employee_scores_daily
+        // NO crear tabla 'guardian_events' genérica aquí para evitar conflictos
+        /*
         await client.query(`
             CREATE TABLE IF NOT EXISTS guardian_events (
                 id SERIAL PRIMARY KEY,
@@ -321,6 +328,7 @@ async function initializeDatabase() {
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         `);
+        */
 
         // Índices
         await client.query('CREATE INDEX IF NOT EXISTS idx_employees_tenant_id ON employees(tenant_id)');
