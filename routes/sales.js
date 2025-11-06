@@ -174,91 +174,120 @@ module.exports = (pool) => {
         }
     });
 
-    // POST /api/sync/sales - Alias de /api/sales (para compatibilidad con Desktop)
-    // Ahora también acepta localShiftId para offline-first reconciliation
+    // POST /api/sync/sales - Sincronizar venta desde Desktop
+    // 🔴 NUEVO: Ahora usa tabla "ventas" con estructura 1:1 con Desktop
     router.post('/sync', async (req, res) => {
         try {
-            const { tenantId, branchId, employeeId, ticketNumber, totalAmount, paymentMethod, tipoPagoId, userEmail, sale_type, ventaTipoId, fechaVenta, localShiftId } = req.body;
+            // 🔴 NUEVO: Aceptar payload con snake_case (match con Desktop)
+            const {
+                tenant_id,
+                branch_id,
+                id_empleado,
+                id_turno,
+                estado_venta_id,
+                venta_tipo_id,
+                tipo_pago_id,
+                id_repartidor_asignado,
+                id_turno_repartidor,
+                ticket_number,
+                id_cliente,
+                subtotal,
+                total_descuentos,
+                total,
+                monto_pagado,
+                fecha_venta_raw,
+                fecha_liquidacion_raw,
+                notas
+            } = req.body;
 
             console.log(`[Sync/Sales] ⏮️  RAW REQUEST BODY:`, JSON.stringify(req.body, null, 2));
-            console.log(`[Sync/Sales] Desktop sync - Tenant: ${tenantId}, Branch: ${branchId}, Ticket: ${ticketNumber}, Type: ${sale_type}, FechaVenta: ${fechaVenta}, LocalShiftId: ${localShiftId}`);
-            console.log(`[Sync/Sales] Received totalAmount: ${totalAmount} (type: ${typeof totalAmount})`);
-            console.log(`[Sync/Sales] Received paymentMethod: ${paymentMethod}, tipoPagoId: ${tipoPagoId}`);
+            console.log(`[Sync/Sales] 🔄 Sincronizando venta - Tenant: ${tenant_id}, Branch: ${branch_id}, Ticket: ${ticket_number}`);
+            console.log(`[Sync/Sales] 💰 Montos - Subtotal: ${subtotal}, Descuentos: ${total_descuentos}, Total: ${total}, Pagado: ${monto_pagado}`);
+            console.log(`[Sync/Sales] 📅 Timestamps RAW - FechaVenta: ${fecha_venta_raw}, FechaLiquidacion: ${fecha_liquidacion_raw}`);
 
-            if (!tenantId || !branchId || !ticketNumber || totalAmount === null || totalAmount === undefined) {
-                return res.status(400).json({ success: false, message: 'Datos incompletos (tenantId, branchId, ticketNumber, totalAmount requeridos)' });
+            // Validar campos requeridos
+            if (!tenant_id || !branch_id || !id_empleado || !id_turno || !ticket_number || total === null || total === undefined) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Datos incompletos (tenant_id, branch_id, id_empleado, id_turno, ticket_number, total requeridos)'
+                });
             }
 
-            // Convertir totalAmount a número si viene como string
-            const numericTotalAmount = parseFloat(totalAmount);
-            if (isNaN(numericTotalAmount)) {
-                return res.status(400).json({ success: false, message: 'totalAmount debe ser un número válido' });
+            // Convertir montos a números
+            const numericSubtotal = parseFloat(subtotal) || 0;
+            const numericTotalDescuentos = parseFloat(total_descuentos) || 0;
+            const numericTotal = parseFloat(total);
+            const numericMontoPagado = parseFloat(monto_pagado) || 0;
+
+            if (isNaN(numericTotal)) {
+                return res.status(400).json({ success: false, message: 'total debe ser un número válido' });
             }
 
-            // Determinar método de pago de manera robusta usando tipoPagoId si viene
-            let finalPaymentMethod = paymentMethod || 'cash';
-            if (tipoPagoId) {
-                const tipoPagoMap = {
-                    1: 'cash',      // Efectivo
-                    2: 'card',      // Tarjeta
-                    3: 'credit'     // Crédito
-                };
-                finalPaymentMethod = tipoPagoMap[tipoPagoId] || paymentMethod || 'cash';
-                console.log(`[Sync/Sales] 💳 Usando tipoPagoId ${tipoPagoId} -> ${finalPaymentMethod}`);
-            }
-
-            // Usar employeeId del body si viene, sino buscar por email
-            let finalEmployeeId = employeeId;
-            if (!finalEmployeeId && userEmail) {
-                const empResult = await pool.query(
-                    'SELECT id FROM employees WHERE LOWER(email) = LOWER($1) AND tenant_id = $2',
-                    [userEmail, tenantId]
-                );
-                if (empResult.rows.length > 0) {
-                    finalEmployeeId = empResult.rows[0].id;
-                }
-            }
-
-            // ✅ CRITICAL FIX: ALWAYS use server time (UTC now)
-            // NEVER trust client-provided timestamps - they can be in different timezones
-            // Server timestamp is the source of truth
-            const saleDate = new Date().toISOString();
-            console.log(`[Sync/Sales] 📅 Using server UTC timestamp: ${saleDate}`);
-
-            console.log(`[Sync/Sales] 📤 About to insert - saleDate: ${saleDate} (type: ${typeof saleDate}, null: ${saleDate === null}, empty: ${saleDate === ''})`);
-
-            // Determinar sale_type_id basado en ventaTipoId o sale_type
-            // ventaTipoId: 1=Mostrador, 2=Repartidor
-            let finalSaleTypeId = ventaTipoId || (sale_type === 'delivery' ? 2 : 1);
-            if (!ventaTipoId && !sale_type) finalSaleTypeId = 1; // Default: Mostrador
-
-            // ✅ IMPORTANTE: Mapear correctamente el sale_type TEXT basado en finalSaleTypeId
-            // 1 = 'counter', 2 = 'delivery'
-            const finalSaleType = finalSaleTypeId === 2 ? 'delivery' : 'counter';
-
+            // 🔴 IMPORTANTE: INSERT en tabla "ventas" (no "sales")
             const result = await pool.query(
-                `INSERT INTO sales (tenant_id, branch_id, employee_id, local_shift_id, ticket_number, total_amount, payment_method, payment_type_id, sale_type, sale_type_id, sale_date)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                `INSERT INTO ventas (
+                    tenant_id, branch_id, id_empleado, id_turno,
+                    estado_venta_id, venta_tipo_id, tipo_pago_id,
+                    id_repartidor_asignado, id_turno_repartidor,
+                    ticket_number, id_cliente,
+                    subtotal, total_descuentos, total, monto_pagado,
+                    fecha_venta_raw, fecha_liquidacion_raw,
+                    notas, synced, synced_at_raw
+                 )
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
                  RETURNING *`,
-                [tenantId, branchId, finalEmployeeId, localShiftId || null, ticketNumber, numericTotalAmount, finalPaymentMethod, tipoPagoId || 1, finalSaleType, finalSaleTypeId, saleDate]
+                [
+                    tenant_id,
+                    branch_id,
+                    id_empleado,
+                    id_turno,
+                    estado_venta_id || 3,                    // Default: 3=Completada
+                    venta_tipo_id || 1,                      // Default: 1=Mostrador
+                    tipo_pago_id || 1,                       // Default: 1=Efectivo
+                    id_repartidor_asignado || null,
+                    id_turno_repartidor || null,
+                    ticket_number,
+                    id_cliente || 1,                         // Default: 1=Público General
+                    numericSubtotal,
+                    numericTotalDescuentos,
+                    numericTotal,
+                    numericMontoPagado,
+                    fecha_venta_raw || null,
+                    fecha_liquidacion_raw || null,
+                    notas || null,
+                    true,                                     // synced=true (backend es la fuente de verdad)
+                    Date.now()                                // synced_at_raw = epoch_ms actual
+                ]
             );
 
-            console.log(`[Sync/Sales] ✅ Venta sincronizada: ${ticketNumber} - $${numericTotalAmount} | Pago: ${tipoPagoId} | Tipo: ${finalSaleType} (ID: ${finalSaleTypeId}) | LocalShiftId: ${localShiftId}`);
+            const insertedVenta = result.rows[0];
 
-            // Asegurar que total_amount es un número y formatear timestamps en UTC
-            const responseData = result.rows[0];
-            if (responseData) {
-                responseData.total_amount = parseFloat(responseData.total_amount);
-                // Format timestamps as ISO strings in UTC
-                if (responseData.sale_date) {
-                    responseData.sale_date = new Date(responseData.sale_date).toISOString();
+            console.log(`[Sync/Sales] ✅ Venta sincronizada exitosamente:`);
+            console.log(`[Sync/Sales]    ID: ${insertedVenta.id_venta}`);
+            console.log(`[Sync/Sales]    Ticket: ${insertedVenta.ticket_number}`);
+            console.log(`[Sync/Sales]    Total: $${insertedVenta.total}`);
+            console.log(`[Sync/Sales]    Estado: ${insertedVenta.estado_venta_id}`);
+            console.log(`[Sync/Sales]    Tipo: ${insertedVenta.venta_tipo_id}`);
+
+            // Formatear respuesta (Desktop espera "data.id_venta")
+            res.json({
+                success: true,
+                data: {
+                    id_venta: insertedVenta.id_venta,
+                    ticket_number: insertedVenta.ticket_number,
+                    total: parseFloat(insertedVenta.total),
+                    fecha_venta_utc: insertedVenta.fecha_venta_utc,
+                    created_at: insertedVenta.created_at
                 }
-            }
-
-            res.json({ success: true, data: responseData });
+            });
         } catch (error) {
-            console.error('[Sync/Sales] Error:', error);
-            res.status(500).json({ success: false, message: 'Error al sincronizar venta', error: error.message });
+            console.error('[Sync/Sales] ❌ Error:', error);
+            console.error('[Sync/Sales] Error detalle:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Error al sincronizar venta',
+                error: error.message
+            });
         }
     });
 
