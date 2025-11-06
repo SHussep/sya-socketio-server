@@ -20,7 +20,7 @@ SET CONSTRAINTS ALL DEFERRED;
 -- PASO 1: Eliminar datos transaccionales y eventos (solo tablas existentes)
 -- ═══════════════════════════════════════════════════════════════════════════
 
-TRUNCATE TABLE sales CASCADE;
+TRUNCATE TABLE ventas CASCADE;
 TRUNCATE TABLE expenses CASCADE;
 TRUNCATE TABLE purchases CASCADE;
 TRUNCATE TABLE cash_cuts CASCADE;

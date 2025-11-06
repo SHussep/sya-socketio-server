@@ -223,6 +223,20 @@ module.exports = (pool) => {
                 return res.status(400).json({ success: false, message: 'total debe ser un número válido' });
             }
 
+            // Validar que el cliente existe, sino usar NULL
+            let finalIdCliente = null;
+            if (id_cliente) {
+                const customerCheck = await pool.query(
+                    'SELECT id FROM customers WHERE id = $1 AND tenant_id = $2',
+                    [id_cliente, tenant_id]
+                );
+                if (customerCheck.rows.length > 0) {
+                    finalIdCliente = id_cliente;
+                } else {
+                    console.log(`[Sync/Sales] ⚠️ Cliente ${id_cliente} no existe, usando NULL`);
+                }
+            }
+
             // 🔴 IMPORTANTE: INSERT en tabla "ventas" (no "sales")
             const result = await pool.query(
                 `INSERT INTO ventas (
@@ -247,7 +261,7 @@ module.exports = (pool) => {
                     id_repartidor_asignado || null,
                     id_turno_repartidor || null,
                     ticket_number,
-                    id_cliente || 1,                         // Default: 1=Público General
+                    finalIdCliente,                          // NULL si el cliente no existe
                     numericSubtotal,
                     numericTotalDescuentos,
                     numericTotal,
