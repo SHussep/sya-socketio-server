@@ -79,6 +79,7 @@ const employeeBranchesRoutes = require('./routes/employee_branches')(pool); // R
 const employeeRolesRoutes = require('./routes/employee_roles'); // Rutas para gestionar roles y permisos
 const employeesRoutes = require('./routes/employees')(pool); // Rutas de empleados con sync-role endpoint
 const customersRoutes = require('./routes/customers'); // Rutas de sincronización de clientes
+const suspiciousWeighingLogsRoutes = require('./routes/suspiciousWeighingLogs'); // Rutas de Guardian logs de báscula
 
 // Inicializar Firebase para notificaciones push
 initializeFirebase();
@@ -328,6 +329,7 @@ app.use('/api/admin', adminRoutes(pool)); // Rutas de administración
 app.use('/api/employees', employeesRoutes); // Rutas de sincronización de empleados desde Desktop
 app.use('/api/employee-roles', employeeRolesRoutes); // Rutas para gestionar roles y permisos
 app.use('/api/customers', customersRoutes(pool)); // Rutas de sincronización de clientes
+app.use('/api/suspicious-weighing-logs', suspiciousWeighingLogsRoutes(pool)); // Rutas de Guardian logs de báscula
 
 // FASE 1: Cash Management Routes (Deposits, Withdrawals, Cash Cuts)
 app.use('/api/deposits', depositsRoutes(pool));
