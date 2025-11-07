@@ -197,19 +197,26 @@ module.exports = (pool) => {
                 monto_pagado,
                 fecha_venta_raw,
                 fecha_liquidacion_raw,
-                notas
+                notas,
+                // ✅ OFFLINE-FIRST FIELDS
+                global_id,
+                terminal_id,
+                local_op_seq,
+                created_local_utc,
+                device_event_raw
             } = req.body;
 
             console.log(`[Sync/Sales] ⏮️  RAW REQUEST BODY:`, JSON.stringify(req.body, null, 2));
             console.log(`[Sync/Sales] 🔄 Sincronizando venta - Tenant: ${tenant_id}, Branch: ${branch_id}, Ticket: ${ticket_number}`);
             console.log(`[Sync/Sales] 💰 Montos - Subtotal: ${subtotal}, Descuentos: ${total_descuentos}, Total: ${total}, Pagado: ${monto_pagado}`);
             console.log(`[Sync/Sales] 📅 Timestamps RAW - FechaVenta: ${fecha_venta_raw}, FechaLiquidacion: ${fecha_liquidacion_raw}`);
+            console.log(`[Sync/Sales] 🔐 Offline-First - GlobalId: ${global_id}, TerminalId: ${terminal_id}, LocalOpSeq: ${local_op_seq}`);
 
-            // Validar campos requeridos
-            if (!tenant_id || !branch_id || !id_empleado || !id_turno || !ticket_number || total === null || total === undefined) {
+            // Validar campos requeridos (incluyendo global_id para idempotencia)
+            if (!tenant_id || !branch_id || !id_empleado || !id_turno || !ticket_number || total === null || total === undefined || !global_id) {
                 return res.status(400).json({
                     success: false,
-                    message: 'Datos incompletos (tenant_id, branch_id, id_empleado, id_turno, ticket_number, total requeridos)'
+                    message: 'Datos incompletos (tenant_id, branch_id, id_empleado, id_turno, ticket_number, total, global_id requeridos)'
                 });
             }
 
@@ -237,7 +244,7 @@ module.exports = (pool) => {
                 }
             }
 
-            // 🔴 IMPORTANTE: INSERT en tabla "ventas" (no "sales")
+            // ✅ IDEMPOTENTE: INSERT con ON CONFLICT (global_id) DO UPDATE
             const result = await pool.query(
                 `INSERT INTO ventas (
                     tenant_id, branch_id, id_empleado, id_turno,
@@ -246,9 +253,18 @@ module.exports = (pool) => {
                     ticket_number, id_cliente,
                     subtotal, total_descuentos, total, monto_pagado,
                     fecha_venta_raw, fecha_liquidacion_raw,
-                    notas, synced, synced_at_raw
+                    notas, synced, synced_at_raw,
+                    global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw
                  )
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21::uuid, $22::uuid, $23, $24, $25)
+                 ON CONFLICT (global_id) DO UPDATE
+                 SET subtotal = EXCLUDED.subtotal,
+                     total_descuentos = EXCLUDED.total_descuentos,
+                     total = EXCLUDED.total,
+                     monto_pagado = EXCLUDED.monto_pagado,
+                     estado_venta_id = EXCLUDED.estado_venta_id,
+                     notas = EXCLUDED.notas,
+                     synced_at_raw = $20
                  RETURNING *`,
                 [
                     tenant_id,
@@ -270,7 +286,12 @@ module.exports = (pool) => {
                     fecha_liquidacion_raw || null,
                     notas || null,
                     true,                                     // synced=true (backend es la fuente de verdad)
-                    Date.now()                                // synced_at_raw = epoch_ms actual
+                    Date.now(),                               // synced_at_raw = epoch_ms actual
+                    global_id,                                // UUID from Desktop
+                    terminal_id,                              // UUID from Desktop
+                    local_op_seq,                             // Sequence number from Desktop
+                    created_local_utc,                        // ISO 8601 timestamp from Desktop
+                    device_event_raw                          // Raw .NET ticks from Desktop
                 ]
             );
 

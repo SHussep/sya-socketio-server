@@ -166,13 +166,18 @@ module.exports = (pool) => {
     // Ahora también acepta localShiftId para offline-first reconciliation
     router.post('/sync', async (req, res) => {
         try {
-            const { tenantId, branchId, employeeId, category, description, amount, userEmail, fechaGasto, localShiftId } = req.body;
+            const {
+                tenantId, branchId, employeeId, category, description, amount, userEmail, fechaGasto, localShiftId,
+                // ✅ OFFLINE-FIRST FIELDS
+                global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw
+            } = req.body;
 
             console.log(`[Sync/Expenses] Desktop sync - Tenant: ${tenantId}, Branch: ${branchId}, Category: ${category}, FechaGasto: ${fechaGasto}, LocalShiftId: ${localShiftId}`);
             console.log(`[Sync/Expenses] Received amount: ${amount} (type: ${typeof amount})`);
+            console.log(`[Sync/Expenses] 🔐 Offline-First - GlobalId: ${global_id}, TerminalId: ${terminal_id}, LocalOpSeq: ${local_op_seq}`);
 
-            if (!tenantId || !branchId || !category || amount === null || amount === undefined) {
-                return res.status(400).json({ success: false, message: 'Datos incompletos (tenantId, branchId, category, amount requeridos)' });
+            if (!tenantId || !branchId || !category || amount === null || amount === undefined || !global_id) {
+                return res.status(400).json({ success: false, message: 'Datos incompletos (tenantId, branchId, category, amount, global_id requeridos)' });
             }
 
             // Convertir amount a número si viene como string
@@ -217,11 +222,35 @@ module.exports = (pool) => {
             const expenseDate = new Date().toISOString();
             console.log(`[Sync/Expenses] 📅 Using server UTC timestamp: ${expenseDate}`);
 
+            // ✅ IDEMPOTENTE: INSERT con ON CONFLICT (global_id) DO UPDATE
             const result = await pool.query(
-                `INSERT INTO expenses (tenant_id, branch_id, employee_id, local_shift_id, category_id, description, amount, expense_date)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                `INSERT INTO expenses (
+                    tenant_id, branch_id, employee_id, local_shift_id, category_id, description, amount, expense_date,
+                    global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw,
+                    synced, synced_at
+                 )
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::uuid, $10::uuid, $11, $12, $13, true, NOW())
+                 ON CONFLICT (global_id) DO UPDATE
+                 SET amount = EXCLUDED.amount,
+                     description = EXCLUDED.description,
+                     expense_date = EXCLUDED.expense_date,
+                     synced_at = NOW()
                  RETURNING *`,
-                [tenantId, branchId, finalEmployeeId, localShiftId || null, categoryId, description || '', numericAmount, expenseDate]
+                [
+                    tenantId,
+                    branchId,
+                    finalEmployeeId,
+                    localShiftId || null,
+                    categoryId,
+                    description || '',
+                    numericAmount,
+                    expenseDate,
+                    global_id,                    // UUID from Desktop
+                    terminal_id,                  // UUID from Desktop
+                    local_op_seq,                 // Sequence number from Desktop
+                    created_local_utc,            // ISO 8601 timestamp from Desktop
+                    device_event_raw              // Raw .NET ticks from Desktop
+                ]
             );
 
             console.log(`[Sync/Expenses] ✅ Gasto sincronizado: ${category} - $${numericAmount} | LocalShiftId: ${localShiftId}`);
