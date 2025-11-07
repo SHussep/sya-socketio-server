@@ -60,6 +60,11 @@ module.exports = (pool) => {
                 });
             }
 
+            // Split fullName into first_name and last_name
+            const nameParts = fullName.trim().split(/\s+/);
+            const firstName = nameParts[0] || fullName;
+            const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
+
             // Map role_id: if not 1-4, use "Otro" (99) for custom roles from Desktop
             let mappedRoleId = roleId;
             if (roleId) {
@@ -125,20 +130,22 @@ module.exports = (pool) => {
 
                     const updateResult = await client.query(
                         `UPDATE employees
-                         SET full_name = $1,
-                             main_branch_id = COALESCE($2, main_branch_id),
-                             is_active = COALESCE($3, is_active),
-                             role_id = COALESCE($4, role_id),
-                             password_hash = COALESCE($5, password_hash),
-                             password_updated_at = CASE WHEN $5 IS NOT NULL THEN NOW() ELSE password_updated_at END,
-                             can_use_mobile_app = COALESCE($8, can_use_mobile_app),
-                             address = COALESCE($9, address),
-                             phone_number = COALESCE($10, phone_number),
+                         SET first_name = $1,
+                             last_name = $2,
+                             main_branch_id = COALESCE($3, main_branch_id),
+                             is_active = COALESCE($4, is_active),
+                             role_id = COALESCE($5, role_id),
+                             password_hash = COALESCE($6, password_hash),
+                             password_updated_at = CASE WHEN $6 IS NOT NULL THEN NOW() ELSE password_updated_at END,
+                             can_use_mobile_app = COALESCE($9, can_use_mobile_app),
+                             address = COALESCE($10, address),
+                             phone_number = COALESCE($11, phone_number),
                              updated_at = NOW()
-                         WHERE id = $6 AND tenant_id = $7
-                         RETURNING id, tenant_id, full_name, username, email, main_branch_id, is_active, role_id, can_use_mobile_app, address, phone_number, created_at, updated_at`,
+                         WHERE id = $7 AND tenant_id = $8
+                         RETURNING id, tenant_id, first_name, last_name, username, email, main_branch_id, is_active, role_id, can_use_mobile_app, address, phone_number, created_at, updated_at`,
                         [
-                            fullName,
+                            firstName,
+                            lastName,
                             branchId || mainBranchId,
                             isActive !== false,
                             mappedRoleId || null,
@@ -146,8 +153,8 @@ module.exports = (pool) => {
                             existingId,
                             tenantId,
                             canUseMobileApp,
-                            address || null,        // $9
-                            phoneNumber || null     // $10
+                            address || null,        // $10
+                            phoneNumber || null     // $11
                         ]
                     );
 
@@ -237,12 +244,13 @@ module.exports = (pool) => {
 
                 const insertResult = await client.query(
                     `INSERT INTO employees
-                     (tenant_id, full_name, username, email, password_hash, main_branch_id, role_id, can_use_mobile_app, is_active, address, phone_number, updated_at, created_at)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
-                     RETURNING id, tenant_id, full_name, username, email, main_branch_id, role_id, can_use_mobile_app, is_active, address, phone_number, created_at, updated_at`,
+                     (tenant_id, first_name, last_name, username, email, password_hash, main_branch_id, role_id, can_use_mobile_app, is_active, address, phone_number, updated_at, created_at)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
+                     RETURNING id, tenant_id, first_name, last_name, username, email, main_branch_id, role_id, can_use_mobile_app, is_active, address, phone_number, created_at, updated_at`,
                     [
                         tenantId,
-                        fullName,
+                        firstName,
+                        lastName,
                         username,
                         email,
                         password || null,  // Can be null if not provided
@@ -250,8 +258,8 @@ module.exports = (pool) => {
                         mappedRoleId || null,
                         canUseMobileApp,
                         isActive !== false,
-                        address || null,        // $10
-                        phoneNumber || null     // $11
+                        address || null,        // $11
+                        phoneNumber || null     // $12
                     ]
                 );
 
@@ -362,10 +370,10 @@ module.exports = (pool) => {
             }
 
             const result = await pool.query(
-                `SELECT id, tenant_id, full_name, username, email, is_active, created_at, updated_at
+                `SELECT id, tenant_id, first_name, last_name, username, email, is_active, created_at, updated_at
                  FROM employees
                  WHERE tenant_id = $1
-                 ORDER BY full_name ASC`,
+                 ORDER BY first_name ASC, last_name ASC`,
                 [tenantId]
             );
 
@@ -432,13 +440,14 @@ module.exports = (pool) => {
                      password_updated_at = NOW(),
                      updated_at = NOW()
                  WHERE id = $2 AND tenant_id = $3
-                 RETURNING id, full_name, password_updated_at`,
+                 RETURNING id, first_name, last_name, password_updated_at`,
                 [newPasswordHash, employeeId, tenantId]
             );
 
             if (updateResult.rows.length > 0) {
                 const updated = updateResult.rows[0];
-                console.log(`[Employees/Password] ✅ Contraseña sincronizada para ${updated.full_name} (ID: ${updated.id})`);
+                const updatedFullName = `${updated.first_name || ''} ${updated.last_name || ''}`.trim();
+                console.log(`[Employees/Password] ✅ Contraseña sincronizada para ${updatedFullName} (ID: ${updated.id})`);
 
                 return res.json({
                     success: true,
@@ -550,7 +559,7 @@ module.exports = (pool) => {
 
             // Verify employee exists and belongs to tenant
             const employeeCheck = await client.query(
-                `SELECT id, email, full_name FROM employees
+                `SELECT id, email, first_name, last_name FROM employees
                  WHERE id = $1 AND tenant_id = $2`,
                 [employeeId, tenantId]
             );
@@ -563,6 +572,7 @@ module.exports = (pool) => {
             }
 
             const employee = employeeCheck.rows[0];
+            const employeeFullName = `${employee.first_name || ''} ${employee.last_name || ''}`.trim();
 
             // Start transaction
             await client.query('BEGIN');
@@ -579,13 +589,13 @@ module.exports = (pool) => {
                 const employeeDeleteResult = await client.query(
                     `DELETE FROM employees
                      WHERE id = $1 AND tenant_id = $2
-                     RETURNING id, full_name, email`,
+                     RETURNING id, first_name, last_name, email`,
                     [employeeId, tenantId]
                 );
 
                 await client.query('COMMIT');
 
-                console.log(`[Employees/Delete] ✅ Empleado eliminado: ${employee.full_name} (ID: ${employeeId})`);
+                console.log(`[Employees/Delete] ✅ Empleado eliminado: ${employeeFullName} (ID: ${employeeId})`);
                 console.log(`[Employees/Delete] ℹ️  Se eliminaron ${branchesDeleteResult.rowCount} relaciones de sucursales`);
 
                 return res.json({
@@ -593,7 +603,7 @@ module.exports = (pool) => {
                     message: 'Empleado eliminado exitosamente',
                     data: {
                         employeeId: employeeId,
-                        fullName: employee.full_name,
+                        fullName: employeeFullName,
                         email: employee.email,
                         branchesDeleted: branchesDeleteResult.rowCount,
                         deletedAt: new Date().toISOString()
@@ -633,7 +643,7 @@ module.exports = (pool) => {
             }
 
             const result = await client.query(
-                `SELECT id, email, full_name, role_id, can_use_mobile_app FROM employees
+                `SELECT id, email, first_name, last_name, role_id, can_use_mobile_app FROM employees
                  WHERE id = $1 AND tenant_id = $2 AND is_active = true`,
                 [employeeId, tenantId]
             );
@@ -646,6 +656,7 @@ module.exports = (pool) => {
             }
 
             const employee = result.rows[0];
+            const employeeFullName = `${employee.first_name || ''} ${employee.last_name || ''}`.trim();
 
             // Derive access type from role_id + can_use_mobile_app
             const accessType = getMobileAccessType(employee.role_id, employee.can_use_mobile_app);
@@ -656,7 +667,7 @@ module.exports = (pool) => {
                 data: {
                     employeeId: employee.id,
                     email: employee.email,
-                    fullName: employee.full_name,
+                    fullName: employeeFullName,
                     roleId: employee.role_id,
                     canUseMobileApp: employee.can_use_mobile_app,
                     mobileAccessType: accessType,
@@ -723,9 +734,17 @@ module.exports = (pool) => {
                 });
             }
 
+            // Split fullName if provided
+            let firstName, lastName;
+            if (fullName !== undefined) {
+                const nameParts = fullName.trim().split(/\s+/);
+                firstName = nameParts[0] || fullName;
+                lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
+            }
+
             // Verify employee exists and belongs to tenant
             const employeeCheck = await client.query(
-                `SELECT id, email, full_name, role_id, can_use_mobile_app FROM employees
+                `SELECT id, email, first_name, last_name, role_id, can_use_mobile_app FROM employees
                  WHERE id = $1 AND tenant_id = $2`,
                 [employeeId, tenantId]
             );
@@ -760,8 +779,11 @@ module.exports = (pool) => {
             let paramIndex = 1;
 
             if (fullName !== undefined) {
-                updates.push(`full_name = $${paramIndex}`);
-                params.push(fullName);
+                updates.push(`first_name = $${paramIndex}`);
+                params.push(firstName);
+                paramIndex++;
+                updates.push(`last_name = $${paramIndex}`);
+                params.push(lastName);
                 paramIndex++;
             }
 
@@ -811,12 +833,13 @@ module.exports = (pool) => {
             const query = `UPDATE employees
                           SET ${updates.join(', ')}
                           WHERE id = $${paramIndex} AND tenant_id = $${paramIndex + 1}
-                          RETURNING id, email, full_name, role_id, can_use_mobile_app, is_active, address, phone_number, updated_at`;
+                          RETURNING id, email, first_name, last_name, role_id, can_use_mobile_app, is_active, address, phone_number, updated_at`;
 
             const updateResult = await client.query(query, params);
 
             if (updateResult.rows.length > 0) {
                 const updatedEmployee = updateResult.rows[0];
+                const updatedFullName = `${updatedEmployee.first_name || ''} ${updatedEmployee.last_name || ''}`.trim();
                 const accessType = getMobileAccessType(updatedEmployee.role_id, updatedEmployee.can_use_mobile_app);
 
                 // Log what was updated
@@ -829,7 +852,7 @@ module.exports = (pool) => {
                 if (address !== undefined) changes.push(`dirección: ${address}`);
                 if (phoneNumber !== undefined) changes.push(`teléfono: ${phoneNumber}`);
 
-                console.log(`[Employees/Update] ✅ Empleado actualizado: ${updatedEmployee.full_name} (ID: ${employeeId}) - Cambios: ${changes.join(', ')}`);
+                console.log(`[Employees/Update] ✅ Empleado actualizado: ${updatedFullName} (ID: ${employeeId}) - Cambios: ${changes.join(', ')}`);
 
                 return res.json({
                     success: true,
@@ -837,7 +860,7 @@ module.exports = (pool) => {
                     data: {
                         employeeId: updatedEmployee.id,
                         email: updatedEmployee.email,
-                        fullName: updatedEmployee.full_name,
+                        fullName: updatedFullName,
                         roleId: updatedEmployee.role_id,
                         canUseMobileApp: updatedEmployee.can_use_mobile_app,
                         mobileAccessType: accessType,
