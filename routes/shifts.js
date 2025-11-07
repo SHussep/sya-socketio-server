@@ -414,5 +414,86 @@ module.exports = (pool) => {
         }
     });
 
+    // POST /api/shifts/sync - Sincronizar turno desde Desktop (offline-first idempotente)
+    router.post('/sync', async (req, res) => {
+        try {
+            const {
+                tenant_id,
+                branch_id,
+                employee_id,
+                start_time,
+                initial_amount,
+                transaction_counter,
+                is_cash_cut_open,
+                // Offline-first fields
+                global_id,
+                terminal_id,
+                local_op_seq,
+                created_local_utc,
+                device_event_raw,
+                local_shift_id  // ID del turno en Desktop
+            } = req.body;
+
+            // Validación
+            if (!tenant_id || !branch_id || !employee_id || !global_id) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Datos incompletos (tenant_id, branch_id, employee_id, global_id requeridos)'
+                });
+            }
+
+            // ✅ IDEMPOTENTE: INSERT con ON CONFLICT (global_id) DO UPDATE
+            const result = await pool.query(
+                `INSERT INTO shifts (
+                    tenant_id, branch_id, employee_id, start_time,
+                    initial_amount, transaction_counter, is_cash_cut_open,
+                    global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw
+                 )
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::uuid, $9::uuid, $10, $11, $12)
+                 ON CONFLICT (global_id) DO UPDATE
+                 SET transaction_counter = EXCLUDED.transaction_counter,
+                     is_cash_cut_open = EXCLUDED.is_cash_cut_open,
+                     updated_at = NOW()
+                 RETURNING *`,
+                [
+                    tenant_id,
+                    branch_id,
+                    employee_id,
+                    start_time,
+                    initial_amount || 0,
+                    transaction_counter || 0,
+                    is_cash_cut_open,
+                    global_id,
+                    terminal_id || null,
+                    local_op_seq || null,
+                    created_local_utc || null,
+                    device_event_raw || null
+                ]
+            );
+
+            const shift = result.rows[0];
+
+            console.log(`[Sync/Shifts] ✅ Turno sincronizado: ID ${shift.id} (LocalShiftId: ${local_shift_id}) - Employee ${employee_id}`);
+
+            res.json({
+                success: true,
+                data: {
+                    id: shift.id,  // RemoteId para Desktop
+                    global_id: shift.global_id,
+                    local_shift_id: local_shift_id,  // Devolver para mapeo
+                    created_at: shift.created_at
+                }
+            });
+
+        } catch (error) {
+            console.error('[Sync/Shifts] ❌ Error:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Error al sincronizar turno',
+                error: error.message
+            });
+        }
+    });
+
     return router;
 };
