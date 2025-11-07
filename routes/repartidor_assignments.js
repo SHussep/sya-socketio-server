@@ -35,7 +35,13 @@ function createRepartidorAssignmentRoutes(io) {
       fechaDevoluciones, fecha_devoluciones,
       fechaLiquidacion, fecha_liquidacion,
       turnoRepartidorId, turno_repartidor_id,
-      observaciones
+      observaciones,
+      // ✅ OFFLINE-FIRST FIELDS
+      global_id,
+      terminal_id,
+      local_op_seq,
+      created_local_utc,
+      device_event_raw
     } = req.body;
 
     try {
@@ -105,17 +111,27 @@ function createRepartidorAssignmentRoutes(io) {
         });
       }
 
-      // Insertar asignación
+      // ✅ IDEMPOTENTE: Insertar asignación con ON CONFLICT
       const query = `
         INSERT INTO repartidor_assignments (
           tenant_id, branch_id, sale_id, employee_id,
           cantidad_asignada, cantidad_devuelta,
           monto_asignado, monto_devuelto,
           estado, fecha_asignacion, fecha_devoluciones, fecha_liquidacion,
-          turno_repartidor_id, observaciones, synced, created_at, updated_at
+          turno_repartidor_id, observaciones, synced, created_at, updated_at,
+          global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, true, NOW(), NOW()
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, true, NOW(), NOW(),
+          $15::uuid, $16::uuid, $17, $18, $19
         )
+        ON CONFLICT (global_id) DO UPDATE
+        SET cantidad_devuelta = EXCLUDED.cantidad_devuelta,
+            monto_devuelto = EXCLUDED.monto_devuelto,
+            estado = EXCLUDED.estado,
+            fecha_devoluciones = EXCLUDED.fecha_devoluciones,
+            fecha_liquidacion = EXCLUDED.fecha_liquidacion,
+            observaciones = EXCLUDED.observaciones,
+            updated_at = NOW()
         RETURNING *
       `;
 
@@ -133,7 +149,12 @@ function createRepartidorAssignmentRoutes(io) {
         normalizedFechaDevoluciones,
         normalizedFechaLiquidacion,
         normalizedTurnoRepartidorId,
-        observaciones
+        observaciones,
+        global_id || null,              // UUID from Desktop
+        terminal_id || null,            // UUID from Desktop
+        local_op_seq || null,           // Sequence number
+        created_local_utc || null,      // ISO 8601 timestamp
+        device_event_raw || null        // Raw .NET ticks
       ]);
 
       const assignment = result.rows[0];
