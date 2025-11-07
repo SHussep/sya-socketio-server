@@ -230,7 +230,7 @@ module.exports = (pool) => {
                 return res.status(400).json({ success: false, message: 'total debe ser un número válido' });
             }
 
-            // Validar que el cliente existe, sino usar NULL
+            // ✅ Validar que el cliente existe, sino usar cliente genérico del tenant
             let finalIdCliente = null;
             if (id_cliente) {
                 const customerCheck = await pool.query(
@@ -240,8 +240,18 @@ module.exports = (pool) => {
                 if (customerCheck.rows.length > 0) {
                     finalIdCliente = id_cliente;
                 } else {
-                    console.log(`[Sync/Sales] ⚠️ Cliente ${id_cliente} no existe, usando NULL`);
+                    console.log(`[Sync/Sales] ⚠️ Cliente ${id_cliente} no existe en backend, obteniendo cliente genérico...`);
                 }
+            }
+
+            // ✅ Si no hay cliente válido, obtener/crear el cliente genérico del tenant
+            if (!finalIdCliente) {
+                const genericResult = await pool.query(
+                    'SELECT get_or_create_generic_customer($1, $2) as customer_id',
+                    [tenant_id, branch_id]
+                );
+                finalIdCliente = genericResult.rows[0].customer_id;
+                console.log(`[Sync/Sales] ✅ Usando cliente genérico del tenant: ${finalIdCliente}`);
             }
 
             // ✅ IDEMPOTENTE: INSERT con ON CONFLICT (global_id) DO UPDATE
