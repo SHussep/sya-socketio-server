@@ -151,7 +151,7 @@ module.exports = function(pool) {
                         id: employee.id,
                         email: employee.email,
                         username: employee.username,
-                        fullName: employee.full_name,
+                        fullName: `${employee.first_name || ''} ${employee.last_name || ''}`.trim(),
                         role: employee.role
                     },
                     tenant: {
@@ -385,15 +385,21 @@ module.exports = function(pool) {
 
             // 7. Crear empleado administrador - incluir main_branch_id y can_use_mobile_app
             const username = displayName.replace(/\s+/g, '').toLowerCase();
+
+            // Split displayName into first_name and last_name
+            const nameParts = displayName.trim().split(/\s+/);
+            const firstName = nameParts[0] || displayName;
+            const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
+
             const employeeResult = await client.query(`
                 INSERT INTO employees (
-                    tenant_id, email, username, full_name, password_hash,
+                    tenant_id, email, username, first_name, last_name, password_hash,
                     role_id, main_branch_id, can_use_mobile_app, is_active, is_owner,
                     google_user_identifier, password_updated_at, created_at, updated_at
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, true, true, true, $8, NOW(), NOW(), NOW())
-                RETURNING id, email, username, full_name, role_id, can_use_mobile_app, is_active, created_at
-            `, [tenant.id, email, username, displayName, passwordHash, accesoTotalRoleId, branch.id, email]);
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, true, true, $9, NOW(), NOW(), NOW())
+                RETURNING id, email, username, first_name, last_name, role_id, can_use_mobile_app, is_active, created_at
+            `, [tenant.id, email, username, firstName, lastName, passwordHash, accesoTotalRoleId, branch.id, email]);
 
             const employee = employeeResult.rows[0];
 
@@ -425,7 +431,7 @@ Este es el backup automático creado al registrar la cuenta.
 Fecha de creación: ${new Date().toISOString()}
 Tenant: ${tenant.business_name} (${tenant.tenant_code})
 Branch: ${branch.name} (${branch.branch_code})
-Employee: ${employee.full_name} (${employee.email})
+Employee: ${displayName} (${employee.email})
 
 Este backup inicial está vacío y se actualizará con el primer respaldo real del sistema.`;
 
@@ -497,7 +503,7 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                 employee: {
                     id: employee.id,
                     email: employee.email,
-                    fullName: employee.full_name,
+                    fullName: `${employee.first_name} ${employee.last_name}`.trim(),
                     role: employee.role
                 },
                 branch: {
@@ -683,7 +689,7 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                     id: employee.id,
                     email: employee.email,
                     username: employee.username,
-                    fullName: employee.full_name,
+                    fullName: `${employee.first_name || ''} ${employee.last_name || ''}`.trim(),
                     role: employee.role
                 },
                 tenant: {
@@ -1042,13 +1048,19 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
             // 2. Actualizar información del empleado owner
             const passwordHash = await bcrypt.hash(password, 10);
 
+            // Split ownerName into first_name and last_name
+            const ownerNameParts = ownerName.trim().split(/\s+/);
+            const ownerFirstName = ownerNameParts[0] || ownerName;
+            const ownerLastName = ownerNameParts.length > 1 ? ownerNameParts.slice(1).join(' ') : '';
+
             await client.query(`
                 UPDATE employees
-                SET full_name = $1,
-                    password = $2,
+                SET first_name = $1,
+                    last_name = $2,
+                    password_hash = $3,
                     updated_at = NOW()
-                WHERE tenant_id = $3 AND role = 'owner'
-            `, [ownerName, passwordHash, tenantId]);
+                WHERE tenant_id = $4 AND is_owner = true
+            `, [ownerFirstName, ownerLastName, passwordHash, tenantId]);
 
             console.log(`[Tenant Overwrite] ✅ Empleado owner actualizado: ${ownerName}`);
 
@@ -1876,7 +1888,7 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
 
             // 2. Obtener info del empleado
             const employeeResult = await client.query(
-                `SELECT id, email, full_name, role, main_branch_id
+                `SELECT id, email, first_name, last_name, role_id, main_branch_id
                  FROM employees WHERE id = $1 AND tenant_id = $2`,
                 [employeeId, tenantId]
             );
@@ -1934,8 +1946,8 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                     employee: {
                         id: employee.id,
                         email: employee.email,
-                        name: employee.full_name,
-                        role: employee.role,
+                        name: `${employee.first_name || ''} ${employee.last_name || ''}`.trim(),
+                        role: employee.role_id,
                         primary_branch_id: employee.main_branch_id
                     },
                     branches: branchesWithMetadata,
@@ -1987,9 +1999,9 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
 
             // Obtener el empleado principal/admin del tenant (el que tiene is_owner = true)
             const employeeResult = await pool.query(
-                `SELECT id, username, email, full_name, role
+                `SELECT id, username, email, first_name, last_name, role_id
                  FROM employees
-                 WHERE tenant_id = $1 AND is_active = true AND role = 'owner'
+                 WHERE tenant_id = $1 AND is_active = true AND is_owner = true
                  LIMIT 1`,
                 [tenantId]
             );
@@ -1999,7 +2011,7 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
 
                 // Si no hay owner, obtener el empleado más antiguo (primer registrado)
                 const fallbackResult = await pool.query(
-                    `SELECT id, username, email, full_name, role
+                    `SELECT id, username, email, first_name, last_name, role_id
                      FROM employees
                      WHERE tenant_id = $1 AND is_active = true
                      ORDER BY created_at ASC
@@ -2023,8 +2035,8 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                         id: employee.id,
                         username: employee.username,
                         email: employee.email,
-                        fullName: employee.full_name,
-                        role: employee.role
+                        fullName: `${employee.first_name || ''} ${employee.last_name || ''}`.trim(),
+                        role: employee.role_id
                     }
                 });
             }
@@ -2038,8 +2050,8 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                     id: employee.id,
                     username: employee.username,
                     email: employee.email,
-                    fullName: employee.full_name,
-                    role: employee.role
+                    fullName: `${employee.first_name || ''} ${employee.last_name || ''}`.trim(),
+                    role: employee.role_id
                 }
             });
 
