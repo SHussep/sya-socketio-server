@@ -28,12 +28,14 @@ BEGIN
     IF v_customer_id IS NULL THEN
         INSERT INTO customers (
             tenant_id,
-            name,
-            phone,
-            address,
-            email,
+            nombre,
+            telefono,
+            direccion,
+            correo,
             is_system_generic,
-            notes,
+            nota,
+            global_id,
+            synced,
             created_at,
             updated_at
         ) VALUES (
@@ -44,6 +46,8 @@ BEGIN
             NULL,
             TRUE,
             'Cliente genérico del sistema - No editar ni eliminar',
+            gen_random_uuid()::varchar,
+            TRUE,
             NOW(),
             NOW()
         )
@@ -74,14 +78,14 @@ END $$;
 -- (nombre = "Público en General" o similar)
 UPDATE customers
 SET is_system_generic = TRUE,
-    notes = 'Cliente genérico del sistema - No editar ni eliminar'
+    nota = 'Cliente genérico del sistema - No editar ni eliminar'
 WHERE (
-    LOWER(name) LIKE '%público%general%'
-    OR LOWER(name) LIKE '%publico%general%'
-    OR LOWER(name) = 'generico'
-    OR LOWER(name) = 'generic customer'
+    LOWER(nombre) LIKE '%público%general%'
+    OR LOWER(nombre) LIKE '%publico%general%'
+    OR LOWER(nombre) = 'generico'
+    OR LOWER(nombre) = 'generic customer'
 )
-AND is_system_generic = FALSE;
+AND (is_system_generic = FALSE OR is_system_generic IS NULL);
 
 -- ✅ PASO 6: Crear trigger para prevenir eliminación del cliente genérico
 CREATE OR REPLACE FUNCTION prevent_generic_customer_delete()

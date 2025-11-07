@@ -34,8 +34,8 @@ module.exports = (pool) => {
             const { include_generic = 'false' } = req.query;
 
             let query = `
-                SELECT id, tenant_id, name, phone, email, address,
-                       credit_limit, current_balance, notes, is_system_generic,
+                SELECT id, tenant_id, nombre as name, telefono as phone, correo as email, direccion as address,
+                       credito_limite as credit_limit, saldo_deudor as current_balance, nota as notes, is_system_generic,
                        created_at, updated_at
                 FROM customers
                 WHERE tenant_id = $1
@@ -109,22 +109,21 @@ module.exports = (pool) => {
             // ✅ IDEMPOTENTE: INSERT con ON CONFLICT (global_id) DO UPDATE
             const result = await pool.query(
                 `INSERT INTO customers (
-                    tenant_id, name, phone, email, address,
-                    credit_limit, current_balance, notes, is_wholesale, discount_percentage,
+                    tenant_id, nombre, telefono, correo, direccion,
+                    credito_limite, saldo_deudor, nota, porcentaje_descuento,
                     global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw,
-                    is_system_generic, created_at, updated_at
+                    is_system_generic, synced, created_at, updated_at
                  )
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::uuid, $12::uuid, $13, $14, $15, FALSE, NOW(), NOW())
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::uuid, $11::uuid, $12, $13, $14, FALSE, TRUE, NOW(), NOW())
                  ON CONFLICT (global_id) DO UPDATE
-                 SET name = EXCLUDED.name,
-                     phone = EXCLUDED.phone,
-                     email = EXCLUDED.email,
-                     address = EXCLUDED.address,
-                     credit_limit = EXCLUDED.credit_limit,
-                     current_balance = EXCLUDED.current_balance,
-                     notes = EXCLUDED.notes,
-                     is_wholesale = EXCLUDED.is_wholesale,
-                     discount_percentage = EXCLUDED.discount_percentage,
+                 SET nombre = EXCLUDED.nombre,
+                     telefono = EXCLUDED.telefono,
+                     correo = EXCLUDED.correo,
+                     direccion = EXCLUDED.direccion,
+                     credito_limite = EXCLUDED.credito_limite,
+                     saldo_deudor = EXCLUDED.saldo_deudor,
+                     nota = EXCLUDED.nota,
+                     porcentaje_descuento = EXCLUDED.porcentaje_descuento,
                      updated_at = NOW()
                  RETURNING *`,
                 [
@@ -136,7 +135,6 @@ module.exports = (pool) => {
                     credit_limit || 0,
                     current_balance || 0,
                     notes || null,
-                    is_wholesale || false,
                     discount_percentage || 0,
                     global_id,
                     terminal_id || null,
@@ -148,13 +146,13 @@ module.exports = (pool) => {
 
             const customer = result.rows[0];
 
-            console.log(`[Sync/Customers] ✅ Cliente sincronizado: ${customer.name} (ID: ${customer.id})`);
+            console.log(`[Sync/Customers] ✅ Cliente sincronizado: ${customer.nombre} (ID: ${customer.id})`);
 
             res.json({
                 success: true,
                 data: {
                     id: customer.id,
-                    name: customer.name,
+                    name: customer.nombre,
                     global_id: customer.global_id,
                     created_at: customer.created_at
                 }
