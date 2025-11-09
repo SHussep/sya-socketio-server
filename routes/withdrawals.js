@@ -144,7 +144,12 @@ module.exports = (pool) => {
 
             for (const withdrawal of withdrawals) {
                 try {
-                    const { branchId, shiftId, employeeId, amount, description, withdrawalType = 'manual', withdrawalDate, localShiftId } = withdrawal;
+                    const {
+                        branchId, shiftId, employeeId, amount, description,
+                        withdrawal_type = 'manual', withdrawal_date, localShiftId,
+                        // Campos offline-first para idempotencia
+                        global_id, terminal_id, local_op_seq, device_event_raw, created_local_utc
+                    } = withdrawal;
 
                     if (!amount || amount <= 0 || !branchId) {
                         results.push({ success: false, error: 'Missing required fields' });
@@ -152,15 +157,29 @@ module.exports = (pool) => {
                     }
 
                     const numericAmount = parseFloat(amount);
+
+                    // ✅ UPSERT con global_id para evitar duplicados
                     const result = await pool.query(
-                        `INSERT INTO withdrawals (tenant_id, branch_id, shift_id, local_shift_id, employee_id, amount, description, withdrawal_type, withdrawal_date)
-                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9, NOW()))
+                        `INSERT INTO withdrawals (
+                            tenant_id, branch_id, shift_id, local_shift_id, employee_id,
+                            amount, description, withdrawal_type, withdrawal_date,
+                            global_id, terminal_id, local_op_seq, device_event_raw, created_local_utc
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9, NOW()), $10, $11, $12, $13, $14)
+                         ON CONFLICT (global_id) WHERE global_id IS NOT NULL
+                         DO UPDATE SET
+                            amount = EXCLUDED.amount,
+                            description = EXCLUDED.description,
+                            synced_at = NOW()
                          RETURNING *`,
-                        [tenantId, branchId, shiftId || null, localShiftId || null, employeeId || null, numericAmount, description || '', withdrawalType, withdrawalDate]
+                        [
+                            tenantId, branchId, shiftId || null, localShiftId || null, employeeId || null,
+                            numericAmount, description || '', withdrawal_type, withdrawal_date,
+                            global_id, terminal_id, local_op_seq, device_event_raw, created_local_utc
+                        ]
                     );
 
                     results.push({ success: true, data: result.rows[0] });
-                    console.log(`[Withdrawals/Sync] ✅ Withdrawal synced: $${numericAmount} (localShiftId: ${localShiftId})`);
+                    console.log(`[Withdrawals/Sync] ✅ Withdrawal synced: $${numericAmount} (global_id: ${global_id})`);
                 } catch (error) {
                     results.push({ success: false, error: error.message });
                     console.error(`[Withdrawals/Sync] ❌ Error:`, error.message);

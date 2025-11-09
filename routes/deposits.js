@@ -127,7 +127,7 @@ module.exports = (pool) => {
     });
 
     // POST /api/deposits/sync - Sync deposits from mobile/desktop (SIN AUTENTICACIÓN - para Desktop offline-first)
-    // Ahora también acepta localShiftId para offline-first reconciliation
+    // ✅ Soporte completo para idempotencia con global_id
     router.post('/sync', async (req, res) => {
         try {
             const deposits = Array.isArray(req.body) ? req.body : [req.body];
@@ -144,7 +144,12 @@ module.exports = (pool) => {
 
             for (const deposit of deposits) {
                 try {
-                    const { branchId, shiftId, employeeId, amount, description, depositType = 'manual', depositDate, localShiftId } = deposit;
+                    const {
+                        branchId, shiftId, employeeId, amount, description,
+                        deposit_type = 'manual', deposit_date, localShiftId,
+                        // Campos offline-first para idempotencia
+                        global_id, terminal_id, local_op_seq, device_event_raw, created_local_utc
+                    } = deposit;
 
                     if (!amount || amount <= 0 || !branchId) {
                         results.push({ success: false, error: 'Missing required fields' });
@@ -152,15 +157,29 @@ module.exports = (pool) => {
                     }
 
                     const numericAmount = parseFloat(amount);
+
+                    // ✅ UPSERT con global_id para evitar duplicados
                     const result = await pool.query(
-                        `INSERT INTO deposits (tenant_id, branch_id, shift_id, local_shift_id, employee_id, amount, description, deposit_type, deposit_date)
-                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9, NOW()))
+                        `INSERT INTO deposits (
+                            tenant_id, branch_id, shift_id, local_shift_id, employee_id,
+                            amount, description, deposit_type, deposit_date,
+                            global_id, terminal_id, local_op_seq, device_event_raw, created_local_utc
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9, NOW()), $10, $11, $12, $13, $14)
+                         ON CONFLICT (global_id) WHERE global_id IS NOT NULL
+                         DO UPDATE SET
+                            amount = EXCLUDED.amount,
+                            description = EXCLUDED.description,
+                            synced_at = NOW()
                          RETURNING *`,
-                        [tenantId, branchId, shiftId || null, localShiftId || null, employeeId || null, numericAmount, description || '', depositType, depositDate]
+                        [
+                            tenantId, branchId, shiftId || null, localShiftId || null, employeeId || null,
+                            numericAmount, description || '', deposit_type, deposit_date,
+                            global_id, terminal_id, local_op_seq, device_event_raw, created_local_utc
+                        ]
                     );
 
                     results.push({ success: true, data: result.rows[0] });
-                    console.log(`[Deposits/Sync] ✅ Deposit synced: $${numericAmount} (localShiftId: ${localShiftId})`);
+                    console.log(`[Deposits/Sync] ✅ Deposit synced: $${numericAmount} (global_id: ${global_id})`);
                 } catch (error) {
                     results.push({ success: false, error: error.message });
                     console.error(`[Deposits/Sync] ❌ Error:`, error.message);
