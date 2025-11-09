@@ -330,7 +330,7 @@ app.use('/api/guardian-events', guardianEventsRoutes(pool, io)); // Requires io 
 app.use('/api/dashboard', dashboardRoutes(pool));
 app.use('/api/admin', adminRoutes(pool)); // Rutas de administración
 app.use('/api/employees', employeesRoutes); // Rutas de sincronización de empleados desde Desktop
-app.use('/api/cancelaciones', cancelacionesRoutes); // Rutas de cancelaciones bitácora con sync offline-first
+app.use('/api/cancelaciones', cancelacionesRoutes(pool)); // Rutas de cancelaciones bitácora con sync offline-first
 app.use('/api/employee-roles', employeeRolesRoutes); // Rutas para gestionar roles y permisos
 app.use('/api/customers', customersRoutes(pool)); // Rutas de sincronización de clientes
 app.use('/api/suspicious-weighing-logs', suspiciousWeighingLogsRoutes(pool)); // Rutas de Guardian logs de báscula

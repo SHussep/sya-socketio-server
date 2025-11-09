@@ -33,9 +33,10 @@ CREATE TABLE IF NOT EXISTS cancelaciones_bitacora (
     cantidad NUMERIC(10, 3) DEFAULT 0, -- Quantity cancelled
     peso_kg NUMERIC(10, 3), -- Weight in kg if applicable
 
-    -- Cancellation reason
+    -- Cancellation reason (normalized)
     motivo VARCHAR(500), -- "Eliminado de ticket", "Venta cancelada", "Error de captura", etc.
-    razon_cancelacion TEXT, -- Detailed reason entered by user
+    razon_id INTEGER REFERENCES cancelacion_razones(id), -- Normalized cancellation reason (FK)
+    otra_razon TEXT, -- Only filled if razon_id is "Otra" (free text explanation)
 
     -- Timestamps
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -50,6 +51,7 @@ CREATE INDEX IF NOT EXISTS idx_cancelaciones_fecha ON cancelaciones_bitacora(ten
 CREATE INDEX IF NOT EXISTS idx_cancelaciones_empleado ON cancelaciones_bitacora(id_empleado, fecha DESC);
 CREATE INDEX IF NOT EXISTS idx_cancelaciones_turno ON cancelaciones_bitacora(id_turno);
 CREATE INDEX IF NOT EXISTS idx_cancelaciones_venta ON cancelaciones_bitacora(id_venta) WHERE id_venta IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_cancelaciones_razon ON cancelaciones_bitacora(razon_id) WHERE razon_id IS NOT NULL;
 
 -- Add trigger for updated_at
 CREATE OR REPLACE FUNCTION update_cancelaciones_bitacora_updated_at()
@@ -70,4 +72,5 @@ COMMENT ON TABLE cancelaciones_bitacora IS 'Tracks all sale cancellations with o
 COMMENT ON COLUMN cancelaciones_bitacora.global_id IS 'UUID for idempotent sync - prevents duplicate inserts';
 COMMENT ON COLUMN cancelaciones_bitacora.terminal_id IS 'Terminal/POS identifier that created the cancellation';
 COMMENT ON COLUMN cancelaciones_bitacora.local_op_seq IS 'Local operation sequence for deterministic ordering';
-COMMENT ON COLUMN cancelaciones_bitacora.razon_cancelacion IS 'Detailed cancellation reason entered by user (editable)';
+COMMENT ON COLUMN cancelaciones_bitacora.razon_id IS 'Foreign key to cancelacion_razones - normalized cancellation reason for analysis';
+COMMENT ON COLUMN cancelaciones_bitacora.otra_razon IS 'Free text explanation - only required when razon_id points to "Otra" reason';
