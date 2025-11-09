@@ -82,6 +82,7 @@ const customersRoutes = require('./routes/customers'); // Rutas de sincronizaci�
 const suspiciousWeighingLogsRoutes = require('./routes/suspiciousWeighingLogs'); // Rutas de Guardian logs de báscula
 const scaleDisconnectionLogsRoutes = require('./routes/scaleDisconnectionLogs'); // Rutas de eventos de desconexión de báscula
 const employeeMetricsRoutes = require('./routes/employeeMetrics'); // Rutas de métricas diarias de empleados
+const cancelacionesRoutes = require('./routes/cancelaciones'); // Rutas de cancelaciones bitácora con sync offline-first
 
 // Inicializar Firebase para notificaciones push
 initializeFirebase();
@@ -329,6 +330,7 @@ app.use('/api/guardian-events', guardianEventsRoutes(pool, io)); // Requires io 
 app.use('/api/dashboard', dashboardRoutes(pool));
 app.use('/api/admin', adminRoutes(pool)); // Rutas de administración
 app.use('/api/employees', employeesRoutes); // Rutas de sincronización de empleados desde Desktop
+app.use('/api/cancelaciones', cancelacionesRoutes); // Rutas de cancelaciones bitácora con sync offline-first
 app.use('/api/employee-roles', employeeRolesRoutes); // Rutas para gestionar roles y permisos
 app.use('/api/customers', customersRoutes(pool)); // Rutas de sincronización de clientes
 app.use('/api/suspicious-weighing-logs', suspiciousWeighingLogsRoutes(pool)); // Rutas de Guardian logs de báscula
