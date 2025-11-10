@@ -412,6 +412,14 @@ module.exports = function(pool) {
                 ) VALUES ($1, $2, $3)
             `, [tenant.id, employee.id, branch.id]);
 
+            // 8b. Crear cliente genérico "Público en General" para el tenant
+            const genericCustomerResult = await client.query(
+                'SELECT get_or_create_generic_customer($1, $2) as customer_id',
+                [tenant.id, branch.id]
+            );
+            const genericCustomerId = genericCustomerResult.rows[0].customer_id;
+            console.log(`[Google Signup] ✅ Cliente genérico creado: ID ${genericCustomerId}`);
+
             await client.query('COMMIT');
 
             // 9. Crear backup inicial (día 0) en Dropbox
