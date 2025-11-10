@@ -295,11 +295,16 @@ module.exports = (pool) => {
         }
     });
 
-    // POST /api/cash-cuts/sync - Sync cash cuts from mobile/desktop
-    router.post('/sync', authenticateToken, async (req, res) => {
+    // POST /api/cash-cuts/sync - Sync cash cuts from mobile/desktop (SIN AUTENTICACIÓN - para Desktop offline-first)
+    router.post('/sync', async (req, res) => {
         try {
-            const { tenantId } = req.user;
             const cashCuts = Array.isArray(req.body) ? req.body : [req.body];
+
+            // Obtener tenantId del primer cash cut
+            if (cashCuts.length === 0 || !cashCuts[0].tenantId) {
+                return res.status(400).json({ success: false, message: 'tenantId es requerido' });
+            }
+            const { tenantId } = cashCuts[0];
 
             console.log(`[CashCuts/Sync] Syncing ${cashCuts.length} cash cuts for tenant ${tenantId}`);
 
@@ -309,7 +314,7 @@ module.exports = (pool) => {
                 const client = await pool.connect();
                 try {
                     const {
-                        branchId, shiftId, employeeId,
+                        tenantId: cutTenantId, branchId, shiftId, employeeId,
                         initialAmount, totalCashSales, totalCardSales, totalCreditSales,
                         totalCashPayments, totalCardPayments,
                         totalExpenses, totalDeposits, totalWithdrawals,
@@ -319,6 +324,8 @@ module.exports = (pool) => {
                         // Campos offline-first para idempotencia
                         global_id, terminal_id, local_op_seq, device_event_raw, created_local_utc
                     } = cashCut;
+
+                    const effectiveTenantId = cutTenantId || tenantId;
 
                     if (!shiftId || !branchId || countedCash === undefined) {
                         results.push({ success: false, error: 'Missing required fields (shiftId, branchId, countedCash)' });
@@ -330,7 +337,7 @@ module.exports = (pool) => {
                     // Get shift details for time range
                     const shiftResult = await client.query(
                         'SELECT start_time, end_time FROM shifts WHERE id = $1 AND tenant_id = $2',
-                        [shiftId, tenantId]
+                        [shiftId, effectiveTenantId]
                     );
 
                     if (shiftResult.rows.length === 0) {
@@ -364,7 +371,7 @@ module.exports = (pool) => {
                             synced_at = NOW()
                         RETURNING *`,
                         [
-                            tenantId, branchId, shiftId, employeeId || null,
+                            effectiveTenantId, branchId, shiftId, employeeId || null,
                             startTime, endTime,
                             parseFloat(initialAmount || 0),
                             parseFloat(totalCashSales || 0),
