@@ -16,7 +16,6 @@ CREATE TABLE IF NOT EXISTS cancelaciones_bitacora (
     created_local_utc TEXT NOT NULL, -- ISO 8601 timestamp from device
     synced BOOLEAN DEFAULT FALSE, -- Sync status flag
     synced_at_raw BIGINT, -- Sync timestamp (UnixTimeMilliseconds)
-    remote_id INTEGER, -- Reference to remote system if applicable
 
     -- Foreign keys
     tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,

@@ -24,10 +24,7 @@ ADD COLUMN IF NOT EXISTS device_event_raw BIGINT;
 ALTER TABLE deposits
 ADD COLUMN IF NOT EXISTS created_local_utc TEXT;
 
--- Columnas de sincronización
-ALTER TABLE deposits
-ADD COLUMN IF NOT EXISTS remote_id INTEGER;
-
+-- Columnas de sincronización (remote_id NO es necesario - global_id es suficiente para idempotencia)
 ALTER TABLE deposits
 ADD COLUMN IF NOT EXISTS synced BOOLEAN NOT NULL DEFAULT TRUE;
 
@@ -69,10 +66,7 @@ ADD COLUMN IF NOT EXISTS device_event_raw BIGINT;
 ALTER TABLE withdrawals
 ADD COLUMN IF NOT EXISTS created_local_utc TEXT;
 
--- Columnas de sincronización
-ALTER TABLE withdrawals
-ADD COLUMN IF NOT EXISTS remote_id INTEGER;
-
+-- Columnas de sincronización (remote_id NO es necesario - global_id es suficiente para idempotencia)
 ALTER TABLE withdrawals
 ADD COLUMN IF NOT EXISTS synced BOOLEAN NOT NULL DEFAULT TRUE;
 
