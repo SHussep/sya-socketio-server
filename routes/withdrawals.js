@@ -37,7 +37,7 @@ module.exports = (pool) => {
 
             let query = `
                 SELECT w.id, w.tenant_id, w.branch_id, w.shift_id, w.employee_id,
-                       w.amount, w.description, w.withdrawal_type,
+                       w.amount, w.description,
                        w.withdrawal_date, w.created_at,
                        emp.full_name as employee_name, b.name as branch_name
                 FROM withdrawals w
@@ -89,7 +89,7 @@ module.exports = (pool) => {
     // POST /api/withdrawals - Create new withdrawal (SIN AUTENTICACIÓN - para Desktop offline-first)
     router.post('/', async (req, res) => {
         try {
-            const { tenantId, branchId, employeeId, amount, description, withdrawal_type = 'manual', shiftId } = req.body;
+            const { tenantId, branchId, employeeId, amount, description, shiftId } = req.body;
 
             if (!tenantId || !branchId) {
                 return res.status(400).json({ success: false, message: 'tenantId y branchId son requeridos' });
@@ -102,10 +102,10 @@ module.exports = (pool) => {
             const numericAmount = parseFloat(amount);
 
             const result = await pool.query(
-                `INSERT INTO withdrawals (tenant_id, branch_id, shift_id, employee_id, amount, description, withdrawal_type, withdrawal_date)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+                `INSERT INTO withdrawals (tenant_id, branch_id, shift_id, employee_id, amount, description, withdrawal_date)
+                 VALUES ($1, $2, $3, $4, $5, $6, NOW())
                  RETURNING *`,
-                [tenantId, branchId, shiftId || null, employeeId, numericAmount, description || '', withdrawal_type]
+                [tenantId, branchId, shiftId || null, employeeId, numericAmount, description || '']
             );
 
             const withdrawal = result.rows[0];
@@ -145,8 +145,7 @@ module.exports = (pool) => {
             for (const withdrawal of withdrawals) {
                 try {
                     const {
-                        branchId, shiftId, employeeId, amount, description,
-                        withdrawal_type = 'manual', withdrawal_date,
+                        branchId, shiftId, employeeId, amount, description, withdrawal_date,
                         // Campos offline-first para idempotencia
                         global_id, terminal_id, local_op_seq, device_event_raw, created_local_utc
                     } = withdrawal;
@@ -162,9 +161,9 @@ module.exports = (pool) => {
                     const result = await pool.query(
                         `INSERT INTO withdrawals (
                             tenant_id, branch_id, shift_id, employee_id,
-                            amount, description, withdrawal_type, withdrawal_date,
+                            amount, description, withdrawal_date,
                             global_id, terminal_id, local_op_seq, device_event_raw, created_local_utc
-                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, NOW()), $9, $10, $11, $12, $13)
+                        ) VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, NOW()), $8, $9, $10, $11, $12)
                          ON CONFLICT (global_id) WHERE global_id IS NOT NULL
                          DO UPDATE SET
                             amount = EXCLUDED.amount,
@@ -173,7 +172,7 @@ module.exports = (pool) => {
                          RETURNING *`,
                         [
                             tenantId, branchId, shiftId || null, employeeId || null,
-                            numericAmount, description || '', withdrawal_type, withdrawal_date,
+                            numericAmount, description || '', withdrawal_date,
                             global_id, terminal_id, local_op_seq, device_event_raw, created_local_utc
                         ]
                     );

@@ -12,7 +12,6 @@ CREATE TABLE IF NOT EXISTS deposits (
     employee_id INTEGER REFERENCES employees(id) ON DELETE SET NULL,
 
     amount NUMERIC(12, 2) NOT NULL CHECK (amount >= 0),
-    deposit_type VARCHAR(50) NOT NULL DEFAULT 'manual',
     deposit_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -22,15 +21,6 @@ CREATE TABLE IF NOT EXISTS deposits (
 -- Agregar columnas faltantes si no existen (para tablas ya creadas)
 DO $$
 BEGIN
-    -- Agregar deposit_type si no existe
-    IF NOT EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_name = 'deposits' AND column_name = 'deposit_type'
-    ) THEN
-        ALTER TABLE deposits ADD COLUMN deposit_type VARCHAR(50) NOT NULL DEFAULT 'manual';
-        RAISE NOTICE '✅ Columna deposit_type agregada a deposits';
-    END IF;
-
     -- Agregar deposit_date si no existe
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.columns
@@ -48,6 +38,15 @@ BEGIN
         ALTER TABLE deposits ADD COLUMN description TEXT NOT NULL DEFAULT '';
         RAISE NOTICE '✅ Columna description agregada a deposits';
     END IF;
+
+    -- Eliminar deposit_type si existe (campo obsoleto)
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'deposits' AND column_name = 'deposit_type'
+    ) THEN
+        ALTER TABLE deposits DROP COLUMN deposit_type;
+        RAISE NOTICE '✅ Columna deposit_type eliminada de deposits (obsoleta)';
+    END IF;
 END $$;
 
 -- Índices para deposits
@@ -60,7 +59,6 @@ CREATE INDEX IF NOT EXISTS idx_deposits_date ON deposits(deposit_date);
 COMMENT ON TABLE deposits IS 'Registro de depósitos/ingresos adicionales a la caja';
 COMMENT ON COLUMN deposits.amount IS 'Monto del depósito';
 COMMENT ON COLUMN deposits.description IS 'Descripción del depósito';
-COMMENT ON COLUMN deposits.deposit_type IS 'Tipo de depósito: manual, automatic, etc';
 COMMENT ON COLUMN deposits.deposit_date IS 'Fecha y hora del depósito';
 
 -- ========== WITHDRAWALS TABLE ==========
@@ -72,7 +70,6 @@ CREATE TABLE IF NOT EXISTS withdrawals (
     employee_id INTEGER REFERENCES employees(id) ON DELETE SET NULL,
 
     amount NUMERIC(12, 2) NOT NULL CHECK (amount >= 0),
-    withdrawal_type VARCHAR(50) NOT NULL DEFAULT 'manual',
     withdrawal_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -82,15 +79,6 @@ CREATE TABLE IF NOT EXISTS withdrawals (
 -- Agregar columnas faltantes si no existen (para tablas ya creadas)
 DO $$
 BEGIN
-    -- Agregar withdrawal_type si no existe
-    IF NOT EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_name = 'withdrawals' AND column_name = 'withdrawal_type'
-    ) THEN
-        ALTER TABLE withdrawals ADD COLUMN withdrawal_type VARCHAR(50) NOT NULL DEFAULT 'manual';
-        RAISE NOTICE '✅ Columna withdrawal_type agregada a withdrawals';
-    END IF;
-
     -- Agregar withdrawal_date si no existe
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.columns
@@ -108,6 +96,15 @@ BEGIN
         ALTER TABLE withdrawals ADD COLUMN description TEXT NOT NULL DEFAULT '';
         RAISE NOTICE '✅ Columna description agregada a withdrawals';
     END IF;
+
+    -- Eliminar withdrawal_type si existe (campo obsoleto)
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'withdrawals' AND column_name = 'withdrawal_type'
+    ) THEN
+        ALTER TABLE withdrawals DROP COLUMN withdrawal_type;
+        RAISE NOTICE '✅ Columna withdrawal_type eliminada de withdrawals (obsoleta)';
+    END IF;
 END $$;
 
 -- Índices para withdrawals
@@ -120,5 +117,4 @@ CREATE INDEX IF NOT EXISTS idx_withdrawals_date ON withdrawals(withdrawal_date);
 COMMENT ON TABLE withdrawals IS 'Registro de retiros de efectivo de la caja';
 COMMENT ON COLUMN withdrawals.amount IS 'Monto del retiro';
 COMMENT ON COLUMN withdrawals.description IS 'Descripción del retiro';
-COMMENT ON COLUMN withdrawals.withdrawal_type IS 'Tipo de retiro: manual, automatic, etc';
 COMMENT ON COLUMN withdrawals.withdrawal_date IS 'Fecha y hora del retiro';
