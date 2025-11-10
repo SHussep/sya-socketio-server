@@ -19,9 +19,28 @@ CREATE TABLE IF NOT EXISTS deposits (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Agregar columna description si no existe (para tablas ya creadas)
+-- Agregar columnas faltantes si no existen (para tablas ya creadas)
 DO $$
 BEGIN
+    -- Agregar deposit_type si no existe
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'deposits' AND column_name = 'deposit_type'
+    ) THEN
+        ALTER TABLE deposits ADD COLUMN deposit_type VARCHAR(50) NOT NULL DEFAULT 'manual';
+        RAISE NOTICE '✅ Columna deposit_type agregada a deposits';
+    END IF;
+
+    -- Agregar deposit_date si no existe
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'deposits' AND column_name = 'deposit_date'
+    ) THEN
+        ALTER TABLE deposits ADD COLUMN deposit_date TIMESTAMPTZ NOT NULL DEFAULT NOW();
+        RAISE NOTICE '✅ Columna deposit_date agregada a deposits';
+    END IF;
+
+    -- Agregar description si no existe
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.columns
         WHERE table_name = 'deposits' AND column_name = 'description'
@@ -60,9 +79,28 @@ CREATE TABLE IF NOT EXISTS withdrawals (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Agregar columna description si no existe (para tablas ya creadas)
+-- Agregar columnas faltantes si no existen (para tablas ya creadas)
 DO $$
 BEGIN
+    -- Agregar withdrawal_type si no existe
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'withdrawals' AND column_name = 'withdrawal_type'
+    ) THEN
+        ALTER TABLE withdrawals ADD COLUMN withdrawal_type VARCHAR(50) NOT NULL DEFAULT 'manual';
+        RAISE NOTICE '✅ Columna withdrawal_type agregada a withdrawals';
+    END IF;
+
+    -- Agregar withdrawal_date si no existe
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'withdrawals' AND column_name = 'withdrawal_date'
+    ) THEN
+        ALTER TABLE withdrawals ADD COLUMN withdrawal_date TIMESTAMPTZ NOT NULL DEFAULT NOW();
+        RAISE NOTICE '✅ Columna withdrawal_date agregada a withdrawals';
+    END IF;
+
+    -- Agregar description si no existe
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.columns
         WHERE table_name = 'withdrawals' AND column_name = 'description'
