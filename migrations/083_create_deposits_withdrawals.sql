@@ -1,0 +1,64 @@
+-- =====================================================
+-- Migration: 023_create_deposits_withdrawals.sql
+-- Descripción: Crear tablas deposits y withdrawals para gestión de caja
+-- =====================================================
+
+-- ========== DEPOSITS TABLE ==========
+CREATE TABLE IF NOT EXISTS deposits (
+    id SERIAL PRIMARY KEY,
+    tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+    shift_id INTEGER REFERENCES shifts(id) ON DELETE SET NULL,
+    employee_id INTEGER REFERENCES employees(id) ON DELETE SET NULL,
+
+    amount NUMERIC(12, 2) NOT NULL CHECK (amount >= 0),
+    description TEXT NOT NULL DEFAULT '',
+    deposit_type VARCHAR(50) NOT NULL DEFAULT 'manual',
+    deposit_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Índices para deposits
+CREATE INDEX IF NOT EXISTS idx_deposits_tenant_branch ON deposits(tenant_id, branch_id);
+CREATE INDEX IF NOT EXISTS idx_deposits_shift ON deposits(shift_id);
+CREATE INDEX IF NOT EXISTS idx_deposits_employee ON deposits(employee_id);
+CREATE INDEX IF NOT EXISTS idx_deposits_date ON deposits(deposit_date);
+
+-- Comentarios
+COMMENT ON TABLE deposits IS 'Registro de depósitos/ingresos adicionales a la caja';
+COMMENT ON COLUMN deposits.amount IS 'Monto del depósito';
+COMMENT ON COLUMN deposits.description IS 'Descripción del depósito';
+COMMENT ON COLUMN deposits.deposit_type IS 'Tipo de depósito: manual, automatic, etc';
+COMMENT ON COLUMN deposits.deposit_date IS 'Fecha y hora del depósito';
+
+-- ========== WITHDRAWALS TABLE ==========
+CREATE TABLE IF NOT EXISTS withdrawals (
+    id SERIAL PRIMARY KEY,
+    tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+    shift_id INTEGER REFERENCES shifts(id) ON DELETE SET NULL,
+    employee_id INTEGER REFERENCES employees(id) ON DELETE SET NULL,
+
+    amount NUMERIC(12, 2) NOT NULL CHECK (amount >= 0),
+    description TEXT NOT NULL DEFAULT '',
+    withdrawal_type VARCHAR(50) NOT NULL DEFAULT 'manual',
+    withdrawal_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Índices para withdrawals
+CREATE INDEX IF NOT EXISTS idx_withdrawals_tenant_branch ON withdrawals(tenant_id, branch_id);
+CREATE INDEX IF NOT EXISTS idx_withdrawals_shift ON withdrawals(shift_id);
+CREATE INDEX IF NOT EXISTS idx_withdrawals_employee ON withdrawals(employee_id);
+CREATE INDEX IF NOT EXISTS idx_withdrawals_date ON withdrawals(withdrawal_date);
+
+-- Comentarios
+COMMENT ON TABLE withdrawals IS 'Registro de retiros de efectivo de la caja';
+COMMENT ON COLUMN withdrawals.amount IS 'Monto del retiro';
+COMMENT ON COLUMN withdrawals.description IS 'Descripción del retiro';
+COMMENT ON COLUMN withdrawals.withdrawal_type IS 'Tipo de retiro: manual, automatic, etc';
+COMMENT ON COLUMN withdrawals.withdrawal_date IS 'Fecha y hora del retiro';
