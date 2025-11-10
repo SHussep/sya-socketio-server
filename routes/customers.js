@@ -73,7 +73,7 @@ module.exports = (pool) => {
                 address,
                 has_credit,
                 credit_limit,
-                current_balance,
+                // ❌ REMOVIDO: current_balance - PostgreSQL lo calcula automáticamente con triggers
                 notes,
                 is_wholesale,
                 discount_percentage,
@@ -108,14 +108,15 @@ module.exports = (pool) => {
             }
 
             // ✅ IDEMPOTENTE: INSERT con ON CONFLICT (global_id) DO UPDATE
+            // ⚠️ saldo_deudor se maneja automáticamente con triggers (sales + credit_payments)
             const result = await pool.query(
                 `INSERT INTO customers (
                     tenant_id, nombre, telefono, correo, direccion,
-                    tiene_credito, credito_limite, saldo_deudor, nota, porcentaje_descuento,
+                    tiene_credito, credito_limite, nota, porcentaje_descuento,
                     global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw,
                     is_system_generic, synced, created_at, updated_at
                  )
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::uuid, $12::uuid, $13, $14, $15, FALSE, TRUE, NOW(), NOW())
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::uuid, $11::uuid, $12, $13, $14, FALSE, TRUE, NOW(), NOW())
                  ON CONFLICT (global_id) DO UPDATE
                  SET nombre = EXCLUDED.nombre,
                      telefono = EXCLUDED.telefono,
@@ -123,7 +124,6 @@ module.exports = (pool) => {
                      direccion = EXCLUDED.direccion,
                      tiene_credito = EXCLUDED.tiene_credito,
                      credito_limite = EXCLUDED.credito_limite,
-                     saldo_deudor = EXCLUDED.saldo_deudor,
                      nota = EXCLUDED.nota,
                      porcentaje_descuento = EXCLUDED.porcentaje_descuento,
                      updated_at = NOW()
@@ -136,7 +136,6 @@ module.exports = (pool) => {
                     address || null,
                     has_credit || false,
                     credit_limit || 0,
-                    current_balance || 0,
                     notes || null,
                     discount_percentage || 0,
                     global_id,

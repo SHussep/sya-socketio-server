@@ -254,6 +254,11 @@ module.exports = (pool) => {
                 console.log(`[Sync/Sales] ✅ Usando cliente genérico del tenant: ${finalIdCliente}`);
             }
 
+            // ✅ Mapear estado_venta_id a status
+            // Desktop: 1=Borrador, 2=Asignada, 3=Completada, 4=Cancelada, 5=Liquidada
+            // PostgreSQL: 'completed' o 'cancelled'
+            const status = (estado_venta_id === 4) ? 'cancelled' : 'completed';
+
             // ✅ IDEMPOTENTE: INSERT con ON CONFLICT (global_id) DO UPDATE
             const result = await pool.query(
                 `INSERT INTO ventas (
@@ -263,18 +268,19 @@ module.exports = (pool) => {
                     ticket_number, id_cliente,
                     subtotal, total_descuentos, total, monto_pagado,
                     fecha_venta_raw, fecha_liquidacion_raw,
-                    notas, synced, synced_at_raw,
+                    notas, status, synced, synced_at_raw,
                     global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw
                  )
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21::uuid, $22::uuid, $23, $24, $25)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22::uuid, $23::uuid, $24, $25, $26)
                  ON CONFLICT (global_id) DO UPDATE
                  SET subtotal = EXCLUDED.subtotal,
                      total_descuentos = EXCLUDED.total_descuentos,
                      total = EXCLUDED.total,
                      monto_pagado = EXCLUDED.monto_pagado,
                      estado_venta_id = EXCLUDED.estado_venta_id,
+                     status = EXCLUDED.status,
                      notas = EXCLUDED.notas,
-                     synced_at_raw = $20
+                     synced_at_raw = $21
                  RETURNING *`,
                 [
                     tenant_id,
@@ -295,6 +301,7 @@ module.exports = (pool) => {
                     fecha_venta_raw || null,
                     fecha_liquidacion_raw || null,
                     notas || null,
+                    status,                                   // ✅ NUEVO: 'completed' o 'cancelled'
                     true,                                     // synced=true (backend es la fuente de verdad)
                     Date.now(),                               // synced_at_raw = epoch_ms actual
                     global_id,                                // UUID from Desktop
