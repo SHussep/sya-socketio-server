@@ -38,7 +38,7 @@ module.exports = (pool) => {
             let query = `
                 SELECT cp.id, cp.tenant_id, cp.branch_id, cp.customer_id, cp.shift_id, cp.employee_id,
                        cp.amount, cp.payment_method, cp.payment_date, cp.notes,
-                       c.nombre as customer_name, e.full_name as employee_name, b.name as branch_name,
+                       c.nombre as customer_name, CONCAT(e.first_name, ' ', e.last_name) as employee_name, b.name as branch_name,
                        cp.created_at
                 FROM credit_payments cp
                 LEFT JOIN customers c ON cp.customer_id = c.id
@@ -175,7 +175,7 @@ module.exports = (pool) => {
             const { limit = 100 } = req.query;
 
             const result = await pool.query(
-                `SELECT cp.*, e.full_name as employee_name
+                `SELECT cp.*, CONCAT(e.first_name, ' ', e.last_name) as employee_name
                  FROM credit_payments cp
                  LEFT JOIN employees e ON cp.employee_id = e.id
                  WHERE cp.tenant_id = $1 AND cp.customer_id = $2

@@ -115,7 +115,7 @@ SELECT
   cp.payment_method,
   cp.payment_date,
   cp.notes,
-  e.full_name as employee_name,
+  CONCAT(e.first_name, ' ', e.last_name) as employee_name,
   b.name as branch_name
 FROM credit_payments cp
 LEFT JOIN customers c ON cp.customer_id = c.id
