@@ -46,7 +46,7 @@ BEGIN
             NULL,
             TRUE,
             'Cliente genérico del sistema - No editar ni eliminar',
-            gen_random_uuid()::varchar,
+            'GENERIC_CUSTOMER_' || p_tenant_id,
             TRUE,
             NOW(),
             NOW()
