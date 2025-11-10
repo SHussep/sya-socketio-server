@@ -146,7 +146,7 @@ module.exports = (pool) => {
                 try {
                     const {
                         branchId, shiftId, employeeId, amount, description,
-                        deposit_type = 'manual', deposit_date, localShiftId,
+                        deposit_type = 'manual', deposit_date,
                         // Campos offline-first para idempotencia
                         global_id, terminal_id, local_op_seq, device_event_raw, created_local_utc
                     } = deposit;
@@ -161,10 +161,10 @@ module.exports = (pool) => {
                     // ✅ UPSERT con global_id para evitar duplicados
                     const result = await pool.query(
                         `INSERT INTO deposits (
-                            tenant_id, branch_id, shift_id, local_shift_id, employee_id,
+                            tenant_id, branch_id, shift_id, employee_id,
                             amount, description, deposit_type, deposit_date,
                             global_id, terminal_id, local_op_seq, device_event_raw, created_local_utc
-                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9, NOW()), $10, $11, $12, $13, $14)
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, NOW()), $9, $10, $11, $12, $13)
                          ON CONFLICT (global_id) WHERE global_id IS NOT NULL
                          DO UPDATE SET
                             amount = EXCLUDED.amount,
@@ -172,7 +172,7 @@ module.exports = (pool) => {
                             synced_at = NOW()
                          RETURNING *`,
                         [
-                            tenantId, branchId, shiftId || null, localShiftId || null, employeeId || null,
+                            tenantId, branchId, shiftId || null, employeeId || null,
                             numericAmount, description || '', deposit_type, deposit_date,
                             global_id, terminal_id, local_op_seq, device_event_raw, created_local_utc
                         ]
