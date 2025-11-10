@@ -12,13 +12,24 @@ CREATE TABLE IF NOT EXISTS deposits (
     employee_id INTEGER REFERENCES employees(id) ON DELETE SET NULL,
 
     amount NUMERIC(12, 2) NOT NULL CHECK (amount >= 0),
-    description TEXT NOT NULL DEFAULT '',
     deposit_type VARCHAR(50) NOT NULL DEFAULT 'manual',
     deposit_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Agregar columna description si no existe (para tablas ya creadas)
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'deposits' AND column_name = 'description'
+    ) THEN
+        ALTER TABLE deposits ADD COLUMN description TEXT NOT NULL DEFAULT '';
+        RAISE NOTICE '✅ Columna description agregada a deposits';
+    END IF;
+END $$;
 
 -- Índices para deposits
 CREATE INDEX IF NOT EXISTS idx_deposits_tenant_branch ON deposits(tenant_id, branch_id);
@@ -42,13 +53,24 @@ CREATE TABLE IF NOT EXISTS withdrawals (
     employee_id INTEGER REFERENCES employees(id) ON DELETE SET NULL,
 
     amount NUMERIC(12, 2) NOT NULL CHECK (amount >= 0),
-    description TEXT NOT NULL DEFAULT '',
     withdrawal_type VARCHAR(50) NOT NULL DEFAULT 'manual',
     withdrawal_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Agregar columna description si no existe (para tablas ya creadas)
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'withdrawals' AND column_name = 'description'
+    ) THEN
+        ALTER TABLE withdrawals ADD COLUMN description TEXT NOT NULL DEFAULT '';
+        RAISE NOTICE '✅ Columna description agregada a withdrawals';
+    END IF;
+END $$;
 
 -- Índices para withdrawals
 CREATE INDEX IF NOT EXISTS idx_withdrawals_tenant_branch ON withdrawals(tenant_id, branch_id);
