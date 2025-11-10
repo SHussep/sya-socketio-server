@@ -315,7 +315,9 @@ module.exports = (pool) => {
                         totalExpenses, totalDeposits, totalWithdrawals,
                         expectedCashInDrawer, countedCash, difference,
                         unregisteredWeightEvents = 0, scaleConnectionEvents = 0, cancelledSales = 0,
-                        notes, isClosed = true
+                        notes, isClosed = true,
+                        // Campos offline-first para idempotencia
+                        global_id, terminal_id, local_op_seq, device_event_raw, created_local_utc
                     } = cashCut;
 
                     if (!shiftId || !branchId || countedCash === undefined) {
@@ -339,7 +341,7 @@ module.exports = (pool) => {
 
                     const { start_time: startTime, end_time: endTime } = shiftResult.rows[0];
 
-                    // Insert cash cut record
+                    // ✅ UPSERT cash cut record con global_id para idempotencia
                     const insertResult = await client.query(
                         `INSERT INTO cash_cuts (
                             tenant_id, branch_id, shift_id, employee_id,
@@ -350,9 +352,16 @@ module.exports = (pool) => {
                             total_expenses, total_deposits, total_withdrawals,
                             expected_cash_in_drawer, counted_cash, difference,
                             unregistered_weight_events, scale_connection_events, cancelled_sales,
-                            notes, is_closed
+                            notes, is_closed,
+                            global_id, terminal_id, local_op_seq, device_event_raw, created_local_utc
                         )
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
+                        ON CONFLICT (global_id) WHERE global_id IS NOT NULL
+                        DO UPDATE SET
+                            counted_cash = EXCLUDED.counted_cash,
+                            difference = EXCLUDED.difference,
+                            notes = EXCLUDED.notes,
+                            synced_at = NOW()
                         RETURNING *`,
                         [
                             tenantId, branchId, shiftId, employeeId || null,
@@ -373,7 +382,12 @@ module.exports = (pool) => {
                             scaleConnectionEvents,
                             cancelledSales,
                             notes || null,
-                            isClosed
+                            isClosed,
+                            global_id,
+                            terminal_id,
+                            local_op_seq,
+                            device_event_raw,
+                            created_local_utc
                         ]
                     );
 
