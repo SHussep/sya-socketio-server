@@ -79,6 +79,7 @@ const employeeBranchesRoutes = require('./routes/employee_branches')(pool); // R
 const employeeRolesRoutes = require('./routes/employee_roles'); // Rutas para gestionar roles y permisos
 const employeesRoutes = require('./routes/employees')(pool); // Rutas de empleados con sync-role endpoint
 const customersRoutes = require('./routes/customers'); // Rutas de sincronización de clientes
+const creditPaymentsRoutes = require('./routes/credit-payments'); // Rutas de pagos de crédito
 const suspiciousWeighingLogsRoutes = require('./routes/suspiciousWeighingLogs'); // Rutas de Guardian logs de báscula
 const scaleDisconnectionLogsRoutes = require('./routes/scaleDisconnectionLogs'); // Rutas de eventos de desconexión de báscula
 const employeeMetricsRoutes = require('./routes/employeeMetrics'); // Rutas de métricas diarias de empleados
@@ -333,6 +334,7 @@ app.use('/api/employees', employeesRoutes); // Rutas de sincronización de emple
 app.use('/api/cancelaciones', cancelacionesRoutes(pool)); // Rutas de cancelaciones bitácora con sync offline-first
 app.use('/api/employee-roles', employeeRolesRoutes); // Rutas para gestionar roles y permisos
 app.use('/api/customers', customersRoutes(pool)); // Rutas de sincronización de clientes
+app.use('/api/credit-payments', creditPaymentsRoutes(pool)); // Rutas de pagos de crédito
 app.use('/api/suspicious-weighing-logs', suspiciousWeighingLogsRoutes(pool)); // Rutas de Guardian logs de báscula
 app.use('/api/scale-disconnection-logs', scaleDisconnectionLogsRoutes(pool)); // Rutas de eventos de desconexión de báscula
 app.use('/api/employee-metrics', employeeMetricsRoutes(pool)); // Rutas de métricas diarias de empleados

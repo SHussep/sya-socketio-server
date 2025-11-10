@@ -71,6 +71,7 @@ module.exports = (pool) => {
                 phone,
                 email,
                 address,
+                has_credit,
                 credit_limit,
                 current_balance,
                 notes,
@@ -110,16 +111,17 @@ module.exports = (pool) => {
             const result = await pool.query(
                 `INSERT INTO customers (
                     tenant_id, nombre, telefono, correo, direccion,
-                    credito_limite, saldo_deudor, nota, porcentaje_descuento,
+                    tiene_credito, credito_limite, saldo_deudor, nota, porcentaje_descuento,
                     global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw,
                     is_system_generic, synced, created_at, updated_at
                  )
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::uuid, $11::uuid, $12, $13, $14, FALSE, TRUE, NOW(), NOW())
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::uuid, $12::uuid, $13, $14, $15, FALSE, TRUE, NOW(), NOW())
                  ON CONFLICT (global_id) DO UPDATE
                  SET nombre = EXCLUDED.nombre,
                      telefono = EXCLUDED.telefono,
                      correo = EXCLUDED.correo,
                      direccion = EXCLUDED.direccion,
+                     tiene_credito = EXCLUDED.tiene_credito,
                      credito_limite = EXCLUDED.credito_limite,
                      saldo_deudor = EXCLUDED.saldo_deudor,
                      nota = EXCLUDED.nota,
@@ -132,6 +134,7 @@ module.exports = (pool) => {
                     phone || null,
                     email || null,
                     address || null,
+                    has_credit || false,
                     credit_limit || 0,
                     current_balance || 0,
                     notes || null,
