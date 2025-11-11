@@ -73,9 +73,9 @@ CREATE INDEX IF NOT EXISTS idx_repartidor_assignments_repartidor_shift ON repart
 CREATE INDEX IF NOT EXISTS idx_repartidor_assignments_status ON repartidor_assignments(status);
 CREATE INDEX IF NOT EXISTS idx_repartidor_assignments_needs_update ON repartidor_assignments(needs_update);
 
--- 7. Agregar constraint UNIQUE en sale_id (relación 1:1)
-ALTER TABLE repartidor_assignments DROP CONSTRAINT IF EXISTS unique_repartidor_assignments_sale;
-ALTER TABLE repartidor_assignments ADD CONSTRAINT unique_repartidor_assignments_sale UNIQUE(sale_id);
+-- 7. Constraint UNIQUE en sale_id (se maneja en migration 096 de forma segura)
+-- Removido de aquí porque puede fallar si hay duplicados en producción
+-- Ver: 096_fix_repartidor_assignments_constraint.sql
 
 -- 8. Comentarios de documentación
 COMMENT ON COLUMN repartidor_assignments.assigned_quantity IS 'Cantidad ORIGINAL asignada (no cambia, readonly)';
