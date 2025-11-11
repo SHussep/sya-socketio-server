@@ -167,17 +167,18 @@ module.exports = (pool) => {
     router.post('/sync', async (req, res) => {
         try {
             const {
-                tenantId, branchId, employeeId, category, description, amount, userEmail, fechaGasto, localShiftId,
+                tenantId, branchId, employeeId, category, description, amount, userEmail,
+                payment_type_id, expense_date_utc,  // ✅ NUEVO: payment_type_id es REQUERIDO, expense_date_utc ya en UTC
                 // ✅ OFFLINE-FIRST FIELDS
                 global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw
             } = req.body;
 
-            console.log(`[Sync/Expenses] Desktop sync - Tenant: ${tenantId}, Branch: ${branchId}, Category: ${category}, FechaGasto: ${fechaGasto}, LocalShiftId: ${localShiftId}`);
+            console.log(`[Sync/Expenses] Desktop sync - Tenant: ${tenantId}, Branch: ${branchId}, Category: ${category}, PaymentType: ${payment_type_id}, ExpenseDateUTC: ${expense_date_utc}`);
             console.log(`[Sync/Expenses] Received amount: ${amount} (type: ${typeof amount})`);
             console.log(`[Sync/Expenses] 🔐 Offline-First - GlobalId: ${global_id}, TerminalId: ${terminal_id}, LocalOpSeq: ${local_op_seq}`);
 
-            if (!tenantId || !branchId || !category || amount === null || amount === undefined || !global_id) {
-                return res.status(400).json({ success: false, message: 'Datos incompletos (tenantId, branchId, category, amount, global_id requeridos)' });
+            if (!tenantId || !branchId || !category || amount === null || amount === undefined || !global_id || !payment_type_id) {
+                return res.status(400).json({ success: false, message: 'Datos incompletos (tenantId, branchId, category, amount, payment_type_id, global_id requeridos)' });
             }
 
             // Convertir amount a número si viene como string
@@ -216,16 +217,15 @@ module.exports = (pool) => {
                 console.log(`[Sync/Expenses] Categoría creada: ${category} (ID: ${categoryId})`);
             }
 
-            // ✅ CRITICAL FIX: ALWAYS use server time (UTC now)
-            // NEVER trust client-provided timestamps - they can be in different timezones
-            // Server timestamp is the source of truth
-            const expenseDate = new Date().toISOString();
-            console.log(`[Sync/Expenses] 📅 Using server UTC timestamp: ${expenseDate}`);
+            // ✅ Use client-provided UTC timestamp (already converted to UTC by Desktop)
+            // Desktop sends expense_date_utc in ISO 8601 format (YYYY-MM-DDTHH:mm:ss.sssZ)
+            const expenseDate = expense_date_utc || new Date().toISOString();
+            console.log(`[Sync/Expenses] 📅 Using expense timestamp: ${expenseDate}`);
 
             // ✅ IDEMPOTENTE: INSERT con ON CONFLICT (global_id) DO UPDATE
             const result = await pool.query(
                 `INSERT INTO expenses (
-                    tenant_id, branch_id, employee_id, local_shift_id, category_id, description, amount, expense_date,
+                    tenant_id, branch_id, employee_id, payment_type_id, category_id, description, amount, expense_date,
                     global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw,
                     synced, synced_at
                  )
@@ -234,26 +234,27 @@ module.exports = (pool) => {
                  SET amount = EXCLUDED.amount,
                      description = EXCLUDED.description,
                      expense_date = EXCLUDED.expense_date,
+                     payment_type_id = EXCLUDED.payment_type_id,
                      synced_at = NOW()
                  RETURNING *`,
                 [
                     tenantId,
                     branchId,
                     finalEmployeeId,
-                    localShiftId || null,
-                    categoryId,
-                    description || '',
-                    numericAmount,
-                    expenseDate,
-                    global_id,                    // UUID from Desktop
-                    terminal_id,                  // UUID from Desktop
-                    local_op_seq,                 // Sequence number from Desktop
-                    created_local_utc,            // ISO 8601 timestamp from Desktop
-                    device_event_raw              // Raw .NET ticks from Desktop
+                    payment_type_id,              // ✅ NUEVO (posición $4)
+                    categoryId,                   // ahora $5
+                    description || '',            // ahora $6
+                    numericAmount,                // ahora $7
+                    expenseDate,                  // ahora $8
+                    global_id,                    // ahora $9 - UUID from Desktop
+                    terminal_id,                  // ahora $10 - UUID from Desktop
+                    local_op_seq,                 // ahora $11 - Sequence number from Desktop
+                    created_local_utc,            // ahora $12 - ISO 8601 timestamp from Desktop
+                    device_event_raw              // ahora $13 - Raw .NET ticks from Desktop
                 ]
             );
 
-            console.log(`[Sync/Expenses] ✅ Gasto sincronizado: ${category} - $${numericAmount} | LocalShiftId: ${localShiftId}`);
+            console.log(`[Sync/Expenses] ✅ Gasto sincronizado: ${category} - $${numericAmount} | PaymentType: ${payment_type_id}`);
 
             // Asegurar que amount es un número en la respuesta
             const responseData = result.rows[0];
