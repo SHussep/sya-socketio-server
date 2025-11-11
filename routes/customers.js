@@ -198,5 +198,175 @@ module.exports = (pool) => {
         }
     });
 
+    // PUT /api/customers/:id - Actualizar cliente existente desde Desktop
+    router.put('/:id', async (req, res) => {
+        try {
+            const { id } = req.params;
+            const {
+                tenant_id,
+                name,
+                phone,
+                phone_secondary,
+                email,
+                address,
+                has_credit,
+                credit_limit,
+                notes,
+                discount_percentage,
+                tipo_descuento,
+                monto_descuento_fijo,
+                aplicar_redondeo,
+                last_modified_local_utc
+            } = req.body;
+
+            console.log(`[Customers/Update] 🔄 Actualizando cliente ${id} - Tenant: ${tenant_id}`);
+
+            // Validar que el cliente pertenece al tenant
+            const checkResult = await pool.query(
+                'SELECT id FROM customers WHERE id = $1 AND tenant_id = $2',
+                [id, tenant_id]
+            );
+
+            if (checkResult.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Cliente no encontrado o no pertenece al tenant'
+                });
+            }
+
+            // ⚠️ NO permitir modificar el cliente genérico
+            const genericCheck = await pool.query(
+                'SELECT is_system_generic FROM customers WHERE id = $1',
+                [id]
+            );
+
+            if (genericCheck.rows[0]?.is_system_generic) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'No se puede modificar el cliente genérico del sistema'
+                });
+            }
+
+            // UPDATE cliente
+            const result = await pool.query(
+                `UPDATE customers
+                 SET nombre = $1,
+                     telefono = $2,
+                     telefono_sec = $3,
+                     correo = $4,
+                     direccion = $5,
+                     tiene_credito = $6,
+                     credito_limite = $7,
+                     nota = $8,
+                     porcentaje_descuento = $9,
+                     tipo_descuento = $10,
+                     monto_descuento_fijo = $11,
+                     aplicar_redondeo = $12,
+                     updated_at = NOW()
+                 WHERE id = $13 AND tenant_id = $14
+                 RETURNING *`,
+                [
+                    name,
+                    phone || null,
+                    phone_secondary || null,
+                    email || null,
+                    address || null,
+                    has_credit || false,
+                    credit_limit || 0,
+                    notes || null,
+                    discount_percentage || 0,
+                    tipo_descuento || 0,
+                    monto_descuento_fijo || 0,
+                    aplicar_redondeo || false,
+                    id,
+                    tenant_id
+                ]
+            );
+
+            const customer = result.rows[0];
+
+            console.log(`[Customers/Update] ✅ Cliente ${customer.nombre} (ID: ${customer.id}) actualizado exitosamente`);
+
+            res.json({
+                success: true,
+                message: 'Cliente actualizado exitosamente',
+                data: {
+                    id: customer.id,
+                    name: customer.nombre,
+                    updated_at: customer.updated_at
+                }
+            });
+        } catch (error) {
+            console.error('[Customers/Update] ❌ Error:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Error al actualizar cliente',
+                error: error.message
+            });
+        }
+    });
+
+    // PATCH /api/customers/:id/deactivate - Soft delete (desactivar cliente)
+    router.patch('/:id/deactivate', async (req, res) => {
+        try {
+            const { id } = req.params;
+            const { tenant_id, last_modified_local_utc } = req.body;
+
+            console.log(`[Customers/Deactivate] 🗑️ Desactivando cliente ${id} - Tenant: ${tenant_id}`);
+
+            // Validar que el cliente pertenece al tenant
+            const checkResult = await pool.query(
+                'SELECT id, is_system_generic FROM customers WHERE id = $1 AND tenant_id = $2',
+                [id, tenant_id]
+            );
+
+            if (checkResult.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Cliente no encontrado o no pertenece al tenant'
+                });
+            }
+
+            // ⚠️ NO permitir desactivar el cliente genérico
+            if (checkResult.rows[0].is_system_generic) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'No se puede desactivar el cliente genérico del sistema'
+                });
+            }
+
+            // Soft delete: marcar como inactivo
+            const result = await pool.query(
+                `UPDATE customers
+                 SET activo = FALSE,
+                     updated_at = NOW()
+                 WHERE id = $1 AND tenant_id = $2
+                 RETURNING id, nombre, activo`,
+                [id, tenant_id]
+            );
+
+            const customer = result.rows[0];
+
+            console.log(`[Customers/Deactivate] ✅ Cliente ${customer.nombre} (ID: ${customer.id}) desactivado exitosamente`);
+
+            res.json({
+                success: true,
+                message: 'Cliente desactivado exitosamente',
+                data: {
+                    id: customer.id,
+                    name: customer.nombre,
+                    activo: customer.activo
+                }
+            });
+        } catch (error) {
+            console.error('[Customers/Deactivate] ❌ Error:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Error al desactivar cliente',
+                error: error.message
+            });
+        }
+    });
+
     return router;
 };
