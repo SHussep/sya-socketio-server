@@ -57,6 +57,7 @@ const restoreRoutes = require('./routes/restore');
 const backupRoutes = require('./routes/backup');
 const authRoutes = require('./routes/auth')(pool); // Pasar pool al módulo
 const createRepartidorAssignmentRoutes = require('./routes/repartidor_assignments'); // Rutas de asignaciones a repartidores
+const createRepartidorReturnRoutes = require('./routes/repartidor_returns'); // Rutas de devoluciones de repartidores
 const createRepartidorDebtsRoutes = require('./routes/repartidor_debts'); // Rutas de deudas de repartidores
 const notificationRoutes = require('./routes/notifications'); // Rutas de notificaciones FCM
 const { initializeFirebase } = require('./utils/firebaseAdmin'); // Firebase Admin SDK
@@ -314,8 +315,10 @@ let stats = {
 // INICIALIZAR RUTAS CON SOCKET.IO
 // ═══════════════════════════════════════════════════════════════
 const repartidorAssignmentRoutes = createRepartidorAssignmentRoutes(io);
+const repartidorReturnRoutes = createRepartidorReturnRoutes(io);
 const repartidorDebtsRoutes = createRepartidorDebtsRoutes(io);
 app.use('/api/repartidor-assignments', repartidorAssignmentRoutes);
+app.use('/api/repartidor-returns', repartidorReturnRoutes);
 app.use('/api/repartidor-liquidations', repartidorAssignmentRoutes);
 app.use('/api/repartidor-debts', repartidorDebtsRoutes);
 

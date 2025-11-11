@@ -16,27 +16,27 @@ function createRepartidorAssignmentRoutes(io) {
   const router = express.Router();
 
   // ═══════════════════════════════════════════════════════════════
-  // POST /api/repartidor-assignments
-  // Crear una nueva asignación de kilos a un repartidor (desde Desktop sync)
+  // POST /api/repartidor-assignments/sync
+  // Sincronizar asignación desde Desktop (idempotente con global_id)
+  // Esquema normalizado 3NF - Sin redundancia
   // ═══════════════════════════════════════════════════════════════
-  router.post('/', async (req, res) => {
+  router.post('/sync', async (req, res) => {
     const {
-      // Support both camelCase (Desktop) and snake_case (old format)
-      saleId, sale_id,
-      employeeId, employee_id,
-      branchId, branch_id,
-      tenantId, tenant_id,
-      cantidadAsignada, cantidad_asignada,
-      cantidadDevuelta, cantidad_devuelta,
-      montoAsignado, monto_asignado,
-      montoDevuelto, monto_devuelto,
-      estado,
-      fechaAsignacion, fecha_asignacion,
-      fechaDevoluciones, fecha_devoluciones,
-      fechaLiquidacion, fecha_liquidacion,
-      turnoRepartidorId, turno_repartidor_id,
+      tenant_id,
+      branch_id,
+      sale_id,
+      employee_id,
+      created_by_employee_id,
+      shift_id,
+      repartidor_shift_id,
+      assigned_quantity,
+      assigned_amount,
+      unit_price,
+      status,
+      fecha_asignacion,
+      fecha_liquidacion,
       observaciones,
-      // ✅ OFFLINE-FIRST FIELDS
+      // Offline-first fields
       global_id,
       terminal_id,
       local_op_seq,
@@ -45,152 +45,120 @@ function createRepartidorAssignmentRoutes(io) {
     } = req.body;
 
     try {
-      // Normalize field names (prefer camelCase)
-      const normalizedSaleId = saleId || sale_id;
-      const normalizedEmployeeId = employeeId || employee_id;
-      const normalizedBranchId = branchId || branch_id;
-      const normalizedTenantId = tenantId || tenant_id;
-      const normalizedCantidadAsignada = cantidadAsignada || cantidad_asignada;
-      const normalizedCantidadDevuelta = cantidadDevuelta || cantidad_devuelta || 0;
-      const normalizedMontoAsignado = montoAsignado || monto_asignado;
-      const normalizedMontoDevuelto = montoDevuelto || monto_devuelto || 0;
-      const normalizedEstado = estado || 'asignada';
-      const normalizedFechaAsignacion = fechaAsignacion || fecha_asignacion;
-      const normalizedFechaDevoluciones = fechaDevoluciones || fecha_devoluciones || null;
-      const normalizedFechaLiquidacion = fechaLiquidacion || fecha_liquidacion || null;
-      const normalizedTurnoRepartidorId = turnoRepartidorId || turno_repartidor_id || null;
-
-      console.log('[RepartidorAssignments] 📦 POST /api/repartidor-assignments - Crear asignación');
-      console.log(`  Repartidor: ${normalizedEmployeeId}, Sale: ${normalizedSaleId}, Kilos: ${normalizedCantidadAsignada}, Monto: $${normalizedMontoAsignado}`);
+      console.log('[RepartidorAssignments] 📦 POST /api/repartidor-assignments/sync');
+      console.log(`  GlobalId: ${global_id}, Repartidor: ${employee_id}, Sale: ${sale_id}, Quantity: ${assigned_quantity} kg`);
 
       // Validar campos requeridos
-      if (!normalizedTenantId || !normalizedBranchId || !normalizedSaleId || !normalizedEmployeeId) {
+      if (!tenant_id || !branch_id || !sale_id || !employee_id || !created_by_employee_id || !shift_id) {
         return res.status(400).json({
           success: false,
-          message: 'tenantId, branchId, saleId y employeeId son requeridos'
+          message: 'tenant_id, branch_id, sale_id, employee_id, created_by_employee_id, shift_id son requeridos'
         });
       }
 
-      if (!normalizedCantidadAsignada || normalizedCantidadAsignada <= 0) {
+      if (!assigned_quantity || assigned_quantity <= 0) {
         return res.status(400).json({
           success: false,
-          message: 'cantidadAsignada debe ser mayor que 0'
+          message: 'assigned_quantity debe ser mayor que 0'
         });
       }
 
-      if (!normalizedMontoAsignado || normalizedMontoAsignado <= 0) {
+      if (!assigned_amount || assigned_amount <= 0) {
         return res.status(400).json({
           success: false,
-          message: 'montoAsignado debe ser mayor que 0'
+          message: 'assigned_amount debe ser mayor que 0'
+        });
+      }
+
+      if (!global_id) {
+        return res.status(400).json({
+          success: false,
+          message: 'global_id es requerido para idempotencia'
         });
       }
 
       // Verificar que la venta existe
       const saleCheck = await pool.query(
         'SELECT id FROM sales WHERE id = $1 AND tenant_id = $2',
-        [normalizedSaleId, normalizedTenantId]
+        [sale_id, tenant_id]
       );
 
       if (saleCheck.rows.length === 0) {
         return res.status(404).json({
           success: false,
-          message: `Venta ${normalizedSaleId} no encontrada en tenant ${normalizedTenantId}`
+          message: `Venta ${sale_id} no encontrada en tenant ${tenant_id}`
         });
       }
 
-      // Verificar que el empleado existe
-      const employeeCheck = await pool.query(
-        'SELECT id FROM employees WHERE id = $1 AND tenant_id = $2',
-        [normalizedEmployeeId, normalizedTenantId]
-      );
-
-      if (employeeCheck.rows.length === 0) {
-        return res.status(404).json({
-          success: false,
-          message: `Empleado ${normalizedEmployeeId} no encontrado en tenant ${normalizedTenantId}`
-        });
-      }
-
-      // ✅ IDEMPOTENTE: Insertar asignación con ON CONFLICT
+      // ✅ IDEMPOTENTE: Insertar con global_id único
+      // ON CONFLICT: Solo se permiten updates de status, fecha_liquidacion, observaciones
+      // Los datos originales (assigned_quantity, assigned_amount) NO cambian
       const query = `
         INSERT INTO repartidor_assignments (
           tenant_id, branch_id, sale_id, employee_id,
-          cantidad_asignada, cantidad_devuelta,
-          monto_asignado, monto_devuelto,
-          estado, fecha_asignacion, fecha_devoluciones, fecha_liquidacion,
-          turno_repartidor_id, observaciones, synced, created_at, updated_at,
-          global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw
+          created_by_employee_id, shift_id, repartidor_shift_id,
+          assigned_quantity, assigned_amount, unit_price,
+          status, fecha_asignacion, fecha_liquidacion, observaciones,
+          global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw,
+          synced, synced_at
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, true, NOW(), NOW(),
-          $15::uuid, $16::uuid, $17, $18, $19
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+          $15::uuid, $16::uuid, $17, $18, $19,
+          true, NOW()
         )
-        ON CONFLICT (global_id) DO UPDATE
-        SET cantidad_devuelta = EXCLUDED.cantidad_devuelta,
-            monto_devuelto = EXCLUDED.monto_devuelto,
-            estado = EXCLUDED.estado,
-            fecha_devoluciones = EXCLUDED.fecha_devoluciones,
+        ON CONFLICT (global_id, terminal_id) DO UPDATE
+        SET status = EXCLUDED.status,
             fecha_liquidacion = EXCLUDED.fecha_liquidacion,
             observaciones = EXCLUDED.observaciones,
-            updated_at = NOW()
+            synced = true,
+            synced_at = NOW()
         RETURNING *
       `;
 
       const result = await pool.query(query, [
-        normalizedTenantId,
-        normalizedBranchId,
-        normalizedSaleId,
-        normalizedEmployeeId,
-        parseFloat(normalizedCantidadAsignada),
-        parseFloat(normalizedCantidadDevuelta),
-        parseFloat(normalizedMontoAsignado),
-        parseFloat(normalizedMontoDevuelto),
-        normalizedEstado,
-        normalizedFechaAsignacion || new Date().toISOString(),
-        normalizedFechaDevoluciones,
-        normalizedFechaLiquidacion,
-        normalizedTurnoRepartidorId,
-        observaciones,
-        global_id || null,              // UUID from Desktop
-        terminal_id || null,            // UUID from Desktop
-        local_op_seq || null,           // Sequence number
-        created_local_utc || null,      // ISO 8601 timestamp
-        device_event_raw || null        // Raw .NET ticks
+        tenant_id,
+        branch_id,
+        sale_id,
+        employee_id,
+        created_by_employee_id,
+        shift_id,
+        repartidor_shift_id,
+        parseFloat(assigned_quantity),
+        parseFloat(assigned_amount),
+        parseFloat(unit_price),
+        status || 'pending',
+        fecha_asignacion || new Date().toISOString(),
+        fecha_liquidacion || null,
+        observaciones || null,
+        global_id,
+        terminal_id,
+        local_op_seq || null,
+        created_local_utc || new Date().toISOString(),
+        device_event_raw || null
       ]);
 
       const assignment = result.rows[0];
 
       // Emitir evento en tiempo real
-      io.to(`branch_${normalizedBranchId}`).emit('assignment_created', {
+      io.to(`branch_${branch_id}`).emit('assignment_created', {
         assignment,
         timestamp: new Date().toISOString()
       });
 
-      console.log(`[RepartidorAssignments] ✅ Assignment created: ${assignment.cantidad_asignada} kg for employee ${normalizedEmployeeId} (sale ${normalizedSaleId})`);
+      console.log(`[RepartidorAssignments] ✅ Assignment synced: ${assignment.assigned_quantity} kg, GlobalId: ${global_id}`);
 
       res.status(201).json({
         success: true,
-        data: {
-          ...assignment,
-          cantidad_asignada: parseFloat(assignment.cantidad_asignada),
-          cantidad_devuelta: parseFloat(assignment.cantidad_devuelta),
-          cantidad_vendida: parseFloat(assignment.cantidad_vendida),
-          monto_asignado: parseFloat(assignment.monto_asignado),
-          monto_devuelto: parseFloat(assignment.monto_devuelto),
-          monto_vendido: parseFloat(assignment.monto_vendido),
-          fecha_asignacion: new Date(assignment.fecha_asignacion).toISOString(),
-          fecha_devoluciones: assignment.fecha_devoluciones ? new Date(assignment.fecha_devoluciones).toISOString() : null,
-          fecha_liquidacion: assignment.fecha_liquidacion ? new Date(assignment.fecha_liquidacion).toISOString() : null,
-          created_at: new Date(assignment.created_at).toISOString(),
-          updated_at: new Date(assignment.updated_at).toISOString()
-        },
-        message: 'Asignación creada exitosamente'
+        data: assignment,
+        message: 'Asignación sincronizada exitosamente'
       });
 
     } catch (error) {
-      console.error('[RepartidorAssignments] ❌ Error creando asignación:', error.message);
+      console.error('[RepartidorAssignments] ❌ Error sincronizando asignación:', error.message);
+      console.error(error.stack);
       res.status(500).json({
         success: false,
-        message: 'Error al crear asignación de repartidor',
+        message: 'Error al sincronizar asignación de repartidor',
         error: error.message
       });
     }
