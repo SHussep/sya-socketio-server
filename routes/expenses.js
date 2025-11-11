@@ -269,5 +269,150 @@ module.exports = (pool) => {
         }
     });
 
+    // PUT /api/expenses/:global_id - Actualizar gasto existente
+    router.put('/:global_id', async (req, res) => {
+        try {
+            const { global_id } = req.params;
+            const {
+                tenant_id,
+                category,
+                description,
+                amount,
+                payment_type_id,
+                expense_date_utc,
+                last_modified_local_utc
+            } = req.body;
+
+            console.log(`[Expenses/Update] 🔄 Actualizando gasto ${global_id} - Tenant: ${tenant_id}`);
+
+            // Validar campos requeridos
+            if (!tenant_id || !category || amount === null || !payment_type_id || !global_id) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Datos incompletos (tenant_id, category, amount, payment_type_id, global_id requeridos)'
+                });
+            }
+
+            // Validar que el gasto existe y pertenece al tenant
+            const checkResult = await pool.query(
+                'SELECT id FROM expenses WHERE global_id = $1::uuid AND tenant_id = $2',
+                [global_id, tenant_id]
+            );
+
+            if (checkResult.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Gasto no encontrado o no pertenece al tenant'
+                });
+            }
+
+            // Buscar o crear categoría
+            let categoryId = null;
+            const catResult = await pool.query(
+                'SELECT id FROM expense_categories WHERE LOWER(name) = LOWER($1) AND tenant_id = $2',
+                [category, tenant_id]
+            );
+
+            if (catResult.rows.length > 0) {
+                categoryId = catResult.rows[0].id;
+            } else {
+                const newCat = await pool.query(
+                    'INSERT INTO expense_categories (tenant_id, name) VALUES ($1, $2) RETURNING id',
+                    [tenant_id, category]
+                );
+                categoryId = newCat.rows[0].id;
+                console.log(`[Expenses/Update] Categoría creada: ${category} (ID: ${categoryId})`);
+            }
+
+            // Actualizar gasto
+            const numericAmount = parseFloat(amount);
+            const updateResult = await pool.query(
+                `UPDATE expenses
+                 SET category_id = $1,
+                     description = $2,
+                     amount = $3,
+                     payment_type_id = $4,
+                     expense_date = $5,
+                     updated_at = NOW()
+                 WHERE global_id = $6::uuid AND tenant_id = $7
+                 RETURNING *`,
+                [
+                    categoryId,
+                    description || '',
+                    numericAmount,
+                    payment_type_id,
+                    expense_date_utc || new Date().toISOString(),
+                    global_id,
+                    tenant_id
+                ]
+            );
+
+            console.log(`[Expenses/Update] ✅ Gasto ${global_id} actualizado exitosamente`);
+
+            const responseData = updateResult.rows[0];
+            if (responseData) {
+                responseData.amount = parseFloat(responseData.amount);
+            }
+
+            res.json({ success: true, data: responseData });
+        } catch (error) {
+            console.error('[Expenses/Update] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al actualizar gasto',
+                error: error.message
+            });
+        }
+    });
+
+    // PATCH /api/expenses/:global_id/deactivate - Soft delete (marcar como eliminado)
+    router.patch('/:global_id/deactivate', async (req, res) => {
+        try {
+            const { global_id } = req.params;
+            const { tenant_id, last_modified_local_utc } = req.body;
+
+            console.log(`[Expenses/Deactivate] 🗑️ Desactivando gasto ${global_id} - Tenant: ${tenant_id}`);
+
+            // Validar que el gasto existe y pertenece al tenant
+            const checkResult = await pool.query(
+                'SELECT id FROM expenses WHERE global_id = $1::uuid AND tenant_id = $2',
+                [global_id, tenant_id]
+            );
+
+            if (checkResult.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Gasto no encontrado o no pertenece al tenant'
+                });
+            }
+
+            // Soft delete: marcar como inactivo
+            const result = await pool.query(
+                `UPDATE expenses
+                 SET is_active = false,
+                     deleted_at = NOW(),
+                     updated_at = NOW()
+                 WHERE global_id = $1::uuid AND tenant_id = $2
+                 RETURNING *`,
+                [global_id, tenant_id]
+            );
+
+            console.log(`[Expenses/Deactivate] ✅ Gasto ${global_id} desactivado exitosamente`);
+
+            res.json({
+                success: true,
+                message: 'Gasto desactivado correctamente',
+                data: result.rows[0]
+            });
+        } catch (error) {
+            console.error('[Expenses/Deactivate] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al desactivar gasto',
+                error: error.message
+            });
+        }
+    });
+
     return router;
 };
