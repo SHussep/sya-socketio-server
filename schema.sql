@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     name VARCHAR(100) NOT NULL UNIQUE,
     max_branches INTEGER NOT NULL DEFAULT 1,
     max_devices INTEGER NOT NULL DEFAULT 1,
+    max_devices_per_branch INTEGER NOT NULL DEFAULT 3,
     max_employees INTEGER,
     features JSONB,
     is_active BOOLEAN DEFAULT TRUE,

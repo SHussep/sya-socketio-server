@@ -8,11 +8,11 @@
 
 -- ========== SUBSCRIPTIONS ==========
 -- Plans available for tenants
-INSERT INTO subscriptions (name, max_branches, max_devices, max_employees, is_active)
+INSERT INTO subscriptions (name, max_branches, max_devices, max_devices_per_branch, max_employees, is_active)
 VALUES
-    ('Basic', 1, 2, 10, true),
-    ('Pro', 5, 10, 50, true),
-    ('Enterprise', 999, 999, 999, true)
+    ('Basic', 1, 2, 2, 10, true),
+    ('Pro', 5, 10, 5, 50, true),
+    ('Enterprise', 999, 999, 999, 999, true)
 ON CONFLICT (name) DO NOTHING;
 
 -- ========== ROLES ==========
