@@ -526,6 +526,39 @@ async function runMigrations() {
                 console.log('[Schema] ✅ Column added successfully');
             }
 
+            // 2.5. Clean user data if requested (for testing)
+            if (process.env.CLEAN_DATABASE_ON_START === 'true') {
+                console.log('[Schema] 🗑️  CLEAN_DATABASE_ON_START=true - Cleaning user data...');
+                await client.query('BEGIN');
+                try {
+                    // Truncate in correct order to respect foreign keys
+                    // Children first, parents last
+                    await client.query('TRUNCATE TABLE ventas_detalle CASCADE');
+                    await client.query('TRUNCATE TABLE ventas CASCADE');
+                    await client.query('TRUNCATE TABLE credit_payments CASCADE');
+                    await client.query('TRUNCATE TABLE repartidor_returns CASCADE');
+                    await client.query('TRUNCATE TABLE repartidor_assignments CASCADE');
+                    await client.query('TRUNCATE TABLE expenses CASCADE');
+                    await client.query('TRUNCATE TABLE cash_cuts CASCADE');
+                    await client.query('TRUNCATE TABLE shifts CASCADE');
+                    await client.query('TRUNCATE TABLE employee_branches CASCADE');
+                    await client.query('TRUNCATE TABLE employees RESTART IDENTITY CASCADE');
+                    await client.query('TRUNCATE TABLE devices CASCADE');
+                    await client.query('TRUNCATE TABLE customers RESTART IDENTITY CASCADE');
+                    await client.query('TRUNCATE TABLE products RESTART IDENTITY CASCADE');
+                    await client.query('TRUNCATE TABLE branches RESTART IDENTITY CASCADE');
+                    await client.query('TRUNCATE TABLE tenants RESTART IDENTITY CASCADE');
+
+                    // Do NOT truncate: subscriptions, roles (seeds)
+
+                    await client.query('COMMIT');
+                    console.log('[Schema] ✅ User data cleaned successfully (seeds preserved)');
+                } catch (cleanError) {
+                    await client.query('ROLLBACK');
+                    console.error('[Schema] ❌ Error cleaning data:', cleanError.message);
+                }
+            }
+
             // 3. Always run seeds (idempotent - uses ON CONFLICT)
             console.log('[Seeds] 📝 Running seeds.sql...');
             const seedsPath = path.join(__dirname, 'seeds.sql');
