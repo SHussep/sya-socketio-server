@@ -79,7 +79,7 @@ function createRepartidorAssignmentRoutes(io) {
 
       // Verificar que la venta existe
       const saleCheck = await pool.query(
-        'SELECT id FROM sales WHERE id = $1 AND tenant_id = $2',
+        'SELECT id_venta FROM ventas WHERE id_venta = $1 AND tenant_id = $2',
         [sale_id, tenant_id]
       );
 
