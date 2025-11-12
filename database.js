@@ -527,12 +527,18 @@ async function runMigrations() {
             }
 
             // 2.5. Clean user data if requested (for testing)
+            console.log(`[Schema] 🔍 CLEAN_DATABASE_ON_START = "${process.env.CLEAN_DATABASE_ON_START}"`);
+
             if (process.env.CLEAN_DATABASE_ON_START === 'true') {
                 console.log('[Schema] 🗑️  CLEAN_DATABASE_ON_START=true - Cleaning user data...');
                 const cleanPath = path.join(__dirname, 'migrations', '999_clean_user_data.sql');
+                console.log(`[Schema] 📂 Clean script path: ${cleanPath}`);
+                console.log(`[Schema] 📂 File exists: ${fs.existsSync(cleanPath)}`);
+
                 if (fs.existsSync(cleanPath)) {
                     try {
                         const cleanSql = fs.readFileSync(cleanPath, 'utf8');
+                        console.log('[Schema] 📝 Executing clean script...');
                         await client.query(cleanSql);
                         console.log('[Schema] ✅ User data cleaned successfully (seeds preserved)');
                     } catch (cleanError) {
@@ -542,6 +548,8 @@ async function runMigrations() {
                 } else {
                     console.error('[Schema] ❌ Clean script not found: migrations/999_clean_user_data.sql');
                 }
+            } else {
+                console.log('[Schema] ℹ️  Database clean skipped (CLEAN_DATABASE_ON_START not set to "true")');
             }
 
             // 3. Always run seeds (idempotent - uses ON CONFLICT)
