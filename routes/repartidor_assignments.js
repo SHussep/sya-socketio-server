@@ -104,7 +104,7 @@ function createRepartidorAssignmentRoutes(io) {
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
           $15::uuid, $16::uuid, $17, $18, $19
         )
-        ON CONFLICT (global_id, terminal_id) DO UPDATE
+        ON CONFLICT (global_id) DO UPDATE
         SET status = EXCLUDED.status,
             fecha_liquidacion = EXCLUDED.fecha_liquidacion,
             observaciones = EXCLUDED.observaciones
