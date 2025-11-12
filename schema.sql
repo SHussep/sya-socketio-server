@@ -580,7 +580,7 @@ CREATE TABLE IF NOT EXISTS repartidor_assignments (
     -- Relations
     tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
-    id_venta INTEGER NOT NULL REFERENCES ventas(id_venta) ON DELETE CASCADE,
+    venta_id INTEGER NOT NULL REFERENCES ventas(id_venta) ON DELETE CASCADE,
     employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
     created_by_employee_id INTEGER REFERENCES employees(id) ON DELETE RESTRICT,
     shift_id INTEGER REFERENCES shifts(id) ON DELETE SET NULL,

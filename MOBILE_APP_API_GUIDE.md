@@ -242,7 +242,7 @@ headers: {
   "data": [
     {
       "id": 1,
-      "id_venta": 123,
+      "venta_id": 123,
       "employee_id": 5,
       "assigned_quantity": 250.00,
       "assigned_amount": 6250.00,
@@ -265,7 +265,7 @@ headers: {
 - `liquidated` - Liquidado
 - `cancelled` - Cancelado
 
-**Estado:** ✅ ACTUALIZADO - Usa `id_venta` (español)
+**Estado:** ✅ ACTUALIZADO - Usa `venta_id` (español)
 
 ---
 
@@ -332,7 +332,7 @@ headers: {
     {
       "id": 1,
       "assignment_id": 1,
-      "id_venta": 123,
+      "venta_id": 123,
       "quantity": 10.00,
       "unit_price": 25.00,
       "amount": 250.00,
@@ -350,7 +350,7 @@ headers: {
 }
 ```
 
-**Estado:** ✅ ACTUALIZADO - Usa `id_venta` (español)
+**Estado:** ✅ ACTUALIZADO - Usa `venta_id` (español)
 
 ---
 
@@ -607,7 +607,7 @@ class RepartidorAssignment {
       id: json['id'],
       tenantId: json['tenant_id'],
       branchId: json['branch_id'],
-      idVenta: json['id_venta'],
+      idVenta: json['venta_id'],  // Backend usa venta_id (foreign key)
       employeeId: json['employee_id'],
       createdByEmployeeId: json['created_by_employee_id'],
       shiftId: json['shift_id'],
@@ -837,7 +837,7 @@ class SyaApiService {
 | `sales.payment_method` | `ventas.tipo_pago_id` |
 | `sales.sale_type` | `ventas.venta_tipo_id` |
 | `sales_items` | `ventas_detalle` |
-| `repartidor_assignments.sale_id` | `repartidor_assignments.id_venta` |
+| `repartidor_assignments.sale_id` | `repartidor_assignments.venta_id` |
 
 ### Endpoints Obsoletos ❌
 
@@ -849,8 +849,8 @@ Estos endpoints **NO deben usarse** - aún referencian tablas antiguas:
 ### Endpoints Nuevos/Actualizados ✅
 
 - `GET /api/dashboard/summary` - ✅ Usa `ventas`
-- `GET /api/repartidor-assignments/employee/:id` - ✅ Usa `id_venta`
-- `POST /api/repartidor-returns/sync` - ✅ Usa `id_venta`
+- `GET /api/repartidor-assignments/employee/:id` - ✅ Usa `venta_id`
+- `POST /api/repartidor-returns/sync` - ✅ Usa `venta_id`
 - `POST /api/credit-payments/sync` - ✅ Nuevo
 - `GET /api/customers/with-credit` - ✅ Nuevo
 

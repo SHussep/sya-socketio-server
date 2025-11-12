@@ -95,7 +95,7 @@ function createRepartidorAssignmentRoutes(io) {
       // Los datos originales (assigned_quantity, assigned_amount) NO cambian
       const query = `
         INSERT INTO repartidor_assignments (
-          tenant_id, branch_id, id_venta, employee_id,
+          tenant_id, branch_id, venta_id, employee_id,
           created_by_employee_id, shift_id, repartidor_shift_id,
           assigned_quantity, assigned_amount, unit_price,
           status, fecha_asignacion, fecha_liquidacion, observaciones,
@@ -327,20 +327,16 @@ function createRepartidorAssignmentRoutes(io) {
       let query = `
         SELECT
           ra.id,
-          ra.id_venta,
+          ra.venta_id,
           ra.employee_id,
           e.full_name as employee_name,
           ra.branch_id,
           b.name as branch_name,
-          ra.cantidad_asignada,
-          ra.cantidad_devuelta,
-          ra.cantidad_vendida,
-          ra.monto_asignado,
-          ra.monto_devuelto,
-          ra.monto_vendido,
-          ra.estado,
+          ra.assigned_quantity,
+          ra.assigned_amount,
+          ra.unit_price,
+          ra.status,
           ra.fecha_asignacion,
-          ra.fecha_devoluciones,
           ra.fecha_liquidacion,
           ra.observaciones
         FROM repartidor_assignments ra
