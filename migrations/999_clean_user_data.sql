@@ -15,41 +15,97 @@ SET CONSTRAINTS ALL DEFERRED;
 -- PASO 1: Eliminar datos transaccionales (children first)
 -- ═══════════════════════════════════════════════════════════════════════════
 
-TRUNCATE TABLE ventas_detalle RESTART IDENTITY CASCADE;
-TRUNCATE TABLE ventas RESTART IDENTITY CASCADE;
-TRUNCATE TABLE credit_payments RESTART IDENTITY CASCADE;
-TRUNCATE TABLE repartidor_returns RESTART IDENTITY CASCADE;
-TRUNCATE TABLE repartidor_assignments RESTART IDENTITY CASCADE;
-TRUNCATE TABLE expenses RESTART IDENTITY CASCADE;
-TRUNCATE TABLE cash_cuts RESTART IDENTITY CASCADE;
-TRUNCATE TABLE shifts RESTART IDENTITY CASCADE;
+DO $$
+BEGIN
+    -- Truncate only tables that exist
+    IF EXISTS (SELECT FROM pg_tables WHERE tablename = 'ventas_detalle') THEN
+        TRUNCATE TABLE ventas_detalle RESTART IDENTITY CASCADE;
+    END IF;
+
+    IF EXISTS (SELECT FROM pg_tables WHERE tablename = 'ventas') THEN
+        TRUNCATE TABLE ventas RESTART IDENTITY CASCADE;
+    END IF;
+
+    IF EXISTS (SELECT FROM pg_tables WHERE tablename = 'credit_payments') THEN
+        TRUNCATE TABLE credit_payments RESTART IDENTITY CASCADE;
+    END IF;
+
+    IF EXISTS (SELECT FROM pg_tables WHERE tablename = 'repartidor_returns') THEN
+        TRUNCATE TABLE repartidor_returns RESTART IDENTITY CASCADE;
+    END IF;
+
+    IF EXISTS (SELECT FROM pg_tables WHERE tablename = 'repartidor_assignments') THEN
+        TRUNCATE TABLE repartidor_assignments RESTART IDENTITY CASCADE;
+    END IF;
+
+    IF EXISTS (SELECT FROM pg_tables WHERE tablename = 'expenses') THEN
+        TRUNCATE TABLE expenses RESTART IDENTITY CASCADE;
+    END IF;
+
+    IF EXISTS (SELECT FROM pg_tables WHERE tablename = 'cash_cuts') THEN
+        TRUNCATE TABLE cash_cuts RESTART IDENTITY CASCADE;
+    END IF;
+
+    IF EXISTS (SELECT FROM pg_tables WHERE tablename = 'shifts') THEN
+        TRUNCATE TABLE shifts RESTART IDENTITY CASCADE;
+    END IF;
+END $$;
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- PASO 2: Eliminar relaciones de empleados
 -- ═══════════════════════════════════════════════════════════════════════════
 
-TRUNCATE TABLE employee_branches RESTART IDENTITY CASCADE;
-TRUNCATE TABLE devices RESTART IDENTITY CASCADE;
+DO $$
+BEGIN
+    IF EXISTS (SELECT FROM pg_tables WHERE tablename = 'employee_branches') THEN
+        TRUNCATE TABLE employee_branches RESTART IDENTITY CASCADE;
+    END IF;
+
+    IF EXISTS (SELECT FROM pg_tables WHERE tablename = 'devices') THEN
+        TRUNCATE TABLE devices RESTART IDENTITY CASCADE;
+    END IF;
+END $$;
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- PASO 3: Eliminar empleados, clientes, productos
 -- ═══════════════════════════════════════════════════════════════════════════
 
-TRUNCATE TABLE employees RESTART IDENTITY CASCADE;
-TRUNCATE TABLE customers RESTART IDENTITY CASCADE;
-TRUNCATE TABLE products RESTART IDENTITY CASCADE;
+DO $$
+BEGIN
+    IF EXISTS (SELECT FROM pg_tables WHERE tablename = 'employees') THEN
+        TRUNCATE TABLE employees RESTART IDENTITY CASCADE;
+    END IF;
+
+    IF EXISTS (SELECT FROM pg_tables WHERE tablename = 'customers') THEN
+        TRUNCATE TABLE customers RESTART IDENTITY CASCADE;
+    END IF;
+
+    IF EXISTS (SELECT FROM pg_tables WHERE tablename = 'products') THEN
+        TRUNCATE TABLE products RESTART IDENTITY CASCADE;
+    END IF;
+END $$;
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- PASO 4: Eliminar sucursales
 -- ═══════════════════════════════════════════════════════════════════════════
 
-TRUNCATE TABLE branches RESTART IDENTITY CASCADE;
+DO $$
+BEGIN
+    IF EXISTS (SELECT FROM pg_tables WHERE tablename = 'branches') THEN
+        TRUNCATE TABLE branches RESTART IDENTITY CASCADE;
+    END IF;
+END $$;
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- PASO 5: Eliminar tenants (negocios)
 -- ═══════════════════════════════════════════════════════════════════════════
 
-TRUNCATE TABLE tenants RESTART IDENTITY CASCADE;
+DO $$
+BEGIN
+    IF EXISTS (SELECT FROM pg_tables WHERE tablename = 'tenants') THEN
+        TRUNCATE TABLE tenants RESTART IDENTITY CASCADE;
+    END IF;
+END $$;
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- NOTA: subscriptions y roles NO se eliminan (son seeds)
@@ -64,16 +120,51 @@ COMMIT;
 -- RESUMEN
 -- ═══════════════════════════════════════════════════════════════════════════
 
-SELECT
-    'Limpieza completada. Tablas vaciadas:' as mensaje,
-    (SELECT COUNT(*) FROM tenants) as tenants,
-    (SELECT COUNT(*) FROM branches) as branches,
-    (SELECT COUNT(*) FROM employees) as employees,
-    (SELECT COUNT(*) FROM devices) as devices,
-    (SELECT COUNT(*) FROM ventas) as ventas,
-    (SELECT COUNT(*) FROM customers) as customers;
+DO $$
+DECLARE
+    tenant_count INT := 0;
+    branch_count INT := 0;
+    employee_count INT := 0;
+    device_count INT := 0;
+    venta_count INT := 0;
+    customer_count INT := 0;
+    subscription_count INT := 0;
+    role_count INT := 0;
+BEGIN
+    -- Count only if tables exist
+    IF EXISTS (SELECT FROM pg_tables WHERE tablename = 'tenants') THEN
+        SELECT COUNT(*) INTO tenant_count FROM tenants;
+    END IF;
 
-SELECT
-    'Tablas maestras preservadas:' as mensaje,
-    (SELECT COUNT(*) FROM subscriptions) as subscriptions,
-    (SELECT COUNT(*) FROM roles) as roles;
+    IF EXISTS (SELECT FROM pg_tables WHERE tablename = 'branches') THEN
+        SELECT COUNT(*) INTO branch_count FROM branches;
+    END IF;
+
+    IF EXISTS (SELECT FROM pg_tables WHERE tablename = 'employees') THEN
+        SELECT COUNT(*) INTO employee_count FROM employees;
+    END IF;
+
+    IF EXISTS (SELECT FROM pg_tables WHERE tablename = 'devices') THEN
+        SELECT COUNT(*) INTO device_count FROM devices;
+    END IF;
+
+    IF EXISTS (SELECT FROM pg_tables WHERE tablename = 'ventas') THEN
+        SELECT COUNT(*) INTO venta_count FROM ventas;
+    END IF;
+
+    IF EXISTS (SELECT FROM pg_tables WHERE tablename = 'customers') THEN
+        SELECT COUNT(*) INTO customer_count FROM customers;
+    END IF;
+
+    IF EXISTS (SELECT FROM pg_tables WHERE tablename = 'subscriptions') THEN
+        SELECT COUNT(*) INTO subscription_count FROM subscriptions;
+    END IF;
+
+    IF EXISTS (SELECT FROM pg_tables WHERE tablename = 'roles') THEN
+        SELECT COUNT(*) INTO role_count FROM roles;
+    END IF;
+
+    RAISE NOTICE 'Limpieza completada - Tenants: %, Branches: %, Employees: %, Devices: %, Ventas: %, Customers: %',
+        tenant_count, branch_count, employee_count, device_count, venta_count, customer_count;
+    RAISE NOTICE 'Seeds preservados - Subscriptions: %, Roles: %', subscription_count, role_count;
+END $$;
