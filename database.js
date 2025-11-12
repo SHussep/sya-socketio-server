@@ -466,58 +466,68 @@ async function initializeDatabase() {
     }
 }
 
-// Execute migration files
+// Execute schema and seeds (replaces old migration system)
 async function runMigrations() {
     const fs = require('fs');
     const path = require('path');
 
     try {
-        console.log('[Migrations] 🔄 Running migrations...');
+        console.log('[Schema] 🔄 Initializing database schema...');
 
-        const migrationsDir = path.join(__dirname, 'migrations');
-        if (!fs.existsSync(migrationsDir)) {
-            console.log('[Migrations] ℹ️ Migrations directory not found, skipping');
-            return;
-        }
+        const client = await pool.connect();
 
-        const files = fs.readdirSync(migrationsDir)
-            .filter(f => f.endsWith('.sql'))
-            .sort();
+        try {
+            // 1. Check if database is empty (no tenants table exists)
+            const checkTable = await client.query(`
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'tenants'
+                );
+            `);
 
-        let successCount = 0;
-        let failureCount = 0;
+            const tablesExist = checkTable.rows[0].exists;
 
-        for (const file of files) {
-            const client = await pool.connect();
-            try {
-                const filePath = path.join(migrationsDir, file);
-                const sql = fs.readFileSync(filePath, 'utf8');
+            if (!tablesExist) {
+                console.log('[Schema] 📝 Database is empty - Running schema.sql...');
 
-                console.log(`[Migrations] 📝 Running: ${file}`);
-                // Each migration runs in its own transaction
-                await client.query('BEGIN');
-                await client.query(sql);
-                await client.query('COMMIT');
-                console.log(`[Migrations] ✅ Completed: ${file}`);
-                successCount++;
-            } catch (error) {
-                try {
-                    await client.query('ROLLBACK');
-                } catch (rollbackError) {
-                    // Ignore rollback errors
+                // Execute schema.sql
+                const schemaPath = path.join(__dirname, 'schema.sql');
+                if (fs.existsSync(schemaPath)) {
+                    const schemaSql = fs.readFileSync(schemaPath, 'utf8');
+                    await client.query('BEGIN');
+                    await client.query(schemaSql);
+                    await client.query('COMMIT');
+                    console.log('[Schema] ✅ Schema created successfully');
+                } else {
+                    console.error('[Schema] ❌ schema.sql not found!');
+                    throw new Error('schema.sql file missing');
                 }
-                console.error(`[Migrations] ❌ Error in ${file}:`, error.message);
-                failureCount++;
-                // Continue with next migration instead of throwing
-            } finally {
-                client.release();
+            } else {
+                console.log('[Schema] ℹ️ Database already initialized, skipping schema.sql');
             }
-        }
 
-        console.log(`[Migrations] ✅ All migrations completed (${successCount} successful, ${failureCount} failed)`);
+            // 2. Always run seeds (idempotent - uses ON CONFLICT)
+            console.log('[Seeds] 📝 Running seeds.sql...');
+            const seedsPath = path.join(__dirname, 'seeds.sql');
+            if (fs.existsSync(seedsPath)) {
+                const seedsSql = fs.readFileSync(seedsPath, 'utf8');
+                await client.query('BEGIN');
+                await client.query(seedsSql);
+                await client.query('COMMIT');
+                console.log('[Seeds] ✅ Seeds applied successfully');
+            } else {
+                console.error('[Seeds] ❌ seeds.sql not found!');
+            }
+
+            console.log('[Schema] ✅ Database initialization complete');
+
+        } finally {
+            client.release();
+        }
     } catch (error) {
-        console.error('[Migrations] ❌ Error running migrations:', error.message);
-        // Don't throw - let server start even if migrations fail
+        console.error('[Schema] ❌ Error initializing database:', error.message);
+        console.error(error.stack);
+        // Don't throw - let server start even if initialization fails
     }
 }
 
