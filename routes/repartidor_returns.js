@@ -241,7 +241,7 @@ function createRepartidorReturnRoutes(io) {
       let query = `
         SELECT
           r.*,
-          a.sale_id,
+          a.id_venta,
           a.assigned_quantity,
           a.assigned_amount,
           reg.full_name as registered_by_name

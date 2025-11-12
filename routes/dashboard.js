@@ -55,7 +55,7 @@ module.exports = (pool) => {
             // Construir filtros de fecha timezone-aware usando el timezone del branch
             // Las columnas ahora son TIMESTAMP WITH TIME ZONE
             // Cuando el cliente NO envía fechas, usamos CURRENT_DATE en el timezone del branch
-            let dateFilter = `DATE(sale_date AT TIME ZONE '${branchTimezone}') = DATE(NOW() AT TIME ZONE '${branchTimezone}')`;
+            let dateFilter = `DATE(fecha_venta_utc AT TIME ZONE '${branchTimezone}') = DATE(NOW() AT TIME ZONE '${branchTimezone}')`;
             let expenseDateFilter = `DATE(expense_date AT TIME ZONE '${branchTimezone}') = DATE(NOW() AT TIME ZONE '${branchTimezone}')`;
 
             if (start_date && end_date) {
@@ -76,12 +76,12 @@ module.exports = (pool) => {
                 console.log(`[Dashboard Summary] Converted dates - start: ${startDateISO}, end: ${endDateISO}`);
 
                 // PostgreSQL maneja automáticamente la conversión de timezone para timestamptz
-                dateFilter = `sale_date >= '${startDateISO}'::timestamptz AND sale_date < '${endDateISO}'::timestamptz`;
+                dateFilter = `fecha_venta_utc >= '${startDateISO}'::timestamptz AND fecha_venta_utc < '${endDateISO}'::timestamptz`;
                 expenseDateFilter = `expense_date >= '${startDateISO}'::timestamptz AND expense_date < '${endDateISO}'::timestamptz`;
             }
 
             // Total de ventas
-            let salesQuery = `SELECT COALESCE(SUM(total_amount), 0) as total FROM sales WHERE tenant_id = $1 AND ${dateFilter}`;
+            let salesQuery = `SELECT COALESCE(SUM(total), 0) as total FROM ventas WHERE tenant_id = $1 AND ${dateFilter}`;
             let salesParams = [tenantId];
             if (shouldFilterByBranch) {
                 salesQuery += ` AND branch_id = $2`;
