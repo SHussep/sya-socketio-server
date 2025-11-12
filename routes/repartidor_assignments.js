@@ -24,7 +24,7 @@ function createRepartidorAssignmentRoutes(io) {
     const {
       tenant_id,
       branch_id,
-      sale_id,
+      id_venta,
       employee_id,
       created_by_employee_id,
       shift_id,
@@ -46,13 +46,13 @@ function createRepartidorAssignmentRoutes(io) {
 
     try {
       console.log('[RepartidorAssignments] 📦 POST /api/repartidor-assignments/sync');
-      console.log(`  GlobalId: ${global_id}, Repartidor: ${employee_id}, Sale: ${sale_id}, Quantity: ${assigned_quantity} kg`);
+      console.log(`  GlobalId: ${global_id}, Repartidor: ${employee_id}, Venta: ${id_venta}, Quantity: ${assigned_quantity} kg`);
 
       // Validar campos requeridos
-      if (!tenant_id || !branch_id || !sale_id || !employee_id || !created_by_employee_id || !shift_id) {
+      if (!tenant_id || !branch_id || !id_venta || !employee_id || !created_by_employee_id || !shift_id) {
         return res.status(400).json({
           success: false,
-          message: 'tenant_id, branch_id, sale_id, employee_id, created_by_employee_id, shift_id son requeridos'
+          message: 'tenant_id, branch_id, id_venta, employee_id, created_by_employee_id, shift_id son requeridos'
         });
       }
 
@@ -80,13 +80,13 @@ function createRepartidorAssignmentRoutes(io) {
       // Verificar que la venta existe
       const saleCheck = await pool.query(
         'SELECT id_venta FROM ventas WHERE id_venta = $1 AND tenant_id = $2',
-        [sale_id, tenant_id]
+        [id_venta, tenant_id]
       );
 
       if (saleCheck.rows.length === 0) {
         return res.status(404).json({
           success: false,
-          message: `Venta ${sale_id} no encontrada en tenant ${tenant_id}`
+          message: `Venta ${id_venta} no encontrada en tenant ${tenant_id}`
         });
       }
 
@@ -95,30 +95,26 @@ function createRepartidorAssignmentRoutes(io) {
       // Los datos originales (assigned_quantity, assigned_amount) NO cambian
       const query = `
         INSERT INTO repartidor_assignments (
-          tenant_id, branch_id, sale_id, employee_id,
+          tenant_id, branch_id, id_venta, employee_id,
           created_by_employee_id, shift_id, repartidor_shift_id,
           assigned_quantity, assigned_amount, unit_price,
           status, fecha_asignacion, fecha_liquidacion, observaciones,
-          global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw,
-          synced, synced_at
+          global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-          $15::uuid, $16::uuid, $17, $18, $19,
-          true, NOW()
+          $15::uuid, $16::uuid, $17, $18, $19
         )
         ON CONFLICT (global_id, terminal_id) DO UPDATE
         SET status = EXCLUDED.status,
             fecha_liquidacion = EXCLUDED.fecha_liquidacion,
-            observaciones = EXCLUDED.observaciones,
-            synced = true,
-            synced_at = NOW()
+            observaciones = EXCLUDED.observaciones
         RETURNING *
       `;
 
       const result = await pool.query(query, [
         tenant_id,
         branch_id,
-        sale_id,
+        id_venta,
         employee_id,
         created_by_employee_id,
         shift_id,
@@ -331,7 +327,7 @@ function createRepartidorAssignmentRoutes(io) {
       let query = `
         SELECT
           ra.id,
-          ra.sale_id,
+          ra.id_venta,
           ra.employee_id,
           e.full_name as employee_name,
           ra.branch_id,
