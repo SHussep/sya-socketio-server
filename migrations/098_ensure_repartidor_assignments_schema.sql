@@ -72,6 +72,35 @@ BEGIN
         RAISE NOTICE 'Esquema ya está actualizado';
     END IF;
 
+    -- Asegurar que sale_id existe (columna crítica para relación con ventas)
+    ALTER TABLE repartidor_assignments ADD COLUMN IF NOT EXISTS sale_id INTEGER;
+
+    -- Si sale_id no tiene NOT NULL, aplicarlo
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'repartidor_assignments'
+          AND column_name = 'sale_id'
+          AND is_nullable = 'YES'
+    ) THEN
+        -- Primero poner un valor por defecto para registros existentes sin sale_id
+        UPDATE repartidor_assignments SET sale_id = 0 WHERE sale_id IS NULL;
+        ALTER TABLE repartidor_assignments ALTER COLUMN sale_id SET NOT NULL;
+        RAISE NOTICE 'Columna sale_id configurada como NOT NULL';
+    END IF;
+
+    -- Agregar FK a ventas si no existe
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.table_constraints
+        WHERE table_name = 'repartidor_assignments'
+          AND constraint_type = 'FOREIGN KEY'
+          AND constraint_name LIKE '%sale%'
+    ) THEN
+        ALTER TABLE repartidor_assignments
+        ADD CONSTRAINT repartidor_assignments_sale_id_fkey
+        FOREIGN KEY (sale_id) REFERENCES ventas(id_venta) ON DELETE CASCADE;
+        RAISE NOTICE 'FK a ventas creado';
+    END IF;
+
     -- Agregar FKs si no existen
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.table_constraints
