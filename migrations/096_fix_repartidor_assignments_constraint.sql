@@ -28,9 +28,11 @@ BEGIN
             ADD CONSTRAINT unique_repartidor_assignments_sale UNIQUE(sale_id);
             RAISE NOTICE 'Constraint UNIQUE en sale_id aplicado exitosamente';
         EXCEPTION
-            WHEN duplicate_key THEN
+            WHEN duplicate_table THEN
                 RAISE NOTICE 'Constraint UNIQUE ya existe, omitiendo...';
-            WHEN others THEN
+            WHEN duplicate_object THEN
+                RAISE NOTICE 'Constraint UNIQUE ya existe, omitiendo...';
+            WHEN OTHERS THEN
                 RAISE NOTICE 'Error aplicando constraint: %', SQLERRM;
         END;
     END IF;
