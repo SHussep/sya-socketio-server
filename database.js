@@ -506,7 +506,27 @@ async function runMigrations() {
                 console.log('[Schema] ℹ️ Database already initialized, skipping schema.sql');
             }
 
-            // 2. Always run seeds (idempotent - uses ON CONFLICT)
+            // 2. Apply schema patches (for existing databases)
+            console.log('[Schema] 🔧 Checking for schema updates...');
+
+            // Patch: Add max_devices_per_branch if missing
+            const checkColumn = await client.query(`
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'subscriptions'
+                AND column_name = 'max_devices_per_branch'
+            `);
+
+            if (checkColumn.rows.length === 0) {
+                console.log('[Schema] 📝 Adding missing column: subscriptions.max_devices_per_branch');
+                await client.query(`
+                    ALTER TABLE subscriptions
+                    ADD COLUMN IF NOT EXISTS max_devices_per_branch INTEGER NOT NULL DEFAULT 3
+                `);
+                console.log('[Schema] ✅ Column added successfully');
+            }
+
+            // 3. Always run seeds (idempotent - uses ON CONFLICT)
             console.log('[Seeds] 📝 Running seeds.sql...');
             const seedsPath = path.join(__dirname, 'seeds.sql');
             if (fs.existsSync(seedsPath)) {
