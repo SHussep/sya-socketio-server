@@ -526,15 +526,28 @@ async function runMigrations() {
                 console.log('[Schema] ✅ Column added successfully');
             }
 
-            // Patch: Rename id_venta to venta_id in repartidor_assignments
-            const checkRepartidorColumn = await client.query(`
+            // Patch: Fix repartidor_assignments column naming (id_venta vs venta_id)
+            const checkRepartidorColumns = await client.query(`
                 SELECT column_name
                 FROM information_schema.columns
                 WHERE table_name = 'repartidor_assignments'
-                AND column_name = 'id_venta'
+                AND column_name IN ('id_venta', 'venta_id')
+                ORDER BY column_name
             `);
 
-            if (checkRepartidorColumn.rows.length > 0) {
+            const hasIdVenta = checkRepartidorColumns.rows.some(r => r.column_name === 'id_venta');
+            const hasVentaId = checkRepartidorColumns.rows.some(r => r.column_name === 'venta_id');
+
+            if (hasIdVenta && hasVentaId) {
+                // Both columns exist - drop the old one
+                console.log('[Schema] 📝 Removing duplicate column: repartidor_assignments.id_venta (keeping venta_id)');
+                await client.query(`
+                    ALTER TABLE repartidor_assignments
+                    DROP COLUMN IF EXISTS id_venta CASCADE
+                `);
+                console.log('[Schema] ✅ Duplicate column removed successfully');
+            } else if (hasIdVenta && !hasVentaId) {
+                // Only old column exists - rename it
                 console.log('[Schema] 📝 Renaming column: repartidor_assignments.id_venta → venta_id');
                 await client.query(`
                     ALTER TABLE repartidor_assignments
