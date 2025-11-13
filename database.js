@@ -560,7 +560,7 @@ async function runMigrations() {
             console.log(`[Schema] 🔍 CLEAN_DATABASE_ON_START = "${process.env.CLEAN_DATABASE_ON_START}"`);
 
             if (process.env.CLEAN_DATABASE_ON_START === 'true') {
-                console.log('[Schema] 🗑️  CLEAN_DATABASE_ON_START=true - Cleaning user data...');
+                console.log('[Schema] 🗑️  CLEAN_DATABASE_ON_START=true - Dropping user tables...');
                 const cleanPath = path.join(__dirname, 'migrations', '999_clean_user_data.sql');
                 console.log(`[Schema] 📂 Clean script path: ${cleanPath}`);
                 console.log(`[Schema] 📂 File exists: ${fs.existsSync(cleanPath)}`);
@@ -568,11 +568,24 @@ async function runMigrations() {
                 if (fs.existsSync(cleanPath)) {
                     try {
                         const cleanSql = fs.readFileSync(cleanPath, 'utf8');
-                        console.log('[Schema] 📝 Executing clean script...');
+                        console.log('[Schema] 📝 Executing DROP script...');
                         await client.query(cleanSql);
-                        console.log('[Schema] ✅ User data cleaned successfully (seeds preserved)');
+                        console.log('[Schema] ✅ User tables dropped successfully (seeds preserved)');
+
+                        // Now recreate tables from schema.sql
+                        console.log('[Schema] 📝 Recreating tables from schema.sql...');
+                        const schemaPath = path.join(__dirname, 'schema.sql');
+                        if (fs.existsSync(schemaPath)) {
+                            const schemaSql = fs.readFileSync(schemaPath, 'utf8');
+                            await client.query('BEGIN');
+                            await client.query(schemaSql);
+                            await client.query('COMMIT');
+                            console.log('[Schema] ✅ Tables recreated successfully from schema.sql');
+                        } else {
+                            console.error('[Schema] ❌ schema.sql not found!');
+                        }
                     } catch (cleanError) {
-                        console.error('[Schema] ❌ Error cleaning data:', cleanError.message);
+                        console.error('[Schema] ❌ Error cleaning/recreating:', cleanError.message);
                         console.error(cleanError.stack);
                     }
                 } else {
