@@ -526,6 +526,23 @@ async function runMigrations() {
                 console.log('[Schema] ✅ Column added successfully');
             }
 
+            // Patch: Rename id_venta to venta_id in repartidor_assignments
+            const checkRepartidorColumn = await client.query(`
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'repartidor_assignments'
+                AND column_name = 'id_venta'
+            `);
+
+            if (checkRepartidorColumn.rows.length > 0) {
+                console.log('[Schema] 📝 Renaming column: repartidor_assignments.id_venta → venta_id');
+                await client.query(`
+                    ALTER TABLE repartidor_assignments
+                    RENAME COLUMN id_venta TO venta_id
+                `);
+                console.log('[Schema] ✅ Column renamed successfully');
+            }
+
             // 2.5. Clean user data if requested (for testing)
             console.log(`[Schema] 🔍 CLEAN_DATABASE_ON_START = "${process.env.CLEAN_DATABASE_ON_START}"`);
 
