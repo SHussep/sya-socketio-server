@@ -24,7 +24,7 @@ function createRepartidorAssignmentRoutes(io) {
     const {
       tenant_id,
       branch_id,
-      id_venta,
+      venta_id,
       employee_id,
       created_by_employee_id,
       shift_id,
@@ -46,13 +46,13 @@ function createRepartidorAssignmentRoutes(io) {
 
     try {
       console.log('[RepartidorAssignments] 📦 POST /api/repartidor-assignments/sync');
-      console.log(`  GlobalId: ${global_id}, Repartidor: ${employee_id}, Venta: ${id_venta}, Quantity: ${assigned_quantity} kg`);
+      console.log(`  GlobalId: ${global_id}, Repartidor: ${employee_id}, Venta: ${venta_id}, Quantity: ${assigned_quantity} kg`);
 
       // Validar campos requeridos
-      if (!tenant_id || !branch_id || !id_venta || !employee_id || !created_by_employee_id || !shift_id) {
+      if (!tenant_id || !branch_id || !venta_id || !employee_id || !created_by_employee_id || !shift_id) {
         return res.status(400).json({
           success: false,
-          message: 'tenant_id, branch_id, id_venta, employee_id, created_by_employee_id, shift_id son requeridos'
+          message: 'tenant_id, branch_id, venta_id, employee_id, created_by_employee_id, shift_id son requeridos'
         });
       }
 
@@ -80,13 +80,13 @@ function createRepartidorAssignmentRoutes(io) {
       // Verificar que la venta existe
       const saleCheck = await pool.query(
         'SELECT id_venta FROM ventas WHERE id_venta = $1 AND tenant_id = $2',
-        [id_venta, tenant_id]
+        [venta_id, tenant_id]
       );
 
       if (saleCheck.rows.length === 0) {
         return res.status(404).json({
           success: false,
-          message: `Venta ${id_venta} no encontrada en tenant ${tenant_id}`
+          message: `Venta ${venta_id} no encontrada en tenant ${tenant_id}`
         });
       }
 
@@ -114,7 +114,7 @@ function createRepartidorAssignmentRoutes(io) {
       const result = await pool.query(query, [
         tenant_id,
         branch_id,
-        id_venta,
+        venta_id,
         employee_id,
         created_by_employee_id,
         shift_id,
