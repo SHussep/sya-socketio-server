@@ -515,10 +515,10 @@ CREATE TABLE IF NOT EXISTS ventas (
         END) STORED,
 
     -- Offline-first columns
-    global_id UUID,
-    terminal_id UUID,
-    local_op_seq INTEGER,
-    created_local_utc TEXT,
+    global_id UUID UNIQUE NOT NULL,
+    terminal_id UUID NOT NULL,
+    local_op_seq INTEGER NOT NULL,
+    created_local_utc TEXT NOT NULL,
     device_event_raw BIGINT,
 
     -- Audit
@@ -527,16 +527,14 @@ CREATE TABLE IF NOT EXISTS ventas (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS ventas_uq_ticket_per_branch ON ventas(tenant_id, branch_id, ticket_number);
-CREATE UNIQUE INDEX IF NOT EXISTS uq_ventas_ticket_per_terminal ON ventas(tenant_id, branch_id, ticket_number, terminal_id) WHERE terminal_id IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS uq_ventas_global_id ON ventas(global_id) WHERE global_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ventas_ticket_per_terminal ON ventas(tenant_id, branch_id, ticket_number, terminal_id);
 CREATE INDEX IF NOT EXISTS ventas_scope_time_idx ON ventas(tenant_id, branch_id, fecha_venta_utc DESC);
 CREATE INDEX IF NOT EXISTS ventas_scope_turno_idx ON ventas(tenant_id, branch_id, id_turno);
 CREATE INDEX IF NOT EXISTS ventas_scope_emp_idx ON ventas(tenant_id, branch_id, id_empleado);
 CREATE INDEX IF NOT EXISTS ventas_estado_idx ON ventas(tenant_id, branch_id, estado_venta_id);
 CREATE INDEX IF NOT EXISTS ventas_repartidor_idx ON ventas(id_repartidor_asignado) WHERE id_repartidor_asignado IS NOT NULL;
 CREATE INDEX IF NOT EXISTS ventas_liquidacion_idx ON ventas(fecha_liquidacion_utc) WHERE fecha_liquidacion_utc IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_ventas_global_id ON ventas(global_id) WHERE global_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_ventas_terminal_seq ON ventas(terminal_id, local_op_seq) WHERE terminal_id IS NOT NULL AND local_op_seq IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_ventas_terminal_seq ON ventas(terminal_id, local_op_seq);
 
 -- ventas_detalle (sale items)
 CREATE TABLE IF NOT EXISTS ventas_detalle (
