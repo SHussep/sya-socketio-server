@@ -616,7 +616,7 @@ CREATE TABLE IF NOT EXISTS repartidor_assignments (
 
 CREATE INDEX IF NOT EXISTS idx_repartidor_assignments_tenant ON repartidor_assignments(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_repartidor_assignments_branch ON repartidor_assignments(branch_id);
-CREATE INDEX IF NOT EXISTS idx_repartidor_assignments_id_venta ON repartidor_assignments(id_venta);
+CREATE INDEX IF NOT EXISTS idx_repartidor_assignments_venta_id ON repartidor_assignments(venta_id);
 CREATE INDEX IF NOT EXISTS idx_repartidor_assignments_employee ON repartidor_assignments(employee_id);
 CREATE INDEX IF NOT EXISTS idx_repartidor_assignments_created_by ON repartidor_assignments(created_by_employee_id);
 CREATE INDEX IF NOT EXISTS idx_repartidor_assignments_shift ON repartidor_assignments(shift_id);
