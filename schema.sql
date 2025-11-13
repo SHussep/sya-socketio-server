@@ -96,6 +96,7 @@ CREATE INDEX IF NOT EXISTS idx_employees_email ON employees(email);
 -- employee_branches (empleados asignados a sucursales)
 CREATE TABLE IF NOT EXISTS employee_branches (
     id SERIAL PRIMARY KEY,
+    tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
     branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
     can_login BOOLEAN DEFAULT TRUE,
