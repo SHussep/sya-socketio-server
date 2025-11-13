@@ -155,10 +155,10 @@ CREATE TABLE IF NOT EXISTS shifts (
     transaction_counter INTEGER DEFAULT 0,
 
     -- Offline-first sync columns
-    global_id VARCHAR(36),
-    terminal_id VARCHAR(36),
-    local_op_seq BIGINT,
-    created_local_utc VARCHAR(50),
+    global_id VARCHAR(36) UNIQUE NOT NULL,
+    terminal_id VARCHAR(36) NOT NULL,
+    local_op_seq BIGINT NOT NULL,
+    created_local_utc VARCHAR(50) NOT NULL,
     device_event_raw BIGINT,
     synced BOOLEAN NOT NULL DEFAULT TRUE,
     synced_at TIMESTAMPTZ DEFAULT NOW(),
@@ -197,11 +197,11 @@ CREATE TABLE IF NOT EXISTS expenses (
     deleted_at TIMESTAMP,
 
     -- Offline-first sync columns
-    global_id VARCHAR(255),
-    terminal_id VARCHAR(100),
-    local_op_seq INTEGER,
+    global_id VARCHAR(255) UNIQUE NOT NULL,
+    terminal_id VARCHAR(100) NOT NULL,
+    local_op_seq INTEGER NOT NULL,
     device_event_raw BIGINT,
-    created_local_utc TEXT,
+    created_local_utc TEXT NOT NULL,
     synced BOOLEAN NOT NULL DEFAULT TRUE,
     synced_at TIMESTAMPTZ DEFAULT NOW(),
 
@@ -215,9 +215,7 @@ CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(expense_date DESC);
 CREATE INDEX IF NOT EXISTS idx_expenses_payment_type ON expenses(payment_type_id);
 CREATE INDEX IF NOT EXISTS idx_expenses_is_active ON expenses(is_active);
 CREATE INDEX IF NOT EXISTS idx_expenses_deleted_at ON expenses(deleted_at);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_expenses_global_id_unique ON expenses(global_id) WHERE global_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_expenses_global_id ON expenses(global_id) WHERE global_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_expenses_terminal_seq ON expenses(terminal_id, local_op_seq) WHERE terminal_id IS NOT NULL AND local_op_seq IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_expenses_terminal_seq ON expenses(terminal_id, local_op_seq);
 CREATE INDEX IF NOT EXISTS idx_expenses_synced ON expenses(tenant_id, branch_id, synced) WHERE synced = FALSE;
 
 -- deposits (depósitos)
@@ -232,11 +230,11 @@ CREATE TABLE IF NOT EXISTS deposits (
     description TEXT NOT NULL DEFAULT '',
 
     -- Offline-first sync columns
-    global_id VARCHAR(255),
-    terminal_id VARCHAR(100),
-    local_op_seq INTEGER,
+    global_id VARCHAR(255) UNIQUE NOT NULL,
+    terminal_id VARCHAR(100) NOT NULL,
+    local_op_seq INTEGER NOT NULL,
     device_event_raw BIGINT,
-    created_local_utc TEXT,
+    created_local_utc TEXT NOT NULL,
     synced BOOLEAN NOT NULL DEFAULT TRUE,
     synced_at TIMESTAMPTZ DEFAULT NOW(),
 
@@ -248,8 +246,7 @@ CREATE INDEX IF NOT EXISTS idx_deposits_tenant_branch ON deposits(tenant_id, bra
 CREATE INDEX IF NOT EXISTS idx_deposits_shift ON deposits(shift_id);
 CREATE INDEX IF NOT EXISTS idx_deposits_employee ON deposits(employee_id);
 CREATE INDEX IF NOT EXISTS idx_deposits_date ON deposits(deposit_date);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_deposits_global_id_unique ON deposits(global_id) WHERE global_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_deposits_terminal_seq ON deposits(terminal_id, local_op_seq) WHERE terminal_id IS NOT NULL AND local_op_seq IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_deposits_terminal_seq ON deposits(terminal_id, local_op_seq);
 CREATE INDEX IF NOT EXISTS idx_deposits_synced ON deposits(tenant_id, branch_id, synced) WHERE synced = FALSE;
 
 -- withdrawals (retiros)
@@ -264,11 +261,11 @@ CREATE TABLE IF NOT EXISTS withdrawals (
     description TEXT NOT NULL DEFAULT '',
 
     -- Offline-first sync columns
-    global_id VARCHAR(255),
-    terminal_id VARCHAR(100),
-    local_op_seq INTEGER,
+    global_id VARCHAR(255) UNIQUE NOT NULL,
+    terminal_id VARCHAR(100) NOT NULL,
+    local_op_seq INTEGER NOT NULL,
     device_event_raw BIGINT,
-    created_local_utc TEXT,
+    created_local_utc TEXT NOT NULL,
     synced BOOLEAN NOT NULL DEFAULT TRUE,
     synced_at TIMESTAMPTZ DEFAULT NOW(),
 
@@ -280,8 +277,7 @@ CREATE INDEX IF NOT EXISTS idx_withdrawals_tenant_branch ON withdrawals(tenant_i
 CREATE INDEX IF NOT EXISTS idx_withdrawals_shift ON withdrawals(shift_id);
 CREATE INDEX IF NOT EXISTS idx_withdrawals_employee ON withdrawals(employee_id);
 CREATE INDEX IF NOT EXISTS idx_withdrawals_date ON withdrawals(withdrawal_date);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_withdrawals_global_id_unique ON withdrawals(global_id) WHERE global_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_withdrawals_terminal_seq ON withdrawals(terminal_id, local_op_seq) WHERE terminal_id IS NOT NULL AND local_op_seq IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_withdrawals_terminal_seq ON withdrawals(terminal_id, local_op_seq);
 CREATE INDEX IF NOT EXISTS idx_withdrawals_synced ON withdrawals(tenant_id, branch_id, synced) WHERE synced = FALSE;
 
 -- cash_cuts (cortes de caja)
@@ -329,11 +325,11 @@ CREATE TABLE IF NOT EXISTS cash_cuts (
     is_closed BOOLEAN DEFAULT TRUE,
 
     -- Offline-first sync columns
-    global_id VARCHAR(255),
-    terminal_id VARCHAR(100),
-    local_op_seq INTEGER,
+    global_id VARCHAR(255) UNIQUE NOT NULL,
+    terminal_id VARCHAR(100) NOT NULL,
+    local_op_seq INTEGER NOT NULL,
     device_event_raw BIGINT,
-    created_local_utc TEXT,
+    created_local_utc TEXT NOT NULL,
     synced BOOLEAN NOT NULL DEFAULT TRUE,
     synced_at TIMESTAMPTZ DEFAULT NOW(),
 
@@ -345,8 +341,7 @@ CREATE INDEX IF NOT EXISTS idx_cash_cuts_branch_id ON cash_cuts(branch_id);
 CREATE INDEX IF NOT EXISTS idx_cash_cuts_shift ON cash_cuts(shift_id) WHERE shift_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_cash_cuts_closed ON cash_cuts(tenant_id, branch_id, is_closed);
 CREATE INDEX IF NOT EXISTS idx_cash_cuts_end_time ON cash_cuts(tenant_id, branch_id, end_time DESC) WHERE end_time IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_cuts_global_id_unique ON cash_cuts(global_id) WHERE global_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_cash_cuts_terminal_seq ON cash_cuts(terminal_id, local_op_seq) WHERE terminal_id IS NOT NULL AND local_op_seq IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_cash_cuts_terminal_seq ON cash_cuts(terminal_id, local_op_seq);
 CREATE INDEX IF NOT EXISTS idx_cash_cuts_synced ON cash_cuts(tenant_id, branch_id, synced) WHERE synced = FALSE;
 
 -- ========== CUSTOMERS AND PRODUCTS ==========
@@ -560,10 +555,10 @@ CREATE TABLE IF NOT EXISTS ventas_detalle (
     monto_manual_descuento NUMERIC(14,2) DEFAULT 0,
 
     -- Offline-first columns
-    global_id UUID,
-    terminal_id UUID,
-    local_op_seq INTEGER,
-    created_local_utc TEXT,
+    global_id UUID UNIQUE NOT NULL,
+    terminal_id UUID NOT NULL,
+    local_op_seq INTEGER NOT NULL,
+    created_local_utc TEXT NOT NULL,
     device_event_raw BIGINT,
 
     -- Audit
@@ -572,9 +567,7 @@ CREATE TABLE IF NOT EXISTS ventas_detalle (
 
 CREATE INDEX IF NOT EXISTS ventas_detalle_venta_idx ON ventas_detalle(id_venta);
 CREATE INDEX IF NOT EXISTS ventas_detalle_producto_idx ON ventas_detalle(id_producto);
-CREATE UNIQUE INDEX IF NOT EXISTS uq_ventas_detalle_global_id ON ventas_detalle(global_id) WHERE global_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_ventas_detalle_global_id ON ventas_detalle(global_id) WHERE global_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_ventas_detalle_terminal_seq ON ventas_detalle(terminal_id, local_op_seq) WHERE terminal_id IS NOT NULL AND local_op_seq IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_ventas_detalle_terminal_seq ON ventas_detalle(terminal_id, local_op_seq);
 
 -- ========== REPARTIDOR (DELIVERY) SYSTEM ==========
 
@@ -608,10 +601,10 @@ CREATE TABLE IF NOT EXISTS repartidor_assignments (
     observaciones TEXT,
 
     -- Offline-first sync columns
-    global_id UUID,
-    terminal_id UUID,
-    local_op_seq INTEGER,
-    created_local_utc TIMESTAMPTZ,
+    global_id UUID UNIQUE NOT NULL,
+    terminal_id UUID NOT NULL,
+    local_op_seq INTEGER NOT NULL,
+    created_local_utc TIMESTAMPTZ NOT NULL,
     device_event_raw BIGINT,
 
     -- Audit
@@ -627,9 +620,7 @@ CREATE INDEX IF NOT EXISTS idx_repartidor_assignments_created_by ON repartidor_a
 CREATE INDEX IF NOT EXISTS idx_repartidor_assignments_shift ON repartidor_assignments(shift_id);
 CREATE INDEX IF NOT EXISTS idx_repartidor_assignments_repartidor_shift ON repartidor_assignments(repartidor_shift_id);
 CREATE INDEX IF NOT EXISTS idx_repartidor_assignments_status ON repartidor_assignments(status);
-CREATE UNIQUE INDEX IF NOT EXISTS uq_repartidor_assignments_global_id ON repartidor_assignments(global_id) WHERE global_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_repartidor_assignments_global_id ON repartidor_assignments(global_id) WHERE global_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_repartidor_assignments_terminal_seq ON repartidor_assignments(terminal_id, local_op_seq) WHERE terminal_id IS NOT NULL AND local_op_seq IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_repartidor_assignments_terminal_seq ON repartidor_assignments(terminal_id, local_op_seq);
 
 -- repartidor_returns (devoluciones de repartidores)
 CREATE TABLE IF NOT EXISTS repartidor_returns (

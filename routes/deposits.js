@@ -164,7 +164,7 @@ module.exports = (pool) => {
                             amount, description, deposit_date,
                             global_id, terminal_id, local_op_seq, device_event_raw, created_local_utc
                         ) VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, NOW()), $8, $9, $10, $11, $12)
-                         ON CONFLICT (global_id) WHERE global_id IS NOT NULL
+                         ON CONFLICT (global_id)
                          DO UPDATE SET
                             amount = EXCLUDED.amount,
                             description = EXCLUDED.description,
