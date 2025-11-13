@@ -380,10 +380,14 @@ CREATE TABLE IF NOT EXISTS customers (
     aplicar_redondeo BOOLEAN DEFAULT FALSE,
 
     -- Generic customer (Público en General)
-    is_generic INTEGER DEFAULT 0,  -- 0=Regular, 1=Generic
+    is_system_generic BOOLEAN DEFAULT FALSE,
 
     -- Offline-first sync columns
     global_id VARCHAR(255) UNIQUE NOT NULL,
+    terminal_id VARCHAR(100),
+    local_op_seq INTEGER,
+    created_local_utc TEXT,
+    device_event_raw BIGINT,
     synced BOOLEAN NOT NULL DEFAULT TRUE,
     synced_at TIMESTAMPTZ DEFAULT NOW(),
 
@@ -393,7 +397,8 @@ CREATE TABLE IF NOT EXISTS customers (
 
 CREATE INDEX IF NOT EXISTS idx_customers_tenant ON customers(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_customers_global_id ON customers(global_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_generic_per_tenant ON customers(tenant_id) WHERE is_generic = 1;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_generic_per_tenant ON customers(tenant_id) WHERE is_system_generic = TRUE;
+CREATE INDEX IF NOT EXISTS idx_customers_terminal_seq ON customers(terminal_id, local_op_seq) WHERE terminal_id IS NOT NULL AND local_op_seq IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_customers_activo ON customers(tenant_id, activo);
 CREATE INDEX IF NOT EXISTS idx_customers_credito ON customers(tenant_id, tiene_credito) WHERE tiene_credito = TRUE;
 CREATE INDEX IF NOT EXISTS idx_customers_nombre ON customers(tenant_id, nombre);
@@ -764,6 +769,72 @@ CREATE TRIGGER trigger_decrease_balance_on_credit_payment
 AFTER INSERT ON credit_payments
 FOR EACH ROW
 EXECUTE FUNCTION decrease_customer_balance_on_payment();
+
+-- Function: Obtener o crear cliente genérico "Público en General" por tenant
+CREATE OR REPLACE FUNCTION get_or_create_generic_customer(p_tenant_id INTEGER, p_branch_id INTEGER)
+RETURNS INTEGER AS $$
+DECLARE
+    v_customer_id INTEGER;
+BEGIN
+    -- Intentar encontrar el cliente genérico existente
+    SELECT id INTO v_customer_id
+    FROM customers
+    WHERE tenant_id = p_tenant_id
+    AND is_system_generic = TRUE
+    LIMIT 1;
+
+    -- Si no existe, crearlo
+    IF v_customer_id IS NULL THEN
+        INSERT INTO customers (
+            tenant_id,
+            nombre,
+            telefono,
+            direccion,
+            correo,
+            is_system_generic,
+            nota,
+            global_id,
+            synced,
+            created_at,
+            updated_at
+        ) VALUES (
+            p_tenant_id,
+            'Público en General',
+            'N/A',
+            'N/A',
+            NULL,
+            TRUE,
+            'Cliente genérico del sistema - No editar ni eliminar',
+            'GENERIC_CUSTOMER_' || p_tenant_id,
+            TRUE,
+            NOW(),
+            NOW()
+        )
+        RETURNING id INTO v_customer_id;
+
+        RAISE NOTICE '✅ Cliente genérico creado para tenant % con ID %', p_tenant_id, v_customer_id;
+    END IF;
+
+    RETURN v_customer_id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger: Prevenir eliminación del cliente genérico del sistema
+CREATE OR REPLACE FUNCTION prevent_generic_customer_delete()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF OLD.is_system_generic = TRUE THEN
+        RAISE EXCEPTION 'No se puede eliminar el cliente genérico del sistema (ID: %)', OLD.id;
+    END IF;
+    RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_prevent_generic_customer_delete ON customers;
+CREATE TRIGGER trg_prevent_generic_customer_delete
+    BEFORE DELETE ON customers
+    FOR EACH ROW
+    EXECUTE FUNCTION prevent_generic_customer_delete();
 
 -- ========== BACKUP METADATA ==========
 
