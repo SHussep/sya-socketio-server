@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS employees (
     last_name VARCHAR(100),
     email VARCHAR(255),
     password_hash VARCHAR(255),
+    password_updated_at TIMESTAMP,
     role_id INTEGER REFERENCES roles(id) ON DELETE RESTRICT,
     is_active BOOLEAN DEFAULT TRUE,
     is_owner BOOLEAN DEFAULT FALSE,
