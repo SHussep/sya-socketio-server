@@ -120,6 +120,60 @@ module.exports = function(pool) {
     });
 
     // ─────────────────────────────────────────────────────────
+    // POST /api/auth/gmail/refresh-token
+    // Refrescar access token de Google usando refresh token
+    // ─────────────────────────────────────────────────────────
+    router.post('/gmail/refresh-token', async (req, res) => {
+        console.log('[Gmail Refresh] Refrescando access token');
+
+        const { refresh_token } = req.body;
+
+        if (!refresh_token) {
+            return res.status(400).json({
+                success: false,
+                message: 'Refresh token requerido'
+            });
+        }
+
+        try {
+            const oauth2Client = new OAuth2Client(
+                GOOGLE_CLIENT_ID,
+                GOOGLE_CLIENT_SECRET
+            );
+
+            // Establecer el refresh token
+            oauth2Client.setCredentials({
+                refresh_token: refresh_token
+            });
+
+            // Obtener nuevo access token
+            const { credentials } = await oauth2Client.refreshAccessToken();
+
+            console.log('[Gmail Refresh] ✅ Access token refrescado exitosamente');
+
+            // Devolver tokens en el mismo formato que PHP
+            res.json({
+                success: true,
+                tokens: {
+                    access_token: credentials.access_token,
+                    refresh_token: credentials.refresh_token || refresh_token, // Mantener el refresh_token original si no viene uno nuevo
+                    expiry_date: credentials.expiry_date,
+                    token_type: credentials.token_type,
+                    scope: credentials.scope
+                }
+            });
+
+        } catch (error) {
+            console.error('[Gmail Refresh] Error refrescando token:', error);
+            res.status(401).json({
+                success: false,
+                message: 'Error al refrescar access token. El refresh token puede ser inválido o expirado.',
+                error: error.message
+            });
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
     // POST /api/auth/desktop-login
     // Login desde Desktop con selector de sucursal
     // ─────────────────────────────────────────────────────────
