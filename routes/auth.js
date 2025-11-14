@@ -11,10 +11,113 @@ const { OAuth2Client } = require('google-auth-library');
 
 const JWT_SECRET = process.env.JWT_SECRET;
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
 
 module.exports = function(pool) {
     const router = require('express').Router();
+
+    // ─────────────────────────────────────────────────────────
+    // GET /api/auth/gmail/start-oauth
+    // Generar URL de autenticación de Google para Gmail
+    // ─────────────────────────────────────────────────────────
+    router.get('/gmail/start-oauth', async (req, res) => {
+        console.log('[Gmail OAuth] Generando URL de autenticación');
+
+        try {
+            // Determinar la URL de redirección según el entorno
+            const redirectUri = process.env.GMAIL_REDIRECT_URI ||
+                `${req.protocol}://${req.get('host')}/api/auth/gmail/oauth-callback`;
+
+            const oauth2Client = new OAuth2Client(
+                GOOGLE_CLIENT_ID,
+                GOOGLE_CLIENT_SECRET,
+                redirectUri
+            );
+
+            // Generar URL de autenticación
+            const authUrl = oauth2Client.generateAuthUrl({
+                access_type: 'offline',
+                scope: [
+                    'https://www.googleapis.com/auth/gmail.send',
+                    'https://www.googleapis.com/auth/userinfo.email',
+                    'https://www.googleapis.com/auth/userinfo.profile'
+                ],
+                // NO especificar 'prompt' - Google decide automáticamente
+                // Si es primera vez: muestra consentimiento
+                // Si ya autorizó: solo selección de cuenta (2 pantallas)
+            });
+
+            console.log('[Gmail OAuth] ✅ URL generada exitosamente');
+
+            res.json({
+                success: true,
+                auth_url: authUrl
+            });
+
+        } catch (error) {
+            console.error('[Gmail OAuth] Error generando URL:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al generar URL de autenticación',
+                error: error.message
+            });
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
+    // POST /api/auth/gmail/oauth-callback
+    // Intercambiar código de autorización por tokens de Google
+    // ─────────────────────────────────────────────────────────
+    router.post('/gmail/oauth-callback', async (req, res) => {
+        console.log('[Gmail Callback] Intercambiando código por tokens');
+
+        const { code } = req.body;
+
+        if (!code) {
+            return res.status(400).json({
+                success: false,
+                message: 'Código de autorización requerido'
+            });
+        }
+
+        try {
+            // Determinar la URL de redirección según el entorno
+            const redirectUri = process.env.GMAIL_REDIRECT_URI ||
+                `${req.protocol}://${req.get('host')}/api/auth/gmail/oauth-callback`;
+
+            const oauth2Client = new OAuth2Client(
+                GOOGLE_CLIENT_ID,
+                GOOGLE_CLIENT_SECRET,
+                redirectUri
+            );
+
+            // Intercambiar código por tokens
+            const { tokens } = await oauth2Client.getToken(code);
+
+            console.log('[Gmail Callback] ✅ Tokens obtenidos exitosamente');
+
+            // Devolver tokens en el mismo formato que PHP
+            res.json({
+                success: true,
+                tokens: {
+                    access_token: tokens.access_token,
+                    refresh_token: tokens.refresh_token,
+                    expiry_date: tokens.expiry_date,
+                    token_type: tokens.token_type,
+                    scope: tokens.scope
+                }
+            });
+
+        } catch (error) {
+            console.error('[Gmail Callback] Error intercambiando código:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al intercambiar código de autorización',
+                error: error.message
+            });
+        }
+    });
 
     // ─────────────────────────────────────────────────────────
     // POST /api/auth/desktop-login
