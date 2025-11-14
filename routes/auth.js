@@ -39,6 +39,7 @@ module.exports = function(pool) {
             const authUrl = oauth2Client.generateAuthUrl({
                 access_type: 'offline',
                 scope: [
+                    'openid', // ⭐ IMPORTANTE: Necesario para obtener id_token
                     'https://www.googleapis.com/auth/gmail.send',
                     'https://www.googleapis.com/auth/userinfo.email',
                     'https://www.googleapis.com/auth/userinfo.profile'
@@ -142,6 +143,7 @@ module.exports = function(pool) {
             const { tokens } = await oauth2Client.getToken(code);
 
             console.log('[Gmail Callback] ✅ Tokens obtenidos exitosamente');
+            console.log('[Gmail Callback] ID Token presente:', tokens.id_token ? 'Sí' : 'No');
 
             // Devolver tokens en el mismo formato que PHP
             res.json({
@@ -149,6 +151,7 @@ module.exports = function(pool) {
                 tokens: {
                     access_token: tokens.access_token,
                     refresh_token: tokens.refresh_token,
+                    id_token: tokens.id_token, // ⭐ IMPORTANTE: Para autenticación de usuario
                     expiry_date: tokens.expiry_date,
                     token_type: tokens.token_type,
                     scope: tokens.scope
