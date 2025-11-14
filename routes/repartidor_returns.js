@@ -105,19 +105,15 @@ function createRepartidorReturnRoutes(io) {
         INSERT INTO repartidor_returns (
           tenant_id, branch_id, assignment_id, employee_id, registered_by_employee_id, shift_id,
           quantity, unit_price, amount, return_date, source, notes,
-          global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw,
-          synced, synced_at
+          global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-          $13::uuid, $14::uuid, $15, $16, $17,
-          true, NOW()
+          $13::uuid, $14::uuid, $15, $16, $17
         )
         ON CONFLICT (global_id, terminal_id) DO UPDATE
         SET quantity = EXCLUDED.quantity,
             amount = EXCLUDED.amount,
-            notes = EXCLUDED.notes,
-            synced = true,
-            synced_at = NOW()
+            notes = EXCLUDED.notes
         RETURNING *
       `;
 
