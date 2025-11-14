@@ -66,6 +66,52 @@ module.exports = function(pool) {
     });
 
     // ─────────────────────────────────────────────────────────
+    // GET /api/auth/gmail/oauth-callback
+    // Página de redirección de Google (capturada por WebView)
+    // ─────────────────────────────────────────────────────────
+    router.get('/gmail/oauth-callback', (req, res) => {
+        // El WebView debería interceptar esta redirección antes de que llegue aquí
+        // Si llegó aquí, mostrar un mensaje amigable
+        const code = req.query.code;
+
+        if (code) {
+            res.send(`
+                <html>
+                    <head>
+                        <title>Autenticación Exitosa</title>
+                        <style>
+                            body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
+                            h1 { color: #4CAF50; }
+                        </style>
+                    </head>
+                    <body>
+                        <h1>✅ Autenticación Exitosa</h1>
+                        <p>Tu cuenta de Gmail ha sido vinculada correctamente.</p>
+                        <p>Puedes cerrar esta ventana.</p>
+                    </body>
+                </html>
+            `);
+        } else {
+            res.status(400).send(`
+                <html>
+                    <head>
+                        <title>Error de Autenticación</title>
+                        <style>
+                            body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
+                            h1 { color: #f44336; }
+                        </style>
+                    </head>
+                    <body>
+                        <h1>❌ Error de Autenticación</h1>
+                        <p>No se recibió el código de autorización.</p>
+                        <p>Por favor, intenta de nuevo.</p>
+                    </body>
+                </html>
+            `);
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
     // POST /api/auth/gmail/oauth-callback
     // Intercambiar código de autorización por tokens de Google
     // ─────────────────────────────────────────────────────────
