@@ -22,7 +22,7 @@ function createRepartidorReturnRoutes(io) {
     const {
       tenant_id,
       branch_id,
-      assignment_id,
+      assignment_global_id,  // ✅ OFFLINE-FIRST: Usar GlobalId en lugar de ID numérico
       employee_id,
       registered_by_employee_id,
       shift_id,
@@ -42,13 +42,13 @@ function createRepartidorReturnRoutes(io) {
 
     try {
       console.log('[RepartidorReturns] 📦 POST /api/repartidor-returns/sync');
-      console.log(`  GlobalId: ${global_id}, Assignment: ${assignment_id}, Quantity: ${quantity} kg, Source: ${source}`);
+      console.log(`  GlobalId: ${global_id}, AssignmentGlobalId: ${assignment_global_id}, Quantity: ${quantity} kg, Source: ${source}`);
 
       // Validar campos requeridos
-      if (!tenant_id || !branch_id || !assignment_id || !employee_id || !registered_by_employee_id) {
+      if (!tenant_id || !branch_id || !assignment_global_id || !employee_id || !registered_by_employee_id) {
         return res.status(400).json({
           success: false,
-          message: 'tenant_id, branch_id, assignment_id, employee_id, registered_by_employee_id son requeridos'
+          message: 'tenant_id, branch_id, assignment_global_id, employee_id, registered_by_employee_id son requeridos'
         });
       }
 
@@ -80,20 +80,21 @@ function createRepartidorReturnRoutes(io) {
         });
       }
 
-      // Verificar que la asignación existe
+      // ✅ OFFLINE-FIRST: Buscar asignación por GlobalId en lugar de ID numérico
       const assignmentCheck = await pool.query(
-        'SELECT id, assigned_quantity, unit_price FROM repartidor_assignments WHERE id = $1 AND tenant_id = $2',
-        [assignment_id, tenant_id]
+        'SELECT id, assigned_quantity, unit_price, global_id FROM repartidor_assignments WHERE global_id = $1::uuid AND tenant_id = $2',
+        [assignment_global_id, tenant_id]
       );
 
       if (assignmentCheck.rows.length === 0) {
         return res.status(404).json({
           success: false,
-          message: `Asignación ${assignment_id} no encontrada en tenant ${tenant_id}`
+          message: `Asignación con GlobalId ${assignment_global_id} no encontrada en tenant ${tenant_id}`
         });
       }
 
       const assignment = assignmentCheck.rows[0];
+      const assignment_id = assignment.id;  // ID de PostgreSQL para la FK
 
       // Calcular amount si no viene (por seguridad)
       const calculatedAmount = parseFloat(quantity) * parseFloat(unit_price);
