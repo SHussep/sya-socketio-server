@@ -79,10 +79,8 @@ CREATE TABLE IF NOT EXISTS employees (
     google_user_identifier VARCHAR(255),
     main_branch_id INTEGER REFERENCES branches(id),
 
-    -- Offline-first sync columns
+    -- Offline-first sync columns (only global_id for idempotency)
     global_id VARCHAR(255),
-    synced BOOLEAN NOT NULL DEFAULT TRUE,
-    synced_at TIMESTAMPTZ DEFAULT NOW(),
 
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -154,21 +152,18 @@ CREATE TABLE IF NOT EXISTS shifts (
     is_cash_cut_open BOOLEAN DEFAULT TRUE,
     transaction_counter INTEGER DEFAULT 0,
 
-    -- Offline-first sync columns
+    -- Offline-first sync columns (for idempotency and audit trail)
     global_id VARCHAR(36) UNIQUE NOT NULL,
     terminal_id VARCHAR(36) NOT NULL,
     local_op_seq BIGINT NOT NULL,
     created_local_utc VARCHAR(50) NOT NULL,
     device_event_raw BIGINT,
-    synced BOOLEAN NOT NULL DEFAULT TRUE,
-    synced_at TIMESTAMPTZ DEFAULT NOW(),
 
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS shifts_uq_global_id ON shifts(global_id);
-CREATE INDEX IF NOT EXISTS idx_shifts_synced ON shifts(tenant_id, branch_id, synced) WHERE synced = FALSE;
 
 -- expense_categories (categorías de gastos)
 CREATE TABLE IF NOT EXISTS expense_categories (
@@ -196,14 +191,12 @@ CREATE TABLE IF NOT EXISTS expenses (
     is_active BOOLEAN DEFAULT TRUE,
     deleted_at TIMESTAMP,
 
-    -- Offline-first sync columns
+    -- Offline-first sync columns (for idempotency and audit trail)
     global_id VARCHAR(255) UNIQUE NOT NULL,
     terminal_id VARCHAR(100) NOT NULL,
     local_op_seq INTEGER NOT NULL,
     device_event_raw BIGINT,
     created_local_utc TEXT NOT NULL,
-    synced BOOLEAN NOT NULL DEFAULT TRUE,
-    synced_at TIMESTAMPTZ DEFAULT NOW(),
 
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -216,7 +209,6 @@ CREATE INDEX IF NOT EXISTS idx_expenses_payment_type ON expenses(payment_type_id
 CREATE INDEX IF NOT EXISTS idx_expenses_is_active ON expenses(is_active);
 CREATE INDEX IF NOT EXISTS idx_expenses_deleted_at ON expenses(deleted_at);
 CREATE INDEX IF NOT EXISTS idx_expenses_terminal_seq ON expenses(terminal_id, local_op_seq);
-CREATE INDEX IF NOT EXISTS idx_expenses_synced ON expenses(tenant_id, branch_id, synced) WHERE synced = FALSE;
 
 -- deposits (depósitos)
 CREATE TABLE IF NOT EXISTS deposits (
@@ -229,14 +221,12 @@ CREATE TABLE IF NOT EXISTS deposits (
     deposit_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     description TEXT NOT NULL DEFAULT '',
 
-    -- Offline-first sync columns
+    -- Offline-first sync columns (for idempotency and audit trail)
     global_id VARCHAR(255) UNIQUE NOT NULL,
     terminal_id VARCHAR(100) NOT NULL,
     local_op_seq INTEGER NOT NULL,
     device_event_raw BIGINT,
     created_local_utc TEXT NOT NULL,
-    synced BOOLEAN NOT NULL DEFAULT TRUE,
-    synced_at TIMESTAMPTZ DEFAULT NOW(),
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -247,7 +237,6 @@ CREATE INDEX IF NOT EXISTS idx_deposits_shift ON deposits(shift_id);
 CREATE INDEX IF NOT EXISTS idx_deposits_employee ON deposits(employee_id);
 CREATE INDEX IF NOT EXISTS idx_deposits_date ON deposits(deposit_date);
 CREATE INDEX IF NOT EXISTS idx_deposits_terminal_seq ON deposits(terminal_id, local_op_seq);
-CREATE INDEX IF NOT EXISTS idx_deposits_synced ON deposits(tenant_id, branch_id, synced) WHERE synced = FALSE;
 
 -- withdrawals (retiros)
 CREATE TABLE IF NOT EXISTS withdrawals (
@@ -260,14 +249,12 @@ CREATE TABLE IF NOT EXISTS withdrawals (
     withdrawal_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     description TEXT NOT NULL DEFAULT '',
 
-    -- Offline-first sync columns
+    -- Offline-first sync columns (for idempotency and audit trail)
     global_id VARCHAR(255) UNIQUE NOT NULL,
     terminal_id VARCHAR(100) NOT NULL,
     local_op_seq INTEGER NOT NULL,
     device_event_raw BIGINT,
     created_local_utc TEXT NOT NULL,
-    synced BOOLEAN NOT NULL DEFAULT TRUE,
-    synced_at TIMESTAMPTZ DEFAULT NOW(),
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -278,7 +265,6 @@ CREATE INDEX IF NOT EXISTS idx_withdrawals_shift ON withdrawals(shift_id);
 CREATE INDEX IF NOT EXISTS idx_withdrawals_employee ON withdrawals(employee_id);
 CREATE INDEX IF NOT EXISTS idx_withdrawals_date ON withdrawals(withdrawal_date);
 CREATE INDEX IF NOT EXISTS idx_withdrawals_terminal_seq ON withdrawals(terminal_id, local_op_seq);
-CREATE INDEX IF NOT EXISTS idx_withdrawals_synced ON withdrawals(tenant_id, branch_id, synced) WHERE synced = FALSE;
 
 -- cash_cuts (cortes de caja)
 CREATE TABLE IF NOT EXISTS cash_cuts (
@@ -324,14 +310,12 @@ CREATE TABLE IF NOT EXISTS cash_cuts (
     notes TEXT,
     is_closed BOOLEAN DEFAULT TRUE,
 
-    -- Offline-first sync columns
+    -- Offline-first sync columns (for idempotency and audit trail)
     global_id VARCHAR(255) UNIQUE NOT NULL,
     terminal_id VARCHAR(100) NOT NULL,
     local_op_seq INTEGER NOT NULL,
     device_event_raw BIGINT,
     created_local_utc TEXT NOT NULL,
-    synced BOOLEAN NOT NULL DEFAULT TRUE,
-    synced_at TIMESTAMPTZ DEFAULT NOW(),
 
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -342,7 +326,6 @@ CREATE INDEX IF NOT EXISTS idx_cash_cuts_shift ON cash_cuts(shift_id) WHERE shif
 CREATE INDEX IF NOT EXISTS idx_cash_cuts_closed ON cash_cuts(tenant_id, branch_id, is_closed);
 CREATE INDEX IF NOT EXISTS idx_cash_cuts_end_time ON cash_cuts(tenant_id, branch_id, end_time DESC) WHERE end_time IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_cash_cuts_terminal_seq ON cash_cuts(terminal_id, local_op_seq);
-CREATE INDEX IF NOT EXISTS idx_cash_cuts_synced ON cash_cuts(tenant_id, branch_id, synced) WHERE synced = FALSE;
 
 -- ========== CUSTOMERS AND PRODUCTS ==========
 
@@ -377,14 +360,12 @@ CREATE TABLE IF NOT EXISTS customers (
     -- Generic customer (Público en General)
     is_system_generic BOOLEAN DEFAULT FALSE,
 
-    -- Offline-first sync columns
+    -- Offline-first sync columns (for idempotency and audit trail)
     global_id VARCHAR(255) UNIQUE NOT NULL,
     terminal_id VARCHAR(100),
     local_op_seq INTEGER,
     created_local_utc TEXT,
     device_event_raw BIGINT,
-    synced BOOLEAN NOT NULL DEFAULT TRUE,
-    synced_at TIMESTAMPTZ DEFAULT NOW(),
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -429,10 +410,8 @@ CREATE TABLE IF NOT EXISTS productos (
     bascula BOOLEAN DEFAULT FALSE,  -- Requires scale/weight
     is_pos_shortcut BOOLEAN DEFAULT FALSE,  -- Show in POS shortcuts
 
-    -- Offline-first sync columns
+    -- Offline-first sync columns (for idempotency)
     global_id VARCHAR(255) UNIQUE NOT NULL,
-    synced BOOLEAN NOT NULL DEFAULT TRUE,
-    synced_at TIMESTAMPTZ DEFAULT NOW(),
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -486,11 +465,7 @@ CREATE TABLE IF NOT EXISTS ventas (
     -- Notes
     notas TEXT,
 
-    -- Sync
-    synced BOOLEAN NOT NULL DEFAULT TRUE,
-    synced_at_raw BIGINT,
-
-    -- Generated columns
+    -- Generated columns (from raw timestamps)
     fecha_venta_utc TIMESTAMPTZ GENERATED ALWAYS AS
         (CASE
             WHEN fecha_venta_raw IS NULL THEN NULL
@@ -503,13 +478,7 @@ CREATE TABLE IF NOT EXISTS ventas (
             ELSE to_timestamp((fecha_liquidacion_raw)::double precision / 1000.0)
         END) STORED,
 
-    synced_at_utc TIMESTAMPTZ GENERATED ALWAYS AS
-        (CASE
-            WHEN synced_at_raw IS NULL THEN NULL
-            ELSE to_timestamp((synced_at_raw)::double precision / 1000.0)
-        END) STORED,
-
-    -- Offline-first columns
+    -- Offline-first columns (for idempotency and audit trail)
     global_id UUID UNIQUE NOT NULL,
     terminal_id UUID NOT NULL,
     local_op_seq INTEGER NOT NULL,
@@ -689,16 +658,12 @@ CREATE TABLE IF NOT EXISTS credit_payments (
     payment_date TIMESTAMPTZ NOT NULL,
     notes TEXT,
 
-    -- Offline-first (idempotency)
+    -- Offline-first (for idempotency and audit trail)
     global_id VARCHAR(255) UNIQUE NOT NULL,
     terminal_id VARCHAR(100),
     local_op_seq INTEGER,
     device_event_raw BIGINT,
     created_local_utc TEXT,
-
-    -- Sync
-    synced BOOLEAN DEFAULT TRUE,
-    synced_at TIMESTAMPTZ DEFAULT NOW(),
 
     -- Audit
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -783,7 +748,6 @@ BEGIN
             is_system_generic,
             nota,
             global_id,
-            synced,
             created_at,
             updated_at
         ) VALUES (
@@ -795,7 +759,6 @@ BEGIN
             TRUE,
             'Cliente genérico del sistema - No editar ni eliminar',
             'GENERIC_CUSTOMER_' || p_tenant_id,
-            TRUE,
             NOW(),
             NOW()
         )
