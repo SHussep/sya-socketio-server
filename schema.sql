@@ -490,8 +490,10 @@ CREATE TABLE IF NOT EXISTS ventas (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS ventas_uq_ticket_per_branch ON ventas(tenant_id, branch_id, ticket_number);
-CREATE UNIQUE INDEX IF NOT EXISTS uq_ventas_ticket_per_terminal ON ventas(tenant_id, branch_id, ticket_number, terminal_id);
+-- ✅ CONSTRAINT CORRECTO: Un ticket es único POR TURNO
+-- Cada turno tiene su propia secuencia de tickets (1, 2, 3, ..., N)
+-- El mismo empleado puede tener ticket #1 en turno A y ticket #1 en turno B
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ventas_ticket_per_shift ON ventas(tenant_id, branch_id, ticket_number, id_turno);
 CREATE INDEX IF NOT EXISTS ventas_scope_time_idx ON ventas(tenant_id, branch_id, fecha_venta_utc DESC);
 CREATE INDEX IF NOT EXISTS ventas_scope_turno_idx ON ventas(tenant_id, branch_id, id_turno);
 CREATE INDEX IF NOT EXISTS ventas_scope_emp_idx ON ventas(tenant_id, branch_id, id_empleado);

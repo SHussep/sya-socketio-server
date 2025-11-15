@@ -272,14 +272,17 @@ module.exports = (pool) => {
                     global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw
                  )
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20::uuid, $21::uuid, $22, $23, $24)
-                 ON CONFLICT (global_id) DO UPDATE
+                 ON CONFLICT (tenant_id, branch_id, ticket_number, id_turno) DO UPDATE
                  SET subtotal = EXCLUDED.subtotal,
                      total_descuentos = EXCLUDED.total_descuentos,
                      total = EXCLUDED.total,
                      monto_pagado = EXCLUDED.monto_pagado,
                      estado_venta_id = EXCLUDED.estado_venta_id,
                      status = EXCLUDED.status,
-                     notas = EXCLUDED.notas
+                     notas = EXCLUDED.notas,
+                     fecha_liquidacion_raw = EXCLUDED.fecha_liquidacion_raw,
+                     id_repartidor_asignado = EXCLUDED.id_repartidor_asignado,
+                     id_turno_repartidor = EXCLUDED.id_turno_repartidor
                  RETURNING *`,
                 [
                     tenant_id,

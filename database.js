@@ -556,6 +556,42 @@ async function runMigrations() {
                 console.log('[Schema] ✅ Column renamed successfully');
             }
 
+            // Patch: Fix ventas unique constraint (per shift, not per branch)
+            console.log('[Schema] 🔍 Checking ventas unique constraints...');
+            const checkVentasConstraints = await client.query(`
+                SELECT constraint_name
+                FROM information_schema.table_constraints
+                WHERE table_name = 'ventas'
+                AND constraint_type = 'UNIQUE'
+                AND constraint_name IN ('ventas_uq_ticket_per_branch', 'uq_ventas_ticket_per_terminal', 'uq_ventas_ticket_per_shift')
+            `);
+
+            const constraints = checkVentasConstraints.rows.map(r => r.constraint_name);
+            console.log(`[Schema] 📋 Found constraints: ${constraints.join(', ') || 'none'}`);
+
+            // Drop old incorrect constraints
+            if (constraints.includes('ventas_uq_ticket_per_branch')) {
+                console.log('[Schema] 📝 Removing incorrect constraint: ventas_uq_ticket_per_branch (tickets are unique per shift, not per branch)');
+                await client.query(`DROP INDEX IF EXISTS ventas_uq_ticket_per_branch CASCADE`);
+                console.log('[Schema] ✅ Constraint removed');
+            }
+
+            if (constraints.includes('uq_ventas_ticket_per_terminal')) {
+                console.log('[Schema] 📝 Removing incorrect constraint: uq_ventas_ticket_per_terminal (tickets are unique per shift, not per terminal)');
+                await client.query(`DROP INDEX IF EXISTS uq_ventas_ticket_per_terminal CASCADE`);
+                console.log('[Schema] ✅ Constraint removed');
+            }
+
+            // Create correct constraint if missing
+            if (!constraints.includes('uq_ventas_ticket_per_shift')) {
+                console.log('[Schema] 📝 Creating correct constraint: uq_ventas_ticket_per_shift (tenant_id, branch_id, ticket_number, id_turno)');
+                await client.query(`
+                    CREATE UNIQUE INDEX IF NOT EXISTS uq_ventas_ticket_per_shift
+                    ON ventas(tenant_id, branch_id, ticket_number, id_turno)
+                `);
+                console.log('[Schema] ✅ Constraint created successfully');
+            }
+
             // 2.5. Clean user data if requested (for testing)
             console.log(`[Schema] 🔍 CLEAN_DATABASE_ON_START = "${process.env.CLEAN_DATABASE_ON_START}"`);
 
