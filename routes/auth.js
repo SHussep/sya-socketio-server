@@ -604,7 +604,7 @@ module.exports = function(pool) {
                     google_user_identifier, global_id, password_updated_at, created_at, updated_at
                 )
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, true, true, $9, gen_random_uuid()::text, NOW(), NOW(), NOW())
-                RETURNING id, email, username, first_name, last_name, role_id, can_use_mobile_app, is_active, created_at
+                RETURNING id, email, username, first_name, last_name, role_id, can_use_mobile_app, is_active, global_id, created_at
             `, [tenant.id, email, username, firstName, lastName, passwordHash, accesoTotalRoleId, branch.id, email]);
 
             const employee = employeeResult.rows[0];
@@ -718,7 +718,8 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                     id: employee.id,
                     email: employee.email,
                     fullName: `${employee.first_name} ${employee.last_name}`.trim(),
-                    role: employee.role
+                    role: employee.role,
+                    globalId: employee.global_id
                 },
                 branch: {
                     id: branch.id,
