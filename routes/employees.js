@@ -44,9 +44,7 @@ module.exports = (pool) => {
                 isActive,
                 isOwner,
                 mainBranchId,
-                googleUserIdentifier,
-                address,         // 🆕 Dirección del empleado
-                phoneNumber      // 🆕 Teléfono del empleado
+                googleUserIdentifier
             } = req.body;
 
             console.log(`[Employees/Sync] 🔄 Sincronizando empleado: ${fullName} (${username}) - Tenant: ${tenantId}, Role: ${roleId}`);
@@ -138,11 +136,9 @@ module.exports = (pool) => {
                              password_hash = COALESCE($6, password_hash),
                              password_updated_at = CASE WHEN $6 IS NOT NULL THEN NOW() ELSE password_updated_at END,
                              can_use_mobile_app = COALESCE($9, can_use_mobile_app),
-                             address = COALESCE($10, address),
-                             phone_number = COALESCE($11, phone_number),
                              updated_at = NOW()
                          WHERE id = $7 AND tenant_id = $8
-                         RETURNING id, tenant_id, first_name, last_name, username, email, main_branch_id, is_active, role_id, can_use_mobile_app, address, phone_number, created_at, updated_at`,
+                         RETURNING id, tenant_id, first_name, last_name, username, email, main_branch_id, is_active, role_id, can_use_mobile_app, created_at, updated_at`,
                         [
                             firstName,
                             lastName,
@@ -152,9 +148,7 @@ module.exports = (pool) => {
                             password || null,
                             existingId,
                             tenantId,
-                            canUseMobileApp,
-                            address || null,        // $10
-                            phoneNumber || null     // $11
+                            canUseMobileApp
                         ]
                     );
 
@@ -244,9 +238,9 @@ module.exports = (pool) => {
 
                 const insertResult = await client.query(
                     `INSERT INTO employees
-                     (tenant_id, first_name, last_name, username, email, password_hash, main_branch_id, role_id, can_use_mobile_app, is_active, address, phone_number, updated_at, created_at)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
-                     RETURNING id, tenant_id, first_name, last_name, username, email, main_branch_id, role_id, can_use_mobile_app, is_active, address, phone_number, created_at, updated_at`,
+                     (tenant_id, first_name, last_name, username, email, password_hash, main_branch_id, role_id, can_use_mobile_app, is_active, updated_at, created_at)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+                     RETURNING id, tenant_id, first_name, last_name, username, email, main_branch_id, role_id, can_use_mobile_app, is_active, created_at, updated_at`,
                     [
                         tenantId,
                         firstName,
@@ -257,9 +251,7 @@ module.exports = (pool) => {
                         branchId || mainBranchId,
                         mappedRoleId || null,
                         canUseMobileApp,
-                        isActive !== false,
-                        address || null,        // $11
-                        phoneNumber || null     // $12
+                        isActive !== false
                     ]
                 );
 
@@ -702,13 +694,11 @@ module.exports = (pool) => {
                 canUseMobileApp,
                 fullName,
                 isActive,
-                email,          // 🆕 Email del empleado
-                address,        // 🆕 Dirección del empleado
-                phoneNumber     // 🆕 Teléfono del empleado
+                email
             } = req.body;
 
             console.log(`[Employees/Update] 🔄 [UPDATE RECIBIDO] Actualizando empleado ID: ${employeeId}`);
-            console.log(`[Employees/Update] 📝 Payload: ${JSON.stringify({ tenantId, roleId, canUseMobileApp, fullName, isActive, email, address, phoneNumber })}`);
+            console.log(`[Employees/Update] 📝 Payload: ${JSON.stringify({ tenantId, roleId, canUseMobileApp, fullName, isActive, email })}`);
 
             // Validate parameters
             if (!employeeId || !tenantId) {
@@ -811,18 +801,6 @@ module.exports = (pool) => {
                 paramIndex++;
             }
 
-            if (address !== undefined) {
-                updates.push(`address = $${paramIndex}`);
-                params.push(address);
-                paramIndex++;
-            }
-
-            if (phoneNumber !== undefined) {
-                updates.push(`phone_number = $${paramIndex}`);
-                params.push(phoneNumber);
-                paramIndex++;
-            }
-
             // Always update timestamp
             updates.push(`updated_at = NOW()`);
 
@@ -833,7 +811,7 @@ module.exports = (pool) => {
             const query = `UPDATE employees
                           SET ${updates.join(', ')}
                           WHERE id = $${paramIndex} AND tenant_id = $${paramIndex + 1}
-                          RETURNING id, email, first_name, last_name, role_id, can_use_mobile_app, is_active, address, phone_number, updated_at`;
+                          RETURNING id, email, first_name, last_name, role_id, can_use_mobile_app, is_active, updated_at`;
 
             const updateResult = await client.query(query, params);
 
@@ -849,8 +827,6 @@ module.exports = (pool) => {
                 if (canUseMobileApp !== undefined) changes.push(`acceso_móvil: ${canUseMobileApp}`);
                 if (isActive !== undefined) changes.push(`activo: ${isActive}`);
                 if (email !== undefined) changes.push(`email: ${email}`);
-                if (address !== undefined) changes.push(`dirección: ${address}`);
-                if (phoneNumber !== undefined) changes.push(`teléfono: ${phoneNumber}`);
 
                 console.log(`[Employees/Update] ✅ Empleado actualizado: ${updatedFullName} (ID: ${employeeId}) - Cambios: ${changes.join(', ')}`);
 
@@ -865,8 +841,6 @@ module.exports = (pool) => {
                         canUseMobileApp: updatedEmployee.can_use_mobile_app,
                         mobileAccessType: accessType,
                         isActive: updatedEmployee.is_active,
-                        address: updatedEmployee.address,
-                        phoneNumber: updatedEmployee.phone_number,
                         updatedAt: updatedEmployee.updated_at
                     }
                 });
