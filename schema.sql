@@ -105,7 +105,7 @@ CREATE TABLE IF NOT EXISTS employee_branches (
     removed_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(employee_id, branch_id)
+    UNIQUE(tenant_id, employee_id, branch_id)
 );
 
 -- devices (dispositivos registrados)

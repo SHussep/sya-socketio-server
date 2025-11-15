@@ -268,10 +268,10 @@ module.exports = (pool) => {
                     ticket_number, id_cliente,
                     subtotal, total_descuentos, total, monto_pagado,
                     fecha_venta_raw, fecha_liquidacion_raw,
-                    notas, status, synced, synced_at_raw,
+                    notas, status,
                     global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw
                  )
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22::uuid, $23::uuid, $24, $25, $26)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20::uuid, $21::uuid, $22, $23, $24)
                  ON CONFLICT (global_id) DO UPDATE
                  SET subtotal = EXCLUDED.subtotal,
                      total_descuentos = EXCLUDED.total_descuentos,
@@ -279,8 +279,7 @@ module.exports = (pool) => {
                      monto_pagado = EXCLUDED.monto_pagado,
                      estado_venta_id = EXCLUDED.estado_venta_id,
                      status = EXCLUDED.status,
-                     notas = EXCLUDED.notas,
-                     synced_at_raw = $21
+                     notas = EXCLUDED.notas
                  RETURNING *`,
                 [
                     tenant_id,
@@ -302,8 +301,6 @@ module.exports = (pool) => {
                     fecha_liquidacion_raw || null,
                     notas || null,
                     status,                                   // ✅ NUEVO: 'completed' o 'cancelled'
-                    true,                                     // synced=true (backend es la fuente de verdad)
-                    Date.now(),                               // synced_at_raw = epoch_ms actual
                     global_id,                                // UUID from Desktop
                     terminal_id,                              // UUID from Desktop
                     local_op_seq,                             // Sequence number from Desktop

@@ -367,8 +367,7 @@ module.exports = (pool) => {
                         DO UPDATE SET
                             counted_cash = EXCLUDED.counted_cash,
                             difference = EXCLUDED.difference,
-                            notes = EXCLUDED.notes,
-                            synced_at = NOW()
+                            notes = EXCLUDED.notes
                         RETURNING *`,
                         [
                             effectiveTenantId, branchId, shiftId, employeeId || null,

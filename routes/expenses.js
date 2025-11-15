@@ -226,16 +226,14 @@ module.exports = (pool) => {
             const result = await pool.query(
                 `INSERT INTO expenses (
                     tenant_id, branch_id, employee_id, payment_type_id, category_id, description, amount, expense_date,
-                    global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw,
-                    synced, synced_at
+                    global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw
                  )
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::uuid, $10::uuid, $11, $12, $13, true, NOW())
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::uuid, $10::uuid, $11, $12, $13)
                  ON CONFLICT (global_id) DO UPDATE
                  SET amount = EXCLUDED.amount,
                      description = EXCLUDED.description,
                      expense_date = EXCLUDED.expense_date,
-                     payment_type_id = EXCLUDED.payment_type_id,
-                     synced_at = NOW()
+                     payment_type_id = EXCLUDED.payment_type_id
                  RETURNING *`,
                 [
                     tenantId,

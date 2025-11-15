@@ -136,8 +136,7 @@ module.exports = (pool) => {
                          ON CONFLICT (global_id)
                          DO UPDATE SET
                             amount = EXCLUDED.amount,
-                            notes = EXCLUDED.notes,
-                            synced_at = NOW()
+                            notes = EXCLUDED.notes
                          RETURNING *`,
                         [
                             effectiveTenantId, branchId, customerId, shiftId || null, employeeId || null,
