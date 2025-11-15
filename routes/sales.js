@@ -237,7 +237,7 @@ module.exports = (pool) => {
 
             // 2. Resolver turno (REQUERIDO)
             const shiftResult = await pool.query(
-                'SELECT id FROM shifts WHERE global_id = $1::uuid AND tenant_id = $2',
+                'SELECT id FROM shifts WHERE global_id = $1 AND tenant_id = $2',
                 [turno_global_id, tenant_id]
             );
             if (shiftResult.rows.length === 0) {
@@ -267,7 +267,7 @@ module.exports = (pool) => {
             let id_cliente = null;
             if (cliente_global_id) {
                 const customerResult = await pool.query(
-                    'SELECT id FROM customers WHERE global_id = $1::uuid AND tenant_id = $2',
+                    'SELECT id FROM customers WHERE global_id = $1 AND tenant_id = $2',
                     [cliente_global_id, tenant_id]
                 );
                 if (customerResult.rows.length > 0) {
@@ -281,7 +281,7 @@ module.exports = (pool) => {
             let id_turno_repartidor = null;
             if (turno_repartidor_global_id) {
                 const turnoRepartidorResult = await pool.query(
-                    'SELECT id FROM shifts WHERE global_id = $1::uuid AND tenant_id = $2',
+                    'SELECT id FROM shifts WHERE global_id = $1 AND tenant_id = $2',
                     [turno_repartidor_global_id, tenant_id]
                 );
                 if (turnoRepartidorResult.rows.length > 0) {
@@ -331,7 +331,7 @@ module.exports = (pool) => {
                     notas, status,
                     global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw
                  )
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20::uuid, $21::uuid, $22, $23, $24)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
                  ON CONFLICT (tenant_id, branch_id, ticket_number, id_turno) DO UPDATE
                  SET subtotal = EXCLUDED.subtotal,
                      total_descuentos = EXCLUDED.total_descuentos,
@@ -698,7 +698,7 @@ module.exports = (pool) => {
 
             // Verificar que la venta existe
             const existingVenta = await pool.query(
-                'SELECT id_venta FROM ventas WHERE global_id = $1::uuid AND tenant_id = $2',
+                'SELECT id_venta FROM ventas WHERE global_id = $1 AND tenant_id = $2',
                 [globalId, tenant_id]
             );
 
@@ -731,7 +731,7 @@ module.exports = (pool) => {
             let id_turno_repartidor = null;
             if (turno_repartidor_global_id) {
                 const turnoRepartidorResult = await pool.query(
-                    'SELECT id FROM shifts WHERE global_id = $1::uuid AND tenant_id = $2',
+                    'SELECT id FROM shifts WHERE global_id = $1 AND tenant_id = $2',
                     [turno_repartidor_global_id, tenant_id]
                 );
                 if (turnoRepartidorResult.rows.length > 0) {
@@ -757,7 +757,7 @@ module.exports = (pool) => {
                      notas = $9,
                      status = CASE WHEN $1 = 4 THEN 'cancelled' ELSE 'completed' END,
                      updated_at = NOW()
-                 WHERE global_id = $10::uuid AND tenant_id = $11
+                 WHERE global_id = $10 AND tenant_id = $11
                  RETURNING *`,
                 [
                     estado_venta_id,
