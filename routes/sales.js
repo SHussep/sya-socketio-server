@@ -182,12 +182,12 @@ module.exports = (pool) => {
             const {
                 tenant_id,
                 branch_id,
-                // ✅ RELACIONES CON GLOBALIDS (para idempotencia)
-                empleado_global_id,
-                turno_global_id,
-                cliente_global_id,
-                repartidor_global_id,
-                turno_repartidor_global_id,
+                // ✅ RELACIONES: Mix de IDs directos (backend-only) y GlobalIds (offline-first)
+                id_empleado,                      // ID directo (empleados solo del backend)
+                turno_global_id,                  // GlobalId (turnos se crean offline)
+                cliente_global_id,                // GlobalId (clientes se crean offline)
+                id_repartidor_asignado,           // ID directo (repartidores solo del backend)
+                turno_repartidor_global_id,       // GlobalId (turnos se crean offline)
                 estado_venta_id,
                 venta_tipo_id,
                 tipo_pago_id,
@@ -208,34 +208,23 @@ module.exports = (pool) => {
             } = req.body;
 
             console.log(`[Sync/Sales] 🔄 Sincronizando venta - Tenant: ${tenant_id}, Branch: ${branch_id}, Ticket: ${ticket_number}`);
-            console.log(`[Sync/Sales] 🔑 GlobalIds - turno: ${turno_global_id}, empleado: ${empleado_global_id}, cliente: ${cliente_global_id || 'null'}`);
-            console.log(`[Sync/Sales] 🔑 Repartidor - global_id: ${repartidor_global_id || 'null'}, turno_global_id: ${turno_repartidor_global_id || 'null'}`);
+            console.log(`[Sync/Sales] 🔑 IDs - empleado: ${id_empleado}, turno_global_id: ${turno_global_id}, cliente_global_id: ${cliente_global_id || 'null'}`);
+            console.log(`[Sync/Sales] 🔑 Repartidor - id: ${id_repartidor_asignado || 'null'}, turno_global_id: ${turno_repartidor_global_id || 'null'}`);
             console.log(`[Sync/Sales] 💰 Montos - Subtotal: ${subtotal}, Descuentos: ${total_descuentos}, Total: ${total}, Pagado: ${monto_pagado}`);
 
             // Validar campos requeridos (incluyendo global_id para idempotencia)
-            if (!tenant_id || !branch_id || !empleado_global_id || !turno_global_id || !ticket_number || total === null || total === undefined || !global_id) {
+            if (!tenant_id || !branch_id || !id_empleado || !turno_global_id || !ticket_number || total === null || total === undefined || !global_id) {
                 return res.status(400).json({
                     success: false,
-                    message: 'Datos incompletos (tenant_id, branch_id, empleado_global_id, turno_global_id, ticket_number, total, global_id requeridos)'
+                    message: 'Datos incompletos (tenant_id, branch_id, id_empleado, turno_global_id, ticket_number, total, global_id requeridos)'
                 });
             }
 
             // 🔑 RESOLVER GLOBALIDS A IDs DE POSTGRESQL
-            // 1. Resolver empleado
-            const employeeResult = await pool.query(
-                'SELECT id FROM employees WHERE global_id = $1 AND tenant_id = $2',
-                [empleado_global_id, tenant_id]
-            );
-            if (employeeResult.rows.length === 0) {
-                console.log(`[Sync/Sales] ❌ Empleado no encontrado: ${empleado_global_id}`);
-                return res.status(400).json({
-                    success: false,
-                    message: `Empleado no encontrado con global_id: ${empleado_global_id}`
-                });
-            }
-            const id_empleado = employeeResult.rows[0].id;
+            // Solo turnos y clientes necesitan resolución (se crean offline)
+            // Empleados y repartidores vienen como IDs directos (solo del backend)
 
-            // 2. Resolver turno
+            // 1. Resolver turno (REQUERIDO)
             const shiftResult = await pool.query(
                 'SELECT id FROM shifts WHERE global_id = $1::uuid AND tenant_id = $2',
                 [turno_global_id, tenant_id]
@@ -249,7 +238,7 @@ module.exports = (pool) => {
             }
             const id_turno = shiftResult.rows[0].id;
 
-            // 3. Resolver cliente (opcional)
+            // 2. Resolver cliente (opcional)
             let id_cliente = null;
             if (cliente_global_id) {
                 const customerResult = await pool.query(
@@ -263,21 +252,7 @@ module.exports = (pool) => {
                 }
             }
 
-            // 4. Resolver repartidor asignado (opcional)
-            let id_repartidor_asignado = null;
-            if (repartidor_global_id) {
-                const repartidorResult = await pool.query(
-                    'SELECT id FROM employees WHERE global_id = $1 AND tenant_id = $2',
-                    [repartidor_global_id, tenant_id]
-                );
-                if (repartidorResult.rows.length > 0) {
-                    id_repartidor_asignado = repartidorResult.rows[0].id;
-                } else {
-                    console.log(`[Sync/Sales] ⚠️ Repartidor no encontrado con global_id: ${repartidor_global_id}`);
-                }
-            }
-
-            // 5. Resolver turno del repartidor (opcional)
+            // 3. Resolver turno del repartidor (opcional)
             let id_turno_repartidor = null;
             if (turno_repartidor_global_id) {
                 const turnoRepartidorResult = await pool.query(
@@ -291,7 +266,7 @@ module.exports = (pool) => {
                 }
             }
 
-            console.log(`[Sync/Sales] ✅ IDs resueltos - empleado: ${id_empleado}, turno: ${id_turno}, cliente: ${id_cliente}, repartidor: ${id_repartidor_asignado}, turno_repartidor: ${id_turno_repartidor}`);
+            console.log(`[Sync/Sales] ✅ IDs resueltos - empleado: ${id_empleado} (directo), turno: ${id_turno}, cliente: ${id_cliente}, repartidor: ${id_repartidor_asignado || 'null'} (directo), turno_repartidor: ${id_turno_repartidor}`);
 
             // Convertir montos a números
             const numericSubtotal = parseFloat(subtotal) || 0;
@@ -686,15 +661,15 @@ module.exports = (pool) => {
                 total,
                 subtotal,
                 tipo_pago_id,
-                // ✅ RELACIONES CON GLOBALIDS (para idempotencia)
-                repartidor_global_id,
-                turno_repartidor_global_id,
+                // ✅ RELACIONES: Mix de IDs directos y GlobalIds
+                id_repartidor_asignado,           // ID directo (empleados solo del backend)
+                turno_repartidor_global_id,       // GlobalId (turnos se crean offline)
                 notas
             } = req.body;
 
             console.log(`[Sync/Sales/Update] 🔄 Actualizando venta GlobalId: ${globalId}`);
             console.log(`[Sync/Sales/Update] 📊 Estado: ${estado_venta_id}, Total: ${total}, Pagado: ${monto_pagado}`);
-            console.log(`[Sync/Sales/Update] 🔑 Repartidor - global_id: ${repartidor_global_id || 'null'}, turno_global_id: ${turno_repartidor_global_id || 'null'}`);
+            console.log(`[Sync/Sales/Update] 🔑 Repartidor - id: ${id_repartidor_asignado || 'null'} (directo), turno_global_id: ${turno_repartidor_global_id || 'null'}`);
 
             // Verificar que la venta existe
             const existingVenta = await pool.query(
@@ -713,19 +688,8 @@ module.exports = (pool) => {
             const ventaId = existingVenta.rows[0].id_venta;
 
             // 🔑 RESOLVER GLOBALIDS A IDs DE POSTGRESQL
-            // Resolver repartidor asignado (opcional)
-            let id_repartidor_asignado = null;
-            if (repartidor_global_id) {
-                const repartidorResult = await pool.query(
-                    'SELECT id FROM employees WHERE global_id = $1 AND tenant_id = $2',
-                    [repartidor_global_id, tenant_id]
-                );
-                if (repartidorResult.rows.length > 0) {
-                    id_repartidor_asignado = repartidorResult.rows[0].id;
-                } else {
-                    console.log(`[Sync/Sales/Update] ⚠️ Repartidor no encontrado con global_id: ${repartidor_global_id}`);
-                }
-            }
+            // Solo turno repartidor necesita resolución (se crea offline)
+            // Repartidor viene como ID directo (solo del backend)
 
             // Resolver turno del repartidor (opcional)
             let id_turno_repartidor = null;
@@ -741,7 +705,7 @@ module.exports = (pool) => {
                 }
             }
 
-            console.log(`[Sync/Sales/Update] ✅ IDs resueltos - repartidor: ${id_repartidor_asignado}, turno_repartidor: ${id_turno_repartidor}`);
+            console.log(`[Sync/Sales/Update] ✅ IDs resueltos - repartidor: ${id_repartidor_asignado || 'null'} (directo), turno_repartidor: ${id_turno_repartidor}`);
 
             // Actualizar venta con campos modificables
             const result = await pool.query(
