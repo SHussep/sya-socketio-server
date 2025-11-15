@@ -79,8 +79,12 @@ CREATE TABLE IF NOT EXISTS employees (
     google_user_identifier VARCHAR(255),
     main_branch_id INTEGER REFERENCES branches(id),
 
-    -- Offline-first sync columns (only global_id for idempotency)
-    global_id VARCHAR(255),
+    -- Offline-first sync columns (for idempotency and audit trail)
+    global_id VARCHAR(255) UNIQUE NOT NULL,
+    terminal_id VARCHAR(100),
+    local_op_seq BIGINT,
+    created_local_utc TEXT,
+    device_event_raw BIGINT,
 
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -90,6 +94,7 @@ CREATE TABLE IF NOT EXISTS employees (
 
 CREATE INDEX IF NOT EXISTS idx_employees_tenant_id ON employees(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_employees_email ON employees(email);
+CREATE INDEX IF NOT EXISTS idx_employees_global_id ON employees(global_id);
 
 -- employee_branches (empleados asignados a sucursales)
 CREATE TABLE IF NOT EXISTS employee_branches (

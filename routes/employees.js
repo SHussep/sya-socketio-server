@@ -44,17 +44,24 @@ module.exports = (pool) => {
                 isActive,
                 isOwner,
                 mainBranchId,
-                googleUserIdentifier
+                googleUserIdentifier,
+                // ✅ OFFLINE-FIRST FIELDS
+                global_id,
+                terminal_id,
+                local_op_seq,
+                created_local_utc,
+                device_event_raw
             } = req.body;
 
             console.log(`[Employees/Sync] 🔄 Sincronizando empleado: ${fullName} (${username}) - Tenant: ${tenantId}, Role: ${roleId}`);
+            console.log(`[Employees/Sync] 🔑 GlobalId: ${global_id || 'null'}, TerminalId: ${terminal_id || 'null'}`);
 
             // Validate required fields
-            if (!tenantId || !fullName || !username || !email) {
+            if (!tenantId || !fullName || !username || !email || !global_id) {
                 console.log(`[Employees/Sync] ❌ Datos incompletos`);
                 return res.status(400).json({
                     success: false,
-                    message: 'Faltan campos requeridos: tenantId, fullName, username, email'
+                    message: 'Faltan campos requeridos: tenantId, fullName, username, email, global_id'
                 });
             }
 
@@ -110,12 +117,10 @@ module.exports = (pool) => {
 
             console.log(`[Employees/Sync] 📱 Mobile Access: ${mobileAccessType} (Role: ${mappedRoleId}, Can Use: ${canUseMobileApp})`);
 
-            // Check if employee already exists by email or username
+            // ✅ IDEMPOTENCIA: Check if employee already exists by global_id
             const existingResult = await client.query(
-                `SELECT id, password_hash FROM employees WHERE
-                 (LOWER(email) = LOWER($1) OR LOWER(username) = LOWER($2))
-                 AND tenant_id = $3`,
-                [email, username, tenantId]
+                `SELECT id, password_hash FROM employees WHERE global_id = $1 AND tenant_id = $2`,
+                [global_id, tenantId]
             );
 
             if (existingResult.rows.length > 0) {
@@ -238,8 +243,19 @@ module.exports = (pool) => {
 
                 const insertResult = await client.query(
                     `INSERT INTO employees
-                     (tenant_id, first_name, last_name, username, email, password_hash, main_branch_id, role_id, can_use_mobile_app, is_active, updated_at, created_at)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+                     (tenant_id, first_name, last_name, username, email, password_hash, main_branch_id, role_id, can_use_mobile_app, is_active, global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw, updated_at, created_at)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())
+                     ON CONFLICT (global_id) DO UPDATE
+                     SET first_name = EXCLUDED.first_name,
+                         last_name = EXCLUDED.last_name,
+                         username = EXCLUDED.username,
+                         email = EXCLUDED.email,
+                         password_hash = COALESCE(EXCLUDED.password_hash, employees.password_hash),
+                         main_branch_id = COALESCE(EXCLUDED.main_branch_id, employees.main_branch_id),
+                         role_id = COALESCE(EXCLUDED.role_id, employees.role_id),
+                         can_use_mobile_app = COALESCE(EXCLUDED.can_use_mobile_app, employees.can_use_mobile_app),
+                         is_active = COALESCE(EXCLUDED.is_active, employees.is_active),
+                         updated_at = NOW()
                      RETURNING id, tenant_id, first_name, last_name, username, email, main_branch_id, role_id, can_use_mobile_app, is_active, created_at, updated_at`,
                     [
                         tenantId,
@@ -251,7 +267,12 @@ module.exports = (pool) => {
                         branchId || mainBranchId,
                         mappedRoleId || null,
                         canUseMobileApp,
-                        isActive !== false
+                        isActive !== false,
+                        global_id,            // ✅ OFFLINE-FIRST
+                        terminal_id,          // ✅ OFFLINE-FIRST
+                        local_op_seq,         // ✅ OFFLINE-FIRST
+                        created_local_utc,    // ✅ OFFLINE-FIRST
+                        device_event_raw      // ✅ OFFLINE-FIRST
                     ]
                 );
 
