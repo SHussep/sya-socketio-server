@@ -611,5 +611,105 @@ module.exports = (pool) => {
         }
     });
 
+    // PUT /api/sync/sales/:globalId - Actualizar venta existente (liquidación, cancelación)
+    router.put('/sync/:globalId', authenticateToken, async (req, res) => {
+        try {
+            const { globalId } = req.params;
+            const {
+                tenant_id,
+                branch_id,
+                estado_venta_id,
+                fecha_liquidacion_raw,
+                monto_pagado,
+                total,
+                subtotal,
+                tipo_pago_id,
+                id_repartidor_asignado,
+                id_turno_repartidor,
+                notas
+            } = req.body;
+
+            console.log(`[Sync/Sales/Update] 🔄 Actualizando venta GlobalId: ${globalId}`);
+            console.log(`[Sync/Sales/Update] 📊 Estado: ${estado_venta_id}, Total: ${total}, Pagado: ${monto_pagado}`);
+
+            // Verificar que la venta existe
+            const existingVenta = await pool.query(
+                'SELECT id_venta FROM ventas WHERE global_id = $1::uuid AND tenant_id = $2',
+                [globalId, tenant_id]
+            );
+
+            if (existingVenta.rows.length === 0) {
+                console.log(`[Sync/Sales/Update] ❌ Venta no encontrada: ${globalId}`);
+                return res.status(404).json({
+                    success: false,
+                    message: 'Venta no encontrada'
+                });
+            }
+
+            const ventaId = existingVenta.rows[0].id_venta;
+
+            // Actualizar venta con campos modificables
+            const result = await pool.query(
+                `UPDATE ventas
+                 SET estado_venta_id = $1,
+                     fecha_liquidacion_raw = $2,
+                     monto_pagado = $3,
+                     total = $4,
+                     subtotal = $5,
+                     tipo_pago_id = $6,
+                     id_repartidor_asignado = $7,
+                     id_turno_repartidor = $8,
+                     notas = $9,
+                     status = CASE WHEN $1 = 4 THEN 'cancelled' ELSE 'completed' END,
+                     updated_at = NOW()
+                 WHERE global_id = $10::uuid AND tenant_id = $11
+                 RETURNING *`,
+                [
+                    estado_venta_id,
+                    fecha_liquidacion_raw,
+                    monto_pagado,
+                    total,
+                    subtotal,
+                    tipo_pago_id,
+                    id_repartidor_asignado,
+                    id_turno_repartidor,
+                    notas,
+                    globalId,
+                    tenant_id
+                ]
+            );
+
+            if (result.rows.length === 0) {
+                console.log(`[Sync/Sales/Update] ❌ Error al actualizar venta ${globalId}`);
+                return res.status(500).json({
+                    success: false,
+                    message: 'Error al actualizar venta'
+                });
+            }
+
+            const updatedVenta = result.rows[0];
+
+            console.log(`[Sync/Sales/Update] ✅ Venta actualizada exitosamente:`);
+            console.log(`[Sync/Sales/Update]    ID: ${updatedVenta.id_venta}`);
+            console.log(`[Sync/Sales/Update]    Estado: ${updatedVenta.estado_venta_id}`);
+            console.log(`[Sync/Sales/Update]    Total: $${updatedVenta.total}`);
+
+            res.json({
+                success: true,
+                message: 'Venta actualizada exitosamente',
+                venta_id: updatedVenta.id_venta,
+                estado: updatedVenta.estado_venta_id
+            });
+
+        } catch (error) {
+            console.error('[Sync/Sales/Update] ❌ Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al actualizar venta',
+                error: error.message
+            });
+        }
+    });
+
     return router;
 };
