@@ -142,48 +142,54 @@ module.exports = (pool) => {
 
             const { start_time: startTime, end_time: endTime } = shiftResult.rows[0];
 
-            // Aggregate cash sales (payment_method = 'cash')
+            // Aggregate cash sales (tipo_pago_id = 1 = Efectivo)
+            // ✅ FILTRAR solo ventas COMPLETADAS (estado 3) y LIQUIDADAS (estado 5)
             const cashSalesResult = await client.query(
-                `SELECT COALESCE(SUM(total_amount), 0) as total
-                 FROM sales
-                 WHERE tenant_id = $1 AND branch_id = $2 AND shift_id = $3 AND payment_method = 'cash'
-                 AND sale_date >= $4 AND sale_date <= $5`,
+                `SELECT COALESCE(SUM(total), 0) as total
+                 FROM ventas
+                 WHERE tenant_id = $1 AND branch_id = $2 AND id_turno = $3 AND tipo_pago_id = 1
+                 AND estado_venta_id IN (3, 5)
+                 AND fecha_venta_utc >= $4 AND fecha_venta_utc <= $5`,
                 [tenantId, targetBranchId, shiftId, startTime, endTime]
             );
 
-            // Aggregate card sales (payment_method = 'card')
+            // Aggregate card sales (tipo_pago_id = 2 = Tarjeta)
+            // ✅ FILTRAR solo ventas COMPLETADAS (estado 3) y LIQUIDADAS (estado 5)
             const cardSalesResult = await client.query(
-                `SELECT COALESCE(SUM(total_amount), 0) as total
-                 FROM sales
-                 WHERE tenant_id = $1 AND branch_id = $2 AND shift_id = $3 AND payment_method = 'card'
-                 AND sale_date >= $4 AND sale_date <= $5`,
+                `SELECT COALESCE(SUM(total), 0) as total
+                 FROM ventas
+                 WHERE tenant_id = $1 AND branch_id = $2 AND id_turno = $3 AND tipo_pago_id = 2
+                 AND estado_venta_id IN (3, 5)
+                 AND fecha_venta_utc >= $4 AND fecha_venta_utc <= $5`,
                 [tenantId, targetBranchId, shiftId, startTime, endTime]
             );
 
-            // Aggregate credit sales (payment_method = 'credit')
+            // Aggregate credit sales (tipo_pago_id = 3 = Crédito)
+            // ✅ FILTRAR solo ventas COMPLETADAS (estado 3) y LIQUIDADAS (estado 5)
             const creditSalesResult = await client.query(
-                `SELECT COALESCE(SUM(total_amount), 0) as total
-                 FROM sales
-                 WHERE tenant_id = $1 AND branch_id = $2 AND shift_id = $3 AND payment_method = 'credit'
-                 AND sale_date >= $4 AND sale_date <= $5`,
+                `SELECT COALESCE(SUM(total), 0) as total
+                 FROM ventas
+                 WHERE tenant_id = $1 AND branch_id = $2 AND id_turno = $3 AND tipo_pago_id = 3
+                 AND estado_venta_id IN (3, 5)
+                 AND fecha_venta_utc >= $4 AND fecha_venta_utc <= $5`,
                 [tenantId, targetBranchId, shiftId, startTime, endTime]
             );
 
-            // Aggregate cash payments
+            // Aggregate cash payments (credit_payments con payment_method = 'cash')
             const cashPaymentsResult = await client.query(
-                `SELECT COALESCE(SUM(total_amount), 0) as total
-                 FROM sales
-                 WHERE tenant_id = $1 AND branch_id = $2 AND shift_id = $3 AND sale_type = 'payment' AND payment_method = 'cash'
-                 AND sale_date >= $4 AND sale_date <= $5`,
+                `SELECT COALESCE(SUM(amount), 0) as total
+                 FROM credit_payments
+                 WHERE tenant_id = $1 AND branch_id = $2 AND shift_id = $3 AND payment_method = 'cash'
+                 AND payment_date >= $4 AND payment_date <= $5`,
                 [tenantId, targetBranchId, shiftId, startTime, endTime]
             );
 
-            // Aggregate card payments
+            // Aggregate card payments (credit_payments con payment_method = 'card')
             const cardPaymentsResult = await client.query(
-                `SELECT COALESCE(SUM(total_amount), 0) as total
-                 FROM sales
-                 WHERE tenant_id = $1 AND branch_id = $2 AND shift_id = $3 AND sale_type = 'payment' AND payment_method = 'card'
-                 AND sale_date >= $4 AND sale_date <= $5`,
+                `SELECT COALESCE(SUM(amount), 0) as total
+                 FROM credit_payments
+                 WHERE tenant_id = $1 AND branch_id = $2 AND shift_id = $3 AND payment_method = 'card'
+                 AND payment_date >= $4 AND payment_date <= $5`,
                 [tenantId, targetBranchId, shiftId, startTime, endTime]
             );
 
