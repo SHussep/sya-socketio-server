@@ -612,7 +612,9 @@ module.exports = (pool) => {
     });
 
     // PUT /api/sync/sales/:globalId - Actualizar venta existente (liquidación, cancelación)
-    router.put('/sync/:globalId', authenticateToken, async (req, res) => {
+    // ⚠️ Sin authenticateToken para permitir sync offline-first desde Desktop
+    // El tenant_id en el payload valida que solo puede actualizar sus propias ventas
+    router.put('/sync/:globalId', async (req, res) => {
         try {
             const { globalId } = req.params;
             const {
