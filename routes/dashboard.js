@@ -81,7 +81,10 @@ module.exports = (pool) => {
             }
 
             // Total de ventas
-            let salesQuery = `SELECT COALESCE(SUM(total), 0) as total FROM ventas WHERE tenant_id = $1 AND ${dateFilter}`;
+            // ✅ FILTRAR solo ventas COMPLETADAS (estado 3) y LIQUIDADAS (estado 5)
+            // - Excluye estado 1 = Borrador (sin ticket válido)
+            // - Excluye estado 2 = Asignada (repartidor, no es venta final)
+            let salesQuery = `SELECT COALESCE(SUM(total), 0) as total FROM ventas WHERE tenant_id = $1 AND estado_venta_id IN (3, 5) AND ${dateFilter}`;
             let salesParams = [tenantId];
             if (shouldFilterByBranch) {
                 salesQuery += ` AND branch_id = $2`;
