@@ -39,7 +39,8 @@ module.exports = (pool) => {
                 SELECT d.id, d.tenant_id, d.branch_id, d.shift_id, d.employee_id,
                        d.amount, d.description,
                        d.deposit_date, d.created_at,
-                       emp.full_name as employee_name, b.name as branch_name
+                       CONCAT(emp.first_name, ' ', emp.last_name) as employee_name,
+                       b.name as branch_name
                 FROM deposits d
                 LEFT JOIN employees emp ON d.employee_id = emp.id
                 LEFT JOIN branches b ON d.branch_id = b.id

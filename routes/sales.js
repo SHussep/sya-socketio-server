@@ -28,6 +28,7 @@ module.exports = (pool) => {
     const router = express.Router();
 
     // GET /api/sales - Lista de ventas (con soporte de timezone)
+    // ✅ ACTUALIZADO: Ahora usa tabla 'ventas' con nomenclatura correcta
     router.get('/', authenticateToken, async (req, res) => {
         try {
             const { tenantId, branchId: userBranchId } = req.user;
@@ -40,17 +41,21 @@ module.exports = (pool) => {
             const userTimezone = timezone || 'UTC';
 
             let query = `
-                SELECT s.id, s.ticket_number, s.total_amount, s.payment_method, s.sale_date,
-                       s.sale_type, s.employee_id, s.tenant_id, s.branch_id,
-                       e.full_name as employee_name, e.role as employee_role,
+                SELECT v.id_venta as id, v.ticket_number, v.total as total_amount,
+                       v.tipo_pago_id as payment_method, v.fecha_venta_utc as sale_date,
+                       v.venta_tipo_id as sale_type, v.id_empleado as employee_id,
+                       v.tenant_id, v.branch_id,
+                       CONCAT(e.first_name, ' ', e.last_name) as employee_name,
+                       r.name as employee_role,
                        b.name as branch_name, b.id as "branchId",
                        ra.id as assignment_id,
-                       (s.sale_date AT TIME ZONE '${userTimezone}') as sale_date_display
-                FROM sales s
-                LEFT JOIN employees e ON s.employee_id = e.id
-                LEFT JOIN branches b ON s.branch_id = b.id
-                LEFT JOIN repartidor_assignments ra ON s.id = ra.sale_id
-                WHERE s.tenant_id = $1
+                       (v.fecha_venta_utc AT TIME ZONE '${userTimezone}') as sale_date_display
+                FROM ventas v
+                LEFT JOIN employees e ON v.id_empleado = e.id
+                LEFT JOIN roles r ON e.role_id = r.id
+                LEFT JOIN branches b ON v.branch_id = b.id
+                LEFT JOIN repartidor_assignments ra ON v.id_venta = ra.venta_id
+                WHERE v.tenant_id = $1
             `;
 
             const params = [tenantId];
@@ -58,7 +63,7 @@ module.exports = (pool) => {
 
             // Filtrar por branch_id solo si no se solicita ver todas las sucursales
             if (all_branches !== 'true' && targetBranchId) {
-                query += ` AND s.branch_id = $${paramIndex}`;
+                query += ` AND v.branch_id = $${paramIndex}`;
                 params.push(targetBranchId);
                 paramIndex++;
             }
@@ -66,18 +71,18 @@ module.exports = (pool) => {
             // Filtrar por rango de fechas si se proporciona (en timezone del usuario)
             if (startDate || endDate) {
                 if (startDate) {
-                    query += ` AND (s.sale_date AT TIME ZONE '${userTimezone}')::date >= $${paramIndex}::date`;
+                    query += ` AND (v.fecha_venta_utc AT TIME ZONE '${userTimezone}')::date >= $${paramIndex}::date`;
                     params.push(startDate);
                     paramIndex++;
                 }
                 if (endDate) {
-                    query += ` AND (s.sale_date AT TIME ZONE '${userTimezone}')::date <= $${paramIndex}::date`;
+                    query += ` AND (v.fecha_venta_utc AT TIME ZONE '${userTimezone}')::date <= $${paramIndex}::date`;
                     params.push(endDate);
                     paramIndex++;
                 }
             }
 
-            query += ` ORDER BY s.sale_date DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+            query += ` ORDER BY v.fecha_venta_utc DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
             params.push(limit, offset);
 
             console.log(`[Sales] Fetching sales - Tenant: ${tenantId}, Branch: ${targetBranchId}, Timezone: ${userTimezone}, all_branches: ${all_branches}`);

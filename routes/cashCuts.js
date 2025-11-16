@@ -1,5 +1,8 @@
 // ═══════════════════════════════════════════════════════════════
 // CASH CUTS ROUTES - Extracted from server.js
+// ⚠️ WARNING: Este archivo usa un esquema OBSOLETO
+// ⚠️ Use routes/cash-cuts.js en su lugar (esquema actualizado)
+// ⚠️ Este archivo se mantiene por compatibilidad con versiones antiguas
 // ═══════════════════════════════════════════════════════════════
 
 const express = require('express');
@@ -34,9 +37,9 @@ module.exports = (pool) => {
             const { limit = 50, offset = 0 } = req.query;
 
             const result = await pool.query(
-                `SELECT c.id, c.cut_number, c.total_sales, c.total_expenses, c.cash_in_drawer,
-                        c.expected_cash, c.difference, c.cut_date,
-                        e.full_name as employee_name, b.name as branch_name
+                `SELECT c.id, c.total_expenses, c.counted_cash,
+                        c.expected_cash_in_drawer, c.difference, c.cut_date,
+                        CONCAT(e.first_name, ' ', e.last_name) as employee_name, b.name as branch_name
                  FROM cash_cuts c
                  LEFT JOIN employees e ON c.employee_id = e.id
                  LEFT JOIN branches b ON c.branch_id = b.id
@@ -63,8 +66,16 @@ module.exports = (pool) => {
     });
 
     // POST /api/cash-cuts - Crear corte de caja (desde Desktop)
+    // ⚠️ OBSOLETO: Use POST /api/cash-cuts en routes/cash-cuts.js
     router.post('/', authenticateToken, async (req, res) => {
         try {
+            console.log(`[Cash Cuts] ⚠️ Endpoint OBSOLETO - Use /api/cash-cuts en routes/cash-cuts.js`);
+            return res.status(410).json({
+                success: false,
+                message: 'Este endpoint está obsoleto. Use POST /api/cash-cuts con el nuevo esquema.'
+            });
+
+            /* CÓDIGO COMENTADO - ESQUEMA OBSOLETO
             const { tenantId, employeeId } = req.user;
             const { branchId, cutNumber, totalSales, totalExpenses, cashInDrawer, expectedCash, difference } = req.body;
 
@@ -91,8 +102,16 @@ module.exports = (pool) => {
     });
 
     // POST /api/sync/cash-cuts - Alias de /api/cash-cuts (para compatibilidad con Desktop)
+    // ⚠️ OBSOLETO: Redirige a routes/cash-cuts.js
     router.post('/sync', async (req, res) => {
         try {
+            console.log(`[Sync/CashCuts] ⚠️ Endpoint OBSOLETO - Debería usar routes/cash-cuts.js`);
+            return res.status(410).json({
+                success: false,
+                message: 'Este endpoint está obsoleto. El Desktop debe usar el nuevo sistema de cash_cuts con offline-first.'
+            });
+
+            /* CÓDIGO COMENTADO - ESQUEMA OBSOLETO
             const { tenantId, branchId, employeeId, cutNumber, totalSales, totalExpenses, cashInDrawer, expectedCash, difference, cutDate, userEmail } = req.body;
 
             console.log(`[Sync/CashCuts] Desktop sync - Tenant: ${tenantId}, Branch: ${branchId}, Cut: ${cutNumber}, Date: ${cutDate}`);

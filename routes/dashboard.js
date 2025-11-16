@@ -105,7 +105,7 @@ module.exports = (pool) => {
             const expensesResult = await pool.query(expensesQuery, expensesParams);
 
             // Último corte de caja
-            let cashCutQuery = `SELECT cash_in_drawer FROM cash_cuts WHERE tenant_id = $1`;
+            let cashCutQuery = `SELECT counted_cash FROM cash_cuts WHERE tenant_id = $1`;
             let cashCutParams = [tenantId];
             if (shouldFilterByBranch) {
                 cashCutQuery += ` AND branch_id = $2`;
@@ -114,8 +114,8 @@ module.exports = (pool) => {
             cashCutQuery += ` ORDER BY cut_date DESC LIMIT 1`;
             const cashCutResult = await pool.query(cashCutQuery, cashCutParams);
 
-            // Eventos Guardian no leídos
-            let guardianQuery = `SELECT COUNT(*) as count FROM guardian_events WHERE tenant_id = $1 AND is_read = false`;
+            // Eventos Guardian - ahora se cuentan desde cash_cuts (unregistered_weight_events, scale_connection_events, cancelled_sales)
+            let guardianQuery = `SELECT COALESCE(SUM(unregistered_weight_events + scale_connection_events + cancelled_sales), 0) as count FROM cash_cuts WHERE tenant_id = $1`;
             let guardianParams = [tenantId];
             if (shouldFilterByBranch) {
                 guardianQuery += ` AND branch_id = $2`;
@@ -130,7 +130,7 @@ module.exports = (pool) => {
                 data: {
                     totalSales: parseFloat(salesResult.rows[0].total),
                     totalExpenses: parseFloat(expensesResult.rows[0].total),
-                    cashInDrawer: cashCutResult.rows.length > 0 ? parseFloat(cashCutResult.rows[0].cash_in_drawer) : 0,
+                    cashInDrawer: cashCutResult.rows.length > 0 ? parseFloat(cashCutResult.rows[0].counted_cash) : 0,
                     unreadGuardianEvents: parseInt(guardianEventsResult.rows[0].count)
                 }
             });

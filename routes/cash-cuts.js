@@ -44,7 +44,7 @@ module.exports = (pool) => {
                        cc.expected_cash_in_drawer, cc.counted_cash, cc.difference,
                        cc.unregistered_weight_events, cc.scale_connection_events, cc.cancelled_sales,
                        cc.notes, cc.is_closed, cc.created_at, cc.updated_at,
-                       emp.full_name as employee_name, b.name as branch_name
+                       CONCAT(emp.first_name, ' ', emp.last_name) as employee_name, b.name as branch_name
                 FROM cash_cuts cc
                 LEFT JOIN employees emp ON cc.employee_id = emp.id
                 LEFT JOIN branches b ON cc.branch_id = b.id

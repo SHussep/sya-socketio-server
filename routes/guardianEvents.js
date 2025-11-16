@@ -28,55 +28,25 @@ function authenticateToken(req, res, next) {
 module.exports = (pool, io) => {
     const router = express.Router();
 
-    // GET /api/guardian-events - Lista de eventos Guardian (MUY IMPORTANTE)
+    // GET /api/guardian-events - Lista de eventos Guardian
+    // ⚠️ NOTA: La tabla guardian_events fue refactorizada
+    // Los eventos ahora se agregan como contadores en cash_cuts (unregistered_weight_events, scale_connection_events, cancelled_sales)
+    // Este endpoint retorna un array vacío por compatibilidad con versiones anteriores del cliente
     router.get('/', authenticateToken, async (req, res) => {
         try {
             const { tenantId, branchId: userBranchId } = req.user;
-            const { limit = 100, offset = 0, unreadOnly = false, all_branches = 'false', branch_id } = req.query;
+            const { branch_id } = req.query;
 
-            // Prioridad: 1. branch_id del query, 2. branchId del JWT
             const targetBranchId = branch_id ? parseInt(branch_id) : userBranchId;
 
-            let query = `
-                SELECT g.id, g.event_type, g.severity, g.title, g.description,
-                       g.weight_kg, g.scale_id, g.metadata, g.is_read, g.event_date,
-                       e.full_name as employee_name, b.name as branch_name, b.id as branch_id
-                FROM guardian_events g
-                LEFT JOIN employees e ON g.employee_id = e.id
-                LEFT JOIN branches b ON g.branch_id = b.id
-                WHERE g.tenant_id = $1
-            `;
+            console.log(`[Guardian Events] ⚠️ Tabla guardian_events no existe - retornando array vacío (Tenant: ${tenantId}, Branch: ${targetBranchId})`);
+            console.log(`[Guardian Events] Los eventos Guardian ahora se rastrean como agregados en la tabla cash_cuts`);
 
-            const params = [tenantId];
-            let paramIndex = 2;
-
-            // Filtrar por branch_id si no se solicita ver todas
-            if (all_branches !== 'true' && targetBranchId) {
-                query += ` AND g.branch_id = $${paramIndex}`;
-                params.push(targetBranchId);
-                paramIndex++;
-            }
-
-            if (unreadOnly === 'true') {
-                query += ' AND g.is_read = false';
-            }
-
-            query += ` ORDER BY g.event_date DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
-            params.push(limit, offset);
-
-            console.log(`[Guardian Events] Fetching events - Tenant: ${tenantId}, Branch: ${targetBranchId}, all_branches: ${all_branches}, unreadOnly: ${unreadOnly}`);
-
-            const result = await pool.query(query, params);
-
-            // Format timestamps as ISO strings in UTC
-            const formattedRows = result.rows.map(row => ({
-                ...row,
-                event_date: row.event_date ? new Date(row.event_date).toISOString() : null
-            }));
-
+            // Retornar array vacío por compatibilidad
             res.json({
                 success: true,
-                data: formattedRows
+                data: [],
+                message: 'Guardian events functionality has been refactored. Events are now tracked as aggregates in cash_cuts table.'
             });
         } catch (error) {
             console.error('[Guardian Events] Error:', error);
@@ -85,7 +55,9 @@ module.exports = (pool, io) => {
     });
 
     // POST /api/guardian-events - Crear evento Guardian (desde Desktop)
-    // Nota: Sin autenticación porque el evento ya incluye tenantId, branchId y employeeId del payload
+    // ⚠️ NOTA: La tabla guardian_events fue refactorizada
+    // Los eventos ahora se agregan como contadores en cash_cuts
+    // Este endpoint acepta el evento pero solo emite notificaciones Socket.IO/FCM (no persiste en DB)
     router.post('/', async (req, res) => {
         try {
             const { tenantId, branchId, employeeId, eventType, severity, title, description, weightKg, scaleId, metadata, employeeName } = req.body;
@@ -95,45 +67,38 @@ module.exports = (pool, io) => {
                 return res.status(400).json({ success: false, message: 'Faltan campos requeridos: tenantId, branchId, employeeId, eventType' });
             }
 
-            const result = await pool.query(
-                `INSERT INTO guardian_events (tenant_id, branch_id, employee_id, event_type, severity, title, description, weight_kg, scale_id, metadata, event_date)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CURRENT_TIMESTAMP AT TIME ZONE 'UTC')
-                 RETURNING *`,
-                [tenantId, branchId, employeeId, eventType, severity, title, description, weightKg, scaleId, metadata ? JSON.stringify(metadata) : null]
-            );
+            const finalEmployeeName = employeeName || `Employee_${employeeId}`;
 
-            const event = result.rows[0];
-            const finalEmployeeName = employeeName || `Employee_${employeeId}`;  // Usar nombre si viene, si no usar ID
-
-            console.log(`[Guardian Events] 🚨 Evento creado: ${eventType} - ${title} (Empleado: ${finalEmployeeName})`);
+            console.log(`[Guardian Events] 🚨 Evento recibido: ${eventType} - ${title} (Empleado: ${finalEmployeeName})`);
+            console.log(`[Guardian Events] ⚠️ Tabla guardian_events no existe - solo emitiendo notificación Socket.IO`);
 
             // ✅ Notificación en tiempo real vía Socket.IO
             // Emitir evento al room de la sucursal específica para que móviles lo reciban
-            if (io && event.branch_id) {
-                io.to(`branch_${event.branch_id}`).emit('scale_alert', {
-                    branchId: event.branch_id,
-                    alertId: event.id,
-                    severity: event.severity,
-                    eventType: event.event_type,
-                    weightDetected: event.weight_kg || 0,
-                    details: event.description || '',
-                    timestamp: event.event_date,
-                    employeeName: finalEmployeeName,  // ← Usar nombre real
+            if (io && branchId) {
+                io.to(`branch_${branchId}`).emit('scale_alert', {
+                    branchId: branchId,
+                    alertId: null,  // No hay ID porque no se persiste
+                    severity: severity || 'medium',
+                    eventType: eventType,
+                    weightDetected: weightKg || 0,
+                    details: description || '',
+                    timestamp: new Date().toISOString(),
+                    employeeName: finalEmployeeName,
                     receivedAt: new Date().toISOString(),
-                    source: 'api'  // Indicar que viene del endpoint API
+                    source: 'api'
                 });
 
-                console.log(`[Guardian Events] 📡 Evento 'scale_alert' emitido a branch_${event.branch_id} para app móvil (Empleado: ${finalEmployeeName})`);
+                console.log(`[Guardian Events] 📡 Evento 'scale_alert' emitido a branch_${branchId} para app móvil (Empleado: ${finalEmployeeName})`);
             }
 
             // ✅ Enviar notificación FCM a dispositivos móviles
-            if (event.branch_id) {
+            if (branchId) {
                 try {
-                    await notificationHelper.notifyScaleAlert(event.branch_id, {
-                        severity: event.severity || 'medium',
-                        eventType: event.event_type,
-                        details: event.description || 'Alerta de báscula detectada',
-                        employeeName: finalEmployeeName  // ← Usar nombre real
+                    await notificationHelper.notifyScaleAlert(branchId, {
+                        severity: severity || 'medium',
+                        eventType: eventType,
+                        details: description || 'Alerta de báscula detectada',
+                        employeeName: finalEmployeeName
                     });
                     console.log(`[Guardian Events] ✅ FCM enviado: ${eventType} (${finalEmployeeName})`);
                 } catch (fcmError) {
@@ -142,32 +107,32 @@ module.exports = (pool, io) => {
                 }
             }
 
-            res.json({ success: true, data: event, message: 'Evento Guardian guardado y notificación enviada' });
+            res.json({
+                success: true,
+                data: { id: null, event_type: eventType, severity, title, description },
+                message: 'Guardian event notification sent (not persisted to database)'
+            });
         } catch (error) {
             console.error('[Guardian Events] Error:', error);
-            res.status(500).json({ success: false, message: 'Error al crear evento Guardian' });
+            res.status(500).json({ success: false, message: 'Error al procesar evento Guardian' });
         }
     });
 
     // PUT /api/guardian-events/:id/mark-read - Marcar evento como leído
+    // ⚠️ NOTA: La tabla guardian_events fue refactorizada - este endpoint retorna success por compatibilidad
     router.put('/:id/mark-read', authenticateToken, async (req, res) => {
         try {
             const { tenantId } = req.user;
             const { id } = req.params;
 
-            const result = await pool.query(
-                `UPDATE guardian_events
-                 SET is_read = true
-                 WHERE id = $1 AND tenant_id = $2
-                 RETURNING *`,
-                [id, tenantId]
-            );
+            console.log(`[Guardian Events] ⚠️ PUT /:id/mark-read llamado pero tabla no existe (ID: ${id}, Tenant: ${tenantId})`);
 
-            if (result.rows.length === 0) {
-                return res.status(404).json({ success: false, message: 'Evento no encontrado' });
-            }
-
-            res.json({ success: true, data: result.rows[0] });
+            // Retornar success por compatibilidad con clientes antiguos
+            res.json({
+                success: true,
+                data: { id, is_read: true },
+                message: 'Guardian events functionality has been refactored'
+            });
         } catch (error) {
             console.error('[Guardian Events] Error:', error);
             res.status(500).json({ success: false, message: 'Error al marcar evento' });

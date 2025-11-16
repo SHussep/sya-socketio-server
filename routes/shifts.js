@@ -142,7 +142,7 @@ module.exports = (pool) => {
             let query = `
                 SELECT s.id, s.tenant_id, s.branch_id, s.employee_id, s.start_time, s.end_time,
                        s.initial_amount, s.final_amount, s.transaction_counter, s.is_cash_cut_open,
-                       e.full_name as employee_name,
+                       CONCAT(e.first_name, ' ', e.last_name) as employee_name,
                        b.name as branch_name
                 FROM shifts s
                 LEFT JOIN employees e ON s.employee_id = e.id
@@ -200,10 +200,12 @@ module.exports = (pool) => {
             let query = `
                 SELECT s.id, s.tenant_id, s.branch_id, s.employee_id, s.start_time, s.end_time,
                        s.initial_amount, s.final_amount, s.transaction_counter, s.is_cash_cut_open,
-                       e.full_name as employee_name, e.role as employee_role,
+                       CONCAT(e.first_name, ' ', e.last_name) as employee_name,
+                       r.name as employee_role,
                        b.name as branch_name
                 FROM shifts s
                 LEFT JOIN employees e ON s.employee_id = e.id
+                LEFT JOIN roles r ON e.role_id = r.id
                 LEFT JOIN branches b ON s.branch_id = b.id
                 WHERE s.tenant_id = $1
             `;
@@ -257,7 +259,7 @@ module.exports = (pool) => {
             let query = `
                 SELECT s.id, s.branch_id, s.employee_id, s.start_time, s.end_time,
                        s.initial_amount, s.final_amount, s.transaction_counter, s.is_cash_cut_open,
-                       e.full_name as employee_name,
+                       CONCAT(e.first_name, ' ', e.last_name) as employee_name,
                        b.name as branch_name,
                        (s.final_amount - s.initial_amount) as difference
                 FROM shifts s

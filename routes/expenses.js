@@ -41,7 +41,8 @@ module.exports = (pool) => {
 
             let query = `
                 SELECT e.id, e.description as concept, e.description, e.amount, e.expense_date,
-                       emp.full_name as employee_name, b.name as branch_name, b.id as "branchId",
+                       CONCAT(emp.first_name, ' ', emp.last_name) as employee_name,
+                       b.name as branch_name, b.id as "branchId",
                        cat.name as category,
                        (e.expense_date AT TIME ZONE '${userTimezone}') as expense_date_display
                 FROM expenses e

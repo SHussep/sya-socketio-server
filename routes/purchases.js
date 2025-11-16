@@ -35,7 +35,9 @@ module.exports = (pool) => {
 
             let query = `
                 SELECT p.id, p.purchase_number, p.total_amount, p.payment_status, p.notes, p.purchase_date,
-                       s.name as supplier_name, emp.full_name as employee_name, b.name as branch_name
+                       s.name as supplier_name,
+                       CONCAT(emp.first_name, ' ', emp.last_name) as employee_name,
+                       b.name as branch_name
                 FROM purchases p
                 LEFT JOIN suppliers s ON p.supplier_id = s.id
                 LEFT JOIN employees emp ON p.employee_id = emp.id

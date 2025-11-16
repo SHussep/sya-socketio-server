@@ -75,12 +75,15 @@ module.exports = function(pool, authenticateToken) {
 
             // Obtener empleados de esta sucursal
             const employees = await pool.query(`
-                SELECT e.id, e.full_name, e.role, e.email,
+                SELECT e.id,
+                       CONCAT(e.first_name, ' ', e.last_name) as full_name,
+                       r.name as role, e.email,
                        eb.can_login, eb.can_sell, eb.can_manage_inventory, eb.can_close_shift
                 FROM employees e
                 JOIN employee_branches eb ON e.id = eb.employee_id
+                LEFT JOIN roles r ON e.role_id = r.id
                 WHERE eb.branch_id = $1 AND e.is_active = true
-                ORDER BY e.full_name
+                ORDER BY e.first_name, e.last_name
             `, [id]);
 
             res.json({
