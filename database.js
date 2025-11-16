@@ -123,18 +123,49 @@ async function initializeDatabase() {
             )
         `);
 
+        // Tabla: roles (debe ir ANTES de employees)
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS roles (
+                id INTEGER PRIMARY KEY,
+                name VARCHAR(100) NOT NULL UNIQUE,
+                description TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        // Insertar roles por defecto si no existen
+        await client.query(`
+            INSERT INTO roles (id, name, description) VALUES
+            (1, 'Administrador', 'Acceso total al sistema'),
+            (2, 'Encargado', 'Gestión de sucursal y empleados'),
+            (3, 'Repartidor', 'Entrega de pedidos'),
+            (4, 'Ayudante', 'Ayudante de tortillería')
+            ON CONFLICT (id) DO NOTHING
+        `);
+
         // Tabla: employees
         await client.query(`
             CREATE TABLE IF NOT EXISTS employees (
                 id SERIAL PRIMARY KEY,
                 tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
                 username VARCHAR(100) NOT NULL,
-                full_name VARCHAR(255) NOT NULL,
-                email VARCHAR(255) NOT NULL,
-                password VARCHAR(255) NOT NULL,
-                role VARCHAR(50) DEFAULT 'employee',
-                main_branch_id INTEGER REFERENCES branches(id) ON DELETE SET NULL,
-                is_active BOOLEAN DEFAULT true,
+                first_name VARCHAR(100),
+                last_name VARCHAR(100),
+                email VARCHAR(255),
+                password_hash VARCHAR(255),
+                password_updated_at TIMESTAMP,
+                role_id INTEGER REFERENCES roles(id) ON DELETE RESTRICT,
+                is_active BOOLEAN DEFAULT TRUE,
+                is_owner BOOLEAN DEFAULT FALSE,
+                mobile_access_type VARCHAR(50) DEFAULT 'none',
+                can_use_mobile_app BOOLEAN DEFAULT FALSE,
+                google_user_identifier VARCHAR(255),
+                main_branch_id INTEGER REFERENCES branches(id),
+                global_id VARCHAR(255) UNIQUE NOT NULL,
+                terminal_id VARCHAR(100),
+                local_op_seq BIGINT,
+                created_local_utc TEXT,
+                device_event_raw BIGINT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(tenant_id, username),
@@ -389,10 +420,108 @@ async function initializeDatabase() {
 
         // Migraciones para employees
         try {
+            await client.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS first_name VARCHAR(100)`);
+            console.log('[DB] ✅ Columna employees.first_name verificada/agregada');
+        } catch (error) {
+            console.log('[DB] ⚠️ employees.first_name:', error.message);
+        }
+
+        try {
+            await client.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS last_name VARCHAR(100)`);
+            console.log('[DB] ✅ Columna employees.last_name verificada/agregada');
+        } catch (error) {
+            console.log('[DB] ⚠️ employees.last_name:', error.message);
+        }
+
+        try {
+            await client.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255)`);
+            console.log('[DB] ✅ Columna employees.password_hash verificada/agregada');
+        } catch (error) {
+            console.log('[DB] ⚠️ employees.password_hash:', error.message);
+        }
+
+        try {
+            await client.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS password_updated_at TIMESTAMP`);
+            console.log('[DB] ✅ Columna employees.password_updated_at verificada/agregada');
+        } catch (error) {
+            console.log('[DB] ⚠️ employees.password_updated_at:', error.message);
+        }
+
+        try {
+            await client.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS role_id INTEGER REFERENCES roles(id) ON DELETE RESTRICT`);
+            console.log('[DB] ✅ Columna employees.role_id verificada/agregada');
+        } catch (error) {
+            console.log('[DB] ⚠️ employees.role_id:', error.message);
+        }
+
+        try {
+            await client.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS is_owner BOOLEAN DEFAULT FALSE`);
+            console.log('[DB] ✅ Columna employees.is_owner verificada/agregada');
+        } catch (error) {
+            console.log('[DB] ⚠️ employees.is_owner:', error.message);
+        }
+
+        try {
+            await client.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS mobile_access_type VARCHAR(50) DEFAULT 'none'`);
+            console.log('[DB] ✅ Columna employees.mobile_access_type verificada/agregada');
+        } catch (error) {
+            console.log('[DB] ⚠️ employees.mobile_access_type:', error.message);
+        }
+
+        try {
+            await client.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS can_use_mobile_app BOOLEAN DEFAULT FALSE`);
+            console.log('[DB] ✅ Columna employees.can_use_mobile_app verificada/agregada');
+        } catch (error) {
+            console.log('[DB] ⚠️ employees.can_use_mobile_app:', error.message);
+        }
+
+        try {
+            await client.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS google_user_identifier VARCHAR(255)`);
+            console.log('[DB] ✅ Columna employees.google_user_identifier verificada/agregada');
+        } catch (error) {
+            console.log('[DB] ⚠️ employees.google_user_identifier:', error.message);
+        }
+
+        try {
             await client.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS main_branch_id INTEGER REFERENCES branches(id) ON DELETE SET NULL`);
             console.log('[DB] ✅ Columna employees.main_branch_id verificada/agregada');
         } catch (error) {
             console.log('[DB] ⚠️ employees.main_branch_id:', error.message);
+        }
+
+        try {
+            await client.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS global_id VARCHAR(255) UNIQUE`);
+            console.log('[DB] ✅ Columna employees.global_id verificada/agregada');
+        } catch (error) {
+            console.log('[DB] ⚠️ employees.global_id:', error.message);
+        }
+
+        try {
+            await client.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS terminal_id VARCHAR(100)`);
+            console.log('[DB] ✅ Columna employees.terminal_id verificada/agregada');
+        } catch (error) {
+            console.log('[DB] ⚠️ employees.terminal_id:', error.message);
+        }
+
+        try {
+            await client.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS local_op_seq BIGINT`);
+            console.log('[DB] ✅ Columna employees.local_op_seq verificada/agregada');
+        } catch (error) {
+            console.log('[DB] ⚠️ employees.local_op_seq:', error.message);
+        }
+
+        try {
+            await client.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS created_local_utc TEXT`);
+            console.log('[DB] ✅ Columna employees.created_local_utc verificada/agregada');
+        } catch (error) {
+            console.log('[DB] ⚠️ employees.created_local_utc:', error.message);
+        }
+
+        try {
+            await client.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS device_event_raw BIGINT`);
+            console.log('[DB] ✅ Columna employees.device_event_raw verificada/agregada');
+        } catch (error) {
+            console.log('[DB] ⚠️ employees.device_event_raw:', error.message);
         }
 
         // ⚠️ MIGRACIÓN OBSOLETA: sales → ahora se usa 'ventas' (migration 046)

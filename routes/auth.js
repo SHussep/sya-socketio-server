@@ -425,7 +425,7 @@ module.exports = function(pool) {
                     employeeId: employee.id,
                     tenantId: employee.tenant_id,
                     branchId: selectedBranch.id,
-                    role: employee.role,
+                    roleId: employee.role_id,
                     email: employee.email
                 },
                 JWT_SECRET,
@@ -455,7 +455,8 @@ module.exports = function(pool) {
                         email: employee.email,
                         username: employee.username,
                         fullName: `${employee.first_name || ''} ${employee.last_name || ''}`.trim(),
-                        role: employee.role,
+                        firstName: employee.first_name,
+                        lastName: employee.last_name,
                         roleId: employee.role_id // Para determinar si es Repartidor (3), Encargado (2), o Administrador (1)
                     },
                     tenant: {
@@ -543,7 +544,7 @@ module.exports = function(pool) {
                     employeeId: employee.id,
                     tenantId: employee.tenant_id,
                     branchId: employee.main_branch_id,
-                    role: employee.role,
+                    roleId: employee.role_id,
                     email: employee.email
                 },
                 JWT_SECRET,
@@ -794,7 +795,7 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                     employeeId: employee.id,
                     tenantId: tenant.id,
                     branchId: branch.id,
-                    role: employee.role,
+                    roleId: employee.role_id,
                     email: employee.email
                 },
                 JWT_SECRET,
@@ -816,7 +817,7 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                     id: employee.id,
                     email: employee.email,
                     fullName: `${employee.first_name} ${employee.last_name}`.trim(),
-                    role: employee.role,
+                    roleId: employee.role_id,
                     globalId: employee.global_id
                 },
                 branch: {
@@ -976,7 +977,7 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                 {
                     employeeId: employee.id,
                     tenantId: employee.tenant_id,
-                    role: employee.role,
+                    roleId: employee.role_id,
                     email: employee.email
                 },
                 JWT_SECRET,
@@ -1462,7 +1463,7 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
 
             // 2. Verificar permisos (solo owner puede hacer full-wipe)
             const employeeResult = await client.query(
-                'SELECT role FROM employees WHERE id = $1 AND tenant_id = $2',
+                'SELECT role_id, is_owner FROM employees WHERE id = $1 AND tenant_id = $2',
                 [decoded.employeeId, decoded.tenantId]
             );
 
@@ -1474,13 +1475,14 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                 });
             }
 
-            const userRole = employeeResult.rows[0].role;
+            const employee = employeeResult.rows[0];
 
-            if (userRole !== 'owner') {
+            // role_id: 1=Administrador, 2=Encargado, 3=Repartidor
+            if (!employee.is_owner && employee.role_id !== 1) {
                 await client.query('ROLLBACK');
                 return res.status(403).json({
                     success: false,
-                    message: 'Solo el propietario puede hacer limpieza completa de sucursales'
+                    message: 'Solo el propietario o administrador puede hacer limpieza completa de sucursales'
                 });
             }
 
@@ -1655,7 +1657,7 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
 
             // 2. Verificar permisos (solo owner o admin pueden limpiar sucursales)
             const employeeResult = await client.query(
-                'SELECT role FROM employees WHERE id = $1 AND tenant_id = $2',
+                'SELECT role_id, is_owner FROM employees WHERE id = $1 AND tenant_id = $2',
                 [decoded.employeeId, decoded.tenantId]
             );
 
@@ -1667,13 +1669,14 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                 });
             }
 
-            const userRole = employeeResult.rows[0].role;
+            const employee = employeeResult.rows[0];
 
-            if (userRole !== 'owner' && userRole !== 'admin') {
+            // role_id: 1=Administrador, 2=Encargado
+            if (!employee.is_owner && employee.role_id !== 1 && employee.role_id !== 2) {
                 await client.query('ROLLBACK');
                 return res.status(403).json({
                     success: false,
-                    message: 'Solo propietarios y administradores pueden limpiar sucursales'
+                    message: 'Solo propietarios, administradores y encargados pueden limpiar sucursales'
                 });
             }
 
