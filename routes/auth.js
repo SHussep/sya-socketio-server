@@ -223,6 +223,52 @@ module.exports = function(pool) {
     });
 
     // ─────────────────────────────────────────────────────────
+    // GET /api/auth/debug-employee/:email
+    // DEBUG: Ver empleado en base de datos
+    // ─────────────────────────────────────────────────────────
+    router.get('/debug-employee/:email', async (req, res) => {
+        try {
+            const email = req.params.email;
+            console.log(`[DEBUG] Buscando empleado: ${email}`);
+
+            const result = await pool.query(
+                `SELECT id, tenant_id, email, username, first_name, last_name,
+                        password_hash, is_active, role_id, created_at
+                 FROM employees
+                 WHERE LOWER(email) = LOWER($1)`,
+                [email]
+            );
+
+            const employees = result.rows.map(emp => ({
+                id: emp.id,
+                tenant_id: emp.tenant_id,
+                email: emp.email,
+                username: emp.username,
+                first_name: emp.first_name,
+                last_name: emp.last_name,
+                is_active: emp.is_active,
+                role_id: emp.role_id,
+                created_at: emp.created_at,
+                has_password: !!emp.password_hash,
+                password_length: emp.password_hash ? emp.password_hash.length : 0,
+                password_preview: emp.password_hash ? emp.password_hash.substring(0, 20) + '...' : 'NULL'
+            }));
+
+            res.json({
+                success: true,
+                count: employees.length,
+                employees: employees
+            });
+        } catch (error) {
+            console.error('[DEBUG] Error:', error);
+            res.status(500).json({
+                success: false,
+                error: error.message
+            });
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
     // POST /api/auth/desktop-login
     // Login desde Desktop con selector de sucursal
     // ─────────────────────────────────────────────────────────
@@ -283,10 +329,10 @@ module.exports = function(pool) {
 
             const employee = employeeResult.rows[0];
             console.log(`[Desktop Login] Empleado seleccionado: ID ${employee.id}, Tenant ${employee.tenant_id}, Email ${employee.email}`);
-            console.log(`[Desktop Login] Password en DB: ${employee.password ? 'EXISTS (length: ' + employee.password.length + ')' : 'NULL/UNDEFINED'}`);
+            console.log(`[Desktop Login] Password en DB: ${employee.password_hash ? 'EXISTS (length: ' + employee.password_hash.length + ')' : 'NULL/UNDEFINED'}`);
 
             // Verificar que el empleado tenga contraseña configurada
-            if (!employee.password) {
+            if (!employee.password_hash) {
                 console.log(`[Desktop Login] ⚠️ Empleado ${employee.email} no tiene contraseña configurada`);
                 return res.status(401).json({
                     success: false,
@@ -299,14 +345,14 @@ module.exports = function(pool) {
             try {
                 console.log('[Desktop Login] Comparando contraseñas...');
                 console.log(`  - Password from request: ${password ? 'EXISTS' : 'UNDEFINED'} (length: ${password?.length})`);
-                console.log(`  - Password from DB: ${employee.password ? 'EXISTS' : 'UNDEFINED'} (starts with: ${employee.password?.substring(0, 10)}...)`);
+                console.log(`  - Password from DB: ${employee.password_hash ? 'EXISTS' : 'UNDEFINED'} (starts with: ${employee.password_hash?.substring(0, 10)}...)`);
 
-                validPassword = await bcrypt.compare(password, employee.password);
+                validPassword = await bcrypt.compare(password, employee.password_hash);
                 console.log(`[Desktop Login] Resultado comparación: ${validPassword}`);
             } catch (bcryptError) {
                 console.error('[Desktop Login] ❌ Error en bcrypt.compare:', bcryptError);
                 console.error('  - password (input):', password);
-                console.error('  - employee.password (hash):', employee.password);
+                console.error('  - employee.password_hash (hash):', employee.password_hash);
                 return res.status(500).json({
                     success: false,
                     message: 'Error en el servidor',

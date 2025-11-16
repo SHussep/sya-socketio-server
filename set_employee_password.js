@@ -8,7 +8,7 @@ async function setEmployeePassword(emailOrUsername, newPassword) {
     try {
         // Buscar empleado
         const employeeResult = await pool.query(
-            `SELECT id, email, username, first_name, last_name, password
+            `SELECT id, email, username, first_name, last_name, password_hash
              FROM employees
              WHERE LOWER(email) = LOWER($1) OR LOWER(username) = LOWER($1)`,
             [emailOrUsername]
@@ -25,7 +25,7 @@ async function setEmployeePassword(emailOrUsername, newPassword) {
         console.log(`   Nombre: ${employee.first_name} ${employee.last_name}`);
         console.log(`   Email: ${employee.email}`);
         console.log(`   Username: ${employee.username}`);
-        console.log(`   Tiene contraseña: ${employee.password ? '✅ Sí' : '❌ No'}\n`);
+        console.log(`   Tiene contraseña: ${employee.password_hash ? '✅ Sí' : '❌ No'}\n`);
 
         // Hash de la nueva contraseña
         const hashedPassword = await bcrypt.hash(newPassword, 10);
@@ -33,7 +33,7 @@ async function setEmployeePassword(emailOrUsername, newPassword) {
         // Actualizar en base de datos
         await pool.query(
             `UPDATE employees
-             SET password = $1, updated_at = NOW()
+             SET password_hash = $1, password_updated_at = NOW(), updated_at = NOW()
              WHERE id = $2`,
             [hashedPassword, employee.id]
         );

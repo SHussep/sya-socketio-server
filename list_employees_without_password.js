@@ -12,12 +12,12 @@ async function listEmployeesWithoutPassword() {
                 e.username,
                 e.first_name,
                 e.last_name,
-                e.role,
+                e.role_id,
                 e.is_active,
                 t.business_name as tenant_name
              FROM employees e
              LEFT JOIN tenants t ON e.tenant_id = t.id
-             WHERE e.password IS NULL OR e.password = ''
+             WHERE e.password_hash IS NULL OR e.password_hash = ''
              ORDER BY e.is_active DESC, e.created_at DESC`
         );
 
@@ -34,7 +34,7 @@ async function listEmployeesWithoutPassword() {
             console.log(`   ID:       ${emp.id}`);
             console.log(`   Email:    ${emp.email || 'N/A'}`);
             console.log(`   Username: ${emp.username || 'N/A'}`);
-            console.log(`   Role:     ${emp.role || 'N/A'}`);
+            console.log(`   Role ID:  ${emp.role_id || 'N/A'}`);
             console.log(`   Tenant:   ${emp.tenant_name || 'N/A'}`);
             console.log(`   Activo:   ${emp.is_active ? '✅' : '❌'}`);
         });
