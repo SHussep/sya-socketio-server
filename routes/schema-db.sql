@@ -6,6 +6,11 @@
 -- all migrations applied. No migration history needed.
 -- =====================================================
 
+-- ========== DATABASE CONFIGURATION ==========
+
+-- Set database timezone to UTC (critical for timestamp consistency)
+ALTER DATABASE sya_tortillerias SET timezone TO 'UTC';
+
 -- ========== CORE TABLES ==========
 
 -- subscriptions (planes de suscripción)
