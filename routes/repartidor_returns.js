@@ -181,8 +181,8 @@ function createRepartidorReturnRoutes(io) {
       let query = `
         SELECT
           r.*,
-          e.full_name as employee_name,
-          reg.full_name as registered_by_name
+          CONCAT(e.first_name, ' ', e.last_name) as employee_name,
+          CONCAT(reg.first_name, ' ', reg.last_name) as registered_by_name
         FROM repartidor_returns r
         LEFT JOIN employees e ON e.id = r.employee_id
         LEFT JOIN employees reg ON reg.id = r.registered_by_employee_id

@@ -329,7 +329,7 @@ function createRepartidorAssignmentRoutes(io) {
           ra.id,
           ra.venta_id,
           ra.employee_id,
-          e.full_name as employee_name,
+          CONCAT(e.first_name, ' ', e.last_name) as employee_name,
           ra.branch_id,
           b.name as branch_name,
           ra.assigned_quantity,
@@ -397,7 +397,7 @@ function createRepartidorAssignmentRoutes(io) {
         SELECT
           rl.id,
           rl.employee_id,
-          e.full_name as employee_name,
+          CONCAT(e.first_name, ' ', e.last_name) as employee_name,
           rl.branch_id,
           b.name as branch_name,
           rl.total_kilos_asignados,
@@ -545,7 +545,7 @@ function createRepartidorAssignmentRoutes(io) {
       let query = `
         SELECT
           ra.employee_id,
-          e.full_name as employee_name,
+          CONCAT(e.first_name, ' ', e.last_name) as employee_name,
           COUNT(DISTINCT ra.id) as total_asignaciones,
           SUM(ra.cantidad_asignada) as kilos_asignados,
           COALESCE(SUM(rl.cantidad_devuelta), 0) as kilos_devueltos,
@@ -581,7 +581,7 @@ function createRepartidorAssignmentRoutes(io) {
         paramIndex++;
       }
 
-      query += ` GROUP BY ra.employee_id, e.full_name ORDER BY kilos_asignados DESC`;
+      query += ` GROUP BY ra.employee_id, e.first_name, e.last_name ORDER BY kilos_asignados DESC`;
 
       const result = await pool.query(query, params);
 

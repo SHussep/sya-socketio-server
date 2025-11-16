@@ -31,7 +31,7 @@ function createRepartidorDebtsRoutes(io) {
         SELECT
           rd.id,
           rd.employee_id,
-          e.full_name as employee_name,
+          CONCAT(e.first_name, ' ', e.last_name) as employee_name,
           rd.branch_id,
           b.name as branch_name,
           rd.liquidation_id,
