@@ -347,35 +347,6 @@ app.use('/api/deposits', depositsRoutes(pool));
 app.use('/api/withdrawals', withdrawalsRoutes(pool));
 app.use('/api/cash-cuts-new', newCashCutsRoutes(pool)); // New comprehensive cash cuts endpoint
 
-// 🔧 TEMPORARY FIX ENDPOINT - Remove after tenants.is_active is added
-// Ejecuta ALTER TABLE para agregar is_active a tenants existentes
-app.get('/fix-tenants-is-active', async (req, res) => {
-    try {
-        console.log('[FIX] Ejecutando ALTER TABLE para agregar tenants.is_active...');
-
-        await pool.query(`ALTER TABLE tenants ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true`);
-        console.log('[FIX] ✅ Columna is_active agregada exitosamente');
-
-        await pool.query(`UPDATE tenants SET is_active = true WHERE is_active IS NULL`);
-        console.log('[FIX] ✅ Valores actualizados');
-
-        await pool.query(`CREATE INDEX IF NOT EXISTS idx_tenants_is_active ON tenants(is_active)`);
-        console.log('[FIX] ✅ Índice creado');
-
-        res.json({
-            success: true,
-            message: 'Columna tenants.is_active agregada exitosamente. Este endpoint puede ser removido ahora.'
-        });
-    } catch (error) {
-        console.error('[FIX] ❌ Error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error al ejecutar fix',
-            error: error.message
-        });
-    }
-});
-
 // Sync endpoints are mounted at their service-specific paths
 // e.g., /api/sales/sync, /api/expenses/sync, /api/cash-cuts/sync, etc.
 // This avoids the /api/sync conflict that was happening before

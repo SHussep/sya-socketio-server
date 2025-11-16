@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS tenants (
     subscription_id INTEGER REFERENCES subscriptions(id),
     subscription_status VARCHAR(50) DEFAULT 'trial',
     trial_ends_at TIMESTAMP,
+    is_active BOOLEAN DEFAULT true,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

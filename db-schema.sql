@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS tenants (
     subscription_ends_at TIMESTAMP,
     trial_ends_at TIMESTAMP,
     max_devices INTEGER DEFAULT 3,
+    is_active BOOLEAN DEFAULT true,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
