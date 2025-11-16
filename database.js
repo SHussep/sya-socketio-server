@@ -266,41 +266,87 @@ async function runMigrations() {
         const client = await pool.connect();
 
         try {
-            // 1. Check if database is empty (no tenants table exists)
-            const checkTable = await client.query(`
-                SELECT EXISTS (
-                    SELECT FROM information_schema.tables
-                    WHERE table_name = 'tenants'
-                );
-            `);
+            // 0. FIRST: Check CLEAN_DATABASE_ON_START (before any table checks)
+            console.log(`[Schema] 🔍 CLEAN_DATABASE_ON_START = "${process.env.CLEAN_DATABASE_ON_START}"`);
 
-            const tablesExist = checkTable.rows[0].exists;
+            if (process.env.CLEAN_DATABASE_ON_START === 'true') {
+                console.log('[Schema] 🗑️  CLEAN_DATABASE_ON_START=true - Dropping user tables...');
+                const cleanPath = path.join(__dirname, 'migrations', '999_clean_user_data.sql');
+                console.log(`[Schema] 📂 Clean script path: ${cleanPath}`);
+                console.log(`[Schema] 📂 File exists: ${fs.existsSync(cleanPath)}`);
 
-            if (!tablesExist) {
-                console.log('[Schema] 📝 Database is empty - Running routes/schema-db.sql...');
+                if (fs.existsSync(cleanPath)) {
+                    try {
+                        const cleanSql = fs.readFileSync(cleanPath, 'utf8');
+                        console.log('[Schema] 📝 Executing DROP script...');
+                        await client.query(cleanSql);
+                        console.log('[Schema] ✅ User tables dropped successfully (seeds preserved)');
 
-                // Execute routes/schema-db.sql
-                const schemaPath = path.join(__dirname, 'routes', 'schema-db.sql');
-                if (fs.existsSync(schemaPath)) {
-                    const schemaSql = fs.readFileSync(schemaPath, 'utf8');
-                    await client.query('BEGIN');
-                    await client.query(schemaSql);
-                    await client.query('COMMIT');
-                    console.log('[Schema] ✅ Schema created successfully from routes/schema-db.sql');
+                        // Now recreate tables from routes/schema-db.sql
+                        console.log('[Schema] 📝 Recreating tables from routes/schema-db.sql...');
+                        const schemaPath = path.join(__dirname, 'routes', 'schema-db.sql');
+                        if (fs.existsSync(schemaPath)) {
+                            const schemaSql = fs.readFileSync(schemaPath, 'utf8');
+                            await client.query('BEGIN');
+                            await client.query(schemaSql);
+                            await client.query('COMMIT');
+                            console.log('[Schema] ✅ Tables recreated successfully from routes/schema-db.sql');
+
+                            // Skip all patches - fresh DB doesn't need them
+                            console.log('[Schema] ℹ️  Fresh database created - skipping patches');
+                        } else {
+                            console.error('[Schema] ❌ routes/schema-db.sql not found!');
+                            throw new Error('routes/schema-db.sql file missing');
+                        }
+                    } catch (cleanError) {
+                        console.error('[Schema] ❌ Error cleaning/recreating:', cleanError.message);
+                        console.error(cleanError.stack);
+                        throw cleanError;
+                    }
                 } else {
-                    console.error('[Schema] ❌ routes/schema-db.sql not found!');
-                    throw new Error('routes/schema-db.sql file missing');
+                    console.error('[Schema] ❌ Clean script not found: migrations/999_clean_user_data.sql');
+                    throw new Error('migrations/999_clean_user_data.sql file missing');
                 }
             } else {
-                console.log('[Schema] ℹ️ Database already initialized with tenants table');
-                console.log('[Schema] ⚠️ Skipping schema execution to avoid conflicts with existing data');
-                console.log('[Schema] 💡 Use ALTER TABLE migrations below to add missing columns');
+                console.log('[Schema] ℹ️  Database clean skipped (CLEAN_DATABASE_ON_START not set to "true")');
+
+                // 1. Check if database is empty (no tenants table exists)
+                const checkTable = await client.query(`
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables
+                        WHERE table_name = 'tenants'
+                    );
+                `);
+
+                const tablesExist = checkTable.rows[0].exists;
+
+                if (!tablesExist) {
+                    console.log('[Schema] 📝 Database is empty - Running routes/schema-db.sql...');
+
+                    // Execute routes/schema-db.sql
+                    const schemaPath = path.join(__dirname, 'routes', 'schema-db.sql');
+                    if (fs.existsSync(schemaPath)) {
+                        const schemaSql = fs.readFileSync(schemaPath, 'utf8');
+                        await client.query('BEGIN');
+                        await client.query(schemaSql);
+                        await client.query('COMMIT');
+                        console.log('[Schema] ✅ Schema created successfully from routes/schema-db.sql');
+                    } else {
+                        console.error('[Schema] ❌ routes/schema-db.sql not found!');
+                        throw new Error('routes/schema-db.sql file missing');
+                    }
+                } else {
+                    console.log('[Schema] ℹ️ Database already initialized with tenants table');
+                    console.log('[Schema] ⚠️ Skipping schema execution to avoid conflicts with existing data');
+                    console.log('[Schema] 💡 Use ALTER TABLE migrations below to add missing columns');
+                }
             }
 
-            // 2. Apply schema patches (for existing databases)
-            console.log('[Schema] 🔧 Checking for schema updates...');
+            // 2. Apply schema patches (only for existing databases, not after CLEAN_DATABASE_ON_START)
+            if (process.env.CLEAN_DATABASE_ON_START !== 'true') {
+                console.log('[Schema] 🔧 Checking for schema updates...');
 
-            // Patch: Add max_devices_per_branch if missing
+                // Patch: Add max_devices_per_branch if missing
             const checkColumn = await client.query(`
                 SELECT column_name
                 FROM information_schema.columns
@@ -382,45 +428,7 @@ async function runMigrations() {
                 `);
                 console.log('[Schema] ✅ Constraint created successfully');
             }
-
-            // 2.5. Clean user data if requested (for testing)
-            console.log(`[Schema] 🔍 CLEAN_DATABASE_ON_START = "${process.env.CLEAN_DATABASE_ON_START}"`);
-
-            if (process.env.CLEAN_DATABASE_ON_START === 'true') {
-                console.log('[Schema] 🗑️  CLEAN_DATABASE_ON_START=true - Dropping user tables...');
-                const cleanPath = path.join(__dirname, 'migrations', '999_clean_user_data.sql');
-                console.log(`[Schema] 📂 Clean script path: ${cleanPath}`);
-                console.log(`[Schema] 📂 File exists: ${fs.existsSync(cleanPath)}`);
-
-                if (fs.existsSync(cleanPath)) {
-                    try {
-                        const cleanSql = fs.readFileSync(cleanPath, 'utf8');
-                        console.log('[Schema] 📝 Executing DROP script...');
-                        await client.query(cleanSql);
-                        console.log('[Schema] ✅ User tables dropped successfully (seeds preserved)');
-
-                        // Now recreate tables from routes/schema-db.sql
-                        console.log('[Schema] 📝 Recreating tables from routes/schema-db.sql...');
-                        const schemaPath = path.join(__dirname, 'routes', 'schema-db.sql');
-                        if (fs.existsSync(schemaPath)) {
-                            const schemaSql = fs.readFileSync(schemaPath, 'utf8');
-                            await client.query('BEGIN');
-                            await client.query(schemaSql);
-                            await client.query('COMMIT');
-                            console.log('[Schema] ✅ Tables recreated successfully from routes/schema-db.sql');
-                        } else {
-                            console.error('[Schema] ❌ routes/schema-db.sql not found!');
-                        }
-                    } catch (cleanError) {
-                        console.error('[Schema] ❌ Error cleaning/recreating:', cleanError.message);
-                        console.error(cleanError.stack);
-                    }
-                } else {
-                    console.error('[Schema] ❌ Clean script not found: migrations/999_clean_user_data.sql');
-                }
-            } else {
-                console.log('[Schema] ℹ️  Database clean skipped (CLEAN_DATABASE_ON_START not set to "true")');
-            }
+            } // End of CLEAN_DATABASE_ON_START !== 'true' block
 
             // 3. Always run seeds (idempotent - uses ON CONFLICT)
             console.log('[Seeds] 📝 Running seeds.sql...');
