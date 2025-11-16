@@ -563,6 +563,28 @@ io.on('connection', (socket) => {
         io.to(roomName).emit('weight_update', { ...data, receivedAt: new Date().toISOString() });
     });
 
+    socket.on('user-login', async (data) => {
+        stats.totalEvents++;
+        const roomName = `branch_${data.branchId}`;
+        console.log(`[USER-LOGIN] Sucursal ${data.branchId}: ${data.employeeName} (${data.employeeRole}) inició sesión`);
+
+        // Broadcast al escritorio y móviles en la sucursal
+        io.to(roomName).emit('user-login', { ...data, receivedAt: new Date().toISOString() });
+
+        // OPCIONAL: Enviar notificación FCM
+        try {
+            await notificationHelper.notifyUserLogin(data.branchId, {
+                employeeName: data.employeeName,
+                branchName: data.branchName,
+                scaleStatus: data.scaleStatus || 'unknown'
+            });
+            console.log(`[FCM] 📨 Notificación de login enviada a sucursal ${data.branchId}`);
+        } catch (error) {
+            console.error(`[USER-LOGIN] ⚠️ Error enviando notificación FCM:`, error.message);
+            // No fallar el broadcast si hay error en la notificación
+        }
+    });
+
     socket.on('shift_started', async (data) => {
         stats.totalEvents++;
         const roomName = `branch_${data.branchId}`;

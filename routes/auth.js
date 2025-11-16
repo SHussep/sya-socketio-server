@@ -358,7 +358,8 @@ module.exports = function(pool) {
                         email: employee.email,
                         username: employee.username,
                         fullName: `${employee.first_name || ''} ${employee.last_name || ''}`.trim(),
-                        role: employee.role
+                        role: employee.role,
+                        roleId: employee.role_id // Para determinar si es Repartidor (3), Encargado (2), o Administrador (1)
                     },
                     tenant: {
                         id: tenant.id,
