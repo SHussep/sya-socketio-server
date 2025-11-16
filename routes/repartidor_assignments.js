@@ -322,7 +322,7 @@ function createRepartidorAssignmentRoutes(io) {
 
     try {
       console.log('[API] 📊 GET /api/repartidor-assignments/employee/:employeeId');
-      console.log(`  Employee: ${employeeId}, Branch: ${branch_id}`);
+      console.log(`  Query params: employeeId=${employeeId}, branch_id=${branch_id}, tenant_id=${tenant_id}, estado=${estado}`);
 
       let query = `
         SELECT
@@ -352,20 +352,24 @@ function createRepartidorAssignmentRoutes(io) {
         params.push(branch_id);
       }
 
-      if (tenant_id) {
+      // FIX: Only filter by tenant_id if it's provided and not 0
+      // tenant_id=0 means "use any tenant" (for backwards compatibility with mobile app)
+      if (tenant_id && tenant_id !== '0' && tenant_id !== 0) {
         query += ` AND ra.tenant_id = $${params.length + 1}`;
         params.push(tenant_id);
       }
 
       if (estado) {
-        query += ` AND ra.estado = $${params.length + 1}`;
+        query += ` AND ra.status = $${params.length + 1}`;
         params.push(estado);
       }
 
       query += ` ORDER BY ra.fecha_asignacion DESC`;
 
+      console.log('[API] 🔍 Executing query with params:', params);
       const result = await pool.query(query, params);
 
+      console.log(`[API] ✅ Query returned ${result.rows.length} assignments`);
       res.json({
         success: true,
         data: result.rows,
@@ -391,7 +395,7 @@ function createRepartidorAssignmentRoutes(io) {
 
     try {
       console.log('[API] 📋 GET /api/repartidor-liquidations/employee/:employeeId');
-      console.log(`  Employee: ${employeeId}, Limit: ${limit}, Offset: ${offset}`);
+      console.log(`  Query params: employeeId=${employeeId}, branch_id=${branch_id}, tenant_id=${tenant_id}, limit=${limit}, offset=${offset}`);
 
       let query = `
         SELECT
@@ -425,7 +429,9 @@ function createRepartidorAssignmentRoutes(io) {
         params.push(branch_id);
       }
 
-      if (tenant_id) {
+      // FIX: Only filter by tenant_id if it's provided and not 0
+      // tenant_id=0 means "use any tenant" (for backwards compatibility with mobile app)
+      if (tenant_id && tenant_id !== '0' && tenant_id !== 0) {
         query += ` AND rl.tenant_id = $${params.length + 1}`;
         params.push(tenant_id);
       }
@@ -433,8 +439,10 @@ function createRepartidorAssignmentRoutes(io) {
       query += ` ORDER BY rl.fecha_liquidacion DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
       params.push(limit, offset);
 
+      console.log('[API] 🔍 Executing liquidations query with params:', params);
       const result = await pool.query(query, params);
 
+      console.log(`[API] ✅ Liquidations query returned ${result.rows.length} records`);
       res.json({
         success: true,
         data: result.rows,
