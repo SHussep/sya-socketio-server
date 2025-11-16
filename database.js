@@ -297,22 +297,32 @@ async function runMigrations() {
             const tablesExist = checkTable.rows[0].exists;
 
             if (!tablesExist) {
-                console.log('[Schema] 📝 Database is empty - Running schema.sql...');
+                console.log('[Schema] 📝 Database is empty - Running routes/schema-db.sql...');
 
-                // Execute schema.sql
-                const schemaPath = path.join(__dirname, 'schema.sql');
+                // Execute routes/schema-db.sql
+                const schemaPath = path.join(__dirname, 'routes', 'schema-db.sql');
                 if (fs.existsSync(schemaPath)) {
                     const schemaSql = fs.readFileSync(schemaPath, 'utf8');
                     await client.query('BEGIN');
                     await client.query(schemaSql);
                     await client.query('COMMIT');
-                    console.log('[Schema] ✅ Schema created successfully');
+                    console.log('[Schema] ✅ Schema created successfully from routes/schema-db.sql');
                 } else {
-                    console.error('[Schema] ❌ schema.sql not found!');
-                    throw new Error('schema.sql file missing');
+                    console.error('[Schema] ❌ routes/schema-db.sql not found!');
+                    throw new Error('routes/schema-db.sql file missing');
                 }
             } else {
-                console.log('[Schema] ℹ️ Database already initialized, skipping schema.sql');
+                console.log('[Schema] ℹ️ Database has tenants table, checking for missing tables...');
+
+                // Even if tenants exists, we might be missing other tables (like ventas)
+                // Execute schema-db.sql with IF NOT EXISTS - won't hurt existing tables
+                const schemaPath = path.join(__dirname, 'routes', 'schema-db.sql');
+                if (fs.existsSync(schemaPath)) {
+                    console.log('[Schema] 🔧 Running routes/schema-db.sql to ensure all tables exist...');
+                    const schemaSql = fs.readFileSync(schemaPath, 'utf8');
+                    await client.query(schemaSql);
+                    console.log('[Schema] ✅ All tables verified/created');
+                }
             }
 
             // 2. Apply schema patches (for existing databases)
