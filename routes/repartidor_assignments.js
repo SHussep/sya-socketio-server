@@ -354,7 +354,7 @@ function createRepartidorAssignmentRoutes(io) {
 
       // FIX: Only filter by tenant_id if it's provided and not 0
       // tenant_id=0 means "use any tenant" (for backwards compatibility with mobile app)
-      if (tenant_id && tenant_id !== '0' && tenant_id !== 0) {
+      if (tenant_id && tenant_id !== '0' && Number(tenant_id) !== 0) {
         query += ` AND ra.tenant_id = $${params.length + 1}`;
         params.push(tenant_id);
       }
