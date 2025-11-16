@@ -35,31 +35,11 @@ async function initializeDatabase() {
         console.log('[DB] Initializing database schema...');
 
         // ============================================
-        // EJECUTAR SCHEMA COMPLETO DESDE ARCHIVO SQL
+        // CREAR TABLAS BÁSICAS SI NO EXISTEN
         // ============================================
-        // En lugar de tener CREATE TABLE individuales aquí,
-        // ejecutamos el archivo routes/schema-db.sql que contiene
-        // TODAS las tablas, índices, triggers, funciones, etc.
-
-        const schemaPath = path.join(__dirname, 'routes', 'schema-db.sql');
-
-        try {
-            console.log('[DB] 📄 Leyendo schema desde:', schemaPath);
-            const schemaSql = fs.readFileSync(schemaPath, 'utf8');
-
-            console.log('[DB] 🚀 Ejecutando schema completo...');
-            await client.query(schemaSql);
-
-            console.log('[DB] ✅ Schema ejecutado exitosamente');
-        } catch (error) {
-            console.error('[DB] ❌ Error ejecutando schema:', error.message);
-            // Si el archivo no existe o hay error, continuar con migraciones
-            // Las migraciones a continuación agregarán las columnas faltantes
-        }
-
-        // ============================================
-        // FIN DE SCHEMA SQL FILE
-        // ============================================
+        // NOTA: NO ejecutamos routes/schema-db.sql aquí porque puede fallar
+        // en BDs existentes que no tienen las columnas offline-first.
+        // En su lugar, usamos las migraciones ALTER TABLE más abajo.
 
         // IMPORTANTE: Agregar columnas faltantes si no existen (para tablas creadas antes de esta versión)
 
@@ -312,17 +292,9 @@ async function runMigrations() {
                     throw new Error('routes/schema-db.sql file missing');
                 }
             } else {
-                console.log('[Schema] ℹ️ Database has tenants table, checking for missing tables...');
-
-                // Even if tenants exists, we might be missing other tables (like ventas)
-                // Execute schema-db.sql with IF NOT EXISTS - won't hurt existing tables
-                const schemaPath = path.join(__dirname, 'routes', 'schema-db.sql');
-                if (fs.existsSync(schemaPath)) {
-                    console.log('[Schema] 🔧 Running routes/schema-db.sql to ensure all tables exist...');
-                    const schemaSql = fs.readFileSync(schemaPath, 'utf8');
-                    await client.query(schemaSql);
-                    console.log('[Schema] ✅ All tables verified/created');
-                }
+                console.log('[Schema] ℹ️ Database already initialized with tenants table');
+                console.log('[Schema] ⚠️ Skipping schema execution to avoid conflicts with existing data');
+                console.log('[Schema] 💡 Use ALTER TABLE migrations below to add missing columns');
             }
 
             // 2. Apply schema patches (for existing databases)
