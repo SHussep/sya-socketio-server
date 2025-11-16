@@ -399,17 +399,17 @@ async function runMigrations() {
                         await client.query(cleanSql);
                         console.log('[Schema] ✅ User tables dropped successfully (seeds preserved)');
 
-                        // Now recreate tables from schema.sql
-                        console.log('[Schema] 📝 Recreating tables from schema.sql...');
-                        const schemaPath = path.join(__dirname, 'schema.sql');
+                        // Now recreate tables from routes/schema-db.sql
+                        console.log('[Schema] 📝 Recreating tables from routes/schema-db.sql...');
+                        const schemaPath = path.join(__dirname, 'routes', 'schema-db.sql');
                         if (fs.existsSync(schemaPath)) {
                             const schemaSql = fs.readFileSync(schemaPath, 'utf8');
                             await client.query('BEGIN');
                             await client.query(schemaSql);
                             await client.query('COMMIT');
-                            console.log('[Schema] ✅ Tables recreated successfully from schema.sql');
+                            console.log('[Schema] ✅ Tables recreated successfully from routes/schema-db.sql');
                         } else {
-                            console.error('[Schema] ❌ schema.sql not found!');
+                            console.error('[Schema] ❌ routes/schema-db.sql not found!');
                         }
                     } catch (cleanError) {
                         console.error('[Schema] ❌ Error cleaning/recreating:', cleanError.message);
