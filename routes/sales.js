@@ -121,7 +121,10 @@ module.exports = (pool) => {
         }
     });
 
-    // POST /api/sales - Crear venta desde Desktop (sin JWT)
+    // ⚠️ ENDPOINT OBSOLETO - Ya no usar (usa tabla 'sales' antigua)
+    // Desktop ahora usa POST /api/sales/sync que inserta en tabla 'ventas'
+    // App Móvil usa GET /api/ventas para consultas
+    /*
     router.post('/', async (req, res) => {
         try {
             const { tenantId, branchId, ticketNumber, totalAmount, paymentMethod, userEmail } = req.body;
@@ -173,6 +176,7 @@ module.exports = (pool) => {
             res.status(500).json({ success: false, message: 'Error al crear venta' });
         }
     });
+    */
 
     // POST /api/sync/sales - Sincronizar venta desde Desktop
     // 🔴 NUEVO: Ahora usa tabla "ventas" con estructura 1:1 con Desktop

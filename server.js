@@ -66,6 +66,7 @@ const { requireAdminCredentials } = require('./middleware/adminAuth'); // Helper
 
 // NUEVAS RUTAS MODULARES (refactorización de endpoints)
 const salesRoutes = require('./routes/sales');
+const ventasRoutes = require('./routes/ventas')(pool); // Rutas de consulta de ventas para app móvil
 const expensesRoutes = require('./routes/expenses');
 const shiftsRoutes = require('./routes/shifts');
 const cashCutsRoutes = require('./routes/cashCuts');
@@ -324,8 +325,9 @@ app.use('/api/repartidor-debts', repartidorDebtsRoutes);
 
 // Registrar nuevas rutas modulares
 // Note: Mount routes under their respective base paths to avoid conflicts
-app.use('/api/sales', salesRoutes(pool));
+app.use('/api/sales', salesRoutes(pool)); // Sync desde Desktop (POST /api/sales/sync)
 app.use('/api/sales-items', salesRoutes(pool));
+app.use('/api/ventas', ventasRoutes); // Consultas desde App Móvil (GET)
 app.use('/api/expenses', expensesRoutes(pool));
 app.use('/api/shifts', shiftsRoutes(pool));
 app.use('/api/cash-cuts', cashCutsRoutes(pool));
