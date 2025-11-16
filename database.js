@@ -100,6 +100,7 @@ async function initializeDatabase() {
                 subscription_ends_at TIMESTAMP,
                 trial_ends_at TIMESTAMP,
                 max_devices INTEGER DEFAULT 3,
+                is_active BOOLEAN DEFAULT true,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -362,9 +363,11 @@ async function initializeDatabase() {
             console.log('[DB] ⚠️ tenants.subscription_id:', error.message);
         }
 
+        // is_active ahora está en el CREATE TABLE inicial (línea 103)
+        // Este ALTER TABLE se mantiene solo para compatibilidad con BDs existentes creadas antes del fix
         try {
             await client.query(`ALTER TABLE tenants ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true`);
-            console.log('[DB] ✅ Columna tenants.is_active verificada/agregada');
+            console.log('[DB] ✅ Columna tenants.is_active verificada/agregada (compatibilidad con BDs antiguas)');
         } catch (error) {
             console.log('[DB] ⚠️ tenants.is_active:', error.message);
         }

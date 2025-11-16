@@ -5,7 +5,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "list-no-password": "node list_employees_without_password.js",
+    "set-password": "node set_employee_password.js"
   },
   "keywords": [
     "socketio",

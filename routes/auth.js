@@ -228,11 +228,20 @@ module.exports = function(pool) {
     // ─────────────────────────────────────────────────────────
     router.post('/desktop-login', async (req, res) => {
         console.log('[Desktop Login] Nueva solicitud de login');
+        console.log('[Desktop Login] Headers:', JSON.stringify(req.headers));
+        console.log('[Desktop Login] Body:', JSON.stringify(req.body));
 
         const { email, username, password, branchId } = req.body;
 
+        console.log('[Desktop Login] Parsed values:');
+        console.log('  - email:', email);
+        console.log('  - username:', username);
+        console.log('  - password:', password ? `(${password.length} chars)` : 'undefined');
+        console.log('  - branchId:', branchId);
+
         // Validar que se envíe email O username
         if ((!email && !username) || !password) {
+            console.log('[Desktop Login] ❌ Validación falló - credenciales incompletas');
             return res.status(400).json({
                 success: false,
                 message: 'Email/username y contraseña son requeridos'
@@ -261,8 +270,35 @@ module.exports = function(pool) {
 
             const employee = employeeResult.rows[0];
 
+            // Verificar que el empleado tenga contraseña configurada
+            if (!employee.password) {
+                console.log(`[Desktop Login] ⚠️ Empleado ${employee.email} no tiene contraseña configurada`);
+                return res.status(401).json({
+                    success: false,
+                    message: 'Usuario no tiene contraseña configurada. Contacte al administrador.'
+                });
+            }
+
             // Verificar contraseña
-            const validPassword = await bcrypt.compare(password, employee.password);
+            let validPassword = false;
+            try {
+                console.log('[Desktop Login] Comparando contraseñas...');
+                console.log(`  - Password from request: ${password ? 'EXISTS' : 'UNDEFINED'} (length: ${password?.length})`);
+                console.log(`  - Password from DB: ${employee.password ? 'EXISTS' : 'UNDEFINED'} (starts with: ${employee.password?.substring(0, 10)}...)`);
+
+                validPassword = await bcrypt.compare(password, employee.password);
+                console.log(`[Desktop Login] Resultado comparación: ${validPassword}`);
+            } catch (bcryptError) {
+                console.error('[Desktop Login] ❌ Error en bcrypt.compare:', bcryptError);
+                console.error('  - password (input):', password);
+                console.error('  - employee.password (hash):', employee.password);
+                return res.status(500).json({
+                    success: false,
+                    message: 'Error en el servidor',
+                    error: `bcrypt error: ${bcryptError.message}`
+                });
+            }
+
             if (!validPassword) {
                 console.log(`[Desktop Login] Contraseña incorrecta para: ${employee.email}`);
                 return res.status(401).json({
