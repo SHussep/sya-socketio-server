@@ -259,9 +259,22 @@ module.exports = function(pool) {
                 params = [username];
             }
 
+            console.log('[Desktop Login] Ejecutando query:', query);
+            console.log('[Desktop Login] Parámetros:', params);
+
             const employeeResult = await pool.query(query, params);
 
+            console.log(`[Desktop Login] Empleados encontrados: ${employeeResult.rows.length}`);
+
+            if (employeeResult.rows.length > 1) {
+                console.log('[Desktop Login] ⚠️ ADVERTENCIA: Múltiples empleados con el mismo email/username:');
+                employeeResult.rows.forEach((emp, idx) => {
+                    console.log(`  ${idx + 1}. ID: ${emp.id}, Tenant: ${emp.tenant_id}, Email: ${emp.email}, Password: ${emp.password ? 'EXISTS' : 'NULL'}`);
+                });
+            }
+
             if (employeeResult.rows.length === 0) {
+                console.log('[Desktop Login] ❌ No se encontró empleado con esas credenciales');
                 return res.status(401).json({
                     success: false,
                     message: 'Credenciales inválidas'
@@ -269,6 +282,8 @@ module.exports = function(pool) {
             }
 
             const employee = employeeResult.rows[0];
+            console.log(`[Desktop Login] Empleado seleccionado: ID ${employee.id}, Tenant ${employee.tenant_id}, Email ${employee.email}`);
+            console.log(`[Desktop Login] Password en DB: ${employee.password ? 'EXISTS (length: ' + employee.password.length + ')' : 'NULL/UNDEFINED'}`);
 
             // Verificar que el empleado tenga contraseña configurada
             if (!employee.password) {
