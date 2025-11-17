@@ -192,6 +192,7 @@ CREATE TABLE IF NOT EXISTS expenses (
     tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
     employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+    id_turno INTEGER REFERENCES shifts(id) ON DELETE SET NULL,
     category_id INTEGER REFERENCES expense_categories(id) ON DELETE SET NULL,
     description TEXT,
     amount DECIMAL(10, 2) NOT NULL,
@@ -215,6 +216,7 @@ CREATE TABLE IF NOT EXISTS expenses (
 
 CREATE INDEX IF NOT EXISTS idx_expenses_tenant_id ON expenses(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_expenses_branch_id ON expenses(branch_id);
+CREATE INDEX IF NOT EXISTS idx_expenses_shift ON expenses(id_turno);
 CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(expense_date DESC);
 CREATE INDEX IF NOT EXISTS idx_expenses_payment_type ON expenses(payment_type_id);
 CREATE INDEX IF NOT EXISTS idx_expenses_is_active ON expenses(is_active);

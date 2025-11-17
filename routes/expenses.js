@@ -31,7 +31,7 @@ module.exports = (pool) => {
     router.get('/', authenticateToken, async (req, res) => {
         try {
             const { tenantId, branchId: userBranchId } = req.user;
-            const { limit = 50, offset = 0, all_branches = 'false', branch_id, timezone, startDate, endDate } = req.query;
+            const { limit = 50, offset = 0, all_branches = 'false', branch_id, timezone, startDate, endDate, shift_id } = req.query;
 
             // Prioridad: 1. branch_id del query, 2. branchId del JWT
             const targetBranchId = branch_id ? parseInt(branch_id) : userBranchId;
@@ -41,6 +41,7 @@ module.exports = (pool) => {
 
             let query = `
                 SELECT e.id, e.description as concept, e.description, e.amount, e.expense_date,
+                       e.id_turno as shift_id,
                        CONCAT(emp.first_name, ' ', emp.last_name) as employee_name,
                        b.name as branch_name, b.id as "branchId",
                        cat.name as category,
@@ -62,6 +63,14 @@ module.exports = (pool) => {
                 paramIndex++;
             }
 
+            // ✅ Filtrar por turno (id_turno)
+            if (shift_id) {
+                query += ` AND e.id_turno = $${paramIndex}`;
+                params.push(parseInt(shift_id));
+                paramIndex++;
+                console.log(`[Expenses] ✅ Filtrando por shift_id=${shift_id}`);
+            }
+
             // Filtrar por rango de fechas si se proporciona (en timezone del usuario)
             if (startDate || endDate) {
                 if (startDate) {
@@ -79,7 +88,7 @@ module.exports = (pool) => {
             query += ` ORDER BY e.expense_date DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
             params.push(limit, offset);
 
-            console.log(`[Expenses] Fetching expenses - Tenant: ${tenantId}, Branch: ${targetBranchId}, Timezone: ${userTimezone}, all_branches: ${all_branches}`);
+            console.log(`[Expenses] Fetching expenses - Tenant: ${tenantId}, Branch: ${targetBranchId}, Shift: ${shift_id || 'ALL'}, Timezone: ${userTimezone}, all_branches: ${all_branches}`);
             console.log(`[Expenses] Query: ${query}`);
             console.log(`[Expenses] Params: ${JSON.stringify(params)}`);
 
