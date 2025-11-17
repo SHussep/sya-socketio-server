@@ -9,7 +9,9 @@
 -- ========== DATABASE CONFIGURATION ==========
 
 -- Set database timezone to UTC (critical for timestamp consistency)
-ALTER DATABASE sya_tortillerias SET timezone TO 'UTC';
+-- NOTE: Commented out to avoid hardcoding database name
+-- The timezone is already configured in Render database settings
+-- ALTER DATABASE sya_tortillerias SET timezone TO 'UTC';
 
 -- ========== CORE TABLES ==========
 
