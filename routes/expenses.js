@@ -178,12 +178,12 @@ module.exports = (pool) => {
         try {
             const {
                 tenantId, branchId, employeeId, category, description, amount, userEmail,
-                payment_type_id, expense_date_utc,  // ✅ NUEVO: payment_type_id es REQUERIDO, expense_date_utc ya en UTC
+                payment_type_id, expense_date_utc, id_turno,  // ✅ payment_type_id es REQUERIDO, expense_date_utc ya en UTC, id_turno turno al que pertenece
                 // ✅ OFFLINE-FIRST FIELDS
                 global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw
             } = req.body;
 
-            console.log(`[Sync/Expenses] Desktop sync - Tenant: ${tenantId}, Branch: ${branchId}, Category: ${category}, PaymentType: ${payment_type_id}, ExpenseDateUTC: ${expense_date_utc}`);
+            console.log(`[Sync/Expenses] Desktop sync - Tenant: ${tenantId}, Branch: ${branchId}, Category: ${category}, PaymentType: ${payment_type_id}, ShiftId: ${id_turno || 'N/A'}, ExpenseDateUTC: ${expense_date_utc}`);
             console.log(`[Sync/Expenses] Received amount: ${amount} (type: ${typeof amount})`);
             console.log(`[Sync/Expenses] 🔐 Offline-First - GlobalId: ${global_id}, TerminalId: ${terminal_id}, LocalOpSeq: ${local_op_seq}`);
 
@@ -235,30 +235,32 @@ module.exports = (pool) => {
             // ✅ IDEMPOTENTE: INSERT con ON CONFLICT (global_id) DO UPDATE
             const result = await pool.query(
                 `INSERT INTO expenses (
-                    tenant_id, branch_id, employee_id, payment_type_id, category_id, description, amount, expense_date,
+                    tenant_id, branch_id, employee_id, payment_type_id, id_turno, category_id, description, amount, expense_date,
                     global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw
                  )
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::uuid, $10::uuid, $11, $12, $13)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::uuid, $11::uuid, $12, $13, $14)
                  ON CONFLICT (global_id) DO UPDATE
                  SET amount = EXCLUDED.amount,
                      description = EXCLUDED.description,
                      expense_date = EXCLUDED.expense_date,
-                     payment_type_id = EXCLUDED.payment_type_id
+                     payment_type_id = EXCLUDED.payment_type_id,
+                     id_turno = EXCLUDED.id_turno
                  RETURNING *`,
                 [
                     tenantId,
                     branchId,
                     finalEmployeeId,
-                    payment_type_id,              // ✅ NUEVO (posición $4)
-                    categoryId,                   // ahora $5
-                    description || '',            // ahora $6
-                    numericAmount,                // ahora $7
-                    expenseDate,                  // ahora $8
-                    global_id,                    // ahora $9 - UUID from Desktop
-                    terminal_id,                  // ahora $10 - UUID from Desktop
-                    local_op_seq,                 // ahora $11 - Sequence number from Desktop
-                    created_local_utc,            // ahora $12 - ISO 8601 timestamp from Desktop
-                    device_event_raw              // ahora $13 - Raw .NET ticks from Desktop
+                    payment_type_id,              // $4
+                    id_turno || null,             // $5 - Turno al que pertenece el gasto
+                    categoryId,                   // $6
+                    description || '',            // $7
+                    numericAmount,                // $8
+                    expenseDate,                  // $9
+                    global_id,                    // $10 - UUID from Desktop
+                    terminal_id,                  // $11 - UUID from Desktop
+                    local_op_seq,                 // $12 - Sequence number from Desktop
+                    created_local_utc,            // $13 - ISO 8601 timestamp from Desktop
+                    device_event_raw              // $14 - Raw .NET ticks from Desktop
                 ]
             );
 
