@@ -86,6 +86,7 @@ const suspiciousWeighingLogsRoutes = require('./routes/suspiciousWeighingLogs');
 const scaleDisconnectionLogsRoutes = require('./routes/scaleDisconnectionLogs'); // Rutas de eventos de desconexión de báscula
 const employeeMetricsRoutes = require('./routes/employeeMetrics'); // Rutas de métricas diarias de empleados
 const cancelacionesRoutes = require('./routes/cancelaciones'); // Rutas de cancelaciones bitácora con sync offline-first
+const repartidoresRoutes = require('./routes/repartidores'); // Rutas de resumen y detalles de repartidores
 
 // Inicializar Firebase para notificaciones push
 initializeFirebase();
@@ -343,6 +344,7 @@ app.use('/api/credit-payments', creditPaymentsRoutes(pool)); // Rutas de pagos d
 app.use('/api/suspicious-weighing-logs', suspiciousWeighingLogsRoutes(pool)); // Rutas de Guardian logs de báscula
 app.use('/api/scale-disconnection-logs', scaleDisconnectionLogsRoutes(pool)); // Rutas de eventos de desconexión de báscula
 app.use('/api/employee-metrics', employeeMetricsRoutes(pool)); // Rutas de métricas diarias de empleados
+app.use('/api/repartidores', repartidoresRoutes(pool)); // Rutas de resumen y detalles de repartidores
 
 // FASE 1: Cash Management Routes (Deposits, Withdrawals, Cash Cuts)
 app.use('/api/deposits', depositsRoutes(pool));
