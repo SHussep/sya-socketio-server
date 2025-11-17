@@ -31,7 +31,7 @@ module.exports = (pool) => {
     router.get('/', authenticateToken, async (req, res) => {
         try {
             const { tenantId, branchId: userBranchId } = req.user;
-            const { limit = 50, offset = 0, all_branches = 'false', branch_id, timezone, startDate, endDate, shift_id } = req.query;
+            const { limit = 50, offset = 0, all_branches = 'false', branch_id, timezone, startDate, endDate, shift_id, employee_id } = req.query;
 
             // Prioridad: 1. branch_id del query, 2. branchId del JWT
             const targetBranchId = branch_id ? parseInt(branch_id) : userBranchId;
@@ -69,6 +69,14 @@ module.exports = (pool) => {
                 params.push(parseInt(shift_id));
                 paramIndex++;
                 console.log(`[Expenses] ✅ Filtrando por shift_id=${shift_id}`);
+            }
+
+            // ✅ Filtrar por employee_id (para que repartidores vean solo sus gastos)
+            if (employee_id) {
+                query += ` AND e.employee_id = $${paramIndex}`;
+                params.push(parseInt(employee_id));
+                paramIndex++;
+                console.log(`[Expenses] ✅ Filtrando por employee_id=${employee_id}`);
             }
 
             // Filtrar por rango de fechas si se proporciona (en timezone del usuario)
