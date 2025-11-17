@@ -32,7 +32,7 @@ module.exports = (pool) => {
     router.get('/', authenticateToken, async (req, res) => {
         try {
             const { tenantId, branchId: userBranchId } = req.user;
-            const { limit = 50, offset = 0, all_branches = 'false', branch_id, timezone, startDate, endDate } = req.query;
+            const { limit = 50, offset = 0, all_branches = 'false', branch_id, timezone, startDate, endDate, shift_id } = req.query;
 
             // Prioridad: 1. branch_id del query, 2. branchId del JWT
             const targetBranchId = branch_id ? parseInt(branch_id) : userBranchId;
@@ -44,7 +44,7 @@ module.exports = (pool) => {
                 SELECT v.id_venta as id, v.ticket_number, v.total as total_amount,
                        v.tipo_pago_id as payment_method, v.fecha_venta_utc as sale_date,
                        v.venta_tipo_id as sale_type, v.id_empleado as employee_id,
-                       v.tenant_id, v.branch_id,
+                       v.tenant_id, v.branch_id, v.id_turno as shift_id,
                        CONCAT(e.first_name, ' ', e.last_name) as employee_name,
                        r.name as employee_role,
                        b.name as branch_name, b.id as "branchId",
@@ -68,6 +68,13 @@ module.exports = (pool) => {
                 paramIndex++;
             }
 
+            // 🆕 Filtrar por shift_id (usando id_turno en la tabla ventas)
+            if (shift_id) {
+                query += ` AND v.id_turno = $${paramIndex}`;
+                params.push(parseInt(shift_id));
+                paramIndex++;
+            }
+
             // Filtrar por rango de fechas si se proporciona (en timezone del usuario)
             if (startDate || endDate) {
                 if (startDate) {
@@ -85,13 +92,14 @@ module.exports = (pool) => {
             query += ` ORDER BY v.fecha_venta_utc DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
             params.push(limit, offset);
 
-            console.log(`[Sales] Fetching sales - Tenant: ${tenantId}, Branch: ${targetBranchId}, Timezone: ${userTimezone}, all_branches: ${all_branches}`);
+            console.log(`[Sales] Fetching sales - Tenant: ${tenantId}, Branch: ${targetBranchId}, Shift: ${shift_id || 'ALL'}, Timezone: ${userTimezone}, all_branches: ${all_branches}`);
             console.log(`[Sales] Query: ${query}`);
             console.log(`[Sales] Params: ${JSON.stringify(params)}`);
 
             const result = await pool.query(query, params);
 
             console.log(`[Sales] ✅ Ventas encontradas: ${result.rows.length}`);
+            console.log(`[Sales] 🔍 Shift IDs: ${result.rows.map(r => `ID ${r.id}:shift_${r.shift_id ?? 'NULL'}`).join(', ')}`);
 
             // Debug: detectar duplicados en respuesta
             const idCount = {};

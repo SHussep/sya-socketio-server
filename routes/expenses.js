@@ -95,6 +95,7 @@ module.exports = (pool) => {
             const result = await pool.query(query, params);
 
             console.log(`[Expenses] ✅ Gastos encontrados: ${result.rows.length}`);
+            console.log(`[Expenses] 🔍 Shift IDs: ${result.rows.map(r => `ID ${r.id}:shift_${r.shift_id ?? 'NULL'}`).join(', ')}`);
 
             // Normalizar amount a número y formatear timestamps en UTC
             const normalizedRows = result.rows.map(row => ({
