@@ -198,6 +198,7 @@ CREATE TABLE IF NOT EXISTS expenses (
     category_id INTEGER REFERENCES expense_categories(id) ON DELETE SET NULL,
     description TEXT,
     amount DECIMAL(10, 2) NOT NULL,
+    quantity DECIMAL(10, 3),  -- Cantidad medible (litros para combustible, kg para materiales, etc.)
     expense_date TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     payment_type_id INTEGER,  -- 1=Efectivo, 2=Tarjeta
 
@@ -224,6 +225,7 @@ CREATE INDEX IF NOT EXISTS idx_expenses_branch_id ON expenses(branch_id);
 CREATE INDEX IF NOT EXISTS idx_expenses_shift ON expenses(id_turno);
 CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(expense_date DESC);
 CREATE INDEX IF NOT EXISTS idx_expenses_payment_type ON expenses(payment_type_id);
+CREATE INDEX IF NOT EXISTS idx_expenses_quantity ON expenses(quantity) WHERE quantity IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_expenses_is_active ON expenses(is_active);
 CREATE INDEX IF NOT EXISTS idx_expenses_deleted_at ON expenses(deleted_at);
 CREATE INDEX IF NOT EXISTS idx_expenses_terminal_seq ON expenses(terminal_id, local_op_seq);
