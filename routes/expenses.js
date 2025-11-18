@@ -432,10 +432,11 @@ module.exports = (pool) => {
             });
         }
     });
+
     // ═══════════════════════════════════════════════════════════════
     // MOBILE EXPENSE REVIEW ENDPOINTS
     // ═══════════════════════════════════════════════════════════════
-router.get('/pending-review', async (req, res) => {
+    router.get('/pending-review', async (req, res) => {
     try {
         const { employee_id, tenant_id } = req.query;
 
@@ -502,10 +503,10 @@ router.get('/pending-review', async (req, res) => {
             error: error.message
         });
     }
-});
+    });
 
-// PATCH /api/expenses/:global_id/approve - Aprobar gasto móvil
-router.patch('/:global_id/approve', async (req, res) => {
+    // PATCH /api/expenses/:global_id/approve - Aprobar gasto móvil
+    router.patch('/:global_id/approve', async (req, res) => {
     try {
         const { global_id } = req.params;
         const { tenant_id } = req.body;
@@ -550,10 +551,10 @@ router.patch('/:global_id/approve', async (req, res) => {
             error: error.message
         });
     }
-});
+    });
 
-// DELETE /api/expenses/:global_id - Eliminar gasto rechazado
-router.delete('/:global_id', async (req, res) => {
+    // DELETE /api/expenses/:global_id - Eliminar gasto rechazado
+    router.delete('/:global_id', async (req, res) => {
     try {
         const { global_id } = req.params;
         const { tenant_id } = req.query;
@@ -603,7 +604,7 @@ router.delete('/:global_id', async (req, res) => {
             error: error.message
         });
     }
-});
+    });
 
-
+    return router;
 };
