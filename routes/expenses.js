@@ -436,16 +436,16 @@ module.exports = (pool) => {
     // ═══════════════════════════════════════════════════════════════
     // MOBILE EXPENSE REVIEW ENDPOINTS
     // ═══════════════════════════════════════════════════════════════
-    router.get('/pending-review', async (req, res) => {
-    try {
-        const { employee_id, tenant_id } = req.query;
+        router.get('/pending-review', async (req, res) => {
+        try {
+            const { employee_id, tenant_id } = req.query;
 
-        if (!employee_id) {
-            return res.status(400).json({
-                success: false,
-                message: 'employee_id es requerido'
-            });
-        }
+            if (!employee_id) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'employee_id es requerido'
+                });
+            }
 
         console.log(`[Expenses/PendingReview] 🔍 Buscando gastos pendientes para employee_id: ${employee_id}`);
 
@@ -604,7 +604,7 @@ module.exports = (pool) => {
             error: error.message
         });
     }
-    });
+});
 
-    return router;
+return router;
 };
