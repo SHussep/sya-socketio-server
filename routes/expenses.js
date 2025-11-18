@@ -4,6 +4,7 @@
 
 const express = require('express');
 const jwt = require('jsonwebtoken');
+const { v4: uuidv4 } = require('uuid');
 const JWT_SECRET = process.env.JWT_SECRET;
 
 // Middleware: Autenticación JWT
@@ -198,7 +199,7 @@ module.exports = (pool) => {
             const reviewedValue = reviewed_by_desktop !== undefined ? reviewed_by_desktop : false;
 
             // Si es Mobile (online-only), generar valores simples
-            const finalGlobalId = global_id || `mobile-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+            const finalGlobalId = global_id || uuidv4(); // Generate valid UUID for Mobile
             const finalTerminalId = terminal_id || 'mobile-app';
             const finalLocalOpSeq = local_op_seq || 0;
             const finalCreatedLocalUtc = created_local_utc || new Date().toISOString();
