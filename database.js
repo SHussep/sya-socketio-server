@@ -669,14 +669,23 @@ async function runMigrations() {
             }
 
             // Patch: Fix ventas unique constraint (per shift, not per branch)
-            console.log('[Schema] 🔍 Checking ventas unique constraints...');
-            const checkVentasConstraints = await client.query(`
-                SELECT constraint_name
-                FROM information_schema.table_constraints
-                WHERE table_name = 'ventas'
-                AND constraint_type = 'UNIQUE'
-                AND constraint_name IN ('ventas_uq_ticket_per_branch', 'uq_ventas_ticket_per_terminal', 'uq_ventas_ticket_per_shift')
+            // Only run if ventas table exists
+            const checkVentasTable = await client.query(`
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'ventas'
+                )
             `);
+
+            if (checkVentasTable.rows[0].exists) {
+                console.log('[Schema] 🔍 Checking ventas unique constraints...');
+                const checkVentasConstraints = await client.query(`
+                    SELECT constraint_name
+                    FROM information_schema.table_constraints
+                    WHERE table_name = 'ventas'
+                    AND constraint_type = 'UNIQUE'
+                    AND constraint_name IN ('ventas_uq_ticket_per_branch', 'uq_ventas_ticket_per_terminal', 'uq_ventas_ticket_per_shift')
+                `);
 
             const constraints = checkVentasConstraints.rows.map(r => r.constraint_name);
             console.log(`[Schema] 📋 Found constraints: ${constraints.join(', ') || 'none'}`);
@@ -702,6 +711,9 @@ async function runMigrations() {
                     ON ventas(tenant_id, branch_id, ticket_number, id_turno)
                 `);
                 console.log('[Schema] ✅ Constraint created successfully');
+            }
+            } else {
+                console.log('[Schema] ℹ️  Fresh database created - skipping patches');
             }
 
             // 2.5. Clean user data if requested (for testing)
