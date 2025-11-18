@@ -188,15 +188,19 @@ module.exports = (pool) => {
             const {
                 tenantId, branchId, employeeId, category, description, amount, userEmail,
                 payment_type_id, expense_date_utc, id_turno,  // ✅ payment_type_id es REQUERIDO, expense_date_utc ya en UTC, id_turno turno al que pertenece
-                reviewed_by_desktop,  // ✅ TRUE para gastos de Desktop, FALSE para app móvil
                 // ✅ OFFLINE-FIRST FIELDS
                 global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw
             } = req.body;
 
-            console.log(`[Sync/Expenses] Desktop sync - Tenant: ${tenantId}, Branch: ${branchId}, Category: ${category}, PaymentType: ${payment_type_id}, ShiftId: ${id_turno || 'N/A'}, ExpenseDateUTC: ${expense_date_utc}`);
+            // ✅ LÓGICA CRÍTICA: Este endpoint es SOLO para Desktop
+            // Todos los gastos que llegan aquí DEBEN marcarse como reviewed_by_desktop = true
+            // porque se generaron en Desktop, no en app móvil
+            const isFromDesktop = true;  // Este endpoint /sync es exclusivo de Desktop
+
+            console.log(`[Sync/Expenses] 🖥️ DESKTOP sync - Tenant: ${tenantId}, Branch: ${branchId}, Category: ${category}, PaymentType: ${payment_type_id}, ShiftId: ${id_turno || 'N/A'}, ExpenseDateUTC: ${expense_date_utc}`);
             console.log(`[Sync/Expenses] Received amount: ${amount} (type: ${typeof amount})`);
             console.log(`[Sync/Expenses] 🔐 Offline-First - GlobalId: ${global_id}, TerminalId: ${terminal_id}, LocalOpSeq: ${local_op_seq}`);
-            console.log(`[Sync/Expenses] 📋 ReviewedByDesktop: ${reviewed_by_desktop} (will use: ${reviewed_by_desktop !== undefined ? reviewed_by_desktop : true})`);
+            console.log(`[Sync/Expenses] 📋 Marcando como reviewed_by_desktop = TRUE (origen: Desktop)`);
 
             if (!tenantId || !branchId || !category || amount === null || amount === undefined || !global_id || !payment_type_id) {
                 return res.status(400).json({ success: false, message: 'Datos incompletos (tenantId, branchId, category, amount, payment_type_id, global_id requeridos)' });
@@ -269,7 +273,7 @@ module.exports = (pool) => {
                     description || '',            // $7
                     numericAmount,                // $8
                     expenseDate,                  // $9
-                    reviewed_by_desktop !== undefined ? reviewed_by_desktop : true,  // $10 - TRUE por defecto para Desktop
+                    true,                         // $10 - SIEMPRE TRUE: este endpoint es solo para Desktop
                     global_id,                    // $11 - UUID from Desktop
                     terminal_id,                  // $12 - UUID from Desktop
                     local_op_seq,                 // $13 - Sequence number from Desktop
