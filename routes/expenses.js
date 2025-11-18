@@ -200,7 +200,7 @@ module.exports = (pool) => {
 
             // Si es Mobile (online-only), generar valores simples
             const finalGlobalId = global_id || uuidv4(); // Generate valid UUID for Mobile
-            const finalTerminalId = terminal_id || null; // NULL for mobile apps
+            const finalTerminalId = terminal_id || uuidv4(); // Generate valid UUID for mobile apps
             const finalLocalOpSeq = local_op_seq || 0;
             const finalCreatedLocalUtc = created_local_utc || new Date().toISOString();
             const finalDeviceEventRaw = device_event_raw || Date.now();
@@ -267,7 +267,7 @@ module.exports = (pool) => {
                     reviewed_by_desktop,
                     global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw
                  )
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::uuid, $13, $14, $15, $16)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
                  ON CONFLICT (global_id) DO UPDATE
                  SET amount = EXCLUDED.amount,
                      quantity = EXCLUDED.quantity,
@@ -290,7 +290,7 @@ module.exports = (pool) => {
                     expenseDate,                  // $10
                     reviewedValue,                // $11 - TRUE para Desktop, FALSE para Mobile
                     finalGlobalId,                // $12 - UUID (Desktop) o generado (Mobile)
-                    finalTerminalId,              // $13 - UUID (Desktop) o NULL (Mobile)
+                    finalTerminalId,              // $13 - UUID (Desktop) o generado (Mobile)
                     finalLocalOpSeq,              // $14 - Sequence (Desktop) o 0 (Mobile)
                     finalCreatedLocalUtc,         // $15 - ISO 8601 timestamp
                     finalDeviceEventRaw           // $16 - Raw ticks
