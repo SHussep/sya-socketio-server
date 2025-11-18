@@ -28,7 +28,8 @@ function createRepartidorAssignmentRoutes(io) {
       employee_id,
       created_by_employee_id,
       shift_id,
-      repartidor_shift_id,
+      repartidor_shift_id,              // ID numérico (legacy, puede no existir en PostgreSQL)
+      repartidor_shift_global_id,       // ✅ UUID del turno (offline-first, preferido)
       assigned_quantity,
       assigned_amount,
       unit_price,
@@ -47,6 +48,7 @@ function createRepartidorAssignmentRoutes(io) {
     try {
       console.log('[RepartidorAssignments] 📦 POST /api/repartidor-assignments/sync');
       console.log(`  GlobalId: ${global_id}, Repartidor: ${employee_id}, Venta: ${venta_id}, Quantity: ${assigned_quantity} kg`);
+      console.log(`  RepartidorShiftGlobalId: ${repartidor_shift_global_id || 'N/A'}, RepartidorShiftId: ${repartidor_shift_id || 'N/A'}`);
 
       // Validar campos requeridos
       if (!tenant_id || !branch_id || !venta_id || !employee_id || !created_by_employee_id || !shift_id) {
@@ -90,6 +92,27 @@ function createRepartidorAssignmentRoutes(io) {
         });
       }
 
+      // ✅ RESOLVER repartidor_shift_id usando global_id (offline-first)
+      // Si Desktop envía repartidor_shift_global_id (UUID), resolver al ID correcto en PostgreSQL
+      let resolvedRepartidorShiftId = repartidor_shift_id;
+
+      if (repartidor_shift_global_id) {
+        console.log(`[RepartidorAssignments] 🔍 Resolviendo turno con global_id: ${repartidor_shift_global_id}`);
+        const shiftLookup = await pool.query(
+          'SELECT id FROM shifts WHERE global_id = $1::uuid AND tenant_id = $2',
+          [repartidor_shift_global_id, tenant_id]
+        );
+
+        if (shiftLookup.rows.length > 0) {
+          resolvedRepartidorShiftId = shiftLookup.rows[0].id;
+          console.log(`[RepartidorAssignments] ✅ Turno resuelto: global_id ${repartidor_shift_global_id} → id ${resolvedRepartidorShiftId}`);
+        } else {
+          console.log(`[RepartidorAssignments] ⚠️ Turno no encontrado con global_id: ${repartidor_shift_global_id}`);
+          // Continuar sin repartidor_shift_id (será NULL)
+          resolvedRepartidorShiftId = null;
+        }
+      }
+
       // ✅ IDEMPOTENTE: Insertar con global_id único
       // ON CONFLICT: Solo se permiten updates de status, fecha_liquidacion, observaciones
       // Los datos originales (assigned_quantity, assigned_amount) NO cambian
@@ -118,7 +141,7 @@ function createRepartidorAssignmentRoutes(io) {
         employee_id,
         created_by_employee_id,
         shift_id,
-        repartidor_shift_id,
+        resolvedRepartidorShiftId,  // ✅ Usar ID resuelto desde global_id
         parseFloat(assigned_quantity),
         parseFloat(assigned_amount),
         parseFloat(unit_price),
