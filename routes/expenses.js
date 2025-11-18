@@ -187,23 +187,35 @@ module.exports = (pool) => {
         try {
             const {
                 tenantId, branchId, employeeId, category, description, amount, quantity, userEmail,
-                payment_type_id, expense_date_utc, id_turno,  // ✅ payment_type_id es REQUERIDO, expense_date_utc ya en UTC, id_turno turno al que pertenece
-                reviewed_by_desktop,  // ✅ Cada cliente DEBE enviar este campo explícitamente
-                // ✅ OFFLINE-FIRST FIELDS
+                payment_type_id, expense_date_utc, id_turno,
+                reviewed_by_desktop,
+                // OFFLINE-FIRST FIELDS (OPCIONALES - solo Desktop los envía, Mobile NO)
                 global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw
             } = req.body;
 
-            // ✅ VALIDAR que el campo reviewed_by_desktop venga en el request
-            // Desktop debe enviar true, Mobile debe enviar false
-            const reviewedValue = reviewed_by_desktop !== undefined ? reviewed_by_desktop : false;  // Por defecto FALSE (mobile)
+            // Detectar tipo de cliente: Desktop (offline-first) vs Mobile (online-only)
+            const isDesktop = !!global_id && !!terminal_id;
+            const reviewedValue = reviewed_by_desktop !== undefined ? reviewed_by_desktop : false;
 
-            console.log(`[Sync/Expenses] 📥 Sync request - Tenant: ${tenantId}, Branch: ${branchId}, Category: ${category}, PaymentType: ${payment_type_id}, ShiftId: ${id_turno || 'N/A'}`);
-            console.log(`[Sync/Expenses] Received amount: ${amount} (type: ${typeof amount})`);
-            console.log(`[Sync/Expenses] 🔐 Offline-First - GlobalId: ${global_id}, TerminalId: ${terminal_id}, LocalOpSeq: ${local_op_seq}`);
-            console.log(`[Sync/Expenses] 📋 reviewed_by_desktop = ${reviewedValue} (recibido: ${reviewed_by_desktop})`);
+            // Si es Mobile (online-only), generar valores simples
+            const finalGlobalId = global_id || `mobile-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+            const finalTerminalId = terminal_id || 'mobile-app';
+            const finalLocalOpSeq = local_op_seq || 0;
+            const finalCreatedLocalUtc = created_local_utc || new Date().toISOString();
+            const finalDeviceEventRaw = device_event_raw || Date.now();
 
-            if (!tenantId || !branchId || !category || amount === null || amount === undefined || !global_id || !payment_type_id) {
-                return res.status(400).json({ success: false, message: 'Datos incompletos (tenantId, branchId, category, amount, payment_type_id, global_id requeridos)' });
+            console.log(`[Sync/Expenses] 📥 Client Type: ${isDesktop ? 'DESKTOP (offline-first)' : 'MOBILE (online-only)'}`);
+            console.log(`[Sync/Expenses] 📦 Tenant: ${tenantId}, Branch: ${branchId}, Category: ${category}`);
+            console.log(`[Sync/Expenses] 💰 Amount: ${amount}, Quantity: ${quantity || 'N/A'}, Payment: ${payment_type_id}, Shift: ${id_turno || 'N/A'}`);
+            if (isDesktop) {
+                console.log(`[Sync/Expenses] 🔐 Desktop IDs - Global: ${global_id}, Terminal: ${terminal_id}, Seq: ${local_op_seq}`);
+            } else {
+                console.log(`[Sync/Expenses] 📱 Mobile (online) - Auto-generated GlobalId: ${finalGlobalId}`);
+            }
+            console.log(`[Sync/Expenses] 📋 reviewed_by_desktop = ${reviewedValue}`);
+
+            if (!tenantId || !branchId || !category || amount === null || amount === undefined || !payment_type_id) {
+                return res.status(400).json({ success: false, message: 'Datos incompletos (tenantId, branchId, category, amount, payment_type_id requeridos)' });
             }
 
             // Convertir amount a número si viene como string
@@ -276,11 +288,11 @@ module.exports = (pool) => {
                     quantity || null,             // $9 - Cantidad (litros, kg, etc.)
                     expenseDate,                  // $10
                     reviewedValue,                // $11 - TRUE para Desktop, FALSE para Mobile
-                    global_id,                    // $12 - UUID
-                    terminal_id,                  // $13 - UUID
-                    local_op_seq,                 // $14 - Sequence number
-                    created_local_utc,            // $15 - ISO 8601 timestamp
-                    device_event_raw              // $16 - Raw ticks
+                    finalGlobalId,                // $12 - UUID (Desktop) o generado (Mobile)
+                    finalTerminalId,              // $13 - UUID (Desktop) o 'mobile-app' (Mobile)
+                    finalLocalOpSeq,              // $14 - Sequence (Desktop) o 0 (Mobile)
+                    finalCreatedLocalUtc,         // $15 - ISO 8601 timestamp
+                    finalDeviceEventRaw           // $16 - Raw ticks
                 ]
             );
 
