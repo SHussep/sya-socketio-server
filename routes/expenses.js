@@ -188,19 +188,19 @@ module.exports = (pool) => {
             const {
                 tenantId, branchId, employeeId, category, description, amount, userEmail,
                 payment_type_id, expense_date_utc, id_turno,  // ✅ payment_type_id es REQUERIDO, expense_date_utc ya en UTC, id_turno turno al que pertenece
+                reviewed_by_desktop,  // ✅ Cada cliente DEBE enviar este campo explícitamente
                 // ✅ OFFLINE-FIRST FIELDS
                 global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw
             } = req.body;
 
-            // ✅ LÓGICA CRÍTICA: Este endpoint es SOLO para Desktop
-            // Todos los gastos que llegan aquí DEBEN marcarse como reviewed_by_desktop = true
-            // porque se generaron en Desktop, no en app móvil
-            const isFromDesktop = true;  // Este endpoint /sync es exclusivo de Desktop
+            // ✅ VALIDAR que el campo reviewed_by_desktop venga en el request
+            // Desktop debe enviar true, Mobile debe enviar false
+            const reviewedValue = reviewed_by_desktop !== undefined ? reviewed_by_desktop : false;  // Por defecto FALSE (mobile)
 
-            console.log(`[Sync/Expenses] 🖥️ DESKTOP sync - Tenant: ${tenantId}, Branch: ${branchId}, Category: ${category}, PaymentType: ${payment_type_id}, ShiftId: ${id_turno || 'N/A'}, ExpenseDateUTC: ${expense_date_utc}`);
+            console.log(`[Sync/Expenses] 📥 Sync request - Tenant: ${tenantId}, Branch: ${branchId}, Category: ${category}, PaymentType: ${payment_type_id}, ShiftId: ${id_turno || 'N/A'}`);
             console.log(`[Sync/Expenses] Received amount: ${amount} (type: ${typeof amount})`);
             console.log(`[Sync/Expenses] 🔐 Offline-First - GlobalId: ${global_id}, TerminalId: ${terminal_id}, LocalOpSeq: ${local_op_seq}`);
-            console.log(`[Sync/Expenses] 📋 Marcando como reviewed_by_desktop = TRUE (origen: Desktop)`);
+            console.log(`[Sync/Expenses] 📋 reviewed_by_desktop = ${reviewedValue} (recibido: ${reviewed_by_desktop})`);
 
             if (!tenantId || !branchId || !category || amount === null || amount === undefined || !global_id || !payment_type_id) {
                 return res.status(400).json({ success: false, message: 'Datos incompletos (tenantId, branchId, category, amount, payment_type_id, global_id requeridos)' });
@@ -273,12 +273,12 @@ module.exports = (pool) => {
                     description || '',            // $7
                     numericAmount,                // $8
                     expenseDate,                  // $9
-                    true,                         // $10 - SIEMPRE TRUE: este endpoint es solo para Desktop
-                    global_id,                    // $11 - UUID from Desktop
-                    terminal_id,                  // $12 - UUID from Desktop
-                    local_op_seq,                 // $13 - Sequence number from Desktop
-                    created_local_utc,            // $14 - ISO 8601 timestamp from Desktop
-                    device_event_raw              // $15 - Raw .NET ticks from Desktop
+                    reviewedValue,                // $10 - TRUE para Desktop, FALSE para Mobile
+                    global_id,                    // $11 - UUID
+                    terminal_id,                  // $12 - UUID
+                    local_op_seq,                 // $13 - Sequence number
+                    created_local_utc,            // $14 - ISO 8601 timestamp
+                    device_event_raw              // $15 - Raw ticks
                 ]
             );
 
