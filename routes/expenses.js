@@ -584,7 +584,7 @@ module.exports = (pool) => {
 
         // Validar que el gasto existe y pertenece al tenant
         const checkResult = await pool.query(
-            'SELECT id FROM expenses WHERE global_id = $1::uuid AND tenant_id = $2',
+            'SELECT id FROM expenses WHERE global_id = $1 AND tenant_id = $2',
             [global_id, tenant_id]
         );
 
@@ -600,7 +600,7 @@ module.exports = (pool) => {
             `UPDATE expenses
              SET reviewed_by_desktop = true,
                  updated_at = NOW()
-             WHERE global_id = $1::uuid AND tenant_id = $2
+             WHERE global_id = $1 AND tenant_id = $2
              RETURNING *`,
             [global_id, tenant_id]
         );
@@ -639,7 +639,7 @@ module.exports = (pool) => {
 
         // Validar que el gasto existe y pertenece al tenant
         const checkResult = await pool.query(
-            'SELECT id FROM expenses WHERE global_id = $1::uuid AND tenant_id = $2',
+            'SELECT id FROM expenses WHERE global_id = $1 AND tenant_id = $2',
             [global_id, tenant_id]
         );
 
@@ -653,7 +653,7 @@ module.exports = (pool) => {
         // Eliminación PERMANENTE (hard delete)
         const result = await pool.query(
             `DELETE FROM expenses
-             WHERE global_id = $1::uuid AND tenant_id = $2
+             WHERE global_id = $1 AND tenant_id = $2
              RETURNING *`,
             [global_id, tenant_id]
         );
