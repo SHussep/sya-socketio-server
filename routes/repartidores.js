@@ -64,7 +64,9 @@ module.exports = (pool) => {
                     FROM repartidor_assignments ra
                     LEFT JOIN employees e ON ra.employee_id = e.id
                     LEFT JOIN roles r ON e.role_id = r.id
+                    LEFT JOIN shifts s ON ra.repartidor_shift_id = s.id
                     WHERE ra.tenant_id = $1
+                    AND (s.id IS NULL OR s.is_cash_cut_open = true)
             `;
 
             const params = [tenantId];
@@ -187,7 +189,9 @@ module.exports = (pool) => {
                 LEFT JOIN employees e_created ON ra.created_by_employee_id = e_created.id
                 LEFT JOIN employees e_repartidor ON ra.employee_id = e_repartidor.id
                 LEFT JOIN ventas v ON ra.venta_id = v.id_venta
+                LEFT JOIN shifts s ON ra.repartidor_shift_id = s.id
                 WHERE ra.tenant_id = $1 AND ra.employee_id = $2
+                AND (s.id IS NULL OR s.is_cash_cut_open = true)
             `;
 
             const params = [tenantId, parseInt(employeeId)];
