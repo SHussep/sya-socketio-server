@@ -186,7 +186,7 @@ module.exports = (pool) => {
     router.post('/sync', async (req, res) => {
         try {
             const {
-                tenantId, branchId, employeeId, category, description, amount, userEmail,
+                tenantId, branchId, employeeId, category, description, amount, quantity, userEmail,
                 payment_type_id, expense_date_utc, id_turno,  // ✅ payment_type_id es REQUERIDO, expense_date_utc ya en UTC, id_turno turno al que pertenece
                 reviewed_by_desktop,  // ✅ Cada cliente DEBE enviar este campo explícitamente
                 // ✅ OFFLINE-FIRST FIELDS
@@ -250,13 +250,14 @@ module.exports = (pool) => {
             // ✅ IDEMPOTENTE: INSERT con ON CONFLICT (global_id) DO UPDATE
             const result = await pool.query(
                 `INSERT INTO expenses (
-                    tenant_id, branch_id, employee_id, payment_type_id, id_turno, category_id, description, amount, expense_date,
+                    tenant_id, branch_id, employee_id, payment_type_id, id_turno, category_id, description, amount, quantity, expense_date,
                     reviewed_by_desktop,
                     global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw
                  )
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::uuid, $12::uuid, $13, $14, $15)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::uuid, $13::uuid, $14, $15, $16)
                  ON CONFLICT (global_id) DO UPDATE
                  SET amount = EXCLUDED.amount,
+                     quantity = EXCLUDED.quantity,
                      description = EXCLUDED.description,
                      expense_date = EXCLUDED.expense_date,
                      payment_type_id = EXCLUDED.payment_type_id,
@@ -272,13 +273,14 @@ module.exports = (pool) => {
                     categoryId,                   // $6
                     description || '',            // $7
                     numericAmount,                // $8
-                    expenseDate,                  // $9
-                    reviewedValue,                // $10 - TRUE para Desktop, FALSE para Mobile
-                    global_id,                    // $11 - UUID
-                    terminal_id,                  // $12 - UUID
-                    local_op_seq,                 // $13 - Sequence number
-                    created_local_utc,            // $14 - ISO 8601 timestamp
-                    device_event_raw              // $15 - Raw ticks
+                    quantity || null,             // $9 - Cantidad (litros, kg, etc.)
+                    expenseDate,                  // $10
+                    reviewedValue,                // $11 - TRUE para Desktop, FALSE para Mobile
+                    global_id,                    // $12 - UUID
+                    terminal_id,                  // $13 - UUID
+                    local_op_seq,                 // $14 - Sequence number
+                    created_local_utc,            // $15 - ISO 8601 timestamp
+                    device_event_raw              // $16 - Raw ticks
                 ]
             );
 
@@ -443,6 +445,50 @@ module.exports = (pool) => {
     });
 
     // ═══════════════════════════════════════════════════════════════
+    // EXPENSE CATEGORIES ENDPOINTS
+    // ═══════════════════════════════════════════════════════════════
+
+    // GET /api/expense-categories - Obtener categorías de gastos
+    router.get('/categories', async (req, res) => {
+        try {
+            const { tenant_id } = req.query;
+
+            if (!tenant_id) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'tenant_id es requerido'
+                });
+            }
+
+            console.log(`[Expenses/Categories] 📋 Obteniendo categorías para tenant_id: ${tenant_id}`);
+
+            const query = `
+                SELECT id, tenant_id, name, description, created_at, updated_at
+                FROM expense_categories
+                WHERE tenant_id = $1
+                ORDER BY name ASC
+            `;
+
+            const result = await pool.query(query, [tenant_id]);
+
+            console.log(`[Expenses/Categories] ✅ Encontradas ${result.rows.length} categorías`);
+
+            res.json({
+                success: true,
+                count: result.rows.length,
+                data: result.rows
+            });
+        } catch (error) {
+            console.error('[Expenses/Categories] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al obtener categorías de gastos',
+                error: error.message
+            });
+        }
+    });
+
+    // ═══════════════════════════════════════════════════════════════
     // MOBILE EXPENSE REVIEW ENDPOINTS
     // ═══════════════════════════════════════════════════════════════
         router.get('/pending-review', async (req, res) => {
@@ -470,6 +516,7 @@ module.exports = (pool) => {
                 cat.id as category_id,
                 e.description,
                 e.amount,
+                e.quantity,
                 e.expense_date,
                 e.payment_type_id,
                 e.id_turno as shift_id,
