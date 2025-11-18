@@ -188,6 +188,7 @@ module.exports = (pool) => {
             const {
                 tenantId, branchId, employeeId, category, description, amount, userEmail,
                 payment_type_id, expense_date_utc, id_turno,  // ✅ payment_type_id es REQUERIDO, expense_date_utc ya en UTC, id_turno turno al que pertenece
+                reviewed_by_desktop,  // ✅ TRUE para gastos de Desktop, FALSE para app móvil
                 // ✅ OFFLINE-FIRST FIELDS
                 global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw
             } = req.body;
@@ -195,6 +196,7 @@ module.exports = (pool) => {
             console.log(`[Sync/Expenses] Desktop sync - Tenant: ${tenantId}, Branch: ${branchId}, Category: ${category}, PaymentType: ${payment_type_id}, ShiftId: ${id_turno || 'N/A'}, ExpenseDateUTC: ${expense_date_utc}`);
             console.log(`[Sync/Expenses] Received amount: ${amount} (type: ${typeof amount})`);
             console.log(`[Sync/Expenses] 🔐 Offline-First - GlobalId: ${global_id}, TerminalId: ${terminal_id}, LocalOpSeq: ${local_op_seq}`);
+            console.log(`[Sync/Expenses] 📋 ReviewedByDesktop: ${reviewed_by_desktop} (will use: ${reviewed_by_desktop !== undefined ? reviewed_by_desktop : true})`);
 
             if (!tenantId || !branchId || !category || amount === null || amount === undefined || !global_id || !payment_type_id) {
                 return res.status(400).json({ success: false, message: 'Datos incompletos (tenantId, branchId, category, amount, payment_type_id, global_id requeridos)' });
@@ -245,15 +247,17 @@ module.exports = (pool) => {
             const result = await pool.query(
                 `INSERT INTO expenses (
                     tenant_id, branch_id, employee_id, payment_type_id, id_turno, category_id, description, amount, expense_date,
+                    reviewed_by_desktop,
                     global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw
                  )
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::uuid, $11::uuid, $12, $13, $14)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::uuid, $12::uuid, $13, $14, $15)
                  ON CONFLICT (global_id) DO UPDATE
                  SET amount = EXCLUDED.amount,
                      description = EXCLUDED.description,
                      expense_date = EXCLUDED.expense_date,
                      payment_type_id = EXCLUDED.payment_type_id,
-                     id_turno = EXCLUDED.id_turno
+                     id_turno = EXCLUDED.id_turno,
+                     reviewed_by_desktop = EXCLUDED.reviewed_by_desktop
                  RETURNING *`,
                 [
                     tenantId,
@@ -265,11 +269,12 @@ module.exports = (pool) => {
                     description || '',            // $7
                     numericAmount,                // $8
                     expenseDate,                  // $9
-                    global_id,                    // $10 - UUID from Desktop
-                    terminal_id,                  // $11 - UUID from Desktop
-                    local_op_seq,                 // $12 - Sequence number from Desktop
-                    created_local_utc,            // $13 - ISO 8601 timestamp from Desktop
-                    device_event_raw              // $14 - Raw .NET ticks from Desktop
+                    reviewed_by_desktop !== undefined ? reviewed_by_desktop : true,  // $10 - TRUE por defecto para Desktop
+                    global_id,                    // $11 - UUID from Desktop
+                    terminal_id,                  // $12 - UUID from Desktop
+                    local_op_seq,                 // $13 - Sequence number from Desktop
+                    created_local_utc,            // $14 - ISO 8601 timestamp from Desktop
+                    device_event_raw              // $15 - Raw .NET ticks from Desktop
                 ]
             );
 
