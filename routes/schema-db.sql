@@ -201,6 +201,9 @@ CREATE TABLE IF NOT EXISTS expenses (
     expense_date TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     payment_type_id INTEGER,  -- 1=Efectivo, 2=Tarjeta
 
+    -- Mobile app review system
+    reviewed_by_desktop BOOLEAN DEFAULT FALSE,  -- TRUE = aprobado por Desktop, FALSE = pendiente de revisión
+
     -- Soft delete
     is_active BOOLEAN DEFAULT TRUE,
     deleted_at TIMESTAMP,
@@ -224,6 +227,7 @@ CREATE INDEX IF NOT EXISTS idx_expenses_payment_type ON expenses(payment_type_id
 CREATE INDEX IF NOT EXISTS idx_expenses_is_active ON expenses(is_active);
 CREATE INDEX IF NOT EXISTS idx_expenses_deleted_at ON expenses(deleted_at);
 CREATE INDEX IF NOT EXISTS idx_expenses_terminal_seq ON expenses(terminal_id, local_op_seq);
+CREATE INDEX IF NOT EXISTS idx_expenses_reviewed_by_desktop ON expenses(employee_id, reviewed_by_desktop) WHERE reviewed_by_desktop = FALSE;
 
 -- deposits (depósitos)
 CREATE TABLE IF NOT EXISTS deposits (
