@@ -253,7 +253,7 @@ router.get('/list-desktop/:tenant_id/:branch_id', async (req, res) => {
             `SELECT
                 id, backup_filename, backup_path, file_size_bytes,
                 device_name, device_id, encryption_enabled,
-                created_at, expires_at,
+                created_at,
                 EXTRACT(EPOCH FROM (NOW() - created_at)) / 3600 as hours_ago
              FROM backup_metadata
              WHERE tenant_id = $1
@@ -524,7 +524,7 @@ router.get('/list', authenticateToken, async (req, res) => {
             `SELECT
                 id, backup_filename, backup_path, file_size_bytes,
                 device_name, device_id, encryption_enabled,
-                created_at, expires_at,
+                created_at,
                 EXTRACT(EPOCH FROM (NOW() - created_at)) / 3600 as hours_ago
              FROM backup_metadata
              WHERE tenant_id = $1 AND branch_id = $2
@@ -570,7 +570,7 @@ router.get('/latest', authenticateToken, async (req, res) => {
             `SELECT
                 id, backup_filename, backup_path, file_size_bytes,
                 device_name, device_id, encryption_enabled,
-                created_at, expires_at,
+                created_at,
                 EXTRACT(EPOCH FROM (NOW() - created_at)) / 3600 as hours_ago
              FROM backup_metadata
              WHERE tenant_id = $1 AND branch_id = $2
