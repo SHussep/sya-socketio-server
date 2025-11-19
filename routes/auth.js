@@ -864,36 +864,51 @@ module.exports = function(pool) {
                 });
             }
 
-            // 2. Obtener la subscripción por defecto (Basic - Trial)
+            // 2. Obtener la subscripción por defecto (Trial - 30 días gratis)
             const subscriptionResult = await client.query(
-                "SELECT id FROM subscriptions WHERE name = 'Basic' LIMIT 1"
+                "SELECT id FROM subscriptions WHERE name = 'Trial' LIMIT 1"
             );
 
             if (subscriptionResult.rows.length === 0) {
                 await client.query('ROLLBACK');
                 return res.status(500).json({
                     success: false,
-                    message: 'Error: No se encontró plan de subscripción Basic'
+                    message: 'Error: No se encontró plan de subscripción Trial'
                 });
             }
 
             const subscriptionId = subscriptionResult.rows[0].id;
 
             // 3. Generar tenant_code único
-            const tenantCode = `TNT${Date.now()}`;
+            const tenantCode = `TEN${Date.now()}`;
 
-            // 4. Crear tenant (negocio) - incluir subscription_id
+            // 4. Calcular fecha de expiración del trial (30 días desde ahora)
+            const trialEndsAt = new Date();
+            trialEndsAt.setDate(trialEndsAt.getDate() + 30);
+
+            console.log(`[Google Signup] 📊 Datos a insertar:`);
+            console.log(`  - tenant_code: ${tenantCode}`);
+            console.log(`  - business_name: ${businessName}`);
+            console.log(`  - email: ${email}`);
+            console.log(`  - subscription_id: ${subscriptionId} (Trial)`);
+            console.log(`  - trial_ends_at: ${trialEndsAt.toISOString()}`);
+
+            // 5. Crear tenant (negocio) - incluir subscription_id y trial_ends_at
             const tenantResult = await client.query(`
-                INSERT INTO tenants (tenant_code, business_name, email, subscription_id)
-                VALUES ($1, $2, $3, $4)
-                RETURNING id, tenant_code, business_name, email
-            `, [tenantCode, businessName, email, subscriptionId]);
+                INSERT INTO tenants (tenant_code, business_name, email, subscription_id, trial_ends_at, subscription_status)
+                VALUES ($1, $2, $3, $4, $5, 'trial')
+                RETURNING id, tenant_code, business_name, email, subscription_id, trial_ends_at, subscription_status
+            `, [tenantCode, businessName, email, subscriptionId, trialEndsAt]);
 
             const tenant = tenantResult.rows[0];
 
-            console.log(`[Google Signup] ✅ Tenant creado: ${tenant.tenant_code} (ID: ${tenant.id})`);
+            console.log(`[Google Signup] ✅ Tenant creado exitosamente:`);
+            console.log(`  - ID: ${tenant.id}`);
+            console.log(`  - tenant_code: ${tenant.tenant_code}`);
+            console.log(`  - subscription_id: ${tenant.subscription_id}`);
+            console.log(`  - trial_ends_at: ${tenant.trial_ends_at}`);
 
-            // 4b. Roles are now GLOBAL (not tenant-scoped) with fixed IDs
+            // 6. Roles are now GLOBAL (not tenant-scoped) with fixed IDs
             // Migration 037 created: 1=Administrador, 2=Encargado, 3=Repartidor, 4=Ayudante, 99=Otro
             // Owner/first signup gets role ID 1 (Administrador)
             console.log(`[Google Signup] 📝 Usando roles globales del sistema...`);
@@ -901,7 +916,7 @@ module.exports = function(pool) {
             const accesoRepartidorRoleId = 3;  // Global role: Repartidor
             console.log(`[Google Signup] ✅ Roles globales asignados: Administrador (ID: ${accesoTotalRoleId}), Repartidor (ID: ${accesoRepartidorRoleId})`);
 
-            // 5. Crear branch por defecto (primera sucursal) - solo columnas esenciales
+            // 7. Crear branch por defecto (primera sucursal) - solo columnas esenciales
             // Use short code to stay within varchar(20) limit: tenant_id suffixed with -M for main
             const branchCode = `B${tenant.id}M`;
             const branchResult = await client.query(`
