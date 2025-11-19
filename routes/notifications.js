@@ -331,10 +331,18 @@ router.post('/send-event', async (req, res) => {
         let notificationBody = '';
 
         switch (eventType) {
-            case 'login':
+            case 'shift-opened':
                 const scaleText = scaleStatus === 'connected' ? 'conectada' : 'desconectada';
+                const initialAmount = data.initialAmount || 0;
+                notificationTitle = '💰 Turno Abierto';
+                notificationBody = `${userName} abrió turno con $${initialAmount.toFixed(2)} (báscula ${scaleText})`;
+                break;
+
+            case 'login':
+                // LEGACY - Se mantiene para compatibilidad, pero ya no se usa
+                const scaleTextLogin = scaleStatus === 'connected' ? 'conectada' : 'desconectada';
                 notificationTitle = 'Nuevo Acceso';
-                notificationBody = `${userName} inició sesión (báscula ${scaleText})`;
+                notificationBody = `${userName} inició sesión (báscula ${scaleTextLogin})`;
                 break;
 
             case 'cash-cut-created':
