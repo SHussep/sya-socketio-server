@@ -1074,7 +1074,9 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                 tenant: {
                     id: tenant.id,
                     tenantCode: tenant.tenant_code,
-                    businessName: tenant.business_name
+                    businessName: tenant.business_name,
+                    trialEndsAt: tenant.trial_ends_at,
+                    subscriptionStatus: tenant.subscription_status || 'trial'
                 },
                 employee: {
                     id: employee.id,
