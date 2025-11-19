@@ -386,6 +386,30 @@ module.exports = function(pool) {
 
             const tenant = tenantResult.rows[0];
 
+            // ✅ VALIDAR LICENCIA/TRIAL
+            // Verificar si la licencia/trial ha vencido
+            const now = new Date();
+            const trialEndsAt = tenant.trial_ends_at ? new Date(tenant.trial_ends_at) : null;
+
+            if (trialEndsAt && trialEndsAt < now) {
+                const daysExpired = Math.ceil((now - trialEndsAt) / (1000 * 60 * 60 * 24));
+                console.log(`[Desktop Login] ❌ Licencia vencida para tenant ${tenant.id}. Expiró hace ${daysExpired} días.`);
+                return res.status(403).json({
+                    success: false,
+                    message: 'Su licencia ha caducado. Por favor, contacte con soporte para renovar.',
+                    error: 'LICENSE_EXPIRED',
+                    licenseInfo: {
+                        expiresAt: trialEndsAt.toISOString(),
+                        daysExpired: daysExpired,
+                        businessName: tenant.business_name
+                    }
+                });
+            }
+
+            // Calcular días restantes de la licencia
+            const daysRemaining = trialEndsAt ? Math.ceil((trialEndsAt - now) / (1000 * 60 * 60 * 24)) : null;
+            console.log(`[Desktop Login] Licencia válida. Días restantes: ${daysRemaining || 'ilimitado'}`);
+
             // Obtener sucursales donde el empleado puede trabajar
             const branchesResult = await pool.query(`
                 SELECT b.*, eb.can_login, eb.can_sell, eb.can_manage_inventory, eb.can_close_shift
@@ -463,7 +487,12 @@ module.exports = function(pool) {
                         id: tenant.id,
                         businessName: tenant.business_name,
                         rfc: tenant.rfc,
-                        subscription: tenant.subscription_name
+                        subscription: tenant.subscription_name,
+                        license: {
+                            expiresAt: trialEndsAt ? trialEndsAt.toISOString() : null,
+                            daysRemaining: daysRemaining,
+                            status: daysRemaining === null ? 'unlimited' : (daysRemaining <= 7 ? 'expiring_soon' : 'active')
+                        }
                     },
                     branch: {
                         id: selectedBranch.id,
@@ -579,6 +608,30 @@ module.exports = function(pool) {
 
             const tenant = tenantResult.rows[0];
 
+            // ✅ VALIDAR LICENCIA/TRIAL
+            // Verificar si la licencia/trial ha vencido
+            const now = new Date();
+            const trialEndsAt = tenant.trial_ends_at ? new Date(tenant.trial_ends_at) : null;
+
+            if (trialEndsAt && trialEndsAt < now) {
+                const daysExpired = Math.ceil((now - trialEndsAt) / (1000 * 60 * 60 * 24));
+                console.log(`[Mobile Login] ❌ Licencia vencida para tenant ${tenant.id}. Expiró hace ${daysExpired} días.`);
+                return res.status(403).json({
+                    success: false,
+                    message: 'Su licencia ha caducado. Por favor, contacte con soporte para renovar.',
+                    error: 'LICENSE_EXPIRED',
+                    licenseInfo: {
+                        expiresAt: trialEndsAt.toISOString(),
+                        daysExpired: daysExpired,
+                        businessName: tenant.business_name
+                    }
+                });
+            }
+
+            // Calcular días restantes de la licencia
+            const daysRemaining = trialEndsAt ? Math.ceil((trialEndsAt - now) / (1000 * 60 * 60 * 24)) : null;
+            console.log(`[Mobile Login] Licencia válida. Días restantes: ${daysRemaining || 'ilimitado'}`);
+
             // Obtener sucursales
             const branchesResult = await pool.query(`
                 SELECT b.*, eb.can_login, eb.can_sell, eb.can_manage_inventory, eb.can_close_shift
@@ -661,7 +714,13 @@ module.exports = function(pool) {
                     tenant: {
                         id: tenant.id,
                         name: tenant.name,
-                        subscription: tenant.subscription_name
+                        businessName: tenant.business_name,
+                        subscription: tenant.subscription_name,
+                        license: {
+                            expiresAt: trialEndsAt ? trialEndsAt.toISOString() : null,
+                            daysRemaining: daysRemaining,
+                            status: daysRemaining === null ? 'unlimited' : (daysRemaining <= 7 ? 'expiring_soon' : 'active')
+                        }
                     }
                 }
             });
