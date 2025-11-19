@@ -55,24 +55,31 @@ module.exports = function(pool) {
         }
 
         try {
+            console.log(`[Tenant Register] 🔍 Verificando email: ${ownerEmail}`);
+
             // Verificar si el email ya existe
             const existingTenant = await pool.query(
-                'SELECT id FROM tenants WHERE LOWER(owner_email) = LOWER($1)',
+                'SELECT id FROM tenants WHERE LOWER(email) = LOWER($1)',
                 [ownerEmail]
             );
 
             if (existingTenant.rows.length > 0) {
+                console.log(`[Tenant Register] ❌ Email ya existe: ${ownerEmail}`);
                 return res.status(409).json({
                     success: false,
                     message: 'Este email ya está registrado'
                 });
             }
 
+            console.log(`[Tenant Register] ✅ Email disponible. Iniciando registro...`);
+
             // Hash de contraseña
             const hashedPassword = await bcrypt.hash(password, 10);
+            console.log(`[Tenant Register] 🔐 Password hasheado`);
 
             // Iniciar transacción
             await pool.query('BEGIN');
+            console.log(`[Tenant Register] 📝 Transacción iniciada`);
 
             // 1. Crear Tenant con fecha de expiración del trial (30 días)
             const trialEndsAt = new Date();
@@ -80,6 +87,14 @@ module.exports = function(pool) {
 
             // Generar tenant_code único (formato: TEN + timestamp)
             const tenantCode = `TEN${Date.now()}`;
+
+            console.log(`[Tenant Register] 📊 Datos a insertar en tenants:`);
+            console.log(`  - tenant_code: ${tenantCode}`);
+            console.log(`  - business_name: ${businessName}`);
+            console.log(`  - email: ${ownerEmail}`);
+            console.log(`  - phone_number: ${phone || null}`);
+            console.log(`  - subscription_id: 1 (Trial)`);
+            console.log(`  - trial_ends_at: ${trialEndsAt.toISOString()}`);
 
             const tenantResult = await pool.query(
                 `INSERT INTO tenants (
@@ -92,9 +107,16 @@ module.exports = function(pool) {
             );
 
             const tenant = tenantResult.rows[0];
-            console.log(`[Tenant Register] Tenant creado: ID ${tenant.id} - ${tenant.business_name}`);
+            console.log(`[Tenant Register] ✅ Tenant creado exitosamente:`);
+            console.log(`  - ID: ${tenant.id}`);
+            console.log(`  - tenant_code: ${tenant.tenant_code}`);
+            console.log(`  - business_name: ${tenant.business_name}`);
+            console.log(`  - subscription_id: ${tenant.subscription_id}`);
+            console.log(`  - trial_ends_at: ${tenant.trial_ends_at}`);
 
             // 2. Crear Branch (Sucursal Principal)
+            console.log(`[Tenant Register] 🏢 Creando branch: ${branchName}`);
+
             const branchResult = await pool.query(
                 `INSERT INTO branches (
                     tenant_id, branch_code, name, is_active
@@ -105,11 +127,19 @@ module.exports = function(pool) {
             );
 
             const branch = branchResult.rows[0];
-            console.log(`[Tenant Register] Branch creado: ID ${branch.id} - ${branch.name}`);
+            console.log(`[Tenant Register] ✅ Branch creado: ID ${branch.id} - ${branch.name}`);
 
             // 3. Crear Employee (Owner)
             // Generar global_id único para el empleado
             const employeeGlobalId = `EMP-${tenant.id}-${Date.now()}`;
+            const username = ownerUsername || ownerEmail.split('@')[0];
+            const fullName = ownerFullName || businessName;
+
+            console.log(`[Tenant Register] 👤 Creando employee (owner):`);
+            console.log(`  - username: ${username}`);
+            console.log(`  - email: ${ownerEmail}`);
+            console.log(`  - first_name: ${fullName}`);
+            console.log(`  - global_id: ${employeeGlobalId}`);
 
             const employeeResult = await pool.query(
                 `INSERT INTO employees (
@@ -122,17 +152,19 @@ module.exports = function(pool) {
                     tenant.id,
                     branch.id,
                     ownerEmail,
-                    ownerUsername || ownerEmail.split('@')[0],
+                    username,
                     hashedPassword,
-                    ownerFullName || businessName,
+                    fullName,
                     employeeGlobalId
                 ]
             );
 
             const employee = employeeResult.rows[0];
-            console.log(`[Tenant Register] Employee creado: ID ${employee.id} - ${employee.first_name} (owner)`);
+            console.log(`[Tenant Register] ✅ Employee creado: ID ${employee.id} - ${employee.first_name} (owner)`);
 
             // 4. Asignar empleado a la sucursal principal
+            console.log(`[Tenant Register] 🔗 Asignando empleado a branch...`);
+
             await pool.query(
                 `INSERT INTO employee_branches (
                     tenant_id, employee_id, branch_id,
@@ -142,20 +174,28 @@ module.exports = function(pool) {
                 [tenant.id, employee.id, branch.id]
             );
 
-            console.log(`[Tenant Register] Empleado asignado a sucursal principal`);
+            console.log(`[Tenant Register] ✅ Empleado asignado a sucursal principal`);
 
             // 5. Obtener plan de suscripción
+            console.log(`[Tenant Register] 📋 Obteniendo plan de suscripción ID ${tenant.subscription_id}...`);
+
             const subscription = await pool.query(
                 'SELECT name, max_branches, max_devices, max_employees FROM subscriptions WHERE id = $1',
                 [tenant.subscription_id]
             );
 
             const plan = subscription.rows[0];
+            console.log(`[Tenant Register] ✅ Plan obtenido: ${plan.name}`);
 
             // Commit
             await pool.query('COMMIT');
 
-            console.log(`[Tenant Register] ✅ Registro completado exitosamente`);
+            console.log(`[Tenant Register] 💾 COMMIT exitoso - Registro completado`);
+            console.log(`[Tenant Register] 🎉 RESUMEN FINAL:`);
+            console.log(`  - Tenant ID: ${tenant.id}`);
+            console.log(`  - Business: ${tenant.business_name}`);
+            console.log(`  - Subscription: ${plan.name} (ID: ${tenant.subscription_id})`);
+            console.log(`  - Trial ends: ${tenant.trial_ends_at}`);
 
             // Respuesta - Incluir información del trial
             const trialInfo = {
@@ -206,11 +246,19 @@ module.exports = function(pool) {
             // Rollback en caso de error
             await pool.query('ROLLBACK');
 
-            console.error('[Tenant Register] Error:', error);
+            console.error('[Tenant Register] ❌❌❌ ERROR CRÍTICO ❌❌❌');
+            console.error('[Tenant Register] Error message:', error.message);
+            console.error('[Tenant Register] Error stack:', error.stack);
+            console.error('[Tenant Register] Error code:', error.code);
+            console.error('[Tenant Register] Error detail:', error.detail);
+            console.error('[Tenant Register] 🔄 ROLLBACK ejecutado');
+
             res.status(500).json({
                 success: false,
                 message: 'Error al registrar negocio',
-                error: error.message
+                error: error.message,
+                errorCode: error.code,
+                errorDetail: error.detail
             });
         }
     });
