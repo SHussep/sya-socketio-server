@@ -78,14 +78,17 @@ module.exports = function(pool) {
             const trialEndsAt = new Date();
             trialEndsAt.setDate(trialEndsAt.getDate() + 30); // Agregar 30 días
 
+            // Generar tenant_code único (formato: TEN + timestamp)
+            const tenantCode = `TEN${Date.now()}`;
+
             const tenantResult = await pool.query(
                 `INSERT INTO tenants (
-                    business_name, rfc, owner_email, phone, address,
-                    subscription_id, subscription_expires_at, is_active
+                    tenant_code, business_name, email, phone_number,
+                    subscription_id, trial_ends_at, is_active
                 )
-                VALUES ($1, $2, $3, $4, $5, 1, $6, true)
+                VALUES ($1, $2, $3, $4, 1, $5, true)
                 RETURNING *`,
-                [businessName, rfc || null, ownerEmail, phone || null, address || null, trialEndsAt]
+                [tenantCode, businessName, ownerEmail, phone || null, trialEndsAt]
             );
 
             const tenant = tenantResult.rows[0];
@@ -105,34 +108,38 @@ module.exports = function(pool) {
             console.log(`[Tenant Register] Branch creado: ID ${branch.id} - ${branch.name}`);
 
             // 3. Crear Employee (Owner)
+            // Generar global_id único para el empleado
+            const employeeGlobalId = `EMP-${tenant.id}-${Date.now()}`;
+
             const employeeResult = await pool.query(
                 `INSERT INTO employees (
-                    tenant_id, main_branch_id, email, username, password,
-                    full_name, role, is_active
+                    tenant_id, main_branch_id, email, username, password_hash,
+                    first_name, role_id, is_owner, is_active, global_id
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, 'owner', true)
-                RETURNING id, tenant_id, main_branch_id, email, username, full_name, role, is_active, created_at`,
+                VALUES ($1, $2, $3, $4, $5, $6, 1, true, true, $7)
+                RETURNING id, tenant_id, main_branch_id, email, username, first_name, role_id, is_owner, is_active, created_at`,
                 [
                     tenant.id,
                     branch.id,
                     ownerEmail,
                     ownerUsername || ownerEmail.split('@')[0],
                     hashedPassword,
-                    ownerFullName || businessName
+                    ownerFullName || businessName,
+                    employeeGlobalId
                 ]
             );
 
             const employee = employeeResult.rows[0];
-            console.log(`[Tenant Register] Employee creado: ID ${employee.id} - ${employee.full_name} (owner)`);
+            console.log(`[Tenant Register] Employee creado: ID ${employee.id} - ${employee.first_name} (owner)`);
 
             // 4. Asignar empleado a la sucursal principal
             await pool.query(
                 `INSERT INTO employee_branches (
-                    employee_id, branch_id,
+                    tenant_id, employee_id, branch_id,
                     can_login, can_sell, can_manage_inventory, can_close_shift
                 )
-                VALUES ($1, $2, true, true, true, true)`,
-                [employee.id, branch.id]
+                VALUES ($1, $2, $3, true, true, true, true)`,
+                [tenant.id, employee.id, branch.id]
             );
 
             console.log(`[Tenant Register] Empleado asignado a sucursal principal`);
@@ -165,12 +172,12 @@ module.exports = function(pool) {
                 data: {
                     tenant: {
                         id: tenant.id,
+                        tenantCode: tenant.tenant_code,
                         businessName: tenant.business_name,
-                        ownerEmail: tenant.owner_email,
-                        rfc: tenant.rfc,
-                        phone: tenant.phone,
-                        address: tenant.address,
-                        subscriptionExpiresAt: tenant.subscription_expires_at
+                        email: tenant.email,
+                        phoneNumber: tenant.phone_number,
+                        trialEndsAt: tenant.trial_ends_at,
+                        subscriptionStatus: tenant.subscription_status
                     },
                     branch: {
                         id: branch.id,
@@ -181,8 +188,9 @@ module.exports = function(pool) {
                         id: employee.id,
                         email: employee.email,
                         username: employee.username,
-                        fullName: employee.full_name,
-                        role: employee.role
+                        firstName: employee.first_name,
+                        roleId: employee.role_id,
+                        isOwner: employee.is_owner
                     },
                     subscription: {
                         plan: plan.name,
@@ -288,9 +296,9 @@ module.exports = function(pool) {
 
             // Calcular información del trial
             const now = new Date();
-            const expiresAt = new Date(tenant.subscription_expires_at);
-            const isExpired = expiresAt < now;
-            const daysRemaining = Math.ceil((expiresAt - now) / (1000 * 60 * 60 * 24));
+            const expiresAt = tenant.trial_ends_at ? new Date(tenant.trial_ends_at) : null;
+            const isExpired = expiresAt ? expiresAt < now : false;
+            const daysRemaining = expiresAt ? Math.ceil((expiresAt - now) / (1000 * 60 * 60 * 24)) : 0;
 
             const trialStatus = {
                 isActive: !isExpired && daysRemaining > 0,
@@ -304,17 +312,17 @@ module.exports = function(pool) {
                 success: true,
                 data: {
                     id: tenant.id,
+                    tenantCode: tenant.tenant_code,
                     businessName: tenant.business_name,
-                    rfc: tenant.rfc,
-                    ownerEmail: tenant.owner_email,
-                    phone: tenant.phone,
-                    address: tenant.address,
+                    email: tenant.email,
+                    phoneNumber: tenant.phone_number,
                     subscription: {
                         name: tenant.subscription_name,
                         maxBranches: tenant.max_branches,
                         maxDevices: tenant.max_devices,
                         maxEmployees: tenant.max_employees,
-                        expiresAt: tenant.subscription_expires_at,
+                        trialEndsAt: tenant.trial_ends_at,
+                        subscriptionStatus: tenant.subscription_status,
                         trial: trialStatus
                     },
                     stats: {
