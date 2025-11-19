@@ -277,32 +277,51 @@ module.exports = function(pool) {
         console.log('[Desktop Login] Headers:', JSON.stringify(req.headers));
         console.log('[Desktop Login] Body:', JSON.stringify(req.body));
 
-        const { email, username, password, branchId } = req.body;
+        const { email, username, password, branchId, tenantCode } = req.body;
 
         console.log('[Desktop Login] Parsed values:');
+        console.log('  - tenantCode:', tenantCode);
         console.log('  - email:', email);
         console.log('  - username:', username);
         console.log('  - password:', password ? `(${password.length} chars)` : 'undefined');
         console.log('  - branchId:', branchId);
 
-        // Validar que se envíe email O username
-        if ((!email && !username) || !password) {
+        // Validar que se envíe tenantCode y (email O username) y password
+        if (!tenantCode || (!email && !username) || !password) {
             console.log('[Desktop Login] ❌ Validación falló - credenciales incompletas');
             return res.status(400).json({
                 success: false,
-                message: 'Email/username y contraseña son requeridos'
+                message: 'TenantCode, Email/username y contraseña son requeridos'
             });
         }
 
         try {
-            // Buscar empleado por email o username
+            // PASO 1: Buscar tenant por tenant_code
+            console.log(`[Desktop Login] 🔍 Buscando tenant con código: ${tenantCode}`);
+            const tenantLookup = await pool.query(
+                'SELECT id FROM tenants WHERE tenant_code = $1 AND is_active = true',
+                [tenantCode]
+            );
+
+            if (tenantLookup.rows.length === 0) {
+                console.log(`[Desktop Login] ❌ Tenant no encontrado con código: ${tenantCode}`);
+                return res.status(401).json({
+                    success: false,
+                    message: 'Código de tenant inválido'
+                });
+            }
+
+            const tenantId = tenantLookup.rows[0].id;
+            console.log(`[Desktop Login] ✅ Tenant encontrado: ID ${tenantId}`);
+
+            // PASO 2: Buscar empleado por email/username Y tenant_id
             let query, params;
             if (email) {
-                query = 'SELECT * FROM employees WHERE LOWER(email) = LOWER($1) AND is_active = true';
-                params = [email];
+                query = 'SELECT * FROM employees WHERE LOWER(email) = LOWER($1) AND tenant_id = $2 AND is_active = true';
+                params = [email, tenantId];
             } else {
-                query = 'SELECT * FROM employees WHERE LOWER(username) = LOWER($1) AND is_active = true';
-                params = [username];
+                query = 'SELECT * FROM employees WHERE LOWER(username) = LOWER($1) AND tenant_id = $2 AND is_active = true';
+                params = [username, tenantId];
             }
 
             console.log('[Desktop Login] Ejecutando query:', query);
