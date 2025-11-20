@@ -38,15 +38,14 @@ module.exports = function(pool) {
             // Generar URL de autenticación
             const authUrl = oauth2Client.generateAuthUrl({
                 access_type: 'offline',
+                prompt: 'consent', // ⭐ CRÍTICO: Forzar consent para SIEMPRE obtener refresh_token
+                                  // Sin esto, Google no devuelve refresh_token en re-autorizaciones
                 scope: [
                     'openid', // ⭐ IMPORTANTE: Necesario para obtener id_token
                     'https://www.googleapis.com/auth/gmail.send',
                     'https://www.googleapis.com/auth/userinfo.email',
                     'https://www.googleapis.com/auth/userinfo.profile'
-                ],
-                // NO especificar 'prompt' - Google decide automáticamente
-                // Si es primera vez: muestra consentimiento
-                // Si ya autorizó: solo selección de cuenta (2 pantallas)
+                ]
             });
 
             console.log('[Gmail OAuth] ✅ URL generada exitosamente');
@@ -143,7 +142,18 @@ module.exports = function(pool) {
             const { tokens } = await oauth2Client.getToken(code);
 
             console.log('[Gmail Callback] ✅ Tokens obtenidos exitosamente');
-            console.log('[Gmail Callback] ID Token presente:', tokens.id_token ? 'Sí' : 'No');
+            console.log('[Gmail Callback] 📊 Tokens recibidos de Google:');
+            console.log('[Gmail Callback]    - access_token:', tokens.access_token ? `${tokens.access_token.substring(0, 20)}...` : 'NO');
+            console.log('[Gmail Callback]    - refresh_token:', tokens.refresh_token ? `${tokens.refresh_token.substring(0, 20)}...` : '❌ NO PRESENTE');
+            console.log('[Gmail Callback]    - id_token:', tokens.id_token ? 'Sí' : 'NO');
+            console.log('[Gmail Callback]    - expiry_date:', tokens.expiry_date);
+
+            // ⚠️ CRÍTICO: Verificar que refresh_token esté presente
+            if (!tokens.refresh_token) {
+                console.error('[Gmail Callback] ❌ ERROR CRÍTICO: Google NO devolvió refresh_token!');
+                console.error('[Gmail Callback] Esto ocurre cuando el usuario ya autorizó la app antes.');
+                console.error('[Gmail Callback] Solución: Asegurar que prompt=consent esté en la URL de auth.');
+            }
 
             // Devolver tokens en el mismo formato que PHP
             res.json({
