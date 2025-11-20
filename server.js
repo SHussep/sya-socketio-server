@@ -56,6 +56,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 const restoreRoutes = require('./routes/restore');
 const backupRoutes = require('./routes/backup');
 const authRoutes = require('./routes/auth')(pool); // Pasar pool al módulo
+const tenantsRoutes = require('./routes/tenants')(pool); // Rutas de tenants (licencias, info)
 const createRepartidorAssignmentRoutes = require('./routes/repartidor_assignments'); // Rutas de asignaciones a repartidores
 const createRepartidorReturnRoutes = require('./routes/repartidor_returns'); // Rutas de devoluciones de repartidores
 const createRepartidorDebtsRoutes = require('./routes/repartidor_debts'); // Rutas de deudas de repartidores
@@ -95,6 +96,7 @@ initializeFirebase();
 app.use('/api/restore', restoreRoutes);
 app.use('/api/backup', backupRoutes);
 app.use('/api/auth', authRoutes); // Registrar rutas de autenticación
+app.use('/api/tenants', tenantsRoutes); // Registrar rutas de tenants (licencias, info)
 app.use('/api/notifications', notificationRoutes); // Registrar rutas de notificaciones
 app.use('/api/employees', employeesRoutes); // Registrar rutas de empleados con sync-role endpoint
 app.use('/api/employee-branches', employeeBranchesRoutes); // Registrar rutas de relaciones empleado-sucursal
