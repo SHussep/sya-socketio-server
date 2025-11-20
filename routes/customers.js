@@ -309,6 +309,80 @@ module.exports = (pool) => {
         }
     });
 
+    // PATCH /api/customers/:id/balance - Actualizar saldo del cliente (desde Desktop offline-first)
+    router.patch('/:id/balance', async (req, res) => {
+        try {
+            const { id } = req.params;
+            const { tenant_id, current_balance, last_balance_update_utc } = req.body;
+
+            console.log(`[Customers/Balance] 💰 Actualizando saldo cliente ${id} - Tenant: ${tenant_id}, Nuevo saldo: $${current_balance}`);
+
+            // Validar campos requeridos
+            if (!tenant_id || current_balance === undefined || current_balance === null) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Datos incompletos (tenant_id, current_balance requeridos)'
+                });
+            }
+
+            // Validar que el cliente pertenece al tenant
+            const checkResult = await pool.query(
+                'SELECT id, is_system_generic FROM customers WHERE id = $1 AND tenant_id = $2',
+                [id, tenant_id]
+            );
+
+            if (checkResult.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Cliente no encontrado o no pertenece al tenant'
+                });
+            }
+
+            // ⚠️ NO permitir modificar el saldo del cliente genérico (siempre debe ser 0)
+            if (checkResult.rows[0].is_system_generic) {
+                console.log(`[Customers/Balance] ⏭️ Ignorando actualización de saldo para cliente genérico`);
+                return res.json({
+                    success: true,
+                    message: 'Cliente genérico - saldo no modificado',
+                    data: { id, current_balance: 0 }
+                });
+            }
+
+            // UPDATE saldo - SOBRESCRIBE el saldo calculado por triggers
+            // Esto es necesario porque las devoluciones en Desktop no se reflejan en los triggers de PostgreSQL
+            const result = await pool.query(
+                `UPDATE customers
+                 SET saldo_deudor = $1,
+                     updated_at = NOW()
+                 WHERE id = $2 AND tenant_id = $3
+                 RETURNING id, nombre, saldo_deudor, updated_at`,
+                [current_balance, id, tenant_id]
+            );
+
+            const customer = result.rows[0];
+
+            console.log(`[Customers/Balance] ✅ Saldo actualizado: ${customer.nombre} → $${customer.saldo_deudor}`);
+
+            res.json({
+                success: true,
+                message: 'Saldo actualizado exitosamente',
+                data: {
+                    id: customer.id,
+                    name: customer.nombre,
+                    current_balance: customer.saldo_deudor,
+                    updated_at: customer.updated_at
+                }
+            });
+        } catch (error) {
+            console.error('[Customers/Balance] ❌ Error:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Error al actualizar saldo de cliente',
+                error: error.message
+            });
+        }
+    });
+
     // PATCH /api/customers/:id/deactivate - Soft delete (desactivar cliente)
     router.patch('/:id/deactivate', async (req, res) => {
         try {
