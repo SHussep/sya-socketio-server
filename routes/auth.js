@@ -510,7 +510,16 @@ module.exports = function(pool) {
                         fullName: `${employee.first_name || ''} ${employee.last_name || ''}`.trim(),
                         firstName: employee.first_name,
                         lastName: employee.last_name,
-                        roleId: employee.role_id // Para determinar si es Repartidor (3), Encargado (2), o Administrador (1)
+                        roleId: employee.role_id, // Para determinar si es Repartidor (3), Encargado (2), o Administrador (1)
+                        mainBranchId: employee.main_branch_id,
+                        canUseMobileApp: employee.can_use_mobile_app,
+                        googleUserIdentifier: employee.google_user_identifier,
+                        // ✅ OFFLINE-FIRST FIELDS para idempotencia
+                        globalId: employee.global_id,
+                        terminalId: employee.terminal_id,
+                        localOpSeq: employee.local_op_seq,
+                        createdLocalUtc: employee.created_local_utc,
+                        deviceEventRaw: employee.device_event_raw
                     },
                     tenant: {
                         id: tenant.id,
