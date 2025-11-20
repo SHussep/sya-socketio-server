@@ -392,5 +392,71 @@ module.exports = function(pool) {
         }
     });
 
+    // ─────────────────────────────────────────────────────────
+    // GET /api/tenants/by-code/:tenantCode
+    // Obtener información de licencia del tenant por código
+    // (Sin autenticación - solo para sincronización de licencia en Desktop)
+    // ─────────────────────────────────────────────────────────
+    router.get('/by-code/:tenantCode', async (req, res) => {
+        try {
+            const { tenantCode } = req.params;
+
+            console.log(`[Tenant By Code] Consultando tenant: ${tenantCode}`);
+
+            const result = await pool.query(
+                `SELECT
+                    id,
+                    tenant_code,
+                    business_name,
+                    trial_ends_at,
+                    subscription_status,
+                    subscription_id,
+                    is_active
+                FROM tenants
+                WHERE tenant_code = $1`,
+                [tenantCode]
+            );
+
+            if (result.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Tenant no encontrado'
+                });
+            }
+
+            const tenant = result.rows[0];
+
+            // Verificar si el trial expiró
+            const now = new Date();
+            const trialEndsAt = tenant.trial_ends_at ? new Date(tenant.trial_ends_at) : null;
+            const isExpired = trialEndsAt && trialEndsAt < now;
+            const daysRemaining = trialEndsAt ? Math.ceil((trialEndsAt - now) / (1000 * 60 * 60 * 24)) : null;
+
+            console.log(`[Tenant By Code] ✅ Tenant encontrado: ${tenant.business_name}, Trial expira: ${trialEndsAt ? trialEndsAt.toISOString() : 'N/A'}, Días restantes: ${daysRemaining}`);
+
+            res.json({
+                success: true,
+                data: {
+                    id: tenant.id,
+                    tenantCode: tenant.tenant_code,
+                    businessName: tenant.business_name,
+                    trialEndsAt: trialEndsAt,
+                    subscriptionStatus: tenant.subscription_status || 'trial',
+                    isActive: tenant.is_active,
+                    isExpired: isExpired,
+                    daysRemaining: daysRemaining
+                }
+            });
+
+        } catch (error) {
+            console.error('[Tenant By Code] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al obtener tenant',
+                error: error.message
+            });
+        }
+    });
+
     return router;
 };
