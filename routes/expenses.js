@@ -337,8 +337,9 @@ module.exports = (pool) => {
             }
 
             // Validar que el gasto existe y pertenece al tenant
+            // NOTA: global_id es VARCHAR, no UUID - no usar ::uuid cast
             const checkResult = await pool.query(
-                'SELECT id FROM expenses WHERE global_id = $1::uuid AND tenant_id = $2',
+                'SELECT id FROM expenses WHERE global_id = $1 AND tenant_id = $2',
                 [global_id, tenant_id]
             );
 
@@ -368,6 +369,7 @@ module.exports = (pool) => {
             }
 
             // Actualizar gasto
+            // NOTA: global_id es VARCHAR, no UUID - no usar ::uuid cast
             const numericAmount = parseFloat(amount);
             const updateResult = await pool.query(
                 `UPDATE expenses
@@ -377,7 +379,7 @@ module.exports = (pool) => {
                      payment_type_id = $4,
                      expense_date = $5,
                      updated_at = NOW()
-                 WHERE global_id = $6::uuid AND tenant_id = $7
+                 WHERE global_id = $6 AND tenant_id = $7
                  RETURNING *`,
                 [
                     categoryId,
@@ -417,8 +419,9 @@ module.exports = (pool) => {
             console.log(`[Expenses/Deactivate] 🗑️ Desactivando gasto ${global_id} - Tenant: ${tenant_id}`);
 
             // Validar que el gasto existe y pertenece al tenant
+            // NOTA: global_id es VARCHAR, no UUID - no usar ::uuid cast
             const checkResult = await pool.query(
-                'SELECT id FROM expenses WHERE global_id = $1::uuid AND tenant_id = $2',
+                'SELECT id FROM expenses WHERE global_id = $1 AND tenant_id = $2',
                 [global_id, tenant_id]
             );
 
@@ -435,7 +438,7 @@ module.exports = (pool) => {
                  SET is_active = false,
                      deleted_at = NOW(),
                      updated_at = NOW()
-                 WHERE global_id = $1::uuid AND tenant_id = $2
+                 WHERE global_id = $1 AND tenant_id = $2
                  RETURNING *`,
                 [global_id, tenant_id]
             );
