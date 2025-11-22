@@ -300,6 +300,8 @@ router.post('/upload-desktop', async (req, res) => {
 });
 
 // GET /api/backup/list-desktop/:tenant_id/:branch_id - Listar backups sin JWT (para Desktop)
+// IMPORTANTE: Solo retorna backups de la sucursal específica (branch_id)
+// El usuario debe ver únicamente los backups de la sucursal a la que se unió
 router.get('/list-desktop/:tenant_id/:branch_id', async (req, res) => {
     try {
         const { tenant_id, branch_id } = req.params;
@@ -315,20 +317,32 @@ router.get('/list-desktop/:tenant_id/:branch_id', async (req, res) => {
             });
         }
 
+        // Filtrar SOLO por tenant_id Y branch_id específico
+        // El usuario solo debe ver backups de SU sucursal
         const result = await pool.query(
             `SELECT
-                id, backup_filename, backup_path, file_size_bytes,
-                device_name, device_id, encryption_enabled,
-                created_at,
-                EXTRACT(EPOCH FROM (NOW() - created_at)) / 3600 as hours_ago
-             FROM backup_metadata
-             WHERE tenant_id = $1
-             ORDER BY created_at DESC
-             LIMIT $2 OFFSET $3`,
-            [tenant_id, limit, offset]
+                bm.id,
+                bm.backup_filename,
+                bm.backup_path,
+                bm.file_size_bytes,
+                bm.device_name,
+                bm.device_id,
+                bm.encryption_enabled,
+                bm.created_at,
+                bm.branch_id,
+                bm.tenant_id,
+                EXTRACT(EPOCH FROM (NOW() - bm.created_at)) / 3600 as hours_ago,
+                b.name as branch_name,
+                b.branch_code
+             FROM backup_metadata bm
+             LEFT JOIN branches b ON bm.branch_id = b.id
+             WHERE bm.tenant_id = $1 AND bm.branch_id = $2
+             ORDER BY bm.created_at DESC
+             LIMIT $3 OFFSET $4`,
+            [tenant_id, branch_id, limit, offset]
         );
 
-        console.log(`[Backup List Desktop] Found ${result.rows.length} backups for tenant ${tenant_id} (searched across ALL branches)`);
+        console.log(`[Backup List Desktop] Found ${result.rows.length} backups for tenant ${tenant_id}, branch ${branch_id}`);
 
         res.json({
             success: true,
@@ -342,9 +356,14 @@ router.get('/list-desktop/:tenant_id/:branch_id', async (req, res) => {
                 device_id: backup.device_id,
                 encryption_enabled: backup.encryption_enabled,
                 created_at: backup.created_at,
-                expires_at: backup.expires_at,
-                hours_ago: Math.round(parseFloat(backup.hours_ago))
-            }))
+                hours_ago: Math.round(parseFloat(backup.hours_ago)),
+                branch_id: backup.branch_id,
+                tenant_id: backup.tenant_id,
+                branch_name: backup.branch_name || 'Sucursal',
+                branch_code: backup.branch_code || ''
+            })),
+            branch_id: parseInt(branch_id),
+            tenant_id: parseInt(tenant_id)
         });
 
     } catch (error) {
@@ -357,16 +376,20 @@ router.get('/list-desktop/:tenant_id/:branch_id', async (req, res) => {
 });
 
 // GET /api/backup/download-desktop/:tenant_id/:branch_id/:id - Descargar backup sin JWT (para Desktop)
+// Valida estrictamente que el backup pertenezca a la sucursal del usuario
 router.get('/download-desktop/:tenant_id/:branch_id/:id', async (req, res) => {
     try {
         const { tenant_id, branch_id, id } = req.params;
 
-        console.log(`[Backup Download Desktop] Request - Tenant: ${tenant_id}, Branch: ${branch_id}, ID: ${id}`);
+        console.log(`[Backup Download Desktop] Request - Tenant: ${tenant_id}, Branch: ${branch_id}, Backup ID: ${id}`);
 
-        // Obtener metadata del backup
+        // Obtener metadata del backup - Validar por tenant_id Y branch_id
+        // Solo permitir descargar backups de la sucursal correcta
         const metadataResult = await pool.query(
-            `SELECT * FROM backup_metadata
-             WHERE id = $1 AND tenant_id = $2 AND branch_id = $3`,
+            `SELECT bm.*, b.name as branch_name, b.branch_code
+             FROM backup_metadata bm
+             LEFT JOIN branches b ON bm.branch_id = b.id
+             WHERE bm.id = $1 AND bm.tenant_id = $2 AND bm.branch_id = $3`,
             [id, tenant_id, branch_id]
         );
 
@@ -402,7 +425,10 @@ router.get('/download-desktop/:tenant_id/:branch_id/:id', async (req, res) => {
                     filename: metadata.backup_filename,
                     file_size_bytes: parseInt(metadata.file_size_bytes),
                     backup_base64: base64Data,
-                    created_at: metadata.created_at
+                    created_at: metadata.created_at,
+                    branch_id: metadata.branch_id,
+                    branch_name: metadata.branch_name || 'Sucursal',
+                    branch_code: metadata.branch_code || ''
                 },
                 message: 'Backup descargado exitosamente'
             });
@@ -427,9 +453,12 @@ router.get('/download-desktop/:tenant_id/:branch_id/:id', async (req, res) => {
                         filename: metadata.backup_filename,
                         file_size_bytes: parseInt(metadata.file_size_bytes),
                         backup_base64: base64Data,
-                        created_at: metadata.created_at
+                        created_at: metadata.created_at,
+                        branch_id: metadata.branch_id,
+                        branch_name: metadata.branch_name || 'Sucursal',
+                        branch_code: metadata.branch_code || ''
                     },
-                    message: 'Backup descargado exitosamente (tras refrescar token)'
+                    message: 'Backup descargado exitosamente'
                 });
             } else {
                 throw dropboxError;
