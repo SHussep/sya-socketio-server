@@ -1252,6 +1252,18 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
 
             await client.query('BEGIN');
 
+            // ⭐ MIGRACIÓN: Agregar columnas faltantes si no existen
+            try {
+                await client.query(`ALTER TABLE devices ADD COLUMN IF NOT EXISTS device_id TEXT`);
+                await client.query(`ALTER TABLE devices ADD COLUMN IF NOT EXISTS device_name VARCHAR(255)`);
+                await client.query(`ALTER TABLE devices ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true`);
+                await client.query(`ALTER TABLE devices ADD COLUMN IF NOT EXISTS last_seen TIMESTAMP`);
+                await client.query(`ALTER TABLE devices ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`);
+                console.log('[Device Register] ✅ Columnas de migración verificadas/agregadas');
+            } catch (migrationError) {
+                console.log('[Device Register] ⚠️ Migración de columnas (puede ignorarse si ya existen):', migrationError.message);
+            }
+
             const tenantResult = await client.query(`
                 SELECT t.id, t.tenant_code, t.business_name,
                        s.name as subscription_name, s.max_devices_per_branch
@@ -1453,7 +1465,7 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                 success: false,
                 message: 'Error al registrar dispositivo',
                 error: error.message,
-                details: error.stack  // Incluir stack trace para debugging
+                details: error.stack
             });
         } finally {
             client.release();
@@ -2177,8 +2189,7 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
 
         try {
             const result = await this.pool.query(
-                `SELECT id, first_name, last_name, email, username,
-                        COALESCE(first_name || ' ' || last_name, email) as full_name
+                `SELECT id, first_name, last_name, email, username
                  FROM employees
                  WHERE tenant_id = $1 AND is_owner = true
                  LIMIT 1`,
@@ -2194,15 +2205,24 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
 
             const employee = result.rows[0];
 
-            // Si el username está vacío, derivarlo del email automáticamente
-            if (!employee.username && employee.email) {
-                employee.username = employee.email.split('@')[0];
+            // Si el username está vacío o null, derivarlo del email automáticamente
+            if (!employee.username || employee.username.trim() === '') {
+                employee.username = employee.email ? employee.email.split('@')[0].replace(/[^a-zA-Z0-9]/g, '').toLowerCase() : '';
             }
 
-            // Si first_name/last_name están vacíos pero hay email, usar el email como nombre
-            if (!employee.full_name && employee.email) {
-                employee.full_name = employee.email.split('@')[0];
+            // Construir full_name: usar first_name + last_name si existen, sino usar parte del email
+            let fullName = '';
+            if (employee.first_name && employee.first_name.trim() !== '') {
+                fullName = employee.first_name.trim();
+                if (employee.last_name && employee.last_name.trim() !== '') {
+                    fullName += ' ' + employee.last_name.trim();
+                }
+            } else if (employee.email) {
+                // Si no hay nombre, usar el prefijo del email con la primera letra mayúscula
+                const emailPrefix = employee.email.split('@')[0];
+                fullName = emailPrefix.charAt(0).toUpperCase() + emailPrefix.slice(1);
             }
+            employee.full_name = fullName;
 
             res.json({
                 success: true,
