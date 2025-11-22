@@ -38,6 +38,65 @@ function authenticateToken(req, res, next) {
 
 let dropboxClient = null;
 
+// ═══════════════════════════════════════════════════════════════
+// HELPERS PARA ORGANIZACIÓN DE CARPETAS EN DROPBOX
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Obtiene el email del tenant desde la base de datos
+ * @param {number} tenant_id - ID del tenant
+ * @returns {Promise<string|null>} Email del tenant o null si no se encuentra
+ */
+async function getTenantEmail(tenant_id) {
+    try {
+        const result = await pool.query(
+            `SELECT email FROM tenants WHERE id = $1`,
+            [tenant_id]
+        );
+
+        if (result.rows.length > 0) {
+            return result.rows[0].email;
+        }
+        return null;
+    } catch (error) {
+        console.error(`[Backup] Error al obtener email del tenant ${tenant_id}:`, error);
+        return null;
+    }
+}
+
+/**
+ * Sanitiza el email para usarlo como nombre de carpeta en Dropbox
+ * Ejemplo: "usuario@ejemplo.com" -> "usuario_ejemplo.com"
+ * @param {string} email - Email a sanitizar
+ * @returns {string} Email sanitizado para usar como carpeta
+ */
+function sanitizeEmailForPath(email) {
+    if (!email) return 'unknown';
+
+    // Reemplazar @ con _ y eliminar caracteres no permitidos en nombres de carpeta
+    return email
+        .toLowerCase()
+        .replace('@', '_')
+        .replace(/[<>:"/\\|?*]/g, '_') // Caracteres no permitidos en Windows/Dropbox
+        .replace(/\s+/g, '_')          // Espacios
+        .replace(/_+/g, '_')           // Múltiples underscores consecutivos
+        .trim();
+}
+
+/**
+ * Construye la ruta de Dropbox con la nueva estructura organizada
+ * Estructura: /SYA Backups/{email_sanitizado}/{tenant_id}/{branch_id}/{filename}
+ * @param {string} ownerEmail - Email del propietario del tenant
+ * @param {number} tenant_id - ID del tenant
+ * @param {number} branch_id - ID de la sucursal
+ * @param {string} filename - Nombre del archivo
+ * @returns {string} Ruta completa en Dropbox
+ */
+function buildDropboxPath(ownerEmail, tenant_id, branch_id, filename) {
+    const sanitizedEmail = sanitizeEmailForPath(ownerEmail);
+    return `/SYA Backups/${sanitizedEmail}/${tenant_id}/${branch_id}/${filename}`;
+}
+
 function getDropboxClient() {
     if (!dropboxClient) {
         dropboxClient = new Dropbox({
@@ -118,8 +177,15 @@ router.post('/upload-desktop', async (req, res) => {
         // Esto mantiene solo UN backup por branch, el más reciente
         const simpleFilename = `SYA_Backup_Branch_${branch_id}.zip`;
 
-        // Subir a Dropbox con estructura de carpetas por tenant y branch
-        const dropboxPath = `/SYA Backups/${tenant_id}/${branch_id}/${simpleFilename}`;
+        // Obtener email del tenant para organizar carpetas
+        const ownerEmail = await getTenantEmail(tenant_id);
+        if (!ownerEmail) {
+            console.warn(`[Backup Upload Desktop] ⚠️ No se encontró email para tenant ${tenant_id}, usando 'unknown'`);
+        }
+
+        // Construir ruta con nueva estructura: /SYA Backups/{email}/{tenant_id}/{branch_id}/{filename}
+        const dropboxPath = buildDropboxPath(ownerEmail, tenant_id, branch_id, simpleFilename);
+        console.log(`[Backup Upload Desktop] 📁 Ruta Dropbox: ${dropboxPath}`);
 
         try {
             // PRIMERO: Eliminar backups viejos de esta branch de la BD (mantener solo el más reciente)
@@ -407,8 +473,15 @@ router.post('/upload', authenticateToken, async (req, res) => {
 
         console.log(`[Backup Upload] Tamaño: ${(file_size_bytes / 1024 / 1024).toFixed(2)} MB`);
 
-        // Subir a Dropbox
-        const dropboxPath = `/SYA Backups/${tenantId}/${branchId}/${backup_filename}`;
+        // Obtener email del tenant para organizar carpetas
+        const ownerEmail = await getTenantEmail(tenantId);
+        if (!ownerEmail) {
+            console.warn(`[Backup Upload] ⚠️ No se encontró email para tenant ${tenantId}, usando 'unknown'`);
+        }
+
+        // Construir ruta con nueva estructura: /SYA Backups/{email}/{tenant_id}/{branch_id}/{filename}
+        const dropboxPath = buildDropboxPath(ownerEmail, tenantId, branchId, backup_filename);
+        console.log(`[Backup Upload] 📁 Ruta Dropbox: ${dropboxPath}`);
 
         try {
             const dbx = getDropboxClient();
