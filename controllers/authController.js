@@ -1229,10 +1229,24 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
         try {
             const decoded = jwt.verify(token, JWT_SECRET);
 
-            if (decoded.tenantId !== tenantId || decoded.employeeId !== employeeId) {
+            // Validar que el tenantId coincida
+            if (decoded.tenantId !== tenantId) {
                 return res.status(403).json({
                     success: false,
                     message: 'No autorizado para registrar dispositivos en este tenant'
+                });
+            }
+
+            // Validar que el employeeId existe y pertenece al tenant
+            const employeeCheck = await client.query(
+                'SELECT id FROM employees WHERE id = $1 AND tenant_id = $2 AND is_active = true',
+                [employeeId, tenantId]
+            );
+
+            if (employeeCheck.rows.length === 0) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Empleado no encontrado o no pertenece a este tenant'
                 });
             }
 
@@ -1433,10 +1447,13 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
             }
 
             console.error('[Device Register] Error:', error);
+            console.error('[Device Register] Error stack:', error.stack);
+            console.error('[Device Register] Request data:', { tenantId, branchId, employeeId, deviceId, deviceName, deviceType });
             res.status(500).json({
                 success: false,
                 message: 'Error al registrar dispositivo',
-                error: error.message
+                error: error.message,
+                details: error.stack  // Incluir stack trace para debugging
             });
         } finally {
             client.release();
@@ -2160,7 +2177,8 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
 
         try {
             const result = await this.pool.query(
-                `SELECT id, first_name, last_name, email
+                `SELECT id, first_name, last_name, email, username,
+                        COALESCE(first_name || ' ' || last_name, email) as full_name
                  FROM employees
                  WHERE tenant_id = $1 AND is_owner = true
                  LIMIT 1`,
@@ -2174,9 +2192,21 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                 });
             }
 
+            const employee = result.rows[0];
+
+            // Si el username está vacío, derivarlo del email automáticamente
+            if (!employee.username && employee.email) {
+                employee.username = employee.email.split('@')[0];
+            }
+
+            // Si first_name/last_name están vacíos pero hay email, usar el email como nombre
+            if (!employee.full_name && employee.email) {
+                employee.full_name = employee.email.split('@')[0];
+            }
+
             res.json({
                 success: true,
-                employee: result.rows[0]
+                employee: employee
             });
         } catch (error) {
             console.error('[Get Main Employee] Error:', error);
