@@ -354,6 +354,30 @@ class AuthController {
                 });
             }
 
+            // ═══════════════════════════════════════════════════════════════════
+            // ✅ AUTO-GENERAR GLOBAL_ID SI NO EXISTE (Garantiza sincronización)
+            // Esto es crítico para empleados creados antes del sistema offline-first
+            // ═══════════════════════════════════════════════════════════════════
+            if (!employee.global_id) {
+                const { v4: uuidv4 } = require('uuid');
+                const newGlobalId = uuidv4();
+                const newTerminalId = 'server-auto-' + Date.now();
+
+                await this.pool.query(
+                    `UPDATE employees
+                     SET global_id = $1,
+                         terminal_id = COALESCE(terminal_id, $2),
+                         local_op_seq = COALESCE(local_op_seq, 1),
+                         created_local_utc = COALESCE(created_local_utc, $3)
+                     WHERE id = $4`,
+                    [newGlobalId, newTerminalId, new Date().toISOString(), employee.id]
+                );
+
+                employee.global_id = newGlobalId;
+                employee.terminal_id = newTerminalId;
+                console.log(`[Desktop Login] 🔑 GlobalId auto-generado para empleado ${employee.id}: ${newGlobalId}`);
+            }
+
             const tenantResult = await this.pool.query(
                 `SELECT t.*, s.name as subscription_name
                  FROM tenants t
