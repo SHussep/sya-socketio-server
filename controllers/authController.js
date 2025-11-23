@@ -2170,8 +2170,83 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
 
         try {
             const decoded = jwt.verify(token, JWT_SECRET);
-            const { tenantId, branchId } = decoded;
+            const { tenantId, branchId, employeeId } = decoded;
 
+            // ═══════════════════════════════════════════════════════════════
+            // OBTENER INFORMACIÓN DEL TENANT (CRÍTICO para licencia)
+            // ═══════════════════════════════════════════════════════════════
+            const tenantResult = await this.pool.query(
+                `SELECT id, tenant_code, business_name
+                 FROM tenants
+                 WHERE id = $1`,
+                [tenantId]
+            );
+
+            if (tenantResult.rows.length === 0) {
+                console.log(`[Sync Init] ❌ Tenant ${tenantId} no encontrado`);
+                return res.status(404).json({
+                    success: false,
+                    message: 'Tenant no encontrado'
+                });
+            }
+
+            const tenant = tenantResult.rows[0];
+            console.log(`[Sync Init] ✅ Tenant encontrado: ID=${tenant.id}, Code=${tenant.tenant_code}`);
+
+            // ═══════════════════════════════════════════════════════════════
+            // OBTENER INFORMACIÓN DEL EMPLEADO
+            // ═══════════════════════════════════════════════════════════════
+            const employeeResult = await this.pool.query(
+                `SELECT e.id, e.email, e.first_name, e.last_name, e.main_branch_id,
+                        r.name as role_name
+                 FROM employees e
+                 LEFT JOIN roles r ON e.role_id = r.id
+                 WHERE e.id = $1 AND e.tenant_id = $2`,
+                [employeeId, tenantId]
+            );
+
+            let employee = null;
+            if (employeeResult.rows.length > 0) {
+                const emp = employeeResult.rows[0];
+                employee = {
+                    id: emp.id,
+                    email: emp.email || '',
+                    name: `${emp.first_name || ''} ${emp.last_name || ''}`.trim(),
+                    role: emp.role_name || 'Empleado',
+                    primaryBranchId: emp.main_branch_id || branchId
+                };
+                console.log(`[Sync Init] ✅ Empleado: ID=${employee.id}, Email=${employee.email}`);
+            }
+
+            // ═══════════════════════════════════════════════════════════════
+            // OBTENER SUCURSALES DEL TENANT
+            // ═══════════════════════════════════════════════════════════════
+            const branchesResult = await this.pool.query(
+                `SELECT b.id, b.branch_code, b.name, b.timezone, b.address, b.phone, b.is_active,
+                        (SELECT COUNT(*) FROM employee_branches eb WHERE eb.branch_id = b.id) as employee_count
+                 FROM branches b
+                 WHERE b.tenant_id = $1 AND b.is_active = true
+                 ORDER BY b.id`,
+                [tenantId]
+            );
+
+            const branches = branchesResult.rows.map(b => ({
+                id: b.id,
+                branchCode: b.branch_code,
+                name: b.name,
+                timezone: b.timezone || 'America/Mexico_City',
+                address: b.address || '',
+                phone: b.phone || '',
+                isActive: b.is_active,
+                employeeCount: parseInt(b.employee_count) || 0,
+                primary: b.id === branchId // Marcar como primaria si coincide con el branch del token
+            }));
+
+            console.log(`[Sync Init] ✅ ${branches.length} sucursales encontradas`);
+
+            // ═══════════════════════════════════════════════════════════════
+            // OBTENER DATOS DE PRODUCTOS, CATEGORÍAS Y CLIENTES (legado)
+            // ═══════════════════════════════════════════════════════════════
             const productsResult = await this.pool.query(
                 'SELECT * FROM products WHERE tenant_id = $1 AND is_active = true',
                 [tenantId]
@@ -2189,8 +2264,23 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
 
             console.log(`[Sync Init] Enviando datos base: ${productsResult.rows.length} productos, ${categoriesResult.rows.length} categorías`);
 
+            // ═══════════════════════════════════════════════════════════════
+            // RESPUESTA CON ESTRUCTURA COMPLETA (para WinUI y app móvil)
+            // ═══════════════════════════════════════════════════════════════
             res.json({
                 success: true,
+                // NUEVO: Información estructurada para sincronización de sesión
+                sync: {
+                    tenant: {
+                        id: tenant.id,
+                        code: tenant.tenant_code,  // ⚠️ CRÍTICO: tenant_code para consultar licencia
+                        name: tenant.business_name
+                    },
+                    employee: employee,
+                    branches: branches,
+                    timestamp: new Date().toISOString()
+                },
+                // LEGADO: Mantener compatibilidad con clientes anteriores
                 data: {
                     products: productsResult.rows,
                     categories: categoriesResult.rows,
