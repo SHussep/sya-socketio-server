@@ -2213,7 +2213,7 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
 
         try {
             const result = await this.pool.query(
-                `SELECT id, first_name, last_name, email, username
+                `SELECT id, first_name, last_name, email, username, global_id
                  FROM employees
                  WHERE tenant_id = $1 AND is_owner = true
                  LIMIT 1`,
