@@ -399,6 +399,13 @@ module.exports = (pool) => {
             console.log(`[Sync/Sales]    Tipo: ${insertedVenta.venta_tipo_id}`);
 
             // Formatear respuesta (Desktop espera "data.id_venta")
+            // ✅ Incluir employee_global_id para sincronización con SQLite local
+            const employeeGlobalIdResult = await pool.query(
+                'SELECT global_id FROM employees WHERE id = $1',
+                [id_empleado]
+            );
+            const employeeGlobalId = employeeGlobalIdResult.rows[0]?.global_id || null;
+
             res.json({
                 success: true,
                 data: {
@@ -406,7 +413,8 @@ module.exports = (pool) => {
                     ticket_number: insertedVenta.ticket_number,
                     total: parseFloat(insertedVenta.total),
                     fecha_venta_utc: insertedVenta.fecha_venta_utc,
-                    created_at: insertedVenta.created_at
+                    created_at: insertedVenta.created_at,
+                    employee_global_id: employeeGlobalId  // Para sincronizar GlobalId en SQLite
                 }
             });
         } catch (error) {
