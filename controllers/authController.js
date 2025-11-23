@@ -2229,6 +2229,26 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
 
             const employee = result.rows[0];
 
+            // ⚠️ CRÍTICO: Generar global_id si no existe (para empleados legacy)
+            if (!employee.global_id) {
+                const { v4: uuidv4 } = require('uuid');
+                const newGlobalId = uuidv4();
+                const newTerminalId = 'server-auto-' + Date.now();
+
+                await this.pool.query(
+                    `UPDATE employees
+                     SET global_id = $1,
+                         terminal_id = COALESCE(terminal_id, $2),
+                         local_op_seq = COALESCE(local_op_seq, 1),
+                         created_local_utc = COALESCE(created_local_utc, $3)
+                     WHERE id = $4`,
+                    [newGlobalId, newTerminalId, new Date().toISOString(), employee.id]
+                );
+
+                employee.global_id = newGlobalId;
+                console.log(`[Get Main Employee] 🔑 GlobalId auto-generado para empleado ${employee.id}: ${newGlobalId}`);
+            }
+
             // Si el username está vacío o null, derivarlo del email automáticamente
             if (!employee.username || employee.username.trim() === '') {
                 employee.username = employee.email ? employee.email.split('@')[0].replace(/[^a-zA-Z0-9]/g, '').toLowerCase() : '';
@@ -2247,6 +2267,12 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                 fullName = emailPrefix.charAt(0).toUpperCase() + emailPrefix.slice(1);
             }
             employee.full_name = fullName;
+
+            console.log(`[Get Main Employee] ✅ Empleado retornado:`);
+            console.log(`[Get Main Employee]    - ID: ${employee.id}`);
+            console.log(`[Get Main Employee]    - GlobalId: ${employee.global_id}`);
+            console.log(`[Get Main Employee]    - Username: ${employee.username}`);
+            console.log(`[Get Main Employee]    - FullName: ${fullName}`);
 
             res.json({
                 success: true,
