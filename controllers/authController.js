@@ -416,11 +416,12 @@ class AuthController {
             const daysRemaining = trialEndsAt ? Math.ceil((trialEndsAt - now) / (1000 * 60 * 60 * 24)) : null;
             console.log(`[Desktop Login] Licencia válida. Días restantes: ${daysRemaining || 'ilimitado'}`);
 
+            // Query simplificado - sin columnas de permisos que pueden no existir
             const branchesResult = await this.pool.query(`
-                SELECT b.*, eb.can_login, eb.can_sell, eb.can_manage_inventory, eb.can_close_shift
+                SELECT b.*
                 FROM branches b
                 JOIN employee_branches eb ON b.id = eb.branch_id
-                WHERE eb.employee_id = $1 AND b.is_active = true AND eb.can_login = true
+                WHERE eb.employee_id = $1 AND b.is_active = true
                 ORDER BY b.name
             `, [employee.id]);
 
@@ -508,10 +509,10 @@ class AuthController {
                         code: selectedBranch.branch_code,
                         name: selectedBranch.name,
                         permissions: {
-                            canLogin: selectedBranch.can_login,
-                            canSell: selectedBranch.can_sell,
-                            canManageInventory: selectedBranch.can_manage_inventory,
-                            canCloseShift: selectedBranch.can_close_shift
+                            canLogin: selectedBranch.can_login ?? true,
+                            canSell: selectedBranch.can_sell ?? true,
+                            canManageInventory: selectedBranch.can_manage_inventory ?? false,
+                            canCloseShift: selectedBranch.can_close_shift ?? false
                         }
                     },
                     availableBranches: branches.map(b => ({
@@ -627,11 +628,12 @@ class AuthController {
             const daysRemaining = trialEndsAt ? Math.ceil((trialEndsAt - now) / (1000 * 60 * 60 * 24)) : null;
             console.log(`[Mobile Login] Licencia válida. Días restantes: ${daysRemaining || 'ilimitado'}`);
 
+            // Query simplificado - sin columnas de permisos que pueden no existir
             const branchesResult = await this.pool.query(`
-                SELECT b.*, eb.can_login, eb.can_sell, eb.can_manage_inventory, eb.can_close_shift
+                SELECT b.*
                 FROM branches b
                 JOIN employee_branches eb ON b.id = eb.branch_id
-                WHERE eb.employee_id = $1 AND b.is_active = true AND eb.can_login = true
+                WHERE eb.employee_id = $1 AND b.is_active = true
                 ORDER BY b.name
             `, [employee.id]);
 
