@@ -398,6 +398,71 @@ module.exports = (pool) => {
             console.log(`[Sync/Sales]    Estado: ${insertedVenta.estado_venta_id}`);
             console.log(`[Sync/Sales]    Tipo: ${insertedVenta.venta_tipo_id}`);
 
+            // ═══════════════════════════════════════════════════════════════
+            // SINCRONIZAR DETALLES DE LA VENTA (si vienen en el payload)
+            // ═══════════════════════════════════════════════════════════════
+            const { detalles } = req.body;
+            let detallesSincronizados = 0;
+
+            if (Array.isArray(detalles) && detalles.length > 0) {
+                console.log(`[Sync/Sales] 📦 Procesando ${detalles.length} detalles de venta...`);
+
+                for (const detalle of detalles) {
+                    try {
+                        // INSERT con ON CONFLICT para idempotencia por global_id
+                        await pool.query(
+                            `INSERT INTO ventas_detalle (
+                                id_venta,
+                                id_producto,
+                                descripcion_producto,
+                                cantidad,
+                                precio_lista,
+                                precio_unitario,
+                                total_linea,
+                                tipo_descuento_cliente_id,
+                                monto_cliente_descuento,
+                                tipo_descuento_manual_id,
+                                monto_manual_descuento,
+                                global_id,
+                                terminal_id,
+                                local_op_seq,
+                                created_local_utc,
+                                device_event_raw
+                            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                            ON CONFLICT (global_id) DO UPDATE SET
+                                cantidad = EXCLUDED.cantidad,
+                                precio_unitario = EXCLUDED.precio_unitario,
+                                total_linea = EXCLUDED.total_linea,
+                                monto_cliente_descuento = EXCLUDED.monto_cliente_descuento,
+                                monto_manual_descuento = EXCLUDED.monto_manual_descuento`,
+                            [
+                                insertedVenta.id_venta,
+                                detalle.id_producto,
+                                detalle.descripcion_producto || '',
+                                parseFloat(detalle.cantidad) || 0,
+                                parseFloat(detalle.precio_lista) || 0,
+                                parseFloat(detalle.precio_unitario) || 0,
+                                parseFloat(detalle.total_linea) || 0,
+                                detalle.tipo_descuento_cliente_id || null,
+                                parseFloat(detalle.monto_cliente_descuento) || 0,
+                                detalle.tipo_descuento_manual_id || null,
+                                parseFloat(detalle.monto_manual_descuento) || 0,
+                                detalle.global_id,
+                                detalle.terminal_id,
+                                detalle.local_op_seq || 0,
+                                detalle.created_local_utc || new Date().toISOString(),
+                                detalle.device_event_raw || null
+                            ]
+                        );
+                        detallesSincronizados++;
+                    } catch (detalleError) {
+                        console.error(`[Sync/Sales] ⚠️ Error insertando detalle: ${detalleError.message}`);
+                    }
+                }
+
+                console.log(`[Sync/Sales] ✅ ${detallesSincronizados}/${detalles.length} detalles sincronizados`);
+            }
+
             // Formatear respuesta (Desktop espera "data.id_venta")
             // ✅ Incluir employee_global_id para sincronización con SQLite local
             const employeeGlobalIdResult = await pool.query(
@@ -414,7 +479,8 @@ module.exports = (pool) => {
                     total: parseFloat(insertedVenta.total),
                     fecha_venta_utc: insertedVenta.fecha_venta_utc,
                     created_at: insertedVenta.created_at,
-                    employee_global_id: employeeGlobalId  // Para sincronizar GlobalId en SQLite
+                    employee_global_id: employeeGlobalId,
+                    detalles_sincronizados: detallesSincronizados  // Nuevo: cantidad de detalles sincronizados
                 }
             });
         } catch (error) {
