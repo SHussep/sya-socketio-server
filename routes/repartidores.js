@@ -66,7 +66,7 @@ module.exports = (pool) => {
                     LEFT JOIN roles r ON e.role_id = r.id
                     LEFT JOIN shifts s ON ra.repartidor_shift_id = s.id
                     WHERE ra.tenant_id = $1
-                    AND (s.id IS NULL OR s.is_cash_cut_open = true)
+                    AND (s.id IS NULL OR s.status = 'open')
             `;
 
             const params = [tenantId];
@@ -191,7 +191,7 @@ module.exports = (pool) => {
                 LEFT JOIN ventas v ON ra.venta_id = v.id_venta
                 LEFT JOIN shifts s ON ra.repartidor_shift_id = s.id
                 WHERE ra.tenant_id = $1 AND ra.employee_id = $2
-                AND (s.id IS NULL OR s.is_cash_cut_open = true)
+                AND (s.id IS NULL OR s.status = 'open')
             `;
 
             const params = [tenantId, parseInt(employeeId)];
