@@ -549,7 +549,8 @@ module.exports = (pool) => {
         }
     });
 
-    // GET /api/sales-items - Obtener artículos por venta específica
+    // GET /api/sales/items - Obtener artículos por venta específica
+    // Usa tabla ventas_detalle con JOIN a ventas para obtener tenant_id y branch_id
     router.get('/items', async (req, res) => {
         try {
             const { sale_id, tenant_id, branch_id } = req.query;
@@ -561,12 +562,34 @@ module.exports = (pool) => {
                 });
             }
 
+            console.log(`[SalesItems/GetBySale] Fetching items for sale_id=${sale_id}, tenant_id=${tenant_id}, branch_id=${branch_id}`);
+
             const result = await pool.query(
-                `SELECT * FROM sales_items_with_details
-                 WHERE sale_id = $1 AND tenant_id = $2 AND branch_id = $3
-                 ORDER BY created_at ASC`,
+                `SELECT
+                    vd.id_venta_detalle as id,
+                    v.tenant_id,
+                    v.branch_id,
+                    vd.id_venta as sale_id,
+                    vd.id_producto as product_id,
+                    vd.descripcion_producto as product_name,
+                    vd.cantidad as quantity,
+                    vd.precio_unitario as unit_price,
+                    vd.precio_lista as list_price,
+                    COALESCE(vd.monto_cliente_descuento, 0) as customer_discount,
+                    COALESCE(vd.monto_manual_descuento, 0) as manual_discount,
+                    COALESCE(vd.monto_cliente_descuento, 0) + COALESCE(vd.monto_manual_descuento, 0) as total_discount,
+                    vd.total_linea as subtotal,
+                    vd.created_at,
+                    v.ticket_number,
+                    v.total as total_amount
+                FROM ventas_detalle vd
+                INNER JOIN ventas v ON vd.id_venta = v.id_venta
+                WHERE vd.id_venta = $1 AND v.tenant_id = $2 AND v.branch_id = $3
+                ORDER BY vd.created_at ASC`,
                 [parseInt(sale_id), parseInt(tenant_id), parseInt(branch_id)]
             );
+
+            console.log(`[SalesItems/GetBySale] Found ${result.rows.length} items`);
 
             // Convertir amounts a números
             const items = result.rows.map(row => ({
@@ -588,7 +611,7 @@ module.exports = (pool) => {
         }
     });
 
-    // GET /api/sales-items/branch - Obtener artículos de una sucursal con paginación
+    // GET /api/sales/items/branch - Obtener artículos de una sucursal con paginación
     router.get('/items/branch', async (req, res) => {
         try {
             const { tenant_id, branch_id, limit = 1000, offset = 0 } = req.query;
@@ -601,10 +624,28 @@ module.exports = (pool) => {
             }
 
             const result = await pool.query(
-                `SELECT * FROM sales_items_with_details
-                 WHERE tenant_id = $1 AND branch_id = $2
-                 ORDER BY created_at DESC
-                 LIMIT $3 OFFSET $4`,
+                `SELECT
+                    vd.id_venta_detalle as id,
+                    v.tenant_id,
+                    v.branch_id,
+                    vd.id_venta as sale_id,
+                    vd.id_producto as product_id,
+                    vd.descripcion_producto as product_name,
+                    vd.cantidad as quantity,
+                    vd.precio_unitario as unit_price,
+                    vd.precio_lista as list_price,
+                    COALESCE(vd.monto_cliente_descuento, 0) as customer_discount,
+                    COALESCE(vd.monto_manual_descuento, 0) as manual_discount,
+                    COALESCE(vd.monto_cliente_descuento, 0) + COALESCE(vd.monto_manual_descuento, 0) as total_discount,
+                    vd.total_linea as subtotal,
+                    vd.created_at,
+                    v.ticket_number,
+                    v.total as total_amount
+                FROM ventas_detalle vd
+                INNER JOIN ventas v ON vd.id_venta = v.id_venta
+                WHERE v.tenant_id = $1 AND v.branch_id = $2
+                ORDER BY vd.created_at DESC
+                LIMIT $3 OFFSET $4`,
                 [parseInt(tenant_id), parseInt(branch_id), parseInt(limit), parseInt(offset)]
             );
 
@@ -628,7 +669,8 @@ module.exports = (pool) => {
         }
     });
 
-    // GET /api/sales-items/by-type - Obtener artículos filtrados por tipo de venta
+    // GET /api/sales/items/by-type - Obtener artículos filtrados por tipo de venta
+    // venta_tipo_id: 1 = Mostrador (counter), 2 = Repartidor (delivery)
     router.get('/items/by-type', async (req, res) => {
         try {
             const { tenant_id, branch_id, sale_type, limit = 1000 } = req.query;
@@ -640,17 +682,49 @@ module.exports = (pool) => {
                 });
             }
 
-            // Mapear sale_type string a sale_type_code
+            // Mapear sale_type string a venta_tipo_id
             const saleTypeCode = sale_type.toLowerCase();
+            let ventaTipoId = null;
+            if (saleTypeCode === 'counter' || saleTypeCode === 'mostrador') {
+                ventaTipoId = 1;
+            } else if (saleTypeCode === 'delivery' || saleTypeCode === 'repartidor') {
+                ventaTipoId = 2;
+            }
 
-            const result = await pool.query(
-                `SELECT * FROM sales_items_with_details
-                 WHERE tenant_id = $1 AND branch_id = $2
-                 AND LOWER(sale_type_name) LIKE LOWER($3)
-                 ORDER BY created_at DESC
-                 LIMIT $4`,
-                [parseInt(tenant_id), parseInt(branch_id), `%${saleTypeCode}%`, parseInt(limit)]
-            );
+            let query = `
+                SELECT
+                    vd.id_venta_detalle as id,
+                    v.tenant_id,
+                    v.branch_id,
+                    vd.id_venta as sale_id,
+                    vd.id_producto as product_id,
+                    vd.descripcion_producto as product_name,
+                    vd.cantidad as quantity,
+                    vd.precio_unitario as unit_price,
+                    vd.precio_lista as list_price,
+                    COALESCE(vd.monto_cliente_descuento, 0) as customer_discount,
+                    COALESCE(vd.monto_manual_descuento, 0) as manual_discount,
+                    COALESCE(vd.monto_cliente_descuento, 0) + COALESCE(vd.monto_manual_descuento, 0) as total_discount,
+                    vd.total_linea as subtotal,
+                    vd.created_at,
+                    v.ticket_number,
+                    v.total as total_amount,
+                    CASE v.venta_tipo_id WHEN 1 THEN 'counter' WHEN 2 THEN 'delivery' ELSE 'unknown' END as sale_type_name
+                FROM ventas_detalle vd
+                INNER JOIN ventas v ON vd.id_venta = v.id_venta
+                WHERE v.tenant_id = $1 AND v.branch_id = $2
+            `;
+            const params = [parseInt(tenant_id), parseInt(branch_id)];
+
+            if (ventaTipoId) {
+                query += ` AND v.venta_tipo_id = $3 ORDER BY vd.created_at DESC LIMIT $4`;
+                params.push(ventaTipoId, parseInt(limit));
+            } else {
+                query += ` ORDER BY vd.created_at DESC LIMIT $3`;
+                params.push(parseInt(limit));
+            }
+
+            const result = await pool.query(query, params);
 
             // Convertir amounts a números
             const items = result.rows.map(row => ({
@@ -672,7 +746,8 @@ module.exports = (pool) => {
         }
     });
 
-    // GET /api/sales-items/by-payment - Obtener artículos filtrados por tipo de pago
+    // GET /api/sales/items/by-payment - Obtener artículos filtrados por tipo de pago
+    // tipo_pago_id: 1 = Efectivo (cash), 2 = Tarjeta (card), 3 = Crédito (credit)
     router.get('/items/by-payment', async (req, res) => {
         try {
             const { tenant_id, branch_id, payment_type, limit = 1000 } = req.query;
@@ -684,17 +759,51 @@ module.exports = (pool) => {
                 });
             }
 
-            // Mapear payment_type string a payment_type_code
+            // Mapear payment_type string a tipo_pago_id
             const paymentTypeCode = payment_type.toLowerCase();
+            let tipoPagoId = null;
+            if (paymentTypeCode === 'cash' || paymentTypeCode === 'efectivo') {
+                tipoPagoId = 1;
+            } else if (paymentTypeCode === 'card' || paymentTypeCode === 'tarjeta') {
+                tipoPagoId = 2;
+            } else if (paymentTypeCode === 'credit' || paymentTypeCode === 'credito' || paymentTypeCode === 'crédito') {
+                tipoPagoId = 3;
+            }
 
-            const result = await pool.query(
-                `SELECT * FROM sales_items_with_details
-                 WHERE tenant_id = $1 AND branch_id = $2
-                 AND LOWER(payment_type_name) LIKE LOWER($3)
-                 ORDER BY created_at DESC
-                 LIMIT $4`,
-                [parseInt(tenant_id), parseInt(branch_id), `%${paymentTypeCode}%`, parseInt(limit)]
-            );
+            let query = `
+                SELECT
+                    vd.id_venta_detalle as id,
+                    v.tenant_id,
+                    v.branch_id,
+                    vd.id_venta as sale_id,
+                    vd.id_producto as product_id,
+                    vd.descripcion_producto as product_name,
+                    vd.cantidad as quantity,
+                    vd.precio_unitario as unit_price,
+                    vd.precio_lista as list_price,
+                    COALESCE(vd.monto_cliente_descuento, 0) as customer_discount,
+                    COALESCE(vd.monto_manual_descuento, 0) as manual_discount,
+                    COALESCE(vd.monto_cliente_descuento, 0) + COALESCE(vd.monto_manual_descuento, 0) as total_discount,
+                    vd.total_linea as subtotal,
+                    vd.created_at,
+                    v.ticket_number,
+                    v.total as total_amount,
+                    CASE v.tipo_pago_id WHEN 1 THEN 'cash' WHEN 2 THEN 'card' WHEN 3 THEN 'credit' ELSE 'unknown' END as payment_type_name
+                FROM ventas_detalle vd
+                INNER JOIN ventas v ON vd.id_venta = v.id_venta
+                WHERE v.tenant_id = $1 AND v.branch_id = $2
+            `;
+            const params = [parseInt(tenant_id), parseInt(branch_id)];
+
+            if (tipoPagoId) {
+                query += ` AND v.tipo_pago_id = $3 ORDER BY vd.created_at DESC LIMIT $4`;
+                params.push(tipoPagoId, parseInt(limit));
+            } else {
+                query += ` ORDER BY vd.created_at DESC LIMIT $3`;
+                params.push(parseInt(limit));
+            }
+
+            const result = await pool.query(query, params);
 
             // Convertir amounts a números
             const items = result.rows.map(row => ({
@@ -716,7 +825,7 @@ module.exports = (pool) => {
         }
     });
 
-    // GET /api/sales-items/stats - Obtener estadísticas de artículos vendidos
+    // GET /api/sales/items/stats - Obtener estadísticas de artículos vendidos
     router.get('/items/stats', async (req, res) => {
         try {
             const { tenant_id, branch_id } = req.query;
@@ -731,14 +840,15 @@ module.exports = (pool) => {
             const result = await pool.query(
                 `SELECT
                     COUNT(*) as total_items,
-                    COUNT(DISTINCT sale_id) as total_sales,
-                    SUM(quantity) as total_quantity,
-                    SUM(subtotal) as total_revenue,
-                    SUM(total_discount) as total_discounts,
-                    AVG(subtotal) as avg_item_price,
-                    MAX(created_at) as last_sale_date
-                 FROM sales_items
-                 WHERE tenant_id = $1 AND branch_id = $2`,
+                    COUNT(DISTINCT vd.id_venta) as total_sales,
+                    SUM(vd.cantidad) as total_quantity,
+                    SUM(vd.total_linea) as total_revenue,
+                    SUM(COALESCE(vd.monto_cliente_descuento, 0) + COALESCE(vd.monto_manual_descuento, 0)) as total_discounts,
+                    AVG(vd.total_linea) as avg_item_price,
+                    MAX(vd.created_at) as last_sale_date
+                 FROM ventas_detalle vd
+                 INNER JOIN ventas v ON vd.id_venta = v.id_venta
+                 WHERE v.tenant_id = $1 AND v.branch_id = $2`,
                 [parseInt(tenant_id), parseInt(branch_id)]
             );
 
