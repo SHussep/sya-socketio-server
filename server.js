@@ -529,6 +529,17 @@ io.on('connection', (socket) => {
         console.log(`[ALERT] Sucursal ${data.branchId}: ${data.eventType} (${data.severity})`);
         console.log(`[ALERT] Emitiendo a room: ${roomName}`);
 
+        // DEBUG: Listar clientes en el room
+        const roomSockets = io.sockets.adapter.rooms.get(roomName);
+        const clientCount = roomSockets ? roomSockets.size : 0;
+        console.log(`[ALERT] 📊 Clientes en room '${roomName}': ${clientCount}`);
+        if (roomSockets) {
+            roomSockets.forEach(socketId => {
+                const clientSocket = io.sockets.sockets.get(socketId);
+                console.log(`[ALERT]   → ${socketId} (tipo: ${clientSocket?.clientType || 'unknown'})`);
+            });
+        }
+
         // ⚠️ IMPORTANTE: NO guardar en BD aquí ni enviar FCM
         // Desktop ya envía los eventos via REST API (/api/guardian-events)
         // que se encarga del guardado en BD y envío de FCM
