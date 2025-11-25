@@ -166,9 +166,9 @@ module.exports = (pool) => {
         try {
             const { tenantId, branchId: userBranchId } = req.user;
             const { employeeId } = req.params;
-            const { status, limit = 50, offset = 0 } = req.query;
+            const { status, limit = 50, offset = 0, only_open_shifts = 'false' } = req.query;
 
-            console.log(`[Repartidor Assignments] Fetching - Employee: ${employeeId}, Status: ${status || 'ALL'}`);
+            console.log(`[Repartidor Assignments] Fetching - Employee: ${employeeId}, Status: ${status || 'ALL'}, Only Open Shifts: ${only_open_shifts}`);
 
             let query = `
                 SELECT
@@ -191,8 +191,12 @@ module.exports = (pool) => {
                 LEFT JOIN ventas v ON ra.venta_id = v.id_venta
                 LEFT JOIN shifts s ON ra.repartidor_shift_id = s.id
                 WHERE ra.tenant_id = $1 AND ra.employee_id = $2
-                AND (s.id IS NULL OR s.is_cash_cut_open = true)
             `;
+
+            // Solo filtrar por turnos abiertos si se especifica explícitamente
+            if (only_open_shifts === 'true') {
+                query += ` AND (s.id IS NULL OR s.is_cash_cut_open = true)`;
+            }
 
             const params = [tenantId, parseInt(employeeId)];
             let paramIndex = 3;
