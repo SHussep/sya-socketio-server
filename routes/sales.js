@@ -404,6 +404,8 @@ module.exports = (pool) => {
             const { detalles } = req.body;
             let detallesSincronizados = 0;
 
+            console.log(`[Sync/Sales] 🔍 Detalles recibidos:`, typeof detalles, Array.isArray(detalles) ? `array[${detalles.length}]` : detalles);
+
             if (Array.isArray(detalles) && detalles.length > 0) {
                 console.log(`[Sync/Sales] 📦 Procesando ${detalles.length} detalles de venta...`);
 
