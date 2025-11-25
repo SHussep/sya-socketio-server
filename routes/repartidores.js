@@ -26,12 +26,12 @@ module.exports = (pool) => {
     router.get('/summary', authenticateToken, async (req, res) => {
         try {
             const { tenantId, branchId: userBranchId } = req.user;
-            const { all_branches = 'false', branch_id, shift_id } = req.query;
+            const { all_branches = 'false', branch_id, shift_id, only_open_shifts = 'false' } = req.query;
 
             // Prioridad: 1. branch_id del query, 2. branchId del JWT
             const targetBranchId = branch_id ? parseInt(branch_id) : userBranchId;
 
-            console.log(`[Repartidores Summary] Fetching - Tenant: ${tenantId}, Branch: ${targetBranchId}, Shift: ${shift_id || 'ALL'}, all_branches: ${all_branches}`);
+            console.log(`[Repartidores Summary] Fetching - Tenant: ${tenantId}, Branch: ${targetBranchId}, Shift: ${shift_id || 'ALL'}, all_branches: ${all_branches}, Only Open Shifts: ${only_open_shifts}`);
 
             let query = `
                 WITH assignment_stats AS (
@@ -66,8 +66,12 @@ module.exports = (pool) => {
                     LEFT JOIN roles r ON e.role_id = r.id
                     LEFT JOIN shifts s ON ra.repartidor_shift_id = s.id
                     WHERE ra.tenant_id = $1
-                    AND (s.id IS NULL OR s.is_cash_cut_open = true)
             `;
+
+            // Solo filtrar por turnos abiertos si se especifica explícitamente
+            if (only_open_shifts === 'true') {
+                query += ` AND (s.id IS NULL OR s.is_cash_cut_open = true)`;
+            }
 
             const params = [tenantId];
             let paramIndex = 2;
