@@ -31,7 +31,7 @@ module.exports = (pool) => {
     router.get('/summary', authenticateToken, async (req, res) => {
         try {
             const { tenantId, branchId: userBranchId } = req.user;
-            const { branch_id, start_date, end_date, all_branches = 'false' } = req.query;
+            const { branch_id, start_date, end_date, all_branches = 'false', shift_id } = req.query;
 
             // Prioridad: 1. branch_id del query, 2. branchId del JWT
             const targetBranchId = branch_id ? parseInt(branch_id) : userBranchId;
@@ -86,10 +86,20 @@ module.exports = (pool) => {
             // - Excluye estado 2 = Asignada (repartidor, no es venta final)
             let salesQuery = `SELECT COALESCE(SUM(total), 0) as total FROM ventas WHERE tenant_id = $1 AND estado_venta_id IN (3, 5) AND ${dateFilter}`;
             let salesParams = [tenantId];
+            let paramIndex = 2;
+
             if (shouldFilterByBranch) {
-                salesQuery += ` AND branch_id = $2`;
+                salesQuery += ` AND branch_id = $${paramIndex}`;
                 salesParams.push(targetBranchId);
+                paramIndex++;
             }
+
+            if (shift_id) {
+                salesQuery += ` AND shift_id = $${paramIndex}`;
+                salesParams.push(parseInt(shift_id));
+                paramIndex++;
+            }
+
             console.log(`[Dashboard Summary] Sales Query: ${salesQuery}`);
             console.log(`[Dashboard Summary] Sales Params: ${JSON.stringify(salesParams)}`);
             const salesResult = await pool.query(salesQuery, salesParams);
@@ -98,10 +108,20 @@ module.exports = (pool) => {
             // Total de gastos
             let expensesQuery = `SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE tenant_id = $1 AND ${expenseDateFilter}`;
             let expensesParams = [tenantId];
+            let expParamIndex = 2;
+
             if (shouldFilterByBranch) {
-                expensesQuery += ` AND branch_id = $2`;
+                expensesQuery += ` AND branch_id = $${expParamIndex}`;
                 expensesParams.push(targetBranchId);
+                expParamIndex++;
             }
+
+            if (shift_id) {
+                expensesQuery += ` AND shift_id = $${expParamIndex}`;
+                expensesParams.push(parseInt(shift_id));
+                expParamIndex++;
+            }
+
             const expensesResult = await pool.query(expensesQuery, expensesParams);
 
             // Último corte de caja
@@ -114,16 +134,51 @@ module.exports = (pool) => {
             cashCutQuery += ` ORDER BY cut_date DESC LIMIT 1`;
             const cashCutResult = await pool.query(cashCutQuery, cashCutParams);
 
-            // Eventos Guardian - ahora se cuentan desde cash_cuts (unregistered_weight_events, scale_connection_events, cancelled_sales)
-            let guardianQuery = `SELECT COALESCE(SUM(unregistered_weight_events + scale_connection_events + cancelled_sales), 0) as count FROM cash_cuts WHERE tenant_id = $1`;
+            // Eventos Guardian - contar desde la tabla guardian_events filtrado por fecha
+            let guardianQuery = `SELECT COUNT(*) as count FROM guardian_events WHERE tenant_id = $1 AND ${dateFilter.replace('fecha_venta_utc', 'event_date')}`;
             let guardianParams = [tenantId];
+            let guardParamIndex = 2;
+
             if (shouldFilterByBranch) {
-                guardianQuery += ` AND branch_id = $2`;
+                guardianQuery += ` AND branch_id = $${guardParamIndex}`;
                 guardianParams.push(targetBranchId);
+                guardParamIndex++;
             }
+
+            if (shift_id) {
+                guardianQuery += ` AND shift_id = $${guardParamIndex}`;
+                guardianParams.push(parseInt(shift_id));
+                guardParamIndex++;
+            }
+
             const guardianEventsResult = await pool.query(guardianQuery, guardianParams);
 
-            console.log(`[Dashboard Summary] Fetching summary - Tenant: ${tenantId}, Branch: ${targetBranchId}, all_branches: ${all_branches}`);
+            // Asignaciones de repartidores (activas: pending + in_progress)
+            let assignmentsQuery = `
+                SELECT
+                    COUNT(*) as total_assignments,
+                    COUNT(CASE WHEN status IN ('pending', 'in_progress') THEN 1 END) as active_assignments,
+                    COALESCE(SUM(CASE WHEN status IN ('pending', 'in_progress') THEN assigned_amount ELSE 0 END), 0) as active_amount
+                FROM repartidor_assignments
+                WHERE tenant_id = $1 AND ${dateFilter.replace('fecha_venta_utc', 'fecha_asignacion')}`;
+            let assignmentsParams = [tenantId];
+            let assignParamIndex = 2;
+
+            if (shouldFilterByBranch) {
+                assignmentsQuery += ` AND branch_id = $${assignParamIndex}`;
+                assignmentsParams.push(targetBranchId);
+                assignParamIndex++;
+            }
+
+            if (shift_id) {
+                assignmentsQuery += ` AND shift_id = $${assignParamIndex}`;
+                assignmentsParams.push(parseInt(shift_id));
+                assignParamIndex++;
+            }
+
+            const assignmentsResult = await pool.query(assignmentsQuery, assignmentsParams);
+
+            console.log(`[Dashboard Summary] Fetching summary - Tenant: ${tenantId}, Branch: ${targetBranchId}, Shift: ${shift_id || 'ALL'}, all_branches: ${all_branches}`);
 
             res.json({
                 success: true,
@@ -131,7 +186,10 @@ module.exports = (pool) => {
                     totalSales: parseFloat(salesResult.rows[0].total),
                     totalExpenses: parseFloat(expensesResult.rows[0].total),
                     cashInDrawer: cashCutResult.rows.length > 0 ? parseFloat(cashCutResult.rows[0].counted_cash) : 0,
-                    unreadGuardianEvents: parseInt(guardianEventsResult.rows[0].count)
+                    unreadGuardianEvents: parseInt(guardianEventsResult.rows[0].count),
+                    totalAssignments: parseInt(assignmentsResult.rows[0].total_assignments),
+                    activeAssignments: parseInt(assignmentsResult.rows[0].active_assignments),
+                    activeAssignmentsAmount: parseFloat(assignmentsResult.rows[0].active_amount)
                 }
             });
         } catch (error) {
