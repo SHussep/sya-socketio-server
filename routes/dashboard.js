@@ -95,7 +95,7 @@ module.exports = (pool) => {
             }
 
             if (shift_id) {
-                salesQuery += ` AND shift_id = $${paramIndex}`;
+                salesQuery += ` AND id_turno = $${paramIndex}`;
                 salesParams.push(parseInt(shift_id));
                 paramIndex++;
             }
