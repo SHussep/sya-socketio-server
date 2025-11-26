@@ -79,6 +79,16 @@ async function sendNotificationToDevice(deviceToken, {
             apns: {
                 headers: {
                     'apns-priority': '10'
+                },
+                payload: {
+                    aps: {
+                        alert: {
+                            title: title,
+                            body: body
+                        },
+                        sound: 'default',
+                        badge: 1
+                    }
                 }
             }
         };
