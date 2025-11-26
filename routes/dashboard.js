@@ -57,6 +57,7 @@ module.exports = (pool) => {
             // Cuando el cliente NO envía fechas, usamos CURRENT_DATE en el timezone del branch
             let dateFilter = `DATE(fecha_venta_utc AT TIME ZONE '${branchTimezone}') = DATE(NOW() AT TIME ZONE '${branchTimezone}')`;
             let expenseDateFilter = `DATE(expense_date AT TIME ZONE '${branchTimezone}') = DATE(NOW() AT TIME ZONE '${branchTimezone}')`;
+            let assignmentDateFilter = `DATE(fecha_asignacion AT TIME ZONE '${branchTimezone}') = DATE(NOW() AT TIME ZONE '${branchTimezone}')`;
 
             if (start_date && end_date) {
                 // El cliente envía timestamps ISO (ej: 2025-10-21T00:00:00.000Z)
@@ -78,6 +79,7 @@ module.exports = (pool) => {
                 // PostgreSQL maneja automáticamente la conversión de timezone para timestamptz
                 dateFilter = `fecha_venta_utc >= '${startDateISO}'::timestamptz AND fecha_venta_utc < '${endDateISO}'::timestamptz`;
                 expenseDateFilter = `expense_date >= '${startDateISO}'::timestamptz AND expense_date < '${endDateISO}'::timestamptz`;
+                assignmentDateFilter = `fecha_asignacion >= '${startDateISO}'::timestamptz AND fecha_asignacion < '${endDateISO}'::timestamptz`;
             }
 
             // Total de ventas
@@ -146,7 +148,7 @@ module.exports = (pool) => {
                     COUNT(CASE WHEN status IN ('pending', 'in_progress') THEN 1 END) as active_assignments,
                     COALESCE(SUM(CASE WHEN status IN ('pending', 'in_progress') THEN assigned_amount ELSE 0 END), 0) as active_amount
                 FROM repartidor_assignments
-                WHERE tenant_id = $1 AND ${dateFilter.replace('fecha_venta_utc', 'fecha_asignacion')}`;
+                WHERE tenant_id = $1 AND ${assignmentDateFilter}`;
             let assignmentsParams = [tenantId];
             let assignParamIndex = 2;
 
