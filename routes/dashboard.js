@@ -117,7 +117,7 @@ module.exports = (pool) => {
             }
 
             if (shift_id) {
-                expensesQuery += ` AND shift_id = $${expParamIndex}`;
+                expensesQuery += ` AND id_turno = $${expParamIndex}`;
                 expensesParams.push(parseInt(shift_id));
                 expParamIndex++;
             }
@@ -134,24 +134,10 @@ module.exports = (pool) => {
             cashCutQuery += ` ORDER BY cut_date DESC LIMIT 1`;
             const cashCutResult = await pool.query(cashCutQuery, cashCutParams);
 
-            // Eventos Guardian - contar desde la tabla guardian_events filtrado por fecha
-            let guardianQuery = `SELECT COUNT(*) as count FROM guardian_events WHERE tenant_id = $1 AND ${dateFilter.replace('fecha_venta_utc', 'event_date')}`;
-            let guardianParams = [tenantId];
-            let guardParamIndex = 2;
-
-            if (shouldFilterByBranch) {
-                guardianQuery += ` AND branch_id = $${guardParamIndex}`;
-                guardianParams.push(targetBranchId);
-                guardParamIndex++;
-            }
-
-            if (shift_id) {
-                guardianQuery += ` AND shift_id = $${guardParamIndex}`;
-                guardianParams.push(parseInt(shift_id));
-                guardParamIndex++;
-            }
-
-            const guardianEventsResult = await pool.query(guardianQuery, guardianParams);
+            // Eventos Guardian - NO hay tabla guardian_events, los eventos se guardan como agregados en cash_cuts
+            // Por ahora, retornar 0 eventos
+            const guardianEventsResult = { rows: [{ count: 0 }] };
+            console.log(`[Dashboard Summary] ⚠️ Guardian events no implementado (tabla no existe) - retornando 0`);
 
             // Asignaciones de repartidores (activas: pending + in_progress)
             let assignmentsQuery = `
