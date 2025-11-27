@@ -669,13 +669,22 @@ class AuthController {
                     canUseMobileApp: employee.can_use_mobile_app
                 },
                 JWT_SECRET,
-                { expiresIn: '7d' }
+                { expiresIn: '15m' }
+            );
+
+            const refreshToken = jwt.sign(
+                {
+                    employeeId: employee.id,
+                    tenantId: employee.tenant_id
+                },
+                JWT_SECRET,
+                { expiresIn: '30d' }
             );
 
             const employeeData = {
                 id: employee.id,
                 username: employee.username,
-                fullName: employee.full_name,
+                fullName: employee.full_name || `${employee.first_name || ''} ${employee.last_name || ''}`.trim() || employee.username,
                 email: employee.email,
                 role: employee.role_name || 'Empleado',
                 roleId: employee.role_id,
@@ -701,6 +710,7 @@ class AuthController {
                 message: 'Login exitoso',
                 data: {
                     token,
+                    refreshToken,
                     employee: employeeData,
                     availableBranches: branchesData,
                     selectedBranch: selectedBranch,
