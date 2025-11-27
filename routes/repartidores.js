@@ -168,11 +168,14 @@ module.exports = (pool) => {
     // GET /api/repartidores/:employeeId/assignments - Asignaciones de un repartidor específico
     router.get('/:employeeId/assignments', authenticateToken, async (req, res) => {
         try {
-            const { tenantId, branchId: userBranchId } = req.user;
+            const { tenantId, branchId: userBranchId, employeeId: jwtEmployeeId } = req.user;
             const { employeeId } = req.params;
             const { status, limit = 50, offset = 0, only_open_shifts = 'false' } = req.query;
 
-            console.log(`[Repartidor Assignments] Fetching - Employee: ${employeeId}, Status: ${status || 'ALL'}, Only Open Shifts: ${only_open_shifts}`);
+            console.log(`[Repartidor Assignments] 🔍 === REQUEST INFO ===`);
+            console.log(`[Repartidor Assignments] JWT User: tenantId=${tenantId}, branchId=${userBranchId}, employeeId=${jwtEmployeeId}`);
+            console.log(`[Repartidor Assignments] Params: employeeId=${employeeId} (from URL)`);
+            console.log(`[Repartidor Assignments] Query: status=${status || 'ALL'}, only_open_shifts=${only_open_shifts}, limit=${limit}, offset=${offset}`);
 
             let query = `
                 SELECT
@@ -186,9 +189,11 @@ module.exports = (pool) => {
                     ra.fecha_asignacion,
                     ra.fecha_liquidacion,
                     ra.observaciones,
+                    ra.repartidor_shift_id,
                     CONCAT(e_created.first_name, ' ', e_created.last_name) as assigned_by_name,
                     v.ticket_number,
-                    CONCAT(e_repartidor.first_name, ' ', e_repartidor.last_name) as repartidor_name
+                    CONCAT(e_repartidor.first_name, ' ', e_repartidor.last_name) as repartidor_name,
+                    s.is_cash_cut_open as shift_is_open
                 FROM repartidor_assignments ra
                 LEFT JOIN employees e_created ON ra.created_by_employee_id = e_created.id
                 LEFT JOIN employees e_repartidor ON ra.employee_id = e_repartidor.id
@@ -200,6 +205,7 @@ module.exports = (pool) => {
             // Solo filtrar por turnos abiertos si se especifica explícitamente
             if (only_open_shifts === 'true') {
                 query += ` AND (s.id IS NULL OR s.is_cash_cut_open = true)`;
+                console.log(`[Repartidor Assignments] ✅ Filtrando solo turnos abiertos`);
             }
 
             const params = [tenantId, parseInt(employeeId)];
@@ -215,9 +221,34 @@ module.exports = (pool) => {
             query += ` ORDER BY ra.fecha_asignacion DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
             params.push(limit, offset);
 
+            console.log(`[Repartidor Assignments] 📊 Executing query with params:`, params);
             const result = await pool.query(query, params);
 
             console.log(`[Repartidor Assignments] ✅ Found ${result.rows.length} assignments`);
+            if (result.rows.length === 0) {
+                console.log(`[Repartidor Assignments] ⚠️ No assignments found for employeeId=${employeeId}, tenantId=${tenantId}`);
+                // Verificar si el empleado existe
+                const empCheck = await pool.query('SELECT id, first_name, last_name, role_id FROM employees WHERE id = $1', [parseInt(employeeId)]);
+                if (empCheck.rows.length === 0) {
+                    console.log(`[Repartidor Assignments] ❌ Employee ID ${employeeId} does NOT exist in database`);
+                } else {
+                    console.log(`[Repartidor Assignments] ✅ Employee exists: ${empCheck.rows[0].first_name} ${empCheck.rows[0].last_name} (roleId: ${empCheck.rows[0].role_id})`);
+                }
+                // Verificar si hay asignaciones para este empleado (sin filtros)
+                const allAssignments = await pool.query('SELECT id, status, repartidor_shift_id FROM repartidor_assignments WHERE employee_id = $1 LIMIT 5', [parseInt(employeeId)]);
+                console.log(`[Repartidor Assignments] 📋 Total assignments in DB for this employee (unfiltered): ${allAssignments.rows.length}`);
+                if (allAssignments.rows.length > 0) {
+                    console.log(`[Repartidor Assignments] 📦 Sample assignments:`, allAssignments.rows);
+                }
+            } else {
+                console.log(`[Repartidor Assignments] 📦 First assignment:`, {
+                    id: result.rows[0].id,
+                    status: result.rows[0].status,
+                    quantity: result.rows[0].assigned_quantity,
+                    shiftId: result.rows[0].repartidor_shift_id,
+                    shiftIsOpen: result.rows[0].shift_is_open
+                });
+            }
 
             res.json({
                 success: true,
