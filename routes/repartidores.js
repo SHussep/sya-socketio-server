@@ -333,6 +333,7 @@ module.exports = (pool) => {
                     CONCAT(e_registered.first_name, ' ', e_registered.last_name) as registered_by_name,
                     ra.assigned_quantity,
                     ra.assigned_amount,
+                    ra.repartidor_shift_id,
                     v.ticket_number
                 FROM repartidor_returns rr
                 INNER JOIN repartidor_assignments ra ON rr.assignment_id = ra.id
@@ -361,7 +362,8 @@ module.exports = (pool) => {
                     notes: row.notes,
                     registered_by_name: row.registered_by_name,
                     assigned_quantity: parseFloat(row.assigned_quantity),
-                    assigned_amount: parseFloat(row.assigned_amount)
+                    assigned_amount: parseFloat(row.assigned_amount),
+                    repartidor_shift_id: row.repartidor_shift_id
                 }))
             });
         } catch (error) {
