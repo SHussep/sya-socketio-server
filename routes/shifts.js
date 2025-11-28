@@ -135,10 +135,11 @@ module.exports = (pool) => {
     // GET /api/shifts/current - Obtener turno actual del empleado
     router.get('/current', authenticateToken, async (req, res) => {
         try {
-            const { tenantId, employeeId, branchId } = req.user;
+            const { tenantId, employeeId, branchId, roleId } = req.user;
+            const isAdmin = roleId === 1; // roleId 1 = Administrador
 
-            // Mobile JWT no incluye branchId, así que filtramos solo por tenantId y employeeId
-            // Desktop JWT incluye branchId, así que podemos filtrar por sucursal específica
+            // 🎯 ADMINISTRADORES: Ven cualquier turno abierto de la sucursal
+            // 🎯 EMPLEADOS: Solo ven su propio turno abierto
             let query = `
                 SELECT s.id, s.tenant_id, s.branch_id, s.employee_id, s.start_time, s.end_time,
                        s.initial_amount, s.final_amount, s.transaction_counter, s.is_cash_cut_open,
@@ -147,19 +148,25 @@ module.exports = (pool) => {
                 FROM shifts s
                 LEFT JOIN employees e ON s.employee_id = e.id
                 LEFT JOIN branches b ON s.branch_id = b.id
-                WHERE s.tenant_id = $1 AND s.employee_id = $2 AND s.is_cash_cut_open = true`;
+                WHERE s.tenant_id = $1 AND s.is_cash_cut_open = true`;
 
-            const params = [tenantId, employeeId];
+            const params = [tenantId];
+
+            // Si NO es administrador, filtrar por empleado específico
+            if (!isAdmin) {
+                query += ' AND s.employee_id = $2';
+                params.push(employeeId);
+            }
 
             // Si el JWT incluye branchId (Desktop), filtrar por sucursal
             if (branchId) {
-                query += ' AND s.branch_id = $3';
+                query += ` AND s.branch_id = $${params.length + 1}`;
                 params.push(branchId);
             }
 
             query += ' ORDER BY s.start_time DESC LIMIT 1';
 
-            console.log(`[Shifts Current] Fetching current shift - Tenant: ${tenantId}, Employee: ${employeeId}, Branch: ${branchId || 'all'}`);
+            console.log(`[Shifts Current] Fetching current shift - Tenant: ${tenantId}, Employee: ${employeeId}, Branch: ${branchId || 'all'}, isAdmin: ${isAdmin}`);
 
             const result = await pool.query(query, params);
 
