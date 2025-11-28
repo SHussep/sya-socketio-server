@@ -585,5 +585,150 @@ module.exports = (pool) => {
         }
     });
 
+    // GET /api/shifts/cash-snapshots/open - Obtener snapshots de todos los turnos abiertos
+    router.get('/cash-snapshots/open', authenticateToken, async (req, res) => {
+        try {
+            const { tenantId, branchId } = req.user;
+            const { all_branches = 'false', date } = req.query;
+
+            console.log('[Shifts/CashSnapshots] 📊 Obteniendo snapshots de turnos abiertos...');
+            console.log('[Shifts/CashSnapshots] 🏢 Tenant:', tenantId, '| Branch:', branchId);
+            console.log('[Shifts/CashSnapshots] 🌐 All branches:', all_branches, '| Date:', date);
+
+            // Construir query para obtener turnos abiertos
+            let query = `
+                SELECT
+                    s.id, s.employee_id, s.branch_id, s.tenant_id,
+                    s.start_time, s.initial_cash, s.is_cash_cut_open,
+                    e.name as employee_name,
+                    r.name as employee_role,
+                    b.name as branch_name
+                FROM shifts s
+                INNER JOIN employees e ON s.employee_id = e.id
+                INNER JOIN roles r ON e.role_id = r.id
+                INNER JOIN branches b ON s.branch_id = b.id
+                WHERE s.tenant_id = $1
+                  AND s.is_cash_cut_open = true
+            `;
+
+            const params = [tenantId];
+
+            // Filtrar por sucursal si no se solicitan todas
+            if (all_branches !== 'true') {
+                query += ` AND s.branch_id = $${params.length + 1}`;
+                params.push(branchId);
+            }
+
+            // Filtrar por fecha si se proporciona
+            if (date) {
+                query += ` AND DATE(s.start_time) = DATE($${params.length + 1})`;
+                params.push(date);
+            }
+
+            query += ` ORDER BY s.start_time DESC`;
+
+            const shiftsResult = await pool.query(query, params);
+            const openShifts = shiftsResult.rows;
+
+            console.log('[Shifts/CashSnapshots] ✅ Turnos abiertos encontrados:', openShifts.length);
+
+            // Para cada turno abierto, obtener o calcular su snapshot
+            const snapshots = [];
+
+            for (const shift of openShifts) {
+                try {
+                    // Intentar obtener snapshot existente
+                    let snapshot = await pool.query(
+                        `SELECT * FROM shift_cash_snapshot WHERE shift_id = $1`,
+                        [shift.id]
+                    );
+
+                    // Si no existe o necesita recalcular, llamar a la función
+                    if (snapshot.rows.length === 0 || snapshot.rows[0].needs_recalculation) {
+                        console.log(`[Shifts/CashSnapshots] 🔄 Recalculando snapshot para shift ${shift.id}...`);
+
+                        try {
+                            await pool.query('SELECT recalculate_shift_cash_snapshot($1)', [shift.id]);
+                        } catch (calcError) {
+                            console.error(`[Shifts/CashSnapshots] ⚠️ Error al recalcular shift ${shift.id}:`, calcError.message);
+                            // Continuar sin snapshot para este turno
+                            continue;
+                        }
+
+                        // Volver a obtener el snapshot actualizado
+                        snapshot = await pool.query(
+                            `SELECT * FROM shift_cash_snapshot WHERE shift_id = $1`,
+                            [shift.id]
+                        );
+                    }
+
+                    if (snapshot.rows.length > 0) {
+                        const data = snapshot.rows[0];
+                        snapshots.push({
+                            // Info del turno
+                            shift_id: shift.id,
+                            employee_id: shift.employee_id,
+                            employee_name: shift.employee_name,
+                            employee_role: data.employee_role,
+                            branch_id: shift.branch_id,
+                            branch_name: shift.branch_name,
+                            start_time: shift.start_time,
+
+                            // Snapshot data
+                            id: data.id,
+                            tenant_id: data.tenant_id,
+                            initial_amount: parseFloat(data.initial_amount),
+                            cash_sales: parseFloat(data.cash_sales),
+                            card_sales: parseFloat(data.card_sales),
+                            credit_sales: parseFloat(data.credit_sales),
+                            cash_payments: parseFloat(data.cash_payments),
+                            card_payments: parseFloat(data.card_payments),
+                            expenses: parseFloat(data.expenses),
+                            deposits: parseFloat(data.deposits),
+                            withdrawals: parseFloat(data.withdrawals),
+                            expected_cash: parseFloat(data.expected_cash),
+                            total_assigned_amount: parseFloat(data.total_assigned_amount),
+                            total_assigned_quantity: parseFloat(data.total_assigned_quantity),
+                            total_returned_amount: parseFloat(data.total_returned_amount),
+                            total_returned_quantity: parseFloat(data.total_returned_quantity),
+                            net_amount_to_deliver: parseFloat(data.net_amount_to_deliver),
+                            net_quantity_delivered: parseFloat(data.net_quantity_delivered),
+                            actual_cash_delivered: parseFloat(data.actual_cash_delivered),
+                            cash_difference: parseFloat(data.cash_difference),
+                            assignment_count: data.assignment_count,
+                            liquidated_assignment_count: data.liquidated_assignment_count,
+                            return_count: data.return_count,
+                            expense_count: data.expense_count,
+                            deposit_count: data.deposit_count,
+                            withdrawal_count: data.withdrawal_count,
+                            last_updated_at: data.last_updated_at,
+                            needs_recalculation: data.needs_recalculation,
+                            needs_update: data.needs_update,
+                        });
+                    }
+                } catch (shiftError) {
+                    console.error(`[Shifts/CashSnapshots] ❌ Error procesando shift ${shift.id}:`, shiftError.message);
+                    // Continuar con el siguiente turno
+                }
+            }
+
+            console.log('[Shifts/CashSnapshots] ✅ Snapshots obtenidos:', snapshots.length);
+
+            res.json({
+                success: true,
+                count: snapshots.length,
+                data: snapshots
+            });
+
+        } catch (error) {
+            console.error('[Shifts/CashSnapshots] ❌ Error:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Error al obtener snapshots de caja',
+                error: error.message
+            });
+        }
+    });
+
     return router;
 };
