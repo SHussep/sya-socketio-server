@@ -143,7 +143,7 @@ module.exports = (pool) => {
             let query = `
                 SELECT s.id, s.tenant_id, s.branch_id, s.employee_id, s.start_time, s.end_time,
                        s.initial_amount, s.final_amount, s.transaction_counter, s.is_cash_cut_open,
-                       CONCAT(e.first_name, ' ', e.last_name) as employee_name,
+                       COALESCE(NULLIF(CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, '')), ' '), e.username, 'Sin nombre') as employee_name,
                        b.name as branch_name
                 FROM shifts s
                 LEFT JOIN employees e ON s.employee_id = e.id
@@ -207,9 +207,9 @@ module.exports = (pool) => {
             let query = `
                 SELECT s.id, s.tenant_id, s.branch_id, s.employee_id, s.start_time, s.end_time,
                        s.initial_amount, s.final_amount, s.transaction_counter, s.is_cash_cut_open,
-                       CONCAT(e.first_name, ' ', e.last_name) as employee_name,
-                       r.name as employee_role,
-                       b.name as branch_name
+                       COALESCE(NULLIF(CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, '')), ' '), e.username, 'Sin nombre') as employee_name,
+                       COALESCE(r.name, 'Sin rol') as employee_role,
+                       COALESCE(b.name, 'Sin sucursal') as branch_name
                 FROM shifts s
                 LEFT JOIN employees e ON s.employee_id = e.id
                 LEFT JOIN roles r ON e.role_id = r.id
@@ -266,8 +266,8 @@ module.exports = (pool) => {
             let query = `
                 SELECT s.id, s.branch_id, s.employee_id, s.start_time, s.end_time,
                        s.initial_amount, s.final_amount, s.transaction_counter, s.is_cash_cut_open,
-                       CONCAT(e.first_name, ' ', e.last_name) as employee_name,
-                       b.name as branch_name,
+                       COALESCE(NULLIF(CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, '')), ' '), e.username, 'Sin nombre') as employee_name,
+                       COALESCE(b.name, 'Sin sucursal') as branch_name,
                        (s.final_amount - s.initial_amount) as difference
                 FROM shifts s
                 LEFT JOIN employees e ON s.employee_id = e.id
