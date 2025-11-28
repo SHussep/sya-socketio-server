@@ -650,25 +650,25 @@ module.exports = (pool) => {
                         WHERE id_turno = $1
                     `, [shift.id]);
 
-                    // 2. Calcular gastos
+                    // 2. Calcular gastos (usa id_turno)
                     const expensesQuery = await pool.query(`
                         SELECT COALESCE(SUM(amount), 0) as total_expenses, COUNT(*) as expense_count
                         FROM expenses
                         WHERE id_turno = $1
                     `, [shift.id]);
 
-                    // 3. Calcular depósitos
+                    // 3. Calcular depósitos (usa shift_id)
                     const depositsQuery = await pool.query(`
                         SELECT COALESCE(SUM(amount), 0) as total_deposits, COUNT(*) as deposit_count
                         FROM deposits
-                        WHERE id_turno = $1
+                        WHERE shift_id = $1
                     `, [shift.id]);
 
-                    // 4. Calcular retiros
+                    // 4. Calcular retiros (usa shift_id)
                     const withdrawalsQuery = await pool.query(`
                         SELECT COALESCE(SUM(amount), 0) as total_withdrawals, COUNT(*) as withdrawal_count
                         FROM withdrawals
-                        WHERE id_turno = $1
+                        WHERE shift_id = $1
                     `, [shift.id]);
 
                     const sales = salesQuery.rows[0];
