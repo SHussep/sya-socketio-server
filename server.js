@@ -343,7 +343,7 @@ app.use('/api/cancelaciones', cancelacionesRoutes(pool)); // Rutas de cancelacio
 app.use('/api/employee-roles', employeeRolesRoutes); // Rutas para gestionar roles y permisos
 app.use('/api/customers', customersRoutes(pool)); // Rutas de sincronización de clientes
 app.use('/api/credit-payments', creditPaymentsRoutes(pool)); // Rutas de pagos de crédito
-app.use('/api/suspicious-weighing-logs', suspiciousWeighingLogsRoutes(pool)); // Rutas de Guardian logs de báscula
+app.use('/api/suspicious-weighing-logs', suspiciousWeighingLogsRoutes(pool, io)); // Rutas de Guardian logs de báscula (con Socket.IO)
 app.use('/api/scale-disconnection-logs', scaleDisconnectionLogsRoutes(pool)); // Rutas de eventos de desconexión de báscula
 app.use('/api/employee-metrics', employeeMetricsRoutes(pool)); // Rutas de métricas diarias de empleados
 app.use('/api/repartidores', repartidoresRoutes(pool)); // Rutas de resumen y detalles de repartidores

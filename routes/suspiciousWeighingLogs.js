@@ -4,7 +4,7 @@
 
 const express = require('express');
 
-module.exports = (pool) => {
+module.exports = (pool, io) => {
     const router = express.Router();
 
     // POST /api/suspicious-weighing-logs/sync - Sincronizar log desde Desktop (offline-first idempotente)
@@ -102,6 +102,39 @@ module.exports = (pool) => {
             const log = result.rows[0];
 
             console.log(`[Sync/GuardianLogs] ✅ Log sincronizado: ID ${log.id} - ${event_type} (${severity}) - Employee ${employee_id}`);
+
+            // ✅ NUEVO: Emitir evento Socket.IO en tiempo real a la app móvil
+            if (io && branch_id) {
+                // Obtener nombre del empleado si no se proporcionó
+                let employeeName = 'Empleado desconocido';
+                try {
+                    const empResult = await pool.query(
+                        'SELECT first_name, last_name FROM employees WHERE id = $1 AND tenant_id = $2',
+                        [employee_id, tenant_id]
+                    );
+                    if (empResult.rows.length > 0) {
+                        const emp = empResult.rows[0];
+                        employeeName = `${emp.first_name} ${emp.last_name}`.trim();
+                    }
+                } catch (empError) {
+                    console.error(`[Sync/GuardianLogs] ⚠️ Error obteniendo nombre de empleado: ${empError.message}`);
+                }
+
+                io.to(`branch_${branch_id}`).emit('scale_alert', {
+                    branchId: branch_id,
+                    alertId: log.id,
+                    severity: severity || 'medium',
+                    eventType: event_type,
+                    weightDetected: weight_detected || 0,
+                    details: details || '',
+                    timestamp: timestamp || new Date().toISOString(),
+                    employeeName: employeeName,
+                    receivedAt: new Date().toISOString(),
+                    source: 'sync'
+                });
+
+                console.log(`[Sync/GuardianLogs] 📡 Evento 'scale_alert' emitido a branch_${branch_id} para app móvil (${employeeName})`);
+            }
 
             res.json({
                 success: true,
