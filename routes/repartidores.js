@@ -250,6 +250,42 @@ module.exports = (pool) => {
                 });
             }
 
+            // Obtener los items de cada venta
+            const ventaIds = result.rows.map(row => row.venta_id).filter(id => id != null);
+            let itemsByVenta = {};
+
+            if (ventaIds.length > 0) {
+                const itemsQuery = `
+                    SELECT
+                        vd.id_venta,
+                        vd.id_producto,
+                        vd.descripcion_producto,
+                        vd.cantidad,
+                        vd.precio_unitario,
+                        vd.total_linea
+                    FROM ventas_detalle vd
+                    WHERE vd.id_venta = ANY($1)
+                    ORDER BY vd.id_venta, vd.id_venta_detalle
+                `;
+                const itemsResult = await pool.query(itemsQuery, [ventaIds]);
+
+                // Agrupar items por venta_id
+                itemsResult.rows.forEach(item => {
+                    if (!itemsByVenta[item.id_venta]) {
+                        itemsByVenta[item.id_venta] = [];
+                    }
+                    itemsByVenta[item.id_venta].push({
+                        product_id: item.id_producto,
+                        product_name: item.descripcion_producto,
+                        quantity: parseFloat(item.cantidad),
+                        unit_price: parseFloat(item.precio_unitario),
+                        line_total: parseFloat(item.total_linea)
+                    });
+                });
+
+                console.log(`[Repartidor Assignments] 📦 Loaded items for ${Object.keys(itemsByVenta).length} ventas`);
+            }
+
             res.json({
                 success: true,
                 data: result.rows.map(row => ({
@@ -265,7 +301,8 @@ module.exports = (pool) => {
                     fecha_asignacion: row.fecha_asignacion,
                     fecha_liquidacion: row.fecha_liquidacion,
                     assigned_by_name: row.assigned_by_name,
-                    observaciones: row.observaciones
+                    observaciones: row.observaciones,
+                    items: row.venta_id ? (itemsByVenta[row.venta_id] || []) : []
                 }))
             });
         } catch (error) {
