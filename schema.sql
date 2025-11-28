@@ -674,6 +674,69 @@ CREATE INDEX IF NOT EXISTS idx_repartidor_returns_return_date ON repartidor_retu
 CREATE INDEX IF NOT EXISTS idx_repartidor_returns_source ON repartidor_returns(source);
 CREATE UNIQUE INDEX IF NOT EXISTS unique_repartidor_returns_global_terminal ON repartidor_returns(global_id, terminal_id);
 
+-- repartidor_shift_cash_snapshot (snapshot de corte de caja por turno de repartidor)
+CREATE TABLE IF NOT EXISTS repartidor_shift_cash_snapshot (
+    id SERIAL PRIMARY KEY,
+    tenant_id INTEGER NOT NULL,
+    branch_id INTEGER NOT NULL,
+    employee_id INTEGER NOT NULL,
+    repartidor_shift_id INTEGER NOT NULL UNIQUE,
+
+    -- Montos básicos del corte de caja
+    initial_amount DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
+    cash_sales DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
+    card_sales DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
+    credit_sales DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
+    cash_payments DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
+    card_payments DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
+    expenses DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
+    deposits DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
+    withdrawals DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
+
+    -- Asignaciones y devoluciones
+    total_assigned_amount DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
+    total_assigned_quantity DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
+    total_returned_amount DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
+    total_returned_quantity DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
+    net_amount_to_deliver DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
+    net_quantity_delivered DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
+
+    -- Liquidación
+    actual_cash_delivered DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
+    cash_difference DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
+
+    -- Campo calculado (se agregará con ALTER TABLE en migraciones)
+    expected_cash DECIMAL(10,2),
+
+    -- Contadores
+    assignment_count INTEGER DEFAULT 0 NOT NULL,
+    liquidated_assignment_count INTEGER DEFAULT 0 NOT NULL,
+    return_count INTEGER DEFAULT 0 NOT NULL,
+    expense_count INTEGER DEFAULT 0 NOT NULL,
+    deposit_count INTEGER DEFAULT 0 NOT NULL,
+    withdrawal_count INTEGER DEFAULT 0 NOT NULL,
+
+    -- Metadata de sincronización offline-first
+    last_updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+    needs_recalculation BOOLEAN DEFAULT FALSE NOT NULL,
+    needs_update BOOLEAN DEFAULT FALSE NOT NULL,
+    needs_deletion BOOLEAN DEFAULT FALSE NOT NULL,
+    synced_at TIMESTAMPTZ,
+    global_id VARCHAR(36) UNIQUE,
+    terminal_id VARCHAR(100),
+    created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_cash_snapshot_shift ON repartidor_shift_cash_snapshot(repartidor_shift_id);
+CREATE INDEX IF NOT EXISTS idx_cash_snapshot_employee ON repartidor_shift_cash_snapshot(employee_id);
+CREATE INDEX IF NOT EXISTS idx_cash_snapshot_branch ON repartidor_shift_cash_snapshot(branch_id, tenant_id);
+CREATE INDEX IF NOT EXISTS idx_cash_snapshot_needs_recalc ON repartidor_shift_cash_snapshot(needs_recalculation) WHERE needs_recalculation = TRUE;
+CREATE INDEX IF NOT EXISTS idx_cash_snapshot_needs_update ON repartidor_shift_cash_snapshot(needs_update) WHERE needs_update = TRUE;
+CREATE INDEX IF NOT EXISTS idx_cash_snapshot_needs_deletion ON repartidor_shift_cash_snapshot(needs_deletion) WHERE needs_deletion = TRUE;
+CREATE INDEX IF NOT EXISTS idx_cash_snapshot_global_id ON repartidor_shift_cash_snapshot(global_id) WHERE global_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_cash_snapshot_updated_at ON repartidor_shift_cash_snapshot(updated_at DESC);
+
 -- ========== CREDIT PAYMENTS ==========
 
 -- credit_payments (pagos a crédito)
