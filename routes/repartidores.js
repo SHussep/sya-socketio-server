@@ -286,24 +286,71 @@ module.exports = (pool) => {
                 console.log(`[Repartidor Assignments] 📦 Loaded items for ${Object.keys(itemsByVenta).length} ventas`);
             }
 
+            // 🆕 Obtener devoluciones por assignment_id
+            const assignmentIds = result.rows.map(row => row.id);
+            let returnsByAssignment = {};
+
+            if (assignmentIds.length > 0) {
+                const returnsQuery = `
+                    SELECT
+                        rr.assignment_id,
+                        rr.quantity,
+                        rr.amount,
+                        rr.return_date,
+                        rr.source,
+                        rr.notes
+                    FROM repartidor_returns rr
+                    WHERE rr.assignment_id = ANY($1)
+                    ORDER BY rr.return_date DESC
+                `;
+                const returnsResult = await pool.query(returnsQuery, [assignmentIds]);
+
+                // Agrupar devoluciones por assignment_id
+                returnsResult.rows.forEach(ret => {
+                    if (!returnsByAssignment[ret.assignment_id]) {
+                        returnsByAssignment[ret.assignment_id] = [];
+                    }
+                    returnsByAssignment[ret.assignment_id].push({
+                        quantity: parseFloat(ret.quantity),
+                        amount: parseFloat(ret.amount),
+                        return_date: ret.return_date,
+                        source: ret.source,
+                        notes: ret.notes
+                    });
+                });
+
+                console.log(`[Repartidor Assignments] 🔄 Loaded returns for ${Object.keys(returnsByAssignment).length} assignments`);
+            }
+
             res.json({
                 success: true,
-                data: result.rows.map(row => ({
-                    id: row.id,
-                    venta_id: row.venta_id,
-                    ticket_number: row.ticket_number,
-                    employee_id: row.employee_id,
-                    repartidor_name: row.repartidor_name,
-                    assigned_quantity: parseFloat(row.assigned_quantity),
-                    assigned_amount: parseFloat(row.assigned_amount),
-                    unit_price: parseFloat(row.unit_price),
-                    status: row.status,
-                    fecha_asignacion: row.fecha_asignacion,
-                    fecha_liquidacion: row.fecha_liquidacion,
-                    assigned_by_name: row.assigned_by_name,
-                    observaciones: row.observaciones,
-                    items: row.venta_id ? (itemsByVenta[row.venta_id] || []) : []
-                }))
+                data: result.rows.map(row => {
+                    const returns = returnsByAssignment[row.id] || [];
+                    const totalReturnedQuantity = returns.reduce((sum, r) => sum + r.quantity, 0);
+                    const totalReturnedAmount = returns.reduce((sum, r) => sum + r.amount, 0);
+
+                    return {
+                        id: row.id,
+                        venta_id: row.venta_id,
+                        ticket_number: row.ticket_number,
+                        employee_id: row.employee_id,
+                        repartidor_name: row.repartidor_name,
+                        assigned_quantity: parseFloat(row.assigned_quantity),
+                        assigned_amount: parseFloat(row.assigned_amount),
+                        unit_price: parseFloat(row.unit_price),
+                        status: row.status,
+                        fecha_asignacion: row.fecha_asignacion,
+                        fecha_liquidacion: row.fecha_liquidacion,
+                        assigned_by_name: row.assigned_by_name,
+                        observaciones: row.observaciones,
+                        repartidor_shift_id: row.repartidor_shift_id,
+                        items: row.venta_id ? (itemsByVenta[row.venta_id] || []) : [],
+                        // 🆕 Información de devoluciones
+                        returns: returns,
+                        total_returned_quantity: totalReturnedQuantity,
+                        total_returned_amount: totalReturnedAmount
+                    };
+                })
             });
         } catch (error) {
             console.error('[Repartidor Assignments] Error:', error);
