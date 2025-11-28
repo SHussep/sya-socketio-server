@@ -491,7 +491,9 @@ module.exports = (pool) => {
                 branch_id,
                 employee_id,
                 start_time,
+                end_time,  // Agregar end_time
                 initial_amount,
+                final_amount,  // Agregar final_amount
                 transaction_counter,
                 is_cash_cut_open,
                 // Offline-first fields
@@ -514,13 +516,15 @@ module.exports = (pool) => {
             // ✅ IDEMPOTENTE: INSERT con ON CONFLICT (global_id) DO UPDATE
             const result = await pool.query(
                 `INSERT INTO shifts (
-                    tenant_id, branch_id, employee_id, start_time,
-                    initial_amount, transaction_counter, is_cash_cut_open,
+                    tenant_id, branch_id, employee_id, start_time, end_time,
+                    initial_amount, final_amount, transaction_counter, is_cash_cut_open,
                     global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw
                  )
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::uuid, $9::uuid, $10, $11, $12)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::uuid, $11::uuid, $12, $13, $14)
                  ON CONFLICT (global_id) DO UPDATE
-                 SET transaction_counter = EXCLUDED.transaction_counter,
+                 SET end_time = EXCLUDED.end_time,
+                     final_amount = EXCLUDED.final_amount,
+                     transaction_counter = EXCLUDED.transaction_counter,
                      is_cash_cut_open = EXCLUDED.is_cash_cut_open,
                      updated_at = NOW()
                  RETURNING *`,
@@ -529,7 +533,9 @@ module.exports = (pool) => {
                     branch_id,
                     employee_id,
                     start_time,
+                    end_time || null,
                     initial_amount || 0,
+                    final_amount || null,
                     transaction_counter || 0,
                     is_cash_cut_open,
                     global_id,
