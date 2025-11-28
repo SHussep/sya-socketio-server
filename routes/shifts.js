@@ -286,14 +286,16 @@ module.exports = (pool) => {
                 paramIndex++;
             }
 
+            // 🎯 IMPORTANTE: Incluir turnos abiertos siempre, sin importar fecha de inicio
+            // Para turnos cerrados, filtrar por rango de fechas normalmente
             if (date_from) {
-                query += ` AND s.start_time >= $${paramIndex}`;
+                query += ` AND (s.is_cash_cut_open = true OR s.start_time >= $${paramIndex})`;
                 params.push(date_from);
                 paramIndex++;
             }
 
             if (date_to) {
-                query += ` AND s.start_time <= $${paramIndex}`;
+                query += ` AND (s.is_cash_cut_open = true OR s.start_time <= $${paramIndex})`;
                 params.push(date_to);
                 paramIndex++;
             }
