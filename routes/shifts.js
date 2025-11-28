@@ -585,13 +585,13 @@ module.exports = (pool) => {
         }
     });
 
-    // GET /api/shifts/cash-snapshots/open - Obtener snapshots de todos los turnos abiertos
+    // GET /api/shifts/cash-snapshots/open - Calcular snapshots de turnos abiertos en tiempo real
     router.get('/cash-snapshots/open', authenticateToken, async (req, res) => {
         try {
             const { tenantId, branchId } = req.user;
             const { all_branches = 'false', date } = req.query;
 
-            console.log('[Shifts/CashSnapshots] 📊 Obteniendo snapshots de turnos abiertos...');
+            console.log('[Shifts/CashSnapshots] 📊 Calculando snapshots de turnos abiertos...');
             console.log('[Shifts/CashSnapshots] 🏢 Tenant:', tenantId, '| Branch:', branchId);
             console.log('[Shifts/CashSnapshots] 🌐 All branches:', all_branches, '| Date:', date);
 
@@ -632,87 +632,169 @@ module.exports = (pool) => {
 
             console.log('[Shifts/CashSnapshots] ✅ Turnos abiertos encontrados:', openShifts.length);
 
-            // Para cada turno abierto, obtener o calcular su snapshot
+            // Para cada turno abierto, calcular su snapshot desde las tablas
             const snapshots = [];
 
             for (const shift of openShifts) {
                 try {
-                    // Intentar obtener snapshot existente
-                    let snapshot = await pool.query(
-                        `SELECT * FROM shift_cash_snapshot WHERE shift_id = $1`,
-                        [shift.id]
-                    );
+                    const isRepartidor = shift.employee_role.toLowerCase() === 'repartidor';
 
-                    // Si no existe o necesita recalcular, llamar a la función
-                    if (snapshot.rows.length === 0 || snapshot.rows[0].needs_recalculation) {
-                        console.log(`[Shifts/CashSnapshots] 🔄 Recalculando snapshot para shift ${shift.id}...`);
+                    // 1. Calcular ventas por método de pago
+                    const salesQuery = await pool.query(`
+                        SELECT
+                            COALESCE(SUM(CASE WHEN payment_method = 'Efectivo' THEN total ELSE 0 END), 0) as cash_sales,
+                            COALESCE(SUM(CASE WHEN payment_method = 'Tarjeta' THEN total ELSE 0 END), 0) as card_sales,
+                            COALESCE(SUM(CASE WHEN payment_method = 'Crédito' THEN total ELSE 0 END), 0) as credit_sales
+                        FROM sales
+                        WHERE shift_id = $1
+                    `, [shift.id]);
 
-                        try {
-                            await pool.query('SELECT recalculate_shift_cash_snapshot($1)', [shift.id]);
-                        } catch (calcError) {
-                            console.error(`[Shifts/CashSnapshots] ⚠️ Error al recalcular shift ${shift.id}:`, calcError.message);
-                            // Continuar sin snapshot para este turno
-                            continue;
-                        }
+                    // 2. Calcular gastos
+                    const expensesQuery = await pool.query(`
+                        SELECT COALESCE(SUM(amount), 0) as total_expenses, COUNT(*) as expense_count
+                        FROM expenses
+                        WHERE shift_id = $1
+                    `, [shift.id]);
 
-                        // Volver a obtener el snapshot actualizado
-                        snapshot = await pool.query(
-                            `SELECT * FROM shift_cash_snapshot WHERE shift_id = $1`,
-                            [shift.id]
-                        );
+                    // 3. Calcular depósitos
+                    const depositsQuery = await pool.query(`
+                        SELECT COALESCE(SUM(amount), 0) as total_deposits, COUNT(*) as deposit_count
+                        FROM deposits
+                        WHERE shift_id = $1
+                    `, [shift.id]);
+
+                    // 4. Calcular retiros
+                    const withdrawalsQuery = await pool.query(`
+                        SELECT COALESCE(SUM(amount), 0) as total_withdrawals, COUNT(*) as withdrawal_count
+                        FROM withdrawals
+                        WHERE shift_id = $1
+                    `, [shift.id]);
+
+                    const sales = salesQuery.rows[0];
+                    const expenses = expensesQuery.rows[0];
+                    const deposits = depositsQuery.rows[0];
+                    const withdrawals = withdrawalsQuery.rows[0];
+
+                    const initialAmount = parseFloat(shift.initial_cash || 0);
+                    const cashSales = parseFloat(sales.cash_sales || 0);
+                    const cardSales = parseFloat(sales.card_sales || 0);
+                    const creditSales = parseFloat(sales.credit_sales || 0);
+                    const totalExpenses = parseFloat(expenses.total_expenses || 0);
+                    const totalDeposits = parseFloat(deposits.total_deposits || 0);
+                    const totalWithdrawals = parseFloat(withdrawals.total_withdrawals || 0);
+
+                    // Efectivo esperado = inicial + ventas efectivo + depósitos - gastos - retiros
+                    const expectedCash = initialAmount + cashSales + totalDeposits - totalExpenses - totalWithdrawals;
+
+                    let snapshotData = {
+                        // Info del turno
+                        shift_id: shift.id,
+                        employee_id: shift.employee_id,
+                        employee_name: shift.employee_name,
+                        employee_role: shift.employee_role,
+                        branch_id: shift.branch_id,
+                        branch_name: shift.branch_name,
+                        tenant_id: shift.tenant_id,
+                        start_time: shift.start_time,
+
+                        // Montos básicos
+                        initial_amount: initialAmount,
+                        cash_sales: cashSales,
+                        card_sales: cardSales,
+                        credit_sales: creditSales,
+                        cash_payments: 0, // No usamos credit_payments en este sistema
+                        card_payments: 0,
+                        expenses: totalExpenses,
+                        deposits: totalDeposits,
+                        withdrawals: totalWithdrawals,
+                        expected_cash: expectedCash,
+
+                        // Contadores básicos
+                        expense_count: parseInt(expenses.expense_count || 0),
+                        deposit_count: parseInt(deposits.deposit_count || 0),
+                        withdrawal_count: parseInt(withdrawals.withdrawal_count || 0),
+
+                        // Valores por defecto para no-repartidores
+                        total_assigned_amount: 0,
+                        total_assigned_quantity: 0,
+                        total_returned_amount: 0,
+                        total_returned_quantity: 0,
+                        net_amount_to_deliver: 0,
+                        net_quantity_delivered: 0,
+                        actual_cash_delivered: 0,
+                        cash_difference: 0,
+                        assignment_count: 0,
+                        liquidated_assignment_count: 0,
+                        return_count: 0,
+                        last_updated_at: new Date().toISOString(),
+                    };
+
+                    // Si es repartidor, calcular asignaciones y devoluciones
+                    if (isRepartidor) {
+                        // 5. Calcular asignaciones del repartidor
+                        const assignmentsQuery = await pool.query(`
+                            SELECT
+                                COUNT(*) as total_assignments,
+                                COUNT(*) FILTER (WHERE status = 'liquidated') as liquidated_assignments,
+                                COALESCE(SUM(assigned_amount), 0) as total_assigned_amt,
+                                COALESCE(SUM(assigned_quantity), 0) as total_assigned_qty
+                            FROM repartidor_assignments
+                            WHERE repartidor_shift_id = $1
+                              AND status != 'cancelled'
+                        `, [shift.id]);
+
+                        // 6. Calcular devoluciones del repartidor
+                        const returnsQuery = await pool.query(`
+                            SELECT
+                                COUNT(*) as total_returns,
+                                COALESCE(SUM(rr.amount), 0) as total_returned_amt,
+                                COALESCE(SUM(rr.quantity), 0) as total_returned_qty
+                            FROM repartidor_returns rr
+                            INNER JOIN repartidor_assignments ra ON ra.id = rr.assignment_id
+                            WHERE ra.repartidor_shift_id = $1
+                        `, [shift.id]);
+
+                        const assignments = assignmentsQuery.rows[0];
+                        const returns = returnsQuery.rows[0];
+
+                        const totalAssignedAmount = parseFloat(assignments.total_assigned_amt || 0);
+                        const totalAssignedQty = parseFloat(assignments.total_assigned_qty || 0);
+                        const totalReturnedAmount = parseFloat(returns.total_returned_amt || 0);
+                        const totalReturnedQty = parseFloat(returns.total_returned_qty || 0);
+
+                        // Dinero neto que debe entregar = asignado - devuelto
+                        const netAmountToDeliver = totalAssignedAmount - totalReturnedAmount;
+                        const netQuantityDelivered = totalAssignedQty - totalReturnedQty;
+
+                        // Actualizar snapshot con datos de repartidor
+                        snapshotData.total_assigned_amount = totalAssignedAmount;
+                        snapshotData.total_assigned_quantity = totalAssignedQty;
+                        snapshotData.total_returned_amount = totalReturnedAmount;
+                        snapshotData.total_returned_quantity = totalReturnedQty;
+                        snapshotData.net_amount_to_deliver = netAmountToDeliver;
+                        snapshotData.net_quantity_delivered = netQuantityDelivered;
+                        snapshotData.assignment_count = parseInt(assignments.total_assignments || 0);
+                        snapshotData.liquidated_assignment_count = parseInt(assignments.liquidated_assignments || 0);
+                        snapshotData.return_count = parseInt(returns.total_returns || 0);
+
+                        // Ventas en efectivo para repartidores = asignaciones liquidadas - devoluciones
+                        // (sobreescribir el cálculo anterior)
+                        snapshotData.cash_sales = netAmountToDeliver;
+                        snapshotData.expected_cash = initialAmount + netAmountToDeliver + totalDeposits - totalExpenses - totalWithdrawals;
+
+                        // TODO: Obtener actual_cash_delivered si ya liquidó
+                        // Por ahora dejamos en 0, se actualizará cuando liquide
                     }
 
-                    if (snapshot.rows.length > 0) {
-                        const data = snapshot.rows[0];
-                        snapshots.push({
-                            // Info del turno
-                            shift_id: shift.id,
-                            employee_id: shift.employee_id,
-                            employee_name: shift.employee_name,
-                            employee_role: data.employee_role,
-                            branch_id: shift.branch_id,
-                            branch_name: shift.branch_name,
-                            start_time: shift.start_time,
+                    snapshots.push(snapshotData);
 
-                            // Snapshot data
-                            id: data.id,
-                            tenant_id: data.tenant_id,
-                            initial_amount: parseFloat(data.initial_amount),
-                            cash_sales: parseFloat(data.cash_sales),
-                            card_sales: parseFloat(data.card_sales),
-                            credit_sales: parseFloat(data.credit_sales),
-                            cash_payments: parseFloat(data.cash_payments),
-                            card_payments: parseFloat(data.card_payments),
-                            expenses: parseFloat(data.expenses),
-                            deposits: parseFloat(data.deposits),
-                            withdrawals: parseFloat(data.withdrawals),
-                            expected_cash: parseFloat(data.expected_cash),
-                            total_assigned_amount: parseFloat(data.total_assigned_amount),
-                            total_assigned_quantity: parseFloat(data.total_assigned_quantity),
-                            total_returned_amount: parseFloat(data.total_returned_amount),
-                            total_returned_quantity: parseFloat(data.total_returned_quantity),
-                            net_amount_to_deliver: parseFloat(data.net_amount_to_deliver),
-                            net_quantity_delivered: parseFloat(data.net_quantity_delivered),
-                            actual_cash_delivered: parseFloat(data.actual_cash_delivered),
-                            cash_difference: parseFloat(data.cash_difference),
-                            assignment_count: data.assignment_count,
-                            liquidated_assignment_count: data.liquidated_assignment_count,
-                            return_count: data.return_count,
-                            expense_count: data.expense_count,
-                            deposit_count: data.deposit_count,
-                            withdrawal_count: data.withdrawal_count,
-                            last_updated_at: data.last_updated_at,
-                            needs_recalculation: data.needs_recalculation,
-                            needs_update: data.needs_update,
-                        });
-                    }
                 } catch (shiftError) {
                     console.error(`[Shifts/CashSnapshots] ❌ Error procesando shift ${shift.id}:`, shiftError.message);
                     // Continuar con el siguiente turno
                 }
             }
 
-            console.log('[Shifts/CashSnapshots] ✅ Snapshots obtenidos:', snapshots.length);
+            console.log('[Shifts/CashSnapshots] ✅ Snapshots calculados:', snapshots.length);
 
             res.json({
                 success: true,
@@ -724,7 +806,7 @@ module.exports = (pool) => {
             console.error('[Shifts/CashSnapshots] ❌ Error:', error.message);
             res.status(500).json({
                 success: false,
-                message: 'Error al obtener snapshots de caja',
+                message: 'Error al calcular snapshots de caja',
                 error: error.message
             });
         }
