@@ -66,6 +66,64 @@ async function sendNotificationToBranch(branchId, { title, body, data = {} }) {
 }
 
 /**
+ * Envía notificación a un empleado específico
+ */
+async function sendNotificationToEmployee(employeeId, { title, body, data = {} }) {
+    try {
+        // Obtener todos los dispositivos activos del empleado
+        const result = await pool.query(
+            `SELECT DISTINCT device_token FROM device_tokens
+             WHERE employee_id = $1 AND is_active = true`,
+            [employeeId]
+        );
+
+        const deviceTokens = result.rows.map(row => row.device_token);
+
+        if (deviceTokens.length === 0) {
+            console.log(`[NotificationHelper] ℹ️ No hay dispositivos activos para employee ${employeeId}`);
+            return { sent: 0, failed: 0 };
+        }
+
+        const results = await sendNotificationToMultipleDevices(deviceTokens, {
+            title,
+            body,
+            data
+        });
+
+        const successCount = results.filter(r => r.success).length;
+        const invalidTokens = results
+            .filter(r => r.result === 'INVALID_TOKEN')
+            .map(r => r.deviceToken);
+
+        console.log(`[NotificationHelper] ✅ Notificaciones enviadas a employee ${employeeId}: ${successCount}/${deviceTokens.length}`);
+
+        // Desactivar tokens inválidos
+        if (invalidTokens.length > 0) {
+            try {
+                await pool.query(
+                    `UPDATE device_tokens SET is_active = false
+                     WHERE device_token = ANY($1)`,
+                    [invalidTokens]
+                );
+                console.log(`[NotificationHelper] 🧹 Deactivated ${invalidTokens.length} invalid tokens from employee ${employeeId}`);
+            } catch (updateError) {
+                console.error(`[NotificationHelper] ⚠️ Error updating invalid tokens:`, updateError.message);
+            }
+        }
+
+        return {
+            sent: successCount,
+            failed: deviceTokens.length - successCount,
+            total: deviceTokens.length,
+            invalidTokensRemoved: invalidTokens.length
+        };
+    } catch (error) {
+        console.error('[NotificationHelper] ❌ Error enviando notificaciones:', error.message);
+        return { sent: 0, failed: 0, error: error.message };
+    }
+}
+
+/**
  * Envía notificación cuando un usuario inicia sesión
  */
 async function notifyUserLogin(branchId, { employeeName, branchName, scaleStatus }) {
@@ -182,13 +240,32 @@ async function notifyScaleConnection(branchId, { message }) {
     });
 }
 
+/**
+ * Envía notificación cuando se crea una asignación para un repartidor
+ */
+async function notifyAssignmentCreated(employeeId, { assignmentId, quantity, amount, branchName }) {
+    return await sendNotificationToEmployee(employeeId, {
+        title: '📦 Nueva Asignación',
+        body: `Se te ha asignado ${quantity.toFixed(2)} kg - $${amount.toFixed(2)} en ${branchName}`,
+        data: {
+            type: 'assignment_created',
+            assignmentId: assignmentId.toString(),
+            quantity: quantity.toString(),
+            amount: amount.toString(),
+            branchName
+        }
+    });
+}
+
 module.exports = {
     sendNotificationToBranch,
+    sendNotificationToEmployee,
     notifyUserLogin,
     notifyScaleAlert,
     notifySaleCompleted,
     notifyShiftStarted,
     notifyShiftEnded,
     notifyScaleDisconnection,
-    notifyScaleConnection
+    notifyScaleConnection,
+    notifyAssignmentCreated
 };

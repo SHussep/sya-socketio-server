@@ -11,6 +11,7 @@
 
 const express = require('express');
 const { pool } = require('../database');
+const { notifyAssignmentCreated } = require('../utils/notificationHelper');
 
 function createRepartidorAssignmentRoutes(io) {
   const router = express.Router();
@@ -187,6 +188,26 @@ function createRepartidorAssignmentRoutes(io) {
         assignment,
         timestamp: new Date().toISOString()
       });
+
+      // 🆕 Enviar notificación push al repartidor
+      try {
+        // Obtener nombre de la sucursal
+        const branchResult = await pool.query(
+          'SELECT name FROM branches WHERE id = $1',
+          [branch_id]
+        );
+        const branchName = branchResult.rows[0]?.name || 'Sucursal';
+
+        await notifyAssignmentCreated(employee_id, {
+          assignmentId: assignment.id,
+          quantity: parseFloat(assigned_quantity),
+          amount: parseFloat(assigned_amount),
+          branchName
+        });
+      } catch (notifError) {
+        console.error('[RepartidorAssignments] ⚠️ Error enviando notificación push:', notifError.message);
+        // No fallar la operación si la notificación falla
+      }
 
       console.log(`[RepartidorAssignments] ✅ Assignment synced: ${assignment.assigned_quantity} kg, GlobalId: ${global_id}`);
 
