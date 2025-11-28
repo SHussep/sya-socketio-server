@@ -642,32 +642,32 @@ module.exports = (pool) => {
                     // 1. Calcular ventas por método de pago
                     const salesQuery = await pool.query(`
                         SELECT
-                            COALESCE(SUM(CASE WHEN payment_method = 'Efectivo' THEN total ELSE 0 END), 0) as cash_sales,
-                            COALESCE(SUM(CASE WHEN payment_method = 'Tarjeta' THEN total ELSE 0 END), 0) as card_sales,
-                            COALESCE(SUM(CASE WHEN payment_method = 'Crédito' THEN total ELSE 0 END), 0) as credit_sales
-                        FROM sales
-                        WHERE shift_id = $1
+                            COALESCE(SUM(CASE WHEN metodo_pago = 'Efectivo' THEN total ELSE 0 END), 0) as cash_sales,
+                            COALESCE(SUM(CASE WHEN metodo_pago = 'Tarjeta' THEN total ELSE 0 END), 0) as card_sales,
+                            COALESCE(SUM(CASE WHEN metodo_pago = 'Crédito' THEN total ELSE 0 END), 0) as credit_sales
+                        FROM ventas
+                        WHERE id_turno = $1
                     `, [shift.id]);
 
                     // 2. Calcular gastos
                     const expensesQuery = await pool.query(`
                         SELECT COALESCE(SUM(amount), 0) as total_expenses, COUNT(*) as expense_count
                         FROM expenses
-                        WHERE shift_id = $1
+                        WHERE id_turno = $1
                     `, [shift.id]);
 
                     // 3. Calcular depósitos
                     const depositsQuery = await pool.query(`
                         SELECT COALESCE(SUM(amount), 0) as total_deposits, COUNT(*) as deposit_count
                         FROM deposits
-                        WHERE shift_id = $1
+                        WHERE id_turno = $1
                     `, [shift.id]);
 
                     // 4. Calcular retiros
                     const withdrawalsQuery = await pool.query(`
                         SELECT COALESCE(SUM(amount), 0) as total_withdrawals, COUNT(*) as withdrawal_count
                         FROM withdrawals
-                        WHERE shift_id = $1
+                        WHERE id_turno = $1
                     `, [shift.id]);
 
                     const sales = salesQuery.rows[0];
