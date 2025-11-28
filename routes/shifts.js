@@ -599,7 +599,7 @@ module.exports = (pool) => {
             let query = `
                 SELECT
                     s.id, s.employee_id, s.branch_id, s.tenant_id,
-                    s.start_time, s.initial_cash, s.is_cash_cut_open,
+                    s.start_time, s.initial_amount, s.is_cash_cut_open,
                     e.name as employee_name,
                     r.name as employee_role,
                     b.name as branch_name
@@ -675,7 +675,7 @@ module.exports = (pool) => {
                     const deposits = depositsQuery.rows[0];
                     const withdrawals = withdrawalsQuery.rows[0];
 
-                    const initialAmount = parseFloat(shift.initial_cash || 0);
+                    const initialAmount = parseFloat(shift.initial_amount || 0);
                     const cashSales = parseFloat(sales.cash_sales || 0);
                     const cardSales = parseFloat(sales.card_sales || 0);
                     const creditSales = parseFloat(sales.credit_sales || 0);
