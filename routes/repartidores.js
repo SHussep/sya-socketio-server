@@ -419,5 +419,332 @@ module.exports = (pool) => {
         }
     });
 
+    // ============================================================================
+    // ENDPOINTS DE SNAPSHOT DE CORTE DE CAJA (CASH SNAPSHOT)
+    // ============================================================================
+
+    // GET /api/repartidores/shifts/:shiftId/cash-snapshot
+    // Obtiene el snapshot de corte de caja para un turno de repartidor
+    router.get('/shifts/:shiftId/cash-snapshot', authenticateToken, async (req, res) => {
+        try {
+            const { shiftId } = req.params;
+            const { recalculate = 'false' } = req.query;
+            const { tenantId, employeeId } = req.user;
+
+            console.log(`[Cash Snapshot] GET - Shift: ${shiftId}, Recalculate: ${recalculate}, Tenant: ${tenantId}`);
+
+            // Verificar que el turno pertenece al tenant del usuario
+            const shiftCheck = await pool.query(
+                `SELECT id, tenant_id, employee_id FROM repartidor_shifts WHERE id = $1`,
+                [shiftId]
+            );
+
+            if (shiftCheck.rows.length === 0) {
+                return res.status(404).json({ success: false, message: 'Turno no encontrado' });
+            }
+
+            if (shiftCheck.rows[0].tenant_id !== tenantId) {
+                return res.status(403).json({ success: false, message: 'No autorizado para este turno' });
+            }
+
+            // Verificar si existe el snapshot
+            let snapshot = await pool.query(
+                `SELECT * FROM repartidor_shift_cash_snapshot WHERE repartidor_shift_id = $1`,
+                [shiftId]
+            );
+
+            // Si no existe o necesita recalcular, llamar a la función
+            if (snapshot.rows.length === 0 || snapshot.rows[0].needs_recalculation || recalculate === 'true') {
+                console.log(`[Cash Snapshot] Recalculando snapshot para shift ${shiftId}...`);
+
+                try {
+                    await pool.query('SELECT recalculate_repartidor_cash_snapshot($1)', [shiftId]);
+                } catch (calcError) {
+                    console.error(`[Cash Snapshot] Error al recalcular:`, calcError);
+                    // Si la función falla, intentar crear un snapshot vacío
+                    await pool.query(`
+                        INSERT INTO repartidor_shift_cash_snapshot (
+                            tenant_id, branch_id, employee_id, repartidor_shift_id
+                        )
+                        SELECT tenant_id, branch_id, employee_id, id
+                        FROM repartidor_shifts
+                        WHERE id = $1
+                        ON CONFLICT (repartidor_shift_id) DO NOTHING
+                    `, [shiftId]);
+                }
+
+                // Volver a obtener el snapshot actualizado
+                snapshot = await pool.query(
+                    `SELECT * FROM repartidor_shift_cash_snapshot WHERE repartidor_shift_id = $1`,
+                    [shiftId]
+                );
+            }
+
+            if (snapshot.rows.length === 0) {
+                return res.status(404).json({ success: false, message: 'No se pudo crear el snapshot' });
+            }
+
+            const data = snapshot.rows[0];
+
+            res.json({
+                success: true,
+                data: {
+                    id: data.id,
+                    repartidor_shift_id: data.repartidor_shift_id,
+                    tenant_id: data.tenant_id,
+                    branch_id: data.branch_id,
+                    employee_id: data.employee_id,
+
+                    // Montos básicos
+                    initial_amount: parseFloat(data.initial_amount),
+                    cash_sales: parseFloat(data.cash_sales),
+                    card_sales: parseFloat(data.card_sales),
+                    credit_sales: parseFloat(data.credit_sales),
+                    cash_payments: parseFloat(data.cash_payments),
+                    card_payments: parseFloat(data.card_payments),
+                    expenses: parseFloat(data.expenses),
+                    deposits: parseFloat(data.deposits),
+                    withdrawals: parseFloat(data.withdrawals),
+                    expected_cash: parseFloat(data.expected_cash),
+
+                    // Asignaciones y devoluciones
+                    total_assigned_amount: parseFloat(data.total_assigned_amount),
+                    total_assigned_quantity: parseFloat(data.total_assigned_quantity),
+                    total_returned_amount: parseFloat(data.total_returned_amount),
+                    total_returned_quantity: parseFloat(data.total_returned_quantity),
+                    net_amount_to_deliver: parseFloat(data.net_amount_to_deliver),
+                    net_quantity_delivered: parseFloat(data.net_quantity_delivered),
+
+                    // Liquidación
+                    actual_cash_delivered: parseFloat(data.actual_cash_delivered),
+                    cash_difference: parseFloat(data.cash_difference),
+
+                    // Contadores
+                    assignment_count: data.assignment_count,
+                    liquidated_assignment_count: data.liquidated_assignment_count,
+                    return_count: data.return_count,
+                    expense_count: data.expense_count,
+                    deposit_count: data.deposit_count,
+                    withdrawal_count: data.withdrawal_count,
+
+                    // Metadata
+                    last_updated_at: data.last_updated_at,
+                    needs_recalculation: data.needs_recalculation,
+                    needs_update: data.needs_update,
+                    needs_deletion: data.needs_deletion,
+                    synced_at: data.synced_at,
+                    global_id: data.global_id
+                }
+            });
+
+        } catch (error) {
+            console.error('[Cash Snapshot] Error:', error);
+            res.status(500).json({ success: false, message: 'Error al obtener snapshot de caja', error: error.message });
+        }
+    });
+
+    // PUT /api/repartidores/shifts/:shiftId/cash-delivered
+    // Actualiza el dinero entregado por el repartidor (cuando liquida)
+    router.put('/shifts/:shiftId/cash-delivered', authenticateToken, async (req, res) => {
+        try {
+            const { shiftId } = req.params;
+            const { actual_cash_delivered } = req.body;
+            const { tenantId } = req.user;
+
+            console.log(`[Cash Delivered] PUT - Shift: ${shiftId}, Amount: ${actual_cash_delivered}, Tenant: ${tenantId}`);
+
+            if (actual_cash_delivered === undefined || actual_cash_delivered === null) {
+                return res.status(400).json({ success: false, message: 'Debe proporcionar actual_cash_delivered' });
+            }
+
+            // Verificar que el turno pertenece al tenant
+            const shiftCheck = await pool.query(
+                `SELECT id, tenant_id FROM repartidor_shifts WHERE id = $1`,
+                [shiftId]
+            );
+
+            if (shiftCheck.rows.length === 0) {
+                return res.status(404).json({ success: false, message: 'Turno no encontrado' });
+            }
+
+            if (shiftCheck.rows[0].tenant_id !== tenantId) {
+                return res.status(403).json({ success: false, message: 'No autorizado para este turno' });
+            }
+
+            // Llamar a la función para actualizar el dinero entregado
+            const result = await pool.query(
+                'SELECT * FROM update_repartidor_cash_delivered($1, $2)',
+                [shiftId, actual_cash_delivered]
+            );
+
+            if (result.rows.length === 0) {
+                return res.status(404).json({ success: false, message: 'No se encontró el snapshot para este turno' });
+            }
+
+            const data = result.rows[0];
+
+            res.json({
+                success: true,
+                message: 'Dinero entregado actualizado correctamente',
+                data: {
+                    snapshot_id: data.snapshot_id,
+                    net_amount_to_deliver: parseFloat(data.net_amount_to_deliver),
+                    actual_cash_delivered: parseFloat(data.actual_cash_delivered),
+                    cash_difference: parseFloat(data.cash_difference)
+                }
+            });
+
+        } catch (error) {
+            console.error('[Cash Delivered] Error:', error);
+            res.status(500).json({ success: false, message: 'Error al actualizar dinero entregado', error: error.message });
+        }
+    });
+
+    // POST /api/repartidores/shifts/:shiftId/recalculate-cash
+    // Fuerza el recálculo del snapshot de caja
+    router.post('/shifts/:shiftId/recalculate-cash', authenticateToken, async (req, res) => {
+        try {
+            const { shiftId } = req.params;
+            const { tenantId } = req.user;
+
+            console.log(`[Recalculate Cash] POST - Shift: ${shiftId}, Tenant: ${tenantId}`);
+
+            // Verificar que el turno pertenece al tenant
+            const shiftCheck = await pool.query(
+                `SELECT id, tenant_id FROM repartidor_shifts WHERE id = $1`,
+                [shiftId]
+            );
+
+            if (shiftCheck.rows.length === 0) {
+                return res.status(404).json({ success: false, message: 'Turno no encontrado' });
+            }
+
+            if (shiftCheck.rows[0].tenant_id !== tenantId) {
+                return res.status(403).json({ success: false, message: 'No autorizado para este turno' });
+            }
+
+            // Forzar recálculo
+            const result = await pool.query(
+                'SELECT * FROM recalculate_repartidor_cash_snapshot($1)',
+                [shiftId]
+            );
+
+            if (result.rows.length === 0) {
+                return res.status(500).json({ success: false, message: 'Error al recalcular snapshot' });
+            }
+
+            const data = result.rows[0];
+
+            res.json({
+                success: true,
+                message: 'Snapshot recalculado exitosamente',
+                data: {
+                    snapshot_id: data.snapshot_id,
+                    expected_cash: parseFloat(data.expected_cash),
+                    cash_sales: parseFloat(data.cash_sales),
+                    total_assigned_amount: parseFloat(data.total_assigned_amount),
+                    total_returned_amount: parseFloat(data.total_returned_amount),
+                    net_amount_to_deliver: parseFloat(data.net_amount_to_deliver),
+                    cash_difference: parseFloat(data.cash_difference),
+                    needs_update: data.needs_update
+                }
+            });
+
+        } catch (error) {
+            console.error('[Recalculate Cash] Error:', error);
+            res.status(500).json({ success: false, message: 'Error al recalcular snapshot', error: error.message });
+        }
+    });
+
+    // GET /api/repartidores/cash-snapshots/pending-sync
+    // Obtiene todos los snapshots que necesitan sincronización (para Desktop)
+    router.get('/cash-snapshots/pending-sync', authenticateToken, async (req, res) => {
+        try {
+            const { tenantId, branchId } = req.user;
+            const { all_branches = 'false' } = req.query;
+
+            console.log(`[Pending Sync] GET - Tenant: ${tenantId}, Branch: ${branchId}, All Branches: ${all_branches}`);
+
+            let query = `
+                SELECT * FROM repartidor_shift_cash_snapshot
+                WHERE tenant_id = $1
+                  AND (needs_update = true OR needs_deletion = true)
+            `;
+
+            const params = [tenantId];
+
+            if (all_branches !== 'true') {
+                query += ` AND branch_id = $2`;
+                params.push(branchId);
+            }
+
+            query += ` ORDER BY last_updated_at DESC`;
+
+            const result = await pool.query(query, params);
+
+            res.json({
+                success: true,
+                count: result.rows.length,
+                data: result.rows.map(row => ({
+                    id: row.id,
+                    repartidor_shift_id: row.repartidor_shift_id,
+                    tenant_id: row.tenant_id,
+                    branch_id: row.branch_id,
+                    employee_id: row.employee_id,
+                    expected_cash: parseFloat(row.expected_cash),
+                    cash_sales: parseFloat(row.cash_sales),
+                    total_assigned_amount: parseFloat(row.total_assigned_amount),
+                    total_returned_amount: parseFloat(row.total_returned_amount),
+                    net_amount_to_deliver: parseFloat(row.net_amount_to_deliver),
+                    actual_cash_delivered: parseFloat(row.actual_cash_delivered),
+                    cash_difference: parseFloat(row.cash_difference),
+                    needs_update: row.needs_update,
+                    needs_deletion: row.needs_deletion,
+                    last_updated_at: row.last_updated_at,
+                    global_id: row.global_id
+                }))
+            });
+
+        } catch (error) {
+            console.error('[Pending Sync] Error:', error);
+            res.status(500).json({ success: false, message: 'Error al obtener snapshots pendientes', error: error.message });
+        }
+    });
+
+    // PUT /api/repartidores/cash-snapshots/:snapshotId/mark-synced
+    // Marca un snapshot como sincronizado (llamado por Desktop después de sincronizar)
+    router.put('/cash-snapshots/:snapshotId/mark-synced', authenticateToken, async (req, res) => {
+        try {
+            const { snapshotId } = req.params;
+            const { tenantId } = req.user;
+
+            console.log(`[Mark Synced] PUT - Snapshot: ${snapshotId}, Tenant: ${tenantId}`);
+
+            // Actualizar el snapshot
+            const result = await pool.query(`
+                UPDATE repartidor_shift_cash_snapshot
+                SET
+                    needs_update = false,
+                    synced_at = NOW()
+                WHERE id = $1 AND tenant_id = $2
+                RETURNING id, needs_update, synced_at
+            `, [snapshotId, tenantId]);
+
+            if (result.rows.length === 0) {
+                return res.status(404).json({ success: false, message: 'Snapshot no encontrado' });
+            }
+
+            res.json({
+                success: true,
+                message: 'Snapshot marcado como sincronizado',
+                data: result.rows[0]
+            });
+
+        } catch (error) {
+            console.error('[Mark Synced] Error:', error);
+            res.status(500).json({ success: false, message: 'Error al marcar snapshot como sincronizado', error: error.message });
+        }
+    });
+
     return router;
 };
