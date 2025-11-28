@@ -508,5 +508,82 @@ module.exports = (pool) => {
         }
     });
 
+    // ============================================================================
+    // PUT /api/shifts/:id/close - Cerrar turno (llamado por Desktop)
+    // ============================================================================
+    router.put('/:id/close', authenticateToken, async (req, res) => {
+        try {
+            const { id } = req.params;
+            const { tenantId } = req.user;
+            const { end_time, closed_at } = req.body;
+
+            console.log(`[Shifts/Close] PUT /api/shifts/${id}/close - Tenant: ${tenantId}`);
+
+            // Usar end_time o closed_at (Desktop puede enviar cualquiera)
+            const closeTime = end_time || closed_at;
+
+            if (!closeTime) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Se requiere end_time o closed_at'
+                });
+            }
+
+            // Verificar que el turno pertenece al tenant
+            const shiftCheck = await pool.query(
+                `SELECT id, tenant_id, employee_id, branch_id FROM shifts WHERE id = $1`,
+                [id]
+            );
+
+            if (shiftCheck.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Turno no encontrado'
+                });
+            }
+
+            if (shiftCheck.rows[0].tenant_id !== tenantId) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'No autorizado para cerrar este turno'
+                });
+            }
+
+            // Actualizar el turno
+            const result = await pool.query(`
+                UPDATE shifts
+                SET
+                    closed_at = $1,
+                    is_cash_cut_open = false,
+                    updated_at = NOW()
+                WHERE id = $2 AND tenant_id = $3
+                RETURNING id, employee_id, branch_id, closed_at, is_cash_cut_open
+            `, [closeTime, id, tenantId]);
+
+            if (result.rows.length === 0) {
+                return res.status(500).json({
+                    success: false,
+                    message: 'Error al actualizar turno'
+                });
+            }
+
+            console.log(`[Shifts/Close] ✅ Turno ${id} cerrado exitosamente`);
+
+            res.json({
+                success: true,
+                message: 'Turno cerrado exitosamente',
+                data: result.rows[0]
+            });
+
+        } catch (error) {
+            console.error('[Shifts/Close] ❌ Error:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Error al cerrar turno',
+                error: error.message
+            });
+        }
+    });
+
     return router;
 };

@@ -674,13 +674,14 @@ CREATE INDEX IF NOT EXISTS idx_repartidor_returns_return_date ON repartidor_retu
 CREATE INDEX IF NOT EXISTS idx_repartidor_returns_source ON repartidor_returns(source);
 CREATE UNIQUE INDEX IF NOT EXISTS unique_repartidor_returns_global_terminal ON repartidor_returns(global_id, terminal_id);
 
--- repartidor_shift_cash_snapshot (snapshot de corte de caja por turno de repartidor)
-CREATE TABLE IF NOT EXISTS repartidor_shift_cash_snapshot (
+-- shift_cash_snapshot (snapshot de corte de caja para todos los roles)
+CREATE TABLE IF NOT EXISTS shift_cash_snapshot (
     id SERIAL PRIMARY KEY,
     tenant_id INTEGER NOT NULL,
     branch_id INTEGER NOT NULL,
     employee_id INTEGER NOT NULL,
-    repartidor_shift_id INTEGER NOT NULL UNIQUE,
+    shift_id INTEGER NOT NULL UNIQUE,
+    employee_role VARCHAR(50) NOT NULL,
 
     -- Montos básicos del corte de caja
     initial_amount DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
@@ -693,7 +694,7 @@ CREATE TABLE IF NOT EXISTS repartidor_shift_cash_snapshot (
     deposits DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
     withdrawals DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
 
-    -- Asignaciones y devoluciones
+    -- Asignaciones y devoluciones (solo para repartidores)
     total_assigned_amount DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
     total_assigned_quantity DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
     total_returned_amount DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
@@ -728,14 +729,15 @@ CREATE TABLE IF NOT EXISTS repartidor_shift_cash_snapshot (
     updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_cash_snapshot_shift ON repartidor_shift_cash_snapshot(repartidor_shift_id);
-CREATE INDEX IF NOT EXISTS idx_cash_snapshot_employee ON repartidor_shift_cash_snapshot(employee_id);
-CREATE INDEX IF NOT EXISTS idx_cash_snapshot_branch ON repartidor_shift_cash_snapshot(branch_id, tenant_id);
-CREATE INDEX IF NOT EXISTS idx_cash_snapshot_needs_recalc ON repartidor_shift_cash_snapshot(needs_recalculation) WHERE needs_recalculation = TRUE;
-CREATE INDEX IF NOT EXISTS idx_cash_snapshot_needs_update ON repartidor_shift_cash_snapshot(needs_update) WHERE needs_update = TRUE;
-CREATE INDEX IF NOT EXISTS idx_cash_snapshot_needs_deletion ON repartidor_shift_cash_snapshot(needs_deletion) WHERE needs_deletion = TRUE;
-CREATE INDEX IF NOT EXISTS idx_cash_snapshot_global_id ON repartidor_shift_cash_snapshot(global_id) WHERE global_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_cash_snapshot_updated_at ON repartidor_shift_cash_snapshot(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_shift_cash_snapshot_shift ON shift_cash_snapshot(shift_id);
+CREATE INDEX IF NOT EXISTS idx_shift_cash_snapshot_employee ON shift_cash_snapshot(employee_id);
+CREATE INDEX IF NOT EXISTS idx_shift_cash_snapshot_branch ON shift_cash_snapshot(branch_id, tenant_id);
+CREATE INDEX IF NOT EXISTS idx_shift_cash_snapshot_role ON shift_cash_snapshot(employee_role);
+CREATE INDEX IF NOT EXISTS idx_shift_cash_snapshot_needs_recalc ON shift_cash_snapshot(needs_recalculation) WHERE needs_recalculation = TRUE;
+CREATE INDEX IF NOT EXISTS idx_shift_cash_snapshot_needs_update ON shift_cash_snapshot(needs_update) WHERE needs_update = TRUE;
+CREATE INDEX IF NOT EXISTS idx_shift_cash_snapshot_needs_deletion ON shift_cash_snapshot(needs_deletion) WHERE needs_deletion = TRUE;
+CREATE INDEX IF NOT EXISTS idx_shift_cash_snapshot_global_id ON shift_cash_snapshot(global_id) WHERE global_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_shift_cash_snapshot_updated_at ON shift_cash_snapshot(updated_at DESC);
 
 -- ========== CREDIT PAYMENTS ==========
 

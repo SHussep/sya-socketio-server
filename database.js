@@ -342,14 +342,15 @@ async function initializeDatabase() {
         `);
         */
 
-        // Tabla: repartidor_shift_cash_snapshot (snapshot de corte de caja para repartidores)
+        // Tabla: shift_cash_snapshot (snapshot de corte de caja para todos los roles)
         await client.query(`
-            CREATE TABLE IF NOT EXISTS repartidor_shift_cash_snapshot (
+            CREATE TABLE IF NOT EXISTS shift_cash_snapshot (
                 id SERIAL PRIMARY KEY,
                 tenant_id INTEGER NOT NULL,
                 branch_id INTEGER NOT NULL,
                 employee_id INTEGER NOT NULL,
-                repartidor_shift_id INTEGER NOT NULL,
+                shift_id INTEGER NOT NULL,
+                employee_role VARCHAR(50) NOT NULL,
 
                 -- Montos básicos del corte de caja
                 initial_amount DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
@@ -362,7 +363,7 @@ async function initializeDatabase() {
                 deposits DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
                 withdrawals DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
 
-                -- Asignaciones y devoluciones
+                -- Asignaciones y devoluciones (solo para repartidores)
                 total_assigned_amount DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
                 total_assigned_quantity DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
                 total_returned_amount DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
@@ -396,7 +397,7 @@ async function initializeDatabase() {
                 created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
                 updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
 
-                UNIQUE(repartidor_shift_id)
+                UNIQUE(shift_id)
             )
         `);
 
@@ -407,15 +408,16 @@ async function initializeDatabase() {
         await client.query('CREATE INDEX IF NOT EXISTS idx_sessions_tenant_id ON sessions(tenant_id)');
         await client.query('CREATE INDEX IF NOT EXISTS idx_branches_tenant_id ON branches(tenant_id)');
 
-        // Índices para repartidor_shift_cash_snapshot
-        await client.query('CREATE INDEX IF NOT EXISTS idx_cash_snapshot_shift ON repartidor_shift_cash_snapshot(repartidor_shift_id)');
-        await client.query('CREATE INDEX IF NOT EXISTS idx_cash_snapshot_employee ON repartidor_shift_cash_snapshot(employee_id)');
-        await client.query('CREATE INDEX IF NOT EXISTS idx_cash_snapshot_branch ON repartidor_shift_cash_snapshot(branch_id, tenant_id)');
-        await client.query('CREATE INDEX IF NOT EXISTS idx_cash_snapshot_needs_recalc ON repartidor_shift_cash_snapshot(needs_recalculation) WHERE needs_recalculation = TRUE');
-        await client.query('CREATE INDEX IF NOT EXISTS idx_cash_snapshot_needs_update ON repartidor_shift_cash_snapshot(needs_update) WHERE needs_update = TRUE');
-        await client.query('CREATE INDEX IF NOT EXISTS idx_cash_snapshot_needs_deletion ON repartidor_shift_cash_snapshot(needs_deletion) WHERE needs_deletion = TRUE');
-        await client.query('CREATE INDEX IF NOT EXISTS idx_cash_snapshot_global_id ON repartidor_shift_cash_snapshot(global_id) WHERE global_id IS NOT NULL');
-        await client.query('CREATE INDEX IF NOT EXISTS idx_cash_snapshot_updated_at ON repartidor_shift_cash_snapshot(updated_at DESC)');
+        // Índices para shift_cash_snapshot
+        await client.query('CREATE INDEX IF NOT EXISTS idx_shift_cash_snapshot_shift ON shift_cash_snapshot(shift_id)');
+        await client.query('CREATE INDEX IF NOT EXISTS idx_shift_cash_snapshot_employee ON shift_cash_snapshot(employee_id)');
+        await client.query('CREATE INDEX IF NOT EXISTS idx_shift_cash_snapshot_branch ON shift_cash_snapshot(branch_id, tenant_id)');
+        await client.query('CREATE INDEX IF NOT EXISTS idx_shift_cash_snapshot_role ON shift_cash_snapshot(employee_role)');
+        await client.query('CREATE INDEX IF NOT EXISTS idx_shift_cash_snapshot_needs_recalc ON shift_cash_snapshot(needs_recalculation) WHERE needs_recalculation = TRUE');
+        await client.query('CREATE INDEX IF NOT EXISTS idx_shift_cash_snapshot_needs_update ON shift_cash_snapshot(needs_update) WHERE needs_update = TRUE');
+        await client.query('CREATE INDEX IF NOT EXISTS idx_shift_cash_snapshot_needs_deletion ON shift_cash_snapshot(needs_deletion) WHERE needs_deletion = TRUE');
+        await client.query('CREATE INDEX IF NOT EXISTS idx_shift_cash_snapshot_global_id ON shift_cash_snapshot(global_id) WHERE global_id IS NOT NULL');
+        await client.query('CREATE INDEX IF NOT EXISTS idx_shift_cash_snapshot_updated_at ON shift_cash_snapshot(updated_at DESC)');
 
         // ⚠️ ÍNDICES OBSOLETOS: sales → ahora se usan índices en 'ventas' (migration 046)
         // await client.query('CREATE INDEX IF NOT EXISTS idx_sales_tenant_id ON sales(tenant_id)');

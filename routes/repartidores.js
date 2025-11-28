@@ -449,7 +449,7 @@ module.exports = (pool) => {
 
             // Verificar si existe el snapshot
             let snapshot = await pool.query(
-                `SELECT * FROM repartidor_shift_cash_snapshot WHERE repartidor_shift_id = $1`,
+                `SELECT * FROM shift_cash_snapshot WHERE shift_id = $1`,
                 [shiftId]
             );
 
@@ -458,24 +458,26 @@ module.exports = (pool) => {
                 console.log(`[Cash Snapshot] Recalculando snapshot para shift ${shiftId}...`);
 
                 try {
-                    await pool.query('SELECT recalculate_repartidor_cash_snapshot($1)', [shiftId]);
+                    await pool.query('SELECT recalculate_shift_cash_snapshot($1)', [shiftId]);
                 } catch (calcError) {
                     console.error(`[Cash Snapshot] Error al recalcular:`, calcError);
                     // Si la función falla, intentar crear un snapshot vacío
                     await pool.query(`
-                        INSERT INTO repartidor_shift_cash_snapshot (
-                            tenant_id, branch_id, employee_id, repartidor_shift_id
+                        INSERT INTO shift_cash_snapshot (
+                            tenant_id, branch_id, employee_id, shift_id, employee_role
                         )
-                        SELECT tenant_id, branch_id, employee_id, id
-                        FROM repartidor_shifts
-                        WHERE id = $1
-                        ON CONFLICT (repartidor_shift_id) DO NOTHING
+                        SELECT s.tenant_id, s.branch_id, s.employee_id, s.id, r.name
+                        FROM shifts s
+                        INNER JOIN employees e ON s.employee_id = e.id
+                        INNER JOIN roles r ON e.role_id = r.id
+                        WHERE s.id = $1
+                        ON CONFLICT (shift_id) DO NOTHING
                     `, [shiftId]);
                 }
 
                 // Volver a obtener el snapshot actualizado
                 snapshot = await pool.query(
-                    `SELECT * FROM repartidor_shift_cash_snapshot WHERE repartidor_shift_id = $1`,
+                    `SELECT * FROM shift_cash_snapshot WHERE shift_id = $1`,
                     [shiftId]
                 );
             }
@@ -490,7 +492,7 @@ module.exports = (pool) => {
                 success: true,
                 data: {
                     id: data.id,
-                    repartidor_shift_id: data.repartidor_shift_id,
+                    shift_id: data.shift_id,
                     tenant_id: data.tenant_id,
                     branch_id: data.branch_id,
                     employee_id: data.employee_id,
@@ -573,7 +575,7 @@ module.exports = (pool) => {
 
             // Llamar a la función para actualizar el dinero entregado
             const result = await pool.query(
-                'SELECT * FROM update_repartidor_cash_delivered($1, $2)',
+                'SELECT * FROM update_shift_cash_delivered($1, $2)',
                 [shiftId, actual_cash_delivered]
             );
 
@@ -625,7 +627,7 @@ module.exports = (pool) => {
 
             // Forzar recálculo
             const result = await pool.query(
-                'SELECT * FROM recalculate_repartidor_cash_snapshot($1)',
+                'SELECT * FROM recalculate_shift_cash_snapshot($1)',
                 [shiftId]
             );
 
@@ -666,7 +668,7 @@ module.exports = (pool) => {
             console.log(`[Pending Sync] GET - Tenant: ${tenantId}, Branch: ${branchId}, All Branches: ${all_branches}`);
 
             let query = `
-                SELECT * FROM repartidor_shift_cash_snapshot
+                SELECT * FROM shift_cash_snapshot
                 WHERE tenant_id = $1
                   AND (needs_update = true OR needs_deletion = true)
             `;
@@ -687,7 +689,7 @@ module.exports = (pool) => {
                 count: result.rows.length,
                 data: result.rows.map(row => ({
                     id: row.id,
-                    repartidor_shift_id: row.repartidor_shift_id,
+                    shift_id: row.shift_id,
                     tenant_id: row.tenant_id,
                     branch_id: row.branch_id,
                     employee_id: row.employee_id,
@@ -722,7 +724,7 @@ module.exports = (pool) => {
 
             // Actualizar el snapshot
             const result = await pool.query(`
-                UPDATE repartidor_shift_cash_snapshot
+                UPDATE shift_cash_snapshot
                 SET
                     needs_update = false,
                     synced_at = NOW()
