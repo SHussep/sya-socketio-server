@@ -640,11 +640,12 @@ module.exports = (pool) => {
                     const isRepartidor = shift.employee_role.toLowerCase() === 'repartidor';
 
                     // 1. Calcular ventas por método de pago
+                    // tipo_pago_id: 1=Efectivo, 2=Tarjeta, 3=Crédito
                     const salesQuery = await pool.query(`
                         SELECT
-                            COALESCE(SUM(CASE WHEN metodo_pago = 'Efectivo' THEN total ELSE 0 END), 0) as cash_sales,
-                            COALESCE(SUM(CASE WHEN metodo_pago = 'Tarjeta' THEN total ELSE 0 END), 0) as card_sales,
-                            COALESCE(SUM(CASE WHEN metodo_pago = 'Crédito' THEN total ELSE 0 END), 0) as credit_sales
+                            COALESCE(SUM(CASE WHEN tipo_pago_id = 1 THEN total ELSE 0 END), 0) as cash_sales,
+                            COALESCE(SUM(CASE WHEN tipo_pago_id = 2 THEN total ELSE 0 END), 0) as card_sales,
+                            COALESCE(SUM(CASE WHEN tipo_pago_id = 3 THEN total ELSE 0 END), 0) as credit_sales
                         FROM ventas
                         WHERE id_turno = $1
                     `, [shift.id]);
