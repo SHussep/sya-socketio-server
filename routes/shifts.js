@@ -600,7 +600,7 @@ module.exports = (pool) => {
                 SELECT
                     s.id, s.employee_id, s.branch_id, s.tenant_id,
                     s.start_time, s.initial_amount, s.is_cash_cut_open,
-                    e.name as employee_name,
+                    CONCAT(e.first_name, ' ', e.last_name) as employee_name,
                     r.name as employee_role,
                     b.name as branch_name
                 FROM shifts s
