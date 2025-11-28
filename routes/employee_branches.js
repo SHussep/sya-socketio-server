@@ -72,11 +72,10 @@ module.exports = (pool) => {
 
                 const updateResult = await client.query(
                     `UPDATE employee_branches
-                     SET is_active = $1,
-                         removed_at = CASE WHEN $1 = false THEN NOW() ELSE NULL END,
+                     SET removed_at = CASE WHEN $1 = false THEN NOW() ELSE NULL END,
                          updated_at = NOW()
                      WHERE id = $2
-                     RETURNING id, tenant_id, employee_id, branch_id, is_active, assigned_at, updated_at`,
+                     RETURNING id, tenant_id, employee_id, branch_id, assigned_at, removed_at, updated_at`,
                     [isActive, existingId]
                 );
 
@@ -98,9 +97,9 @@ module.exports = (pool) => {
 
             const insertResult = await client.query(
                 `INSERT INTO employee_branches
-                 (tenant_id, employee_id, branch_id, is_active, assigned_at, updated_at)
-                 VALUES ($1, $2, $3, $4, NOW(), NOW())
-                 RETURNING id, tenant_id, employee_id, branch_id, is_active, assigned_at, updated_at`,
+                 (tenant_id, employee_id, branch_id, assigned_at, removed_at, updated_at)
+                 VALUES ($1, $2, $3, NOW(), CASE WHEN $4 = false THEN NOW() ELSE NULL END, NOW())
+                 RETURNING id, tenant_id, employee_id, branch_id, assigned_at, removed_at, updated_at`,
                 [tenantId, employeeId, branchId, isActive]
             );
 
@@ -150,8 +149,9 @@ module.exports = (pool) => {
 
             let query = `
                 SELECT eb.id, eb.tenant_id, eb.employee_id, eb.branch_id,
-                       eb.is_active, eb.assigned_at, eb.updated_at,
-                       b.name as branch_name, b.code as branch_code
+                       eb.assigned_at, eb.removed_at, eb.updated_at,
+                       (eb.removed_at IS NULL) as is_active,
+                       b.name as branch_name, b.branch_code as branch_code
                 FROM employee_branches eb
                 JOIN branches b ON b.id = eb.branch_id
                 WHERE eb.tenant_id = $1
@@ -217,8 +217,7 @@ module.exports = (pool) => {
             // Soft delete - mark as inactive
             const deleteResult = await client.query(
                 `UPDATE employee_branches
-                 SET is_active = false,
-                     removed_at = NOW(),
+                 SET removed_at = NOW(),
                      updated_at = NOW()
                  WHERE id = $1 AND tenant_id = $2
                  RETURNING id, employee_id, branch_id`,

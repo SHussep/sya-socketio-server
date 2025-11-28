@@ -209,6 +209,7 @@ module.exports = (pool) => {
             let query = `
                 SELECT s.id, s.tenant_id, s.branch_id, s.employee_id, s.start_time, s.end_time,
                        s.initial_amount, s.final_amount, s.transaction_counter, s.is_cash_cut_open,
+                       s.created_at, s.updated_at,
                        COALESCE(NULLIF(CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, '')), ' '), e.username, 'Sin nombre') as employee_name,
                        COALESCE(r.name, 'Sin rol') as employee_role,
                        COALESCE(b.name, 'Sin sucursal') as branch_name
@@ -241,16 +242,69 @@ module.exports = (pool) => {
 
             const result = await pool.query(query, params);
 
-            // Format timestamps as ISO strings in UTC
-            const formattedRows = result.rows.map(row => ({
-                ...row,
-                start_time: row.start_time ? new Date(row.start_time).toISOString() : null,
-                end_time: row.end_time ? new Date(row.end_time).toISOString() : null
-            }));
+            // Para cada turno, calcular totales de ventas, gastos, pagos, etc.
+            const enrichedShifts = [];
+            for (const shift of result.rows) {
+                // 1. Calcular ventas por método de pago (tipo_pago_id: 1=Efectivo, 2=Tarjeta, 3=Crédito)
+                const salesResult = await pool.query(`
+                    SELECT
+                        COALESCE(SUM(CASE WHEN tipo_pago_id = 1 THEN total ELSE 0 END), 0) as total_cash_sales,
+                        COALESCE(SUM(CASE WHEN tipo_pago_id = 2 THEN total ELSE 0 END), 0) as total_card_sales,
+                        COALESCE(SUM(CASE WHEN tipo_pago_id = 3 THEN total ELSE 0 END), 0) as total_credit_sales
+                    FROM ventas
+                    WHERE id_turno = $1
+                `, [shift.id]);
+
+                // 2. Calcular gastos
+                const expensesResult = await pool.query(`
+                    SELECT COALESCE(SUM(amount), 0) as total_expenses
+                    FROM expenses
+                    WHERE id_turno = $1
+                `, [shift.id]);
+
+                // 3. Calcular depósitos
+                const depositsResult = await pool.query(`
+                    SELECT COALESCE(SUM(amount), 0) as total_deposits
+                    FROM deposits
+                    WHERE shift_id = $1
+                `, [shift.id]);
+
+                // 4. Calcular retiros
+                const withdrawalsResult = await pool.query(`
+                    SELECT COALESCE(SUM(amount), 0) as total_withdrawals
+                    FROM withdrawals
+                    WHERE shift_id = $1
+                `, [shift.id]);
+
+                // 5. Calcular pagos de clientes
+                const paymentsResult = await pool.query(`
+                    SELECT
+                        COALESCE(SUM(CASE WHEN payment_method = 'cash' THEN amount ELSE 0 END), 0) as total_cash_payments,
+                        COALESCE(SUM(CASE WHEN payment_method = 'card' THEN amount ELSE 0 END), 0) as total_card_payments
+                    FROM credit_payments
+                    WHERE shift_id = $1
+                `, [shift.id]);
+
+                enrichedShifts.push({
+                    ...shift,
+                    start_time: shift.start_time ? new Date(shift.start_time).toISOString() : null,
+                    end_time: shift.end_time ? new Date(shift.end_time).toISOString() : null,
+                    created_at: shift.created_at ? new Date(shift.created_at).toISOString() : null,
+                    updated_at: shift.updated_at ? new Date(shift.updated_at).toISOString() : null,
+                    total_cash_sales: parseFloat(salesResult.rows[0]?.total_cash_sales || 0),
+                    total_card_sales: parseFloat(salesResult.rows[0]?.total_card_sales || 0),
+                    total_credit_sales: parseFloat(salesResult.rows[0]?.total_credit_sales || 0),
+                    total_expenses: parseFloat(expensesResult.rows[0]?.total_expenses || 0),
+                    total_deposits: parseFloat(depositsResult.rows[0]?.total_deposits || 0),
+                    total_withdrawals: parseFloat(withdrawalsResult.rows[0]?.total_withdrawals || 0),
+                    total_cash_payments: parseFloat(paymentsResult.rows[0]?.total_cash_payments || 0),
+                    total_card_payments: parseFloat(paymentsResult.rows[0]?.total_card_payments || 0),
+                });
+            }
 
             res.json({
                 success: true,
-                data: formattedRows
+                data: enrichedShifts
             });
 
         } catch (error) {
@@ -671,10 +725,21 @@ module.exports = (pool) => {
                         WHERE shift_id = $1
                     `, [shift.id]);
 
+                    // 5. Calcular pagos de clientes (credit_payments)
+                    const paymentsQuery = await pool.query(`
+                        SELECT
+                            COALESCE(SUM(CASE WHEN payment_method = 'cash' THEN amount ELSE 0 END), 0) as cash_payments,
+                            COALESCE(SUM(CASE WHEN payment_method = 'card' THEN amount ELSE 0 END), 0) as card_payments,
+                            COUNT(*) as payment_count
+                        FROM credit_payments
+                        WHERE shift_id = $1
+                    `, [shift.id]);
+
                     const sales = salesQuery.rows[0];
                     const expenses = expensesQuery.rows[0];
                     const deposits = depositsQuery.rows[0];
                     const withdrawals = withdrawalsQuery.rows[0];
+                    const payments = paymentsQuery.rows[0];
 
                     const initialAmount = parseFloat(shift.initial_amount || 0);
                     const cashSales = parseFloat(sales.cash_sales || 0);
@@ -683,9 +748,11 @@ module.exports = (pool) => {
                     const totalExpenses = parseFloat(expenses.total_expenses || 0);
                     const totalDeposits = parseFloat(deposits.total_deposits || 0);
                     const totalWithdrawals = parseFloat(withdrawals.total_withdrawals || 0);
+                    const cashPayments = parseFloat(payments.cash_payments || 0);
+                    const cardPayments = parseFloat(payments.card_payments || 0);
 
-                    // Efectivo esperado = inicial + ventas efectivo + depósitos - gastos - retiros
-                    const expectedCash = initialAmount + cashSales + totalDeposits - totalExpenses - totalWithdrawals;
+                    // Efectivo esperado = inicial + ventas efectivo + pagos efectivo + depósitos - gastos - retiros
+                    const expectedCash = initialAmount + cashSales + cashPayments + totalDeposits - totalExpenses - totalWithdrawals;
 
                     let snapshotData = {
                         // Info del turno
@@ -703,8 +770,8 @@ module.exports = (pool) => {
                         cash_sales: cashSales,
                         card_sales: cardSales,
                         credit_sales: creditSales,
-                        cash_payments: 0, // No usamos credit_payments en este sistema
-                        card_payments: 0,
+                        cash_payments: cashPayments,
+                        card_payments: cardPayments,
                         expenses: totalExpenses,
                         deposits: totalDeposits,
                         withdrawals: totalWithdrawals,
@@ -781,7 +848,7 @@ module.exports = (pool) => {
                         // Ventas en efectivo para repartidores = asignaciones liquidadas - devoluciones
                         // (sobreescribir el cálculo anterior)
                         snapshotData.cash_sales = netAmountToDeliver;
-                        snapshotData.expected_cash = initialAmount + netAmountToDeliver + totalDeposits - totalExpenses - totalWithdrawals;
+                        snapshotData.expected_cash = initialAmount + netAmountToDeliver + cashPayments + totalDeposits - totalExpenses - totalWithdrawals;
 
                         // TODO: Obtener actual_cash_delivered si ya liquidó
                         // Por ahora dejamos en 0, se actualizará cuando liquide
