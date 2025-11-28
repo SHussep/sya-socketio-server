@@ -246,6 +246,7 @@ module.exports = (pool) => {
             const enrichedShifts = [];
             for (const shift of result.rows) {
                 // 1. Calcular ventas por método de pago (tipo_pago_id: 1=Efectivo, 2=Tarjeta, 3=Crédito)
+                // IMPORTANTE: Excluir ventas asignadas a repartidores (id_turno_repartidor != null)
                 const salesResult = await pool.query(`
                     SELECT
                         COALESCE(SUM(CASE WHEN tipo_pago_id = 1 THEN total ELSE 0 END), 0) as total_cash_sales,
@@ -253,6 +254,7 @@ module.exports = (pool) => {
                         COALESCE(SUM(CASE WHEN tipo_pago_id = 3 THEN total ELSE 0 END), 0) as total_credit_sales
                     FROM ventas
                     WHERE id_turno = $1
+                      AND id_turno_repartidor IS NULL
                 `, [shift.id]);
 
                 // 2. Calcular gastos
@@ -695,6 +697,8 @@ module.exports = (pool) => {
 
                     // 1. Calcular ventas por método de pago
                     // tipo_pago_id: 1=Efectivo, 2=Tarjeta, 3=Crédito
+                    // IMPORTANTE: Excluir ventas asignadas a repartidores (id_turno_repartidor != null)
+                    // porque ese dinero NO está en la caja del empleado de mostrador
                     const salesQuery = await pool.query(`
                         SELECT
                             COALESCE(SUM(CASE WHEN tipo_pago_id = 1 THEN total ELSE 0 END), 0) as cash_sales,
@@ -702,6 +706,7 @@ module.exports = (pool) => {
                             COALESCE(SUM(CASE WHEN tipo_pago_id = 3 THEN total ELSE 0 END), 0) as credit_sales
                         FROM ventas
                         WHERE id_turno = $1
+                          AND id_turno_repartidor IS NULL
                     `, [shift.id]);
 
                     // 2. Calcular gastos (usa id_turno)
