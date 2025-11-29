@@ -2,6 +2,7 @@
 // SERVIDOR SOCKET.IO + REST API PARA SYA TORTILLERÍAS
 // Con PostgreSQL Database
 // ✅ Repartidor system with debts endpoint support
+// ✅ FCM notifications filtered by role (admins/encargados only)
 // ═══════════════════════════════════════════════════════════════
 
 // 🔴 CRITICAL: Forzar timezone UTC en el servidor
