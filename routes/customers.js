@@ -569,22 +569,36 @@ module.exports = (pool) => {
             const tenantResult = await pool.query(tenantQuery, [tenantId, branchId]);
             const tenantData = tenantResult.rows[0] || {};
 
-            // 3. Ventas a crédito pendientes (no canceladas)
+            // 3. Ventas a crédito pendientes (no canceladas) CON sus items
             const salesQuery = `
-                SELECT 
+                SELECT
                     v.id_venta AS id,
                     v.ticket_number,
                     v.fecha_venta_utc AS sale_date,
                     v.total AS amount,
                     v.monto_pagado AS amount_paid,
                     (v.total - COALESCE(v.monto_pagado, 0)) AS pending_amount,
-                    v.notas AS notes
+                    v.notas AS notes,
+                    -- Items de la venta como JSON
+                    COALESCE(
+                        json_agg(
+                            json_build_object(
+                                'product_name', vi.nombre_producto,
+                                'quantity', vi.cantidad,
+                                'unit_price', vi.precio_unitario,
+                                'subtotal', vi.subtotal
+                            ) ORDER BY vi.id
+                        ) FILTER (WHERE vi.id IS NOT NULL),
+                        '[]'::json
+                    ) AS items
                 FROM ventas v
+                LEFT JOIN venta_items vi ON v.id_venta = vi.id_venta
                 WHERE v.id_cliente = $1
                     AND v.tenant_id = $2
                     AND v.tipo_pago_id = 3
                     AND (v.status IS NULL OR v.status != 'cancelled')
                     AND (v.total - COALESCE(v.monto_pagado, 0)) > 0
+                GROUP BY v.id_venta, v.ticket_number, v.fecha_venta_utc, v.total, v.monto_pagado, v.notas
                 ORDER BY v.fecha_venta_utc DESC
             `;
             const salesResult = await pool.query(salesQuery, [id, tenantId]);
@@ -642,7 +656,13 @@ module.exports = (pool) => {
                     amount: parseFloat(sale.amount || 0),
                     amount_paid: parseFloat(sale.amount_paid || 0),
                     pending_amount: parseFloat(sale.pending_amount || 0),
-                    notes: sale.notes || ''
+                    notes: sale.notes || '',
+                    items: Array.isArray(sale.items) ? sale.items.map(item => ({
+                        product_name: item.product_name,
+                        quantity: parseFloat(item.quantity || 0),
+                        unit_price: parseFloat(item.unit_price || 0),
+                        subtotal: parseFloat(item.subtotal || 0)
+                    })) : []
                 })),
                 payments: paymentsResult.rows.map(payment => ({
                     id: payment.id,
