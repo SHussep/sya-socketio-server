@@ -130,14 +130,29 @@ async function sendNotificationToAdminsInBranch(branchId, { title, body, data = 
 
 /**
  * Envía notificación a un empleado específico
+ * @param {string} employeeId - GlobalId (UUID) del empleado para idempotencia
  */
 async function sendNotificationToEmployee(employeeId, { title, body, data = {} }) {
     try {
+        // IMPORTANTE: employeeId es el GlobalId (UUID), no el autoincrement ID
+        // Obtener el ID numérico del empleado desde PostgreSQL usando global_id
+        const employeeResult = await pool.query(
+            `SELECT id FROM employees WHERE global_id = $1 LIMIT 1`,
+            [employeeId]
+        );
+
+        if (employeeResult.rows.length === 0) {
+            console.log(`[NotificationHelper] ⚠️ No se encontró empleado con global_id: ${employeeId}`);
+            return { sent: 0, failed: 0 };
+        }
+
+        const employeeIdNumeric = employeeResult.rows[0].id;
+
         // Obtener todos los dispositivos activos del empleado
         const result = await pool.query(
             `SELECT DISTINCT device_token FROM device_tokens
              WHERE employee_id = $1 AND is_active = true`,
-            [employeeId]
+            [employeeIdNumeric]
         );
 
         const deviceTokens = result.rows.map(row => row.device_token);
@@ -158,7 +173,7 @@ async function sendNotificationToEmployee(employeeId, { title, body, data = {} }
             .filter(r => r.result === 'INVALID_TOKEN')
             .map(r => r.deviceToken);
 
-        console.log(`[NotificationHelper] ✅ Notificaciones enviadas a employee ${employeeId}: ${successCount}/${deviceTokens.length}`);
+        console.log(`[NotificationHelper] ✅ Notificaciones enviadas a employee ${employeeIdNumeric} (global_id: ${employeeId}): ${successCount}/${deviceTokens.length}`);
 
         // Desactivar tokens inválidos
         if (invalidTokens.length > 0) {
