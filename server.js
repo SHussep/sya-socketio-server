@@ -544,15 +544,15 @@ io.on('connection', (socket) => {
         // ⚠️ IMPORTANTE: NO guardar en BD aquí ni enviar FCM
         // Desktop ya envía los eventos via REST API (/api/guardian-events)
         // que se encarga del guardado en BD y envío de FCM
-        // Solo emitimos aquí para eventos en TIEMPO REAL (actualizaciones que no fueron guardadas en Desktop)
 
-        // ✅ Emitir evento en tiempo real a la app móvil (para actualizaciones instantáneas)
-        console.log(`[ALERT] 📡 Emitiendo evento en tiempo real (scale_alert) a branch_${data.branchId}`);
-        io.to(roomName).emit('scale_alert', {
-            ...data,
-            receivedAt: new Date().toISOString(),
-            source: 'realtime'  // Indicar que es un evento en tiempo real
-        });
+        // ❌ Socket.IO emit comentado - no soporta filtrado por rol
+        // Solo usamos notificaciones FCM que ya están filtradas por rol (admins/encargados)
+        // console.log(`[ALERT] 📡 Emitiendo evento en tiempo real (scale_alert) a branch_${data.branchId}`);
+        // io.to(roomName).emit('scale_alert', {
+        //     ...data,
+        //     receivedAt: new Date().toISOString(),
+        //     source: 'realtime'
+        // });
     });
 
     socket.on('scale_disconnected', (data) => {

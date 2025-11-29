@@ -70,28 +70,27 @@ module.exports = (pool, io) => {
             const finalEmployeeName = employeeName || `Employee_${employeeId}`;
 
             console.log(`[Guardian Events] 🚨 Evento recibido: ${eventType} - ${title} (Empleado: ${finalEmployeeName})`);
-            console.log(`[Guardian Events] ⚠️ Tabla guardian_events no existe - solo emitiendo notificación Socket.IO`);
+            console.log(`[Guardian Events] ⚠️ Tabla guardian_events no existe - enviando solo notificación FCM`);
 
-            // ✅ Notificación en tiempo real vía Socket.IO
-            // Emitir evento al room de la sucursal específica para que móviles lo reciban
-            if (io && branchId) {
-                io.to(`branch_${branchId}`).emit('scale_alert', {
-                    branchId: branchId,
-                    alertId: null,  // No hay ID porque no se persiste
-                    severity: severity || 'medium',
-                    eventType: eventType,
-                    weightDetected: weightKg || 0,
-                    details: description || '',
-                    timestamp: new Date().toISOString(),
-                    employeeName: finalEmployeeName,
-                    receivedAt: new Date().toISOString(),
-                    source: 'api'
-                });
+            // ❌ Socket.IO emit comentado - no soporta filtrado por rol
+            // Solo usamos notificaciones FCM que ya están filtradas por rol (admins/encargados)
+            // if (io && branchId) {
+            //     io.to(`branch_${branchId}`).emit('scale_alert', {
+            //         branchId: branchId,
+            //         alertId: null,
+            //         severity: severity || 'medium',
+            //         eventType: eventType,
+            //         weightDetected: weightKg || 0,
+            //         details: description || '',
+            //         timestamp: new Date().toISOString(),
+            //         employeeName: finalEmployeeName,
+            //         receivedAt: new Date().toISOString(),
+            //         source: 'api'
+            //     });
+            //     console.log(`[Guardian Events] 📡 Evento 'scale_alert' emitido a branch_${branchId}`);
+            // }
 
-                console.log(`[Guardian Events] 📡 Evento 'scale_alert' emitido a branch_${branchId} para app móvil (Empleado: ${finalEmployeeName})`);
-            }
-
-            // ✅ Enviar notificación FCM a dispositivos móviles
+            // ✅ Enviar notificación FCM a dispositivos móviles (filtrada por rol)
             if (branchId) {
                 try {
                     await notificationHelper.notifyScaleAlert(branchId, {
