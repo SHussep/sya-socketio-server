@@ -331,8 +331,8 @@ app.use('/api/repartidor-debts', repartidorDebtsRoutes);
 app.use('/api/sales', salesRoutes(pool)); // Sync desde Desktop (POST /api/sales/sync)
 app.use('/api/sales-items', salesRoutes(pool));
 app.use('/api/ventas', ventasRoutes); // Consultas desde App Móvil (GET)
-app.use('/api/expenses', expensesRoutes(pool));
-app.use('/api/shifts', shiftsRoutes(pool));
+app.use('/api/expenses', expensesRoutes(pool, io));
+app.use('/api/shifts', shiftsRoutes(pool, io));
 app.use('/api/cash-cuts', cashCutsRoutes(pool));
 app.use('/api/purchases', purchasesRoutes(pool));
 app.use('/api/guardian-events', guardianEventsRoutes(pool, io)); // Requires io for Socket.IO

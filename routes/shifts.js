@@ -24,7 +24,7 @@ function authenticateToken(req, res, next) {
     });
 }
 
-module.exports = (pool) => {
+module.exports = (pool, io) => {
     const router = express.Router();
 
     // POST /api/shifts/open - Abrir turno (inicio de sesión)
@@ -434,6 +434,35 @@ module.exports = (pool) => {
                 });
             }
 
+            // Buscar nombre del empleado para la notificación
+            let employeeName = 'Empleado';
+            try {
+                const empResult = await pool.query(
+                    'SELECT first_name, last_name, username FROM employees WHERE id = $1',
+                    [employeeId]
+                );
+                if (empResult.rows.length > 0) {
+                    const emp = empResult.rows[0];
+                    employeeName = emp.first_name ? `${emp.first_name} ${emp.last_name || ''}`.trim() : emp.username;
+                }
+            } catch (e) {
+                console.warn('[Sync/Shifts] No se pudo obtener nombre del empleado:', e.message);
+            }
+
+            // Buscar nombre de la sucursal para la notificación
+            let branchName = 'Sucursal';
+            try {
+                const branchResult = await pool.query(
+                    'SELECT name FROM branches WHERE id = $1',
+                    [branchId]
+                );
+                if (branchResult.rows.length > 0) {
+                    branchName = branchResult.rows[0].name;
+                }
+            } catch (e) {
+                console.warn('[Sync/Shifts] No se pudo obtener nombre de la sucursal:', e.message);
+            }
+
             // PASO 1: Verificar si hay un turno abierto con DIFERENTE local_shift_id
             // Si existe, significa que fue cerrado offline y necesita auto-cerrarse en PostgreSQL
             const existingShift = await pool.query(
@@ -466,6 +495,22 @@ module.exports = (pool) => {
 
             const shift = result.rows[0];
             console.log(`[Sync/Shifts] ✅ Turno sincronizado desde Desktop: ID ${shift.id} (localShiftId: ${shift.local_shift_id}) - Employee ${employeeId} - Branch ${branchId} - Initial $${initialAmount}`);
+
+            // 📢 EMITIR EVENTO SOCKET.IO
+            if (io) {
+                const roomName = `branch_${branchId}`;
+                console.log(`[Sync/Shifts] 📡 Emitiendo 'shift_started' a ${roomName} para empleado ${employeeId}`);
+                io.to(roomName).emit('shift_started', {
+                    shiftId: shift.id,
+                    employeeId: employeeId,
+                    employeeName: employeeName,
+                    branchId: branchId,
+                    branchName: branchName,
+                    initialAmount: parseFloat(initialAmount || 0),
+                    startTime: new Date().toISOString(),
+                    source: 'desktop_sync'
+                });
+            }
 
             res.json({
                 success: true,
