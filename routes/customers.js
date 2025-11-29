@@ -579,18 +579,20 @@ module.exports = (pool) => {
                     v.monto_pagado AS amount_paid,
                     (v.total - COALESCE(v.monto_pagado, 0)) AS pending_amount,
                     v.notas AS notes,
-                    -- Items de la venta como JSON
-                    COALESCE(
-                        json_agg(
-                            json_build_object(
-                                'product_name', vi.nombre_producto,
-                                'quantity', vi.cantidad,
-                                'unit_price', vi.precio_unitario,
-                                'subtotal', vi.subtotal
-                            ) ORDER BY vi.id
-                        ) FILTER (WHERE vi.id IS NOT NULL),
-                        '[]'::json
-                    ) AS items
+                    -- Items de la venta como JSON array
+                    CASE
+                        WHEN COUNT(vi.id) > 0 THEN
+                            json_agg(
+                                json_build_object(
+                                    'product_name', vi.nombre_producto,
+                                    'quantity', vi.cantidad,
+                                    'unit_price', vi.precio_unitario,
+                                    'subtotal', vi.subtotal
+                                ) ORDER BY vi.id
+                            )
+                        ELSE
+                            '[]'::json
+                    END AS items
                 FROM ventas v
                 LEFT JOIN venta_items vi ON v.id_venta = vi.id_venta
                 WHERE v.id_cliente = $1
