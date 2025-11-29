@@ -239,11 +239,12 @@ async function notifyUserLogin(branchId, { employeeId, employeeName, branchName,
 
 /**
  * Envía notificación cuando hay una alerta de báscula
+ * Solo notifica a administradores y encargados (role_id 1, 2)
  */
 async function notifyScaleAlert(branchId, { severity, eventType, details, employeeName }) {
     const icon = severity === 'high' ? '🔴' : severity === 'medium' ? '🟡' : '🟢';
 
-    return await sendNotificationToBranch(branchId, {
+    return await sendNotificationToAdminsInBranch(branchId, {
         title: `${icon} Alerta de Báscula`,
         body: `${eventType}: ${details} (${employeeName})`,
         data: {
