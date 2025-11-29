@@ -589,9 +589,10 @@ io.on('connection', (socket) => {
         // Broadcast al escritorio y móviles en la sucursal
         io.to(roomName).emit('user-login', { ...data, receivedAt: new Date().toISOString() });
 
-        // OPCIONAL: Enviar notificación FCM
+        // Enviar notificación FCM a admins/encargados + al empleado que hizo login
         try {
             await notificationHelper.notifyUserLogin(data.branchId, {
+                employeeId: data.employeeId,
                 employeeName: data.employeeName,
                 branchName: data.branchName,
                 scaleStatus: data.scaleStatus || 'unknown'

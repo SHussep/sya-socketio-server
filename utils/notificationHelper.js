@@ -188,10 +188,11 @@ async function sendNotificationToEmployee(employeeId, { title, body, data = {} }
 
 /**
  * Envía notificación cuando un usuario inicia sesión
- * SOLO a administradores y encargados (role_id 1,2)
+ * A: Administradores y encargados (role_id 1,2) + el empleado que hizo login
  */
-async function notifyUserLogin(branchId, { employeeName, branchName, scaleStatus }) {
-    return await sendNotificationToAdminsInBranch(branchId, {
+async function notifyUserLogin(branchId, { employeeId, employeeName, branchName, scaleStatus }) {
+    // Enviar a admins/encargados
+    const adminResult = await sendNotificationToAdminsInBranch(branchId, {
         title: '👤 Acceso de Usuario',
         body: `${employeeName} inició sesión en ${branchName}`,
         data: {
@@ -201,6 +202,24 @@ async function notifyUserLogin(branchId, { employeeName, branchName, scaleStatus
             scaleStatus
         }
     });
+
+    // Enviar también al empleado que hizo login (para que reciba su propia notificación)
+    const employeeResult = await sendNotificationToEmployee(employeeId, {
+        title: '👤 Acceso de Usuario',
+        body: `Iniciaste sesión en ${branchName}`,
+        data: {
+            type: 'user_login',
+            employeeName,
+            branchName,
+            scaleStatus
+        }
+    });
+
+    return {
+        admins: adminResult,
+        employee: employeeResult,
+        total: adminResult.sent + employeeResult.sent
+    };
 }
 
 /**
