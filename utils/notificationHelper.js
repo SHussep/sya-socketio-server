@@ -8,7 +8,7 @@ const { sendNotificationToMultipleDevices } = require('./firebaseAdmin');
 const { pool } = require('../database');
 
 /**
- * Envía notificación a todos los repartidores de una sucursal
+ * Envía notificación a todos los dispositivos de una sucursal
  */
 async function sendNotificationToBranch(branchId, { title, body, data = {} }) {
     try {
@@ -61,6 +61,69 @@ async function sendNotificationToBranch(branchId, { title, body, data = {} }) {
         };
     } catch (error) {
         console.error('[NotificationHelper] ❌ Error enviando notificaciones:', error.message);
+        return { sent: 0, failed: 0, error: error.message };
+    }
+}
+
+/**
+ * Envía notificación SOLO a administradores y encargados de una sucursal
+ * Útil para eventos que solo los supervisores deben ver (login, alertas, etc.)
+ */
+async function sendNotificationToAdminsInBranch(branchId, { title, body, data = {} }) {
+    try {
+        // Obtener dispositivos de empleados con role_id 1 (Administrador) o 2 (Encargado)
+        const result = await pool.query(
+            `SELECT DISTINCT dt.device_token
+             FROM device_tokens dt
+             JOIN employees e ON dt.employee_id = e.id
+             WHERE dt.branch_id = $1
+               AND dt.is_active = true
+               AND e.role_id IN (1, 2)`,
+            [branchId]
+        );
+
+        const deviceTokens = result.rows.map(row => row.device_token);
+
+        if (deviceTokens.length === 0) {
+            console.log(`[NotificationHelper] ℹ️ No hay administradores/encargados con dispositivos activos en sucursal ${branchId}`);
+            return { sent: 0, failed: 0 };
+        }
+
+        const results = await sendNotificationToMultipleDevices(deviceTokens, {
+            title,
+            body,
+            data
+        });
+
+        const successCount = results.filter(r => r.success).length;
+        const invalidTokens = results
+            .filter(r => r.result === 'INVALID_TOKEN')
+            .map(r => r.deviceToken);
+
+        console.log(`[NotificationHelper] ✅ Notificaciones enviadas a admins/encargados de sucursal ${branchId}: ${successCount}/${deviceTokens.length}`);
+
+        // Desactivar tokens inválidos
+        if (invalidTokens.length > 0) {
+            try {
+                await pool.query(
+                    `UPDATE device_tokens SET is_active = false
+                     WHERE device_token = ANY($1)`,
+                    [invalidTokens]
+                );
+                console.log(`[NotificationHelper] 🧹 Deactivated ${invalidTokens.length} invalid tokens from branch ${branchId}`);
+            } catch (updateError) {
+                console.error(`[NotificationHelper] ⚠️ Error updating invalid tokens:`, updateError.message);
+            }
+        }
+
+        return {
+            sent: successCount,
+            failed: deviceTokens.length - successCount,
+            total: deviceTokens.length,
+            invalidTokensRemoved: invalidTokens.length
+        };
+    } catch (error) {
+        console.error('[NotificationHelper] ❌ Error enviando notificaciones a admins:', error.message);
         return { sent: 0, failed: 0, error: error.message };
     }
 }
@@ -125,9 +188,10 @@ async function sendNotificationToEmployee(employeeId, { title, body, data = {} }
 
 /**
  * Envía notificación cuando un usuario inicia sesión
+ * SOLO a administradores y encargados (role_id 1,2)
  */
 async function notifyUserLogin(branchId, { employeeName, branchName, scaleStatus }) {
-    return await sendNotificationToBranch(branchId, {
+    return await sendNotificationToAdminsInBranch(branchId, {
         title: '👤 Acceso de Usuario',
         body: `${employeeName} inició sesión en ${branchName}`,
         data: {
@@ -259,6 +323,7 @@ async function notifyAssignmentCreated(employeeId, { assignmentId, quantity, amo
 
 module.exports = {
     sendNotificationToBranch,
+    sendNotificationToAdminsInBranch,
     sendNotificationToEmployee,
     notifyUserLogin,
     notifyScaleAlert,
