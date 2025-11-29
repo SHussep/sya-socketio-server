@@ -27,8 +27,10 @@ function createRepartidorAssignmentRoutes(io) {
       branch_id,
       venta_id,                         // ID numérico (legacy, puede no venir)
       venta_global_id,                  // ✅ UUID de la venta (offline-first, preferido)
-      employee_id,
-      created_by_employee_id,
+      employee_id,                      // DEPRECATED: ID numérico (legacy)
+      employee_global_id,               // ✅ NUEVO: UUID del repartidor (offline-first, preferido)
+      created_by_employee_id,           // DEPRECATED: ID numérico (legacy)
+      created_by_employee_global_id,    // ✅ NUEVO: UUID del empleado que autorizó (offline-first, preferido)
       shift_id,
       repartidor_shift_id,              // ID numérico (legacy, puede no existir en PostgreSQL)
       repartidor_shift_global_id,       // ✅ UUID del turno (offline-first, preferido)
@@ -52,11 +54,27 @@ function createRepartidorAssignmentRoutes(io) {
       console.log(`  GlobalId: ${global_id}, Repartidor: ${employee_id}, VentaGlobalId: ${venta_global_id || venta_id}, Quantity: ${assigned_quantity} kg`);
       console.log(`  RepartidorShiftGlobalId: ${repartidor_shift_global_id || 'N/A'}, RepartidorShiftId: ${repartidor_shift_id || 'N/A'}`);
 
-      // Validar campos requeridos
-      if (!tenant_id || !branch_id || (!venta_id && !venta_global_id) || !employee_id || !created_by_employee_id || !shift_id) {
+      // Validar campos requeridos (ahora permite GlobalIds o IDs numéricos)
+      if (!tenant_id || !branch_id || (!venta_id && !venta_global_id) || !shift_id) {
         return res.status(400).json({
           success: false,
-          message: 'tenant_id, branch_id, venta_id o venta_global_id, employee_id, created_by_employee_id, shift_id son requeridos'
+          message: 'tenant_id, branch_id, venta_id/venta_global_id, shift_id son requeridos'
+        });
+      }
+
+      // Validar que al menos uno de employee_id o employee_global_id esté presente
+      if (!employee_id && !employee_global_id) {
+        return res.status(400).json({
+          success: false,
+          message: 'Se requiere employee_id o employee_global_id'
+        });
+      }
+
+      // Validar que al menos uno de created_by_employee_id o created_by_employee_global_id esté presente
+      if (!created_by_employee_id && !created_by_employee_global_id) {
+        return res.status(400).json({
+          success: false,
+          message: 'Se requiere created_by_employee_id o created_by_employee_global_id'
         });
       }
 
@@ -138,6 +156,48 @@ function createRepartidorAssignmentRoutes(io) {
         }
       }
 
+      // ✅ RESOLVER employee_id usando global_id (offline-first)
+      let resolvedEmployeeId = employee_id;
+      if (employee_global_id) {
+        console.log(`[RepartidorAssignments] 🔍 Resolviendo empleado con global_id: ${employee_global_id}`);
+        const employeeLookup = await pool.query(
+          'SELECT id FROM employees WHERE global_id = $1 AND tenant_id = $2',
+          [employee_global_id, tenant_id]
+        );
+
+        if (employeeLookup.rows.length > 0) {
+          resolvedEmployeeId = employeeLookup.rows[0].id;
+          console.log(`[RepartidorAssignments] ✅ Empleado resuelto: global_id ${employee_global_id} → id ${resolvedEmployeeId}`);
+        } else {
+          console.log(`[RepartidorAssignments] ❌ Empleado no encontrado con global_id: ${employee_global_id}`);
+          return res.status(404).json({
+            success: false,
+            message: `Empleado no encontrado con global_id: ${employee_global_id}`
+          });
+        }
+      }
+
+      // ✅ RESOLVER created_by_employee_id usando global_id (offline-first)
+      let resolvedCreatedByEmployeeId = created_by_employee_id;
+      if (created_by_employee_global_id) {
+        console.log(`[RepartidorAssignments] 🔍 Resolviendo empleado autorizador con global_id: ${created_by_employee_global_id}`);
+        const createdByLookup = await pool.query(
+          'SELECT id FROM employees WHERE global_id = $1 AND tenant_id = $2',
+          [created_by_employee_global_id, tenant_id]
+        );
+
+        if (createdByLookup.rows.length > 0) {
+          resolvedCreatedByEmployeeId = createdByLookup.rows[0].id;
+          console.log(`[RepartidorAssignments] ✅ Empleado autorizador resuelto: global_id ${created_by_employee_global_id} → id ${resolvedCreatedByEmployeeId}`);
+        } else {
+          console.log(`[RepartidorAssignments] ❌ Empleado autorizador no encontrado con global_id: ${created_by_employee_global_id}`);
+          return res.status(404).json({
+            success: false,
+            message: `Empleado autorizador no encontrado con global_id: ${created_by_employee_global_id}`
+          });
+        }
+      }
+
       // ✅ IDEMPOTENTE: Insertar con global_id único
       // ON CONFLICT: Solo se permiten updates de status, fecha_liquidacion, observaciones
       // Los datos originales (assigned_quantity, assigned_amount) NO cambian
@@ -163,8 +223,8 @@ function createRepartidorAssignmentRoutes(io) {
         tenant_id,
         branch_id,
         resolvedVentaId,                // ✅ Usar ID resuelto desde global_id
-        employee_id,
-        created_by_employee_id,
+        resolvedEmployeeId,             // ✅ NUEVO: Usar ID resuelto desde global_id
+        resolvedCreatedByEmployeeId,    // ✅ NUEVO: Usar ID resuelto desde global_id
         shift_id,
         resolvedRepartidorShiftId,      // ✅ Usar ID resuelto desde global_id
         parseFloat(assigned_quantity),
@@ -189,7 +249,7 @@ function createRepartidorAssignmentRoutes(io) {
         timestamp: new Date().toISOString()
       });
 
-      // 🆕 Enviar notificación push al repartidor
+      // 🆕 Enviar notificación push al repartidor y administradores
       try {
         // Obtener nombre de la sucursal
         const branchResult = await pool.query(
@@ -198,12 +258,37 @@ function createRepartidorAssignmentRoutes(io) {
         );
         const branchName = branchResult.rows[0]?.name || 'Sucursal';
 
-        await notifyAssignmentCreated(employee_id, {
+        // Obtener nombre del repartidor (usando ID resuelto)
+        const employeeResult = await pool.query(
+          'SELECT full_name FROM employees WHERE id = $1',
+          [resolvedEmployeeId]
+        );
+        const employeeName = employeeResult.rows[0]?.full_name || 'Repartidor';
+
+        // Obtener nombre del empleado que autorizó la asignación (usando ID resuelto)
+        const createdByResult = await pool.query(
+          'SELECT full_name FROM employees WHERE id = $1',
+          [resolvedCreatedByEmployeeId]
+        );
+        const createdByName = createdByResult.rows[0]?.full_name || 'Empleado';
+
+        console.log(`[RepartidorAssignments] 📨 Enviando notificaciones para asignación #${assignment.id}`);
+        console.log(`   Repartidor: ${employeeName} (GlobalId: ${employee_global_id})`);
+        console.log(`   Autorizado por: ${createdByName} (GlobalId: ${created_by_employee_global_id})`);
+        console.log(`   Cantidad: ${assigned_quantity} kg, Monto: $${assigned_amount}`);
+
+        // Enviar notificaciones usando GlobalId (UUID) para idempotencia
+        await notifyAssignmentCreated(employee_global_id, {
           assignmentId: assignment.id,
           quantity: parseFloat(assigned_quantity),
           amount: parseFloat(assigned_amount),
-          branchName
+          branchName,
+          branchId: branch_id,
+          employeeName,
+          createdByName
         });
+
+        console.log(`[RepartidorAssignments] ✅ Notificaciones enviadas exitosamente`);
       } catch (notifError) {
         console.error('[RepartidorAssignments] ⚠️ Error enviando notificación push:', notifError.message);
         // No fallar la operación si la notificación falla

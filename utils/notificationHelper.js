@@ -274,9 +274,10 @@ async function notifySaleCompleted(branchId, { ticketNumber, total, paymentMetho
 
 /**
  * Envía notificación cuando se inicia un turno
+ * Solo notifica a administradores y encargados (role_id 1, 2)
  */
 async function notifyShiftStarted(branchId, { employeeName, branchName, initialAmount, startTime }) {
-    return await sendNotificationToBranch(branchId, {
+    return await sendNotificationToAdminsInBranch(branchId, {
         title: '🟢 Turno Iniciado',
         body: `${employeeName} inició turno en ${branchName} con $${initialAmount.toFixed(2)}`,
         data: {
@@ -340,11 +341,19 @@ async function notifyScaleConnection(branchId, { message }) {
 
 /**
  * Envía notificación cuando se crea una asignación para un repartidor
+ * Notifica a:
+ * 1. El repartidor que recibe la asignación
+ * 2. Los administradores y encargados de la sucursal
+ * @param {string} employeeGlobalId - GlobalId (UUID) del repartidor
+ * @param {number} branchId - ID de la sucursal
+ * @param {string} employeeName - Nombre del repartidor
+ * @param {string} createdByName - Nombre del empleado que autorizó la asignación
  */
-async function notifyAssignmentCreated(employeeId, { assignmentId, quantity, amount, branchName }) {
-    return await sendNotificationToEmployee(employeeId, {
+async function notifyAssignmentCreated(employeeGlobalId, { assignmentId, quantity, amount, branchName, branchId, employeeName, createdByName }) {
+    // Notificar al repartidor (usando GlobalId)
+    const employeeResult = await sendNotificationToEmployee(employeeGlobalId, {
         title: '📦 Nueva Asignación',
-        body: `Se te ha asignado ${quantity.toFixed(2)} kg - $${amount.toFixed(2)} en ${branchName}`,
+        body: `Se te asignó ${quantity.toFixed(2)} kg ($${amount.toFixed(2)}) en ${branchName}`,
         data: {
             type: 'assignment_created',
             assignmentId: assignmentId.toString(),
@@ -353,6 +362,27 @@ async function notifyAssignmentCreated(employeeId, { assignmentId, quantity, amo
             branchName
         }
     });
+
+    // Notificar a administradores y encargados
+    const adminResult = await sendNotificationToAdminsInBranch(branchId, {
+        title: '📦 Asignación Creada',
+        body: `${employeeName} recibió ${quantity.toFixed(2)} kg ($${amount.toFixed(2)}) autorizado por ${createdByName}`,
+        data: {
+            type: 'assignment_created',
+            assignmentId: assignmentId.toString(),
+            employeeName,
+            createdByName,
+            quantity: quantity.toString(),
+            amount: amount.toString(),
+            branchName
+        }
+    });
+
+    return {
+        employee: employeeResult,
+        admins: adminResult,
+        total: employeeResult.sent + adminResult.sent
+    };
 }
 
 module.exports = {
