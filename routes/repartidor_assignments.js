@@ -260,14 +260,14 @@ function createRepartidorAssignmentRoutes(io) {
 
         // Obtener nombre del repartidor (usando ID resuelto)
         const employeeResult = await pool.query(
-          'SELECT full_name FROM employees WHERE id = $1',
+          "SELECT CONCAT(first_name, ' ', last_name) as full_name FROM employees WHERE id = $1",
           [resolvedEmployeeId]
         );
         const employeeName = employeeResult.rows[0]?.full_name || 'Repartidor';
 
         // Obtener nombre del empleado que autorizó la asignación (usando ID resuelto)
         const createdByResult = await pool.query(
-          'SELECT full_name FROM employees WHERE id = $1',
+          "SELECT CONCAT(first_name, ' ', last_name) as full_name FROM employees WHERE id = $1",
           [resolvedCreatedByEmployeeId]
         );
         const createdByName = createdByResult.rows[0]?.full_name || 'Empleado';
