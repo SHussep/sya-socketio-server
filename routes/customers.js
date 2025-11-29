@@ -445,5 +445,230 @@ module.exports = (pool) => {
         }
     });
 
+    // ═══════════════════════════════════════════════════════════════
+    // PAYMENT REMINDER SYSTEM - NEW ENDPOINTS
+    // ═══════════════════════════════════════════════════════════════
+
+    /**
+     * GET /api/customers/with-balance
+     * Lista clientes con saldo deudor > 0, ordenados por sal do descendente
+     * Query params:
+     *   - tenant_id (required)
+     *   - branch_id (optional) - filtra por sucursal
+     */
+    router.get('/with-balance', authenticateToken, async (req, res) => {
+        try {
+            const { tenantId } = req.user;
+            const { branch_id } = req.query;
+
+            console.log(`[Customers/WithBalance] 📊 Obteniendo clientes con saldo para tenant ${tenantId}`);
+
+            let query = `
+                SELECT 
+                    c.id,
+                    c.nombre AS name,
+                    c.saldo_deudor AS current_balance,
+                    c.telefono AS phone,
+                    c.telefono_secundario AS phone_secondary,
+                    c.correo AS email,
+                    c.direccion AS address,
+                    c.credito_limite AS credit_limit,
+                    c.tenant_id,
+                    t.business_name AS tenant_name
+                FROM customers c
+                JOIN tenants t ON c.tenant_id = t.id
+                WHERE c.tenant_id = $1
+                    AND c.saldo_deudor > 0
+                    AND c.activo = TRUE
+                    AND (c.is_system_generic = FALSE OR c.is_system_generic IS NULL)
+                ORDER BY c.saldo_deudor DESC
+            `;
+
+            const result = await pool.query(query, [tenantId]);
+
+            console.log(`[Customers/WithBalance] ✅ ${result.rows.length} clientes con saldo encontrados`);
+
+            res.json({
+                success: true,
+                count: result.rows.length,
+                customers: result.rows.map(c => ({
+                    id: c.id,
+                    name: c.name,
+                    current_balance: parseFloat(c.current_balance || 0),
+                    phone: c.phone,
+                    phone_secondary: c.phone_secondary,
+                    email: c.email,
+                    address: c.address,
+                    credit_limit: parseFloat(c.credit_limit || 0),
+                    tenant_id: c.tenant_id,
+                    tenant_name: c.tenant_name
+                }))
+            });
+        } catch (error) {
+            console.error('[Customers/WithBalance] ❌ Error:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Error al obtener clientes con saldo deudor',
+                error: error.message
+            });
+        }
+    });
+
+    /**
+     * GET /api/customers/:id/account-statement
+     * Obtiene el estado de cuenta completo de un cliente
+     * Incluye: cliente, tenant, branch, ventas pendientes, pagos
+     */
+    router.get('/:id/account-statement', authenticateToken, async (req, res) => {
+        try {
+            const { id } = req.params;
+            const { tenantId, branchId } = req.user;
+
+            console.log(`[Customers/AccountStatement] 📄 Generando estado de cuenta para cliente ${id}`);
+
+            // 1. Datos del cliente
+            const customerQuery = `
+                SELECT 
+                    c.id,
+                    c.nombre AS name,
+                    c.saldo_deudor AS current_balance,
+                    c.telefono AS phone,
+                    c.telefono_secundario AS phone_secondary,
+                    c.correo AS email,
+                    c.direccion AS address,
+                    c.credito_limite AS credit_limit,
+                    c.tenant_id
+                FROM customers c
+                WHERE c.id = $1 AND c.tenant_id = $2
+            `;
+            const customerResult = await pool.query(customerQuery, [id, tenantId]);
+
+            if (customerResult.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Cliente no encontrado'
+                });
+            }
+
+            const customer = customerResult.rows[0];
+
+            // 2. Datos del Tenant y Branch
+            const tenantQuery = `
+                SELECT 
+                    t.business_name AS name,
+                    t.email,
+                    t.phone_number AS phone,
+                    b.name AS branch_name,
+                    b.address AS branch_address,
+                    b.phone AS branch_phone
+                FROM tenants t
+                LEFT JOIN branches b ON t.id = b.tenant_id AND b.id = $2
+                WHERE t.id = $1
+                LIMIT 1
+            `;
+            const tenantResult = await pool.query(tenantQuery, [tenantId, branchId]);
+            const tenantData = tenantResult.rows[0] || {};
+
+            // 3. Ventas a crédito pendientes (no canceladas)
+            const salesQuery = `
+                SELECT 
+                    v.id_venta AS id,
+                    v.ticket_number,
+                    v.fecha_venta_utc AS sale_date,
+                    v.total AS amount,
+                    v.monto_pagado AS amount_paid,
+                    (v.total - COALESCE(v.monto_pagado, 0)) AS pending_amount,
+                    v.notas AS notes
+                FROM ventas v
+                WHERE v.id_cliente = $1
+                    AND v.tenant_id = $2
+                    AND v.tipo_pago_id = 3
+                    AND (v.status IS NULL OR v.status != 'cancelled')
+                    AND (v.total - COALESCE(v.monto_pagado, 0)) > 0
+                ORDER BY v.fecha_venta_utc DESC
+            `;
+            const salesResult = await pool.query(salesQuery, [id, tenantId]);
+
+            // 4. Pagos recibidos
+            const paymentsQuery = `
+                SELECT 
+                    cp.id,
+                    cp.amount,
+                    cp.payment_date,
+                    cp.payment_method,
+                    cp.notes,
+                    e.first_name || ' ' || COALESCE(e.last_name, '') AS employee_name
+                FROM credit_payments cp
+                LEFT JOIN employees e ON cp.employee_id = e.id
+                WHERE cp.customer_id = $1
+                    AND cp.tenant_id = $2
+                ORDER BY cp.payment_date DESC
+                LIMIT 50
+            `;
+            const paymentsResult = await pool.query(paymentsQuery, [id, tenantId]);
+
+            // 5. Calcular totales
+            const totalPendingSales = salesResult.rows.reduce((sum, sale) => sum + parseFloat(sale.pending_amount || 0), 0);
+            const totalPayments = paymentsResult.rows.reduce((sum, payment) => sum + parseFloat(payment.amount || 0), 0);
+
+            console.log(`[Customers/AccountStatement] ✅ Estado generado: ${salesResult.rows.length} ventas, ${paymentsResult.rows.length} pagos`);
+
+            res.json({
+                success: true,
+                customer: {
+                    id: customer.id,
+                    name: customer.name,
+                    phone: customer.phone,
+                    phone_secondary: customer.phone_secondary,
+                    email: customer.email,
+                    address: customer.address,
+                    credit_limit: parseFloat(customer.credit_limit || 0),
+                    current_balance: parseFloat(customer.current_balance || 0)
+                },
+                tenant: {
+                    name: tenantData.name || '',
+                    email: tenantData.email || '',
+                    phone: tenantData.phone || ''
+                },
+                branch: {
+                    name: tenantData.branch_name || '',
+                    address: tenantData.branch_address || '',
+                    phone: tenantData.branch_phone || ''
+                },
+                pending_sales: salesResult.rows.map(sale => ({
+                    id: sale.id,
+                    ticket_number: sale.ticket_number,
+                    sale_date: sale.sale_date,
+                    amount: parseFloat(sale.amount || 0),
+                    amount_paid: parseFloat(sale.amount_paid || 0),
+                    pending_amount: parseFloat(sale.pending_amount || 0),
+                    notes: sale.notes || ''
+                })),
+                payments: paymentsResult.rows.map(payment => ({
+                    id: payment.id,
+                    amount: parseFloat(payment.amount || 0),
+                    payment_date: payment.payment_date,
+                    payment_method: payment.payment_method,
+                    notes: payment.notes || '',
+                    employee_name: payment.employee_name || 'N/A'
+                })),
+                summary: {
+                    total_pending_sales: totalPendingSales,
+                    total_payments: totalPayments,
+                    total_due: parseFloat(customer.current_balance || 0),
+                    generated_at: new Date().toISOString()
+                }
+            });
+
+        } catch (error) {
+            console.error('[Customers/AccountStatement] ❌ Error:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Error al generar estado de cuenta',
+                error: error.message
+            });
+        }
+    });
+
     return router;
 };
