@@ -653,6 +653,9 @@ CREATE TABLE IF NOT EXISTS repartidor_returns (
     source VARCHAR(20) NOT NULL CHECK (source IN ('desktop', 'mobile')),
     notes TEXT,
 
+    -- Status (draft = borrador editable, confirmed = confirmado en liquidación, deleted = eliminado)
+    status VARCHAR(20) NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'confirmed', 'deleted')),
+
     -- Offline-first fields
     terminal_id UUID NOT NULL,
     local_op_seq INTEGER NOT NULL,
@@ -672,6 +675,8 @@ CREATE INDEX IF NOT EXISTS idx_repartidor_returns_branch ON repartidor_returns(b
 CREATE INDEX IF NOT EXISTS idx_repartidor_returns_shift ON repartidor_returns(shift_id);
 CREATE INDEX IF NOT EXISTS idx_repartidor_returns_return_date ON repartidor_returns(return_date);
 CREATE INDEX IF NOT EXISTS idx_repartidor_returns_source ON repartidor_returns(source);
+CREATE INDEX IF NOT EXISTS idx_repartidor_returns_status ON repartidor_returns(status);
+CREATE INDEX IF NOT EXISTS idx_repartidor_returns_employee_status ON repartidor_returns(employee_id, status);
 CREATE UNIQUE INDEX IF NOT EXISTS unique_repartidor_returns_global_terminal ON repartidor_returns(global_id, terminal_id);
 
 -- shift_cash_snapshot (snapshot de corte de caja para todos los roles)
