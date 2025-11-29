@@ -377,6 +377,8 @@ module.exports = (pool) => {
                     rr.return_date,
                     rr.source,
                     rr.notes,
+                    rr.status,
+                    rr.global_id,
                     CONCAT(e_registered.first_name, ' ', e_registered.last_name) as registered_by_name,
                     ra.assigned_quantity,
                     ra.assigned_amount,
@@ -386,7 +388,9 @@ module.exports = (pool) => {
                 INNER JOIN repartidor_assignments ra ON rr.assignment_id = ra.id
                 LEFT JOIN employees e_registered ON rr.registered_by_employee_id = e_registered.id
                 LEFT JOIN ventas v ON ra.venta_id = v.id_venta
-                WHERE rr.tenant_id = $1 AND rr.employee_id = $2
+                WHERE rr.tenant_id = $1
+                AND rr.employee_id = $2
+                AND (rr.status IS NULL OR rr.status != 'deleted')
                 ORDER BY rr.return_date DESC
                 LIMIT $3 OFFSET $4
             `;
@@ -407,6 +411,8 @@ module.exports = (pool) => {
                     return_date: row.return_date,
                     source: row.source,
                     notes: row.notes,
+                    status: row.status || 'confirmed',
+                    global_id: row.global_id,
                     registered_by_name: row.registered_by_name,
                     assigned_quantity: parseFloat(row.assigned_quantity),
                     assigned_amount: parseFloat(row.assigned_amount),
@@ -745,6 +751,296 @@ module.exports = (pool) => {
         } catch (error) {
             console.error('[Mark Synced] Error:', error);
             res.status(500).json({ success: false, message: 'Error al marcar snapshot como sincronizado', error: error.message });
+        }
+    });
+
+    // ============================================================================
+    // ENDPOINTS PARA REPARTIDOR RETURNS (Devoluciones con estados)
+    // ============================================================================
+
+    /**
+     * POST /api/repartidores/returns
+     * Crea o actualiza una devolución de repartidor
+     * Soporta estados: draft, confirmed, deleted
+     */
+    router.post('/returns', authenticateToken, async (req, res) => {
+        try {
+            const {
+                global_id,
+                assignment_id,
+                assignment_global_id,  // ✅ Aceptar GlobalId del assignment
+                employee_id,
+                registered_by_employee_id,
+                tenant_id,
+                branch_id,
+                shift_id,
+                quantity,
+                unit_price,
+                amount,
+                return_date,
+                source = 'desktop',
+                status = 'draft',
+                notes,
+                terminal_id,
+                local_op_seq,
+                created_local_utc,
+                device_event_raw,
+                needs_update = false
+            } = req.body;
+
+            console.log(`[RepartidorReturns] ${needs_update ? 'UPDATE' : 'INSERT'} - GlobalId: ${global_id}, Status: ${status}, Quantity: ${quantity}`);
+
+            // Validar campos requeridos
+            if (!global_id || (!assignment_id && !assignment_global_id) || !employee_id || !quantity) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Campos requeridos: global_id, (assignment_id o assignment_global_id), employee_id, quantity'
+                });
+            }
+
+            // Si se envió assignment_global_id, resolver el ID numérico
+            let finalAssignmentId = assignment_id;
+            if (!finalAssignmentId && assignment_global_id) {
+                const assignmentResult = await pool.query(
+                    'SELECT id FROM repartidor_assignments WHERE global_id = $1',
+                    [assignment_global_id]
+                );
+
+                if (assignmentResult.rows.length === 0) {
+                    return res.status(404).json({
+                        success: false,
+                        message: `RepartidorAssignment con global_id ${assignment_global_id} no encontrado`
+                    });
+                }
+
+                finalAssignmentId = assignmentResult.rows[0].id;
+                console.log(`[RepartidorReturns] ✅ Assignment resuelto: ${assignment_global_id} → ID ${finalAssignmentId}`);
+            }
+
+            // Verificar si ya existe (idempotencia)
+            const existing = await pool.query(
+                'SELECT * FROM repartidor_returns WHERE global_id = $1',
+                [global_id]
+            );
+
+            if (existing.rows.length > 0) {
+                // Ya existe, verificar si es UPDATE
+                if (needs_update) {
+                    console.log(`[RepartidorReturns] Actualizando registro existente: ${global_id}`);
+
+                    const result = await pool.query(`
+                        UPDATE repartidor_returns
+                        SET
+                            quantity = $1,
+                            amount = $2,
+                            status = $3,
+                            notes = $4,
+                            updated_at = NOW()
+                        WHERE global_id = $5
+                        RETURNING *
+                    `, [quantity, amount, status, notes, global_id]);
+
+                    console.log(`[RepartidorReturns] ✅ Return actualizado: ${global_id} (status: ${status})`);
+
+                    return res.json({
+                        success: true,
+                        data: result.rows[0],
+                        message: 'Devolución actualizada correctamente'
+                    });
+                }
+
+                // Ya existe y no requiere update = idempotente
+                console.log(`[RepartidorReturns] Registro ya existe (idempotente): ${global_id}`);
+                return res.json({
+                    success: true,
+                    data: existing.rows[0],
+                    message: 'Devolución ya registrada (idempotente)'
+                });
+            }
+
+            // No existe, INSERT nuevo
+            console.log(`[RepartidorReturns] Insertando nuevo registro: ${global_id}`);
+
+            const result = await pool.query(`
+                INSERT INTO repartidor_returns (
+                    global_id, assignment_id, employee_id,
+                    registered_by_employee_id, tenant_id, branch_id,
+                    shift_id, quantity, unit_price, amount,
+                    return_date, source, status, notes,
+                    terminal_id, local_op_seq, created_local_utc, device_event_raw
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+                RETURNING *
+            `, [
+                global_id,
+                finalAssignmentId,  // ✅ Usar el ID resuelto
+                employee_id,
+                registered_by_employee_id || employee_id,
+                tenant_id,
+                branch_id,
+                shift_id,
+                quantity,
+                unit_price,
+                amount,
+                return_date || new Date(),
+                source,
+                status,
+                notes,
+                terminal_id,
+                local_op_seq,
+                created_local_utc,
+                device_event_raw
+            ]);
+
+            console.log(`[RepartidorReturns] ✅ Return creado: ${global_id} (status: ${status})`);
+
+            res.json({
+                success: true,
+                data: result.rows[0],
+                message: status === 'draft'
+                    ? 'Devolución borrador guardada'
+                    : 'Devolución confirmada'
+            });
+
+        } catch (error) {
+            console.error('[RepartidorReturns] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al procesar devolución',
+                error: error.message
+            });
+        }
+    });
+
+    /**
+     * GET /api/repartidores/returns/by-employee/:employeeId
+     * Obtiene todas las devoluciones de un repartidor (incluye borradores)
+     * Query params:
+     *   - tenant_id: required
+     *   - include_deleted: 'true' para incluir eliminados
+     *   - status_filter: 'draft', 'confirmed', 'deleted' (opcional)
+     */
+    router.get('/returns/by-employee/:employeeId', authenticateToken, async (req, res) => {
+        try {
+            const { employeeId } = req.params;
+            const { tenant_id, include_deleted = 'false', status_filter } = req.query;
+
+            if (!tenant_id) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'tenant_id es requerido'
+                });
+            }
+
+            console.log(`[RepartidorReturns] GET by employee: ${employeeId}, tenant: ${tenant_id}, include_deleted: ${include_deleted}, status: ${status_filter || 'ALL'}`);
+
+            let query = `
+                SELECT
+                    r.*,
+                    a.assigned_quantity,
+                    a.assigned_amount,
+                    a.status as assignment_status,
+                    a.fecha_asignacion,
+                    v.ticket_number,
+                    CONCAT(e.first_name, ' ', e.last_name) as registered_by_name
+                FROM repartidor_returns r
+                JOIN repartidor_assignments a ON r.assignment_id = a.id
+                JOIN ventas v ON a.venta_id = v.id_venta
+                LEFT JOIN employees e ON r.registered_by_employee_id = e.id
+                WHERE r.employee_id = $1
+                AND r.tenant_id = $2
+            `;
+
+            const params = [employeeId, tenant_id];
+            let paramIndex = 3;
+
+            // Filtrar eliminados si no se piden explícitamente
+            if (include_deleted !== 'true') {
+                query += ` AND r.status != 'deleted'`;
+            }
+
+            // Filtrar por status específico
+            if (status_filter) {
+                query += ` AND r.status = $${paramIndex}`;
+                params.push(status_filter);
+                paramIndex++;
+            }
+
+            query += ` ORDER BY r.return_date DESC`;
+
+            const result = await pool.query(query, params);
+
+            console.log(`[RepartidorReturns] ✅ Encontradas ${result.rows.length} devoluciones`);
+
+            res.json({
+                success: true,
+                data: result.rows,
+                count: result.rows.length
+            });
+
+        } catch (error) {
+            console.error('[RepartidorReturns] Error obteniendo devoluciones:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al obtener devoluciones',
+                error: error.message
+            });
+        }
+    });
+
+    /**
+     * DELETE /api/repartidores/returns/:globalId
+     * Elimina (soft delete) una devolución borrador
+     * Solo se pueden eliminar borradores (status = 'draft')
+     */
+    router.delete('/returns/:globalId', authenticateToken, async (req, res) => {
+        try {
+            const { globalId } = req.params;
+
+            console.log(`[RepartidorReturns] DELETE (soft): ${globalId}`);
+
+            // Verificar que existe y es borrador
+            const existing = await pool.query(
+                'SELECT * FROM repartidor_returns WHERE global_id = $1',
+                [globalId]
+            );
+
+            if (existing.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Devolución no encontrada'
+                });
+            }
+
+            if (existing.rows[0].status !== 'draft') {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Solo se pueden eliminar borradores'
+                });
+            }
+
+            // Soft delete
+            const result = await pool.query(`
+                UPDATE repartidor_returns
+                SET status = 'deleted', updated_at = NOW()
+                WHERE global_id = $1
+                RETURNING *
+            `, [globalId]);
+
+            console.log(`[RepartidorReturns] ✅ Devolución eliminada (soft): ${globalId}`);
+
+            res.json({
+                success: true,
+                data: result.rows[0],
+                message: 'Devolución eliminada correctamente'
+            });
+
+        } catch (error) {
+            console.error('[RepartidorReturns] Error eliminando:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al eliminar devolución',
+                error: error.message
+            });
         }
     });
 
