@@ -581,20 +581,20 @@ module.exports = (pool) => {
                     v.notas AS notes,
                     -- Items de la venta como JSON array
                     CASE
-                        WHEN COUNT(vi.id) > 0 THEN
+                        WHEN COUNT(vd.id_venta_detalle) > 0 THEN
                             json_agg(
                                 json_build_object(
-                                    'product_name', vi.nombre_producto,
-                                    'quantity', vi.cantidad,
-                                    'unit_price', vi.precio_unitario,
-                                    'subtotal', vi.subtotal
-                                ) ORDER BY vi.id
+                                    'product_name', vd.descripcion_producto,
+                                    'quantity', vd.cantidad,
+                                    'unit_price', vd.precio_unitario,
+                                    'subtotal', vd.total_linea
+                                ) ORDER BY vd.id_venta_detalle
                             )
                         ELSE
                             '[]'::json
                     END AS items
                 FROM ventas v
-                LEFT JOIN venta_items vi ON v.id_venta = vi.id_venta
+                LEFT JOIN ventas_detalle vd ON v.id_venta = vd.id_venta
                 WHERE v.id_cliente = $1
                     AND v.tenant_id = $2
                     AND v.tipo_pago_id = 3
