@@ -105,7 +105,9 @@ module.exports = (pool, io) => {
             console.log(`[Sync/GuardianLogs] ✅ Log sincronizado: ID ${log.id} - ${event_type} (${severity}) - Employee ${employee_id}`);
 
             // ✅ NUEVO: Emitir evento Socket.IO en tiempo real a la app móvil
+            console.log(`[Sync/GuardianLogs] 🔍 Verificando envío FCM - io: ${!!io}, branch_id: ${branch_id}`);
             if (io && branch_id) {
+                console.log(`[Sync/GuardianLogs] 📤 Preparando envío de FCM para branch ${branch_id}`);
                 // Obtener nombre del empleado si no se proporcionó
                 let employeeName = 'Empleado desconocido';
                 try {
