@@ -668,65 +668,10 @@ io.on('connection', (socket) => {
         io.to(roomName).emit('shift_ended', { ...data, receivedAt: new Date().toISOString() });
         console.log(`[SHIFT] ✅ shift_ended retransmitido a ${roomName}`);
 
-        // NUEVO: Sincronizar con PostgreSQL y enviar notificaciones FCM
-        try {
-            // Actualizar shift en PostgreSQL: marcar como cerrado
-            const updateShiftQuery = `
-                UPDATE shifts
-                SET is_cash_cut_open = false,
-                    end_time = $1,
-                    updated_at = NOW()
-                WHERE id = $2 AND tenant_id = $3
-                RETURNING id;
-            `;
-
-            console.log(`[SHIFT] DEBUG - Ejecutando UPDATE con: endTime=$1:${data.endTime || new Date().toISOString()}, shiftId=$2:${data.shiftId}, tenantId=$3:${data.tenantId}`);
-
-            const shiftResult = await pool.query(updateShiftQuery, [
-                data.endTime || new Date().toISOString(),
-                data.shiftId,
-                data.tenantId
-            ]);
-
-            console.log(`[SHIFT] DEBUG - Resultado del UPDATE: rows.length=${shiftResult.rows.length}, rows=${JSON.stringify(shiftResult.rows)}`);
-
-            if (shiftResult.rows.length > 0) {
-                console.log(`[SHIFT] ✅ Turno #${data.shiftId} actualizado en PostgreSQL`);
-
-                // Obtener global_id del empleado para notificaciones
-                const employeeData = await pool.query(
-                    `SELECT e.global_id FROM employees e
-                     JOIN shifts s ON s.employee_id = e.id
-                     WHERE s.id = $1`,
-                    [data.shiftId]
-                );
-
-                if (employeeData.rows.length > 0) {
-                    const employeeGlobalId = employeeData.rows[0].global_id;
-
-                    await notificationHelper.notifyShiftEnded(
-                        data.branchId,
-                        employeeGlobalId,
-                        {
-                            employeeName: data.employeeName,
-                            branchName: data.branchName,
-                            difference: data.difference,
-                            countedCash: data.countedCash,
-                            expectedCash: data.expectedCashInDrawer
-                        }
-                    );
-
-                    console.log(`[FCM] 📨 Notificación de cierre de turno enviada a sucursal ${data.branchId} y empleado ${employeeGlobalId}`);
-                } else {
-                    console.log(`[SHIFT] ⚠️ No se pudo obtener global_id del empleado para el turno #${data.shiftId}`);
-                }
-            } else {
-                console.log(`[SHIFT] ⚠️ No se encontró turno #${data.shiftId} en PostgreSQL`);
-            }
-        } catch (error) {
-            console.error(`[SHIFT] ❌ Error sincronizando turno con PostgreSQL:`, error.message);
-            // No fallar el broadcast si hay error en la sincronización
-        }
+        // NOTA: El sync real se hace vía /api/shifts/sync (idempotente con global_id)
+        // Este handler solo hace broadcast en tiempo real a clientes conectados
+        // Las notificaciones FCM se envían desde /api/shifts/sync cuando Desktop sincroniza
+        console.log(`[SHIFT] ℹ️ Shift closure broadcast completado. Sync y notificaciones se manejan vía /api/shifts/sync`);
     });
 
     socket.on('get_stats', () => {

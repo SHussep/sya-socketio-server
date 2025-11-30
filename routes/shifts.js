@@ -630,17 +630,21 @@ module.exports = (pool, io) => {
                 console.log(`[Sync/Shifts] 📨 Detectado cierre de turno - Enviando notificaciones FCM`);
 
                 try {
-                    // Obtener datos del empleado y sucursal para las notificaciones
+                    // Obtener datos del empleado para las notificaciones
                     const employeeData = await pool.query(
-                        `SELECT e.full_name, e.global_id, b.name as branch_name
-                         FROM employees e
-                         JOIN branches b ON e.branch_id = b.id
-                         WHERE e.id = $1`,
+                        `SELECT full_name, global_id FROM employees WHERE id = $1`,
                         [resolvedEmployeeId]
                     );
 
-                    if (employeeData.rows.length > 0) {
+                    // Obtener nombre de la sucursal desde el branch_id del shift
+                    const branchData = await pool.query(
+                        `SELECT name FROM branches WHERE id = $1`,
+                        [branch_id]
+                    );
+
+                    if (employeeData.rows.length > 0 && branchData.rows.length > 0) {
                         const employee = employeeData.rows[0];
+                        const branch = branchData.rows[0];
 
                         // Calcular diferencia de efectivo (si hay final_amount)
                         const countedCash = final_amount || 0;
@@ -652,7 +656,7 @@ module.exports = (pool, io) => {
                             employee.global_id,
                             {
                                 employeeName: employee.full_name,
-                                branchName: employee.branch_name,
+                                branchName: branch.name,
                                 difference,
                                 countedCash,
                                 expectedCash

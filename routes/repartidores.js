@@ -430,8 +430,14 @@ module.exports = (pool) => {
     // ============================================================================
 
     // GET /api/repartidores/shifts/:shiftId/cash-snapshot
-    // Obtiene el snapshot de corte de caja para un turno de repartidor
+    // DEPRECATED: Los cálculos se hacen con queries, no con snapshots
     router.get('/shifts/:shiftId/cash-snapshot', authenticateToken, async (req, res) => {
+        return res.status(501).json({
+            success: false,
+            message: 'Endpoint deprecated - Los cálculos se hacen con queries dinámicas, no con snapshots'
+        });
+        /* CODIGO ORIGINAL COMENTADO
+
         try {
             const { shiftId } = req.params;
             const { recalculate = 'false' } = req.query;
@@ -549,6 +555,7 @@ module.exports = (pool) => {
             console.error('[Cash Snapshot] Error:', error);
             res.status(500).json({ success: false, message: 'Error al obtener snapshot de caja', error: error.message });
         }
+        */ // FIN CODIGO COMENTADO
     });
 
     // PUT /api/repartidores/shifts/:shiftId/cash-delivered
@@ -665,8 +672,13 @@ module.exports = (pool) => {
     });
 
     // GET /api/repartidores/cash-snapshots/pending-sync
-    // Obtiene todos los snapshots que necesitan sincronización (para Desktop)
+    // DEPRECATED: Los cálculos se hacen con queries, no con snapshots
     router.get('/cash-snapshots/pending-sync', authenticateToken, async (req, res) => {
+        return res.status(501).json({
+            success: false,
+            message: 'Endpoint deprecated - Los cálculos se hacen con queries dinámicas, no con snapshots'
+        });
+        /* CODIGO ORIGINAL COMENTADO
         try {
             const { tenantId, branchId } = req.user;
             const { all_branches = 'false' } = req.query;
@@ -717,11 +729,17 @@ module.exports = (pool) => {
             console.error('[Pending Sync] Error:', error);
             res.status(500).json({ success: false, message: 'Error al obtener snapshots pendientes', error: error.message });
         }
+        */ // FIN CODIGO COMENTADO
     });
 
     // PUT /api/repartidores/cash-snapshots/:snapshotId/mark-synced
-    // Marca un snapshot como sincronizado (llamado por Desktop después de sincronizar)
+    // DEPRECATED: Los cálculos se hacen con queries, no con snapshots
     router.put('/cash-snapshots/:snapshotId/mark-synced', authenticateToken, async (req, res) => {
+        return res.status(501).json({
+            success: false,
+            message: 'Endpoint deprecated - Los cálculos se hacen con queries dinámicas, no con snapshots'
+        });
+        /* CODIGO ORIGINAL COMENTADO
         try {
             const { snapshotId } = req.params;
             const { tenantId } = req.user;
@@ -752,6 +770,7 @@ module.exports = (pool) => {
             console.error('[Mark Synced] Error:', error);
             res.status(500).json({ success: false, message: 'Error al marcar snapshot como sincronizado', error: error.message });
         }
+        */ // FIN CODIGO COMENTADO
     });
 
     // ============================================================================
