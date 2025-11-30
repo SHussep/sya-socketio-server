@@ -333,8 +333,16 @@ module.exports = (pool) => {
 
             // ✅ Mapear estado_venta_id a status
             // Desktop: 1=Borrador, 2=Asignada, 3=Completada, 4=Cancelada, 5=Liquidada
-            // PostgreSQL: 'completed' o 'cancelled'
-            const status = (estado_venta_id === 4) ? 'cancelled' : 'completed';
+            // PostgreSQL: 'draft', 'assigned', 'completed', 'cancelled', 'liquidated'
+            // IMPORTANTE: Solo estado 3 (Completada) y 5 (Liquidada) cuentan para corte de caja
+            const statusMap = {
+                1: 'draft',      // Borrador - no cuenta
+                2: 'assigned',   // Asignada a repartidor - NO cuenta en corte hasta liquidación
+                3: 'completed',  // Completada (venta mostrador) - SÍ cuenta
+                4: 'cancelled',  // Cancelada - no cuenta
+                5: 'liquidated'  // Liquidada (repartidor cobró) - SÍ cuenta
+            };
+            const status = statusMap[estado_venta_id] || 'completed';
 
             // ✅ IDEMPOTENTE: INSERT con ON CONFLICT (global_id) DO UPDATE
             const result = await pool.query(
@@ -946,6 +954,17 @@ module.exports = (pool) => {
 
             console.log(`[Sync/Sales/Update] ✅ IDs resueltos - repartidor: ${id_repartidor_asignado || 'null'}, turno_repartidor: ${id_turno_repartidor || 'null'}`);
 
+            // ✅ Mapear estado_venta_id a status
+            // 1=Borrador→draft, 2=Asignada→assigned, 3=Completada→completed, 4=Cancelada→cancelled, 5=Liquidada→liquidated
+            const statusMap = {
+                1: 'draft',
+                2: 'assigned',
+                3: 'completed',
+                4: 'cancelled',
+                5: 'liquidated'
+            };
+            const newStatus = statusMap[estado_venta_id] || 'completed';
+
             // Actualizar venta con campos modificables
             const result = await pool.query(
                 `UPDATE ventas
@@ -958,7 +977,7 @@ module.exports = (pool) => {
                      id_repartidor_asignado = $7,
                      id_turno_repartidor = $8,
                      notas = $9,
-                     status = CASE WHEN $1 = 4 THEN 'cancelled' ELSE 'completed' END,
+                     status = $12,
                      updated_at = NOW()
                  WHERE global_id = $10 AND tenant_id = $11
                  RETURNING *`,
@@ -973,7 +992,8 @@ module.exports = (pool) => {
                     id_turno_repartidor,
                     notas,
                     globalId,
-                    tenant_id
+                    tenant_id,
+                    newStatus  // $12 - status mapeado desde estado_venta_id
                 ]
             );
 
