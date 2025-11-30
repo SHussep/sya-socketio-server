@@ -334,7 +334,7 @@ app.use('/api/sales-items', salesRoutes(pool));
 app.use('/api/ventas', ventasRoutes); // Consultas desde App Móvil (GET)
 app.use('/api/expenses', expensesRoutes(pool, io));
 app.use('/api/shifts', shiftsRoutes(pool, io));
-app.use('/api/cash-cuts', cashCutsRoutes(pool));
+app.use('/api/cash-cuts', newCashCutsRoutes(pool)); // Using new cash-cuts.js with offline-first sync
 app.use('/api/purchases', purchasesRoutes(pool));
 app.use('/api/guardian-events', guardianEventsRoutes(pool, io)); // Requires io for Socket.IO
 app.use('/api/dashboard', dashboardRoutes(pool));
@@ -349,10 +349,10 @@ app.use('/api/scale-disconnection-logs', scaleDisconnectionLogsRoutes(pool)); //
 app.use('/api/employee-metrics', employeeMetricsRoutes(pool)); // Rutas de métricas diarias de empleados
 app.use('/api/repartidores', repartidoresRoutes(pool)); // Rutas de resumen y detalles de repartidores
 
-// FASE 1: Cash Management Routes (Deposits, Withdrawals, Cash Cuts)
+// FASE 1: Cash Management Routes (Deposits, Withdrawals)
 app.use('/api/deposits', depositsRoutes(pool));
 app.use('/api/withdrawals', withdrawalsRoutes(pool));
-app.use('/api/cash-cuts-new', newCashCutsRoutes(pool)); // New comprehensive cash cuts endpoint
+// Note: cash-cuts now uses newCashCutsRoutes at /api/cash-cuts (line 337)
 
 // Sync endpoints are mounted at their service-specific paths
 // e.g., /api/sales/sync, /api/expenses/sync, /api/cash-cuts/sync, etc.
@@ -364,7 +364,7 @@ app.post('/api/sync/cash-cuts', (req, res) => {
     // Forward to the correct endpoint
     req.url = '/sync';
     req.baseUrl = '/api/cash-cuts';
-    cashCutsRoutes(pool)(req, res);
+    newCashCutsRoutes(pool)(req, res);
 });
 
 // Alias routes for FASE 1 cash management endpoints
@@ -380,11 +380,7 @@ app.post('/api/withdrawals/sync', (req, res) => {
     withdrawalsRoutes(pool)(req, res);
 });
 
-app.post('/api/cash-cuts-new/sync', (req, res) => {
-    req.url = '/sync';
-    req.baseUrl = '/api/cash-cuts-new';
-    newCashCutsRoutes(pool)(req, res);
-});
+// Note: /api/cash-cuts-new removed - now using /api/cash-cuts with newCashCutsRoutes
 
 // ═══════════════════════════════════════════════════════════════
 // AUTHENTICATION MIDDLEWARE
