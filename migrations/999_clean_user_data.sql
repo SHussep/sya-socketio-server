@@ -21,18 +21,23 @@ DROP TABLE IF EXISTS ventas CASCADE;
 DROP TABLE IF EXISTS credit_payments CASCADE;
 DROP TABLE IF EXISTS repartidor_returns CASCADE;
 DROP TABLE IF EXISTS repartidor_assignments CASCADE;
+DROP TABLE IF EXISTS shift_cash_snapshot CASCADE;
 DROP TABLE IF EXISTS expenses CASCADE;
+DROP TABLE IF EXISTS expense_categories CASCADE;
 DROP TABLE IF EXISTS deposits CASCADE;
 DROP TABLE IF EXISTS withdrawals CASCADE;
 DROP TABLE IF EXISTS cash_cuts CASCADE;
 DROP TABLE IF EXISTS shifts CASCADE;
+DROP TABLE IF EXISTS backup_metadata CASCADE;
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- PASO 2: DROP relaciones de empleados
+-- PASO 2: DROP relaciones de empleados y dispositivos
 -- ═══════════════════════════════════════════════════════════════════════════
 
 DROP TABLE IF EXISTS employee_branches CASCADE;
+DROP TABLE IF EXISTS device_tokens CASCADE;
 DROP TABLE IF EXISTS devices CASCADE;
+DROP TABLE IF EXISTS sessions CASCADE;
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- PASO 3: DROP empleados, clientes, productos
@@ -40,6 +45,7 @@ DROP TABLE IF EXISTS devices CASCADE;
 
 DROP TABLE IF EXISTS employees CASCADE;
 DROP TABLE IF EXISTS customers CASCADE;
+DROP TABLE IF EXISTS productos CASCADE;
 DROP TABLE IF EXISTS products CASCADE;
 
 -- ═══════════════════════════════════════════════════════════════════════════
