@@ -321,6 +321,7 @@ module.exports = (pool) => {
                 try {
                     const {
                         tenantId: cutTenantId, branchId, shiftId, employeeId,
+                        shift_global_id, // ✅ GlobalId del shift para idempotencia
                         initialAmount, totalCashSales, totalCardSales, totalCreditSales,
                         totalCashPayments, totalCardPayments,
                         totalExpenses, totalDeposits, totalWithdrawals,
@@ -333,18 +334,34 @@ module.exports = (pool) => {
 
                     const effectiveTenantId = cutTenantId || tenantId;
 
-                    if (!shiftId || !branchId || countedCash === undefined) {
-                        results.push({ success: false, error: 'Missing required fields (shiftId, branchId, countedCash)' });
+                    // Validar campos requeridos: shift_global_id (preferido) o shiftId (legacy)
+                    if (!shift_global_id && !shiftId) {
+                        results.push({ success: false, error: 'Missing required field: shift_global_id or shiftId' });
+                        continue;
+                    }
+                    if (!branchId || countedCash === undefined) {
+                        results.push({ success: false, error: 'Missing required fields (branchId, countedCash)' });
                         continue;
                     }
 
                     await client.query('BEGIN');
 
-                    // Get shift details for time range and employee_id
-                    const shiftResult = await client.query(
-                        'SELECT start_time, end_time, employee_id FROM shifts WHERE id = $1 AND tenant_id = $2',
-                        [shiftId, effectiveTenantId]
-                    );
+                    // ✅ Buscar shift por global_id (idempotente) o por id (legacy)
+                    let shiftResult;
+                    if (shift_global_id) {
+                        shiftResult = await client.query(
+                            'SELECT id, start_time, end_time, employee_id FROM shifts WHERE global_id = $1 AND tenant_id = $2',
+                            [shift_global_id, effectiveTenantId]
+                        );
+                        console.log(`[CashCuts/Sync] 🔍 Buscando shift por global_id: ${shift_global_id}`);
+                    } else {
+                        // Legacy: buscar por id numérico
+                        shiftResult = await client.query(
+                            'SELECT id, start_time, end_time, employee_id FROM shifts WHERE id = $1 AND tenant_id = $2',
+                            [shiftId, effectiveTenantId]
+                        );
+                        console.log(`[CashCuts/Sync] 🔍 Buscando shift por id (legacy): ${shiftId}`);
+                    }
 
                     if (shiftResult.rows.length === 0) {
                         await client.query('ROLLBACK');
@@ -352,7 +369,8 @@ module.exports = (pool) => {
                         continue;
                     }
 
-                    const { start_time: startTime, end_time: endTime, employee_id: shiftEmployeeId } = shiftResult.rows[0];
+                    const { id: resolvedShiftId, start_time: startTime, end_time: endTime, employee_id: shiftEmployeeId } = shiftResult.rows[0];
+                    console.log(`[CashCuts/Sync] ✅ Shift encontrado: id=${resolvedShiftId}, employee_id=${shiftEmployeeId}`);
 
                     // ✅ UPSERT cash cut record con global_id para idempotencia
                     const insertResult = await client.query(
@@ -376,7 +394,7 @@ module.exports = (pool) => {
                             notes = EXCLUDED.notes
                         RETURNING *`,
                         [
-                            effectiveTenantId, branchId, shiftId, shiftEmployeeId, // Usar employee_id del shift, no del payload
+                            effectiveTenantId, branchId, resolvedShiftId, shiftEmployeeId, // ✅ Usar el ID resuelto del shift
                             startTime, endTime,
                             parseFloat(initialAmount || 0),
                             parseFloat(totalCashSales || 0),
