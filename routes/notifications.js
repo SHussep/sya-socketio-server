@@ -13,7 +13,7 @@ const router = express.Router();
 // Registra un dispositivo para recibir notificaciones
 // ═══════════════════════════════════════════════════════════════
 router.post('/register-device', async (req, res) => {
-    const { employeeId, branchId, deviceToken, platform, deviceName } = req.body;
+    const { employeeId, branchId, deviceToken, platform, deviceName, deviceId } = req.body;
 
     // Validaciones
     if (!employeeId || !branchId || !deviceToken || !platform) {
@@ -57,16 +57,29 @@ router.post('/register-device', async (req, res) => {
             });
         }
 
+        // Si se proporciona deviceId, desactivar todos los tokens previos de ese dispositivo
+        // Esto previene múltiples tokens activos para el mismo dispositivo físico
+        if (deviceId) {
+            await pool.query(
+                `UPDATE device_tokens
+                 SET is_active = false
+                 WHERE device_id = $1 AND employee_id = $2 AND device_token != $3`,
+                [deviceId, employeeId, deviceToken]
+            );
+            console.log(`[Notifications] 🧹 Deactivated old tokens for device ${deviceId}`);
+        }
+
         // Insertar o actualizar el device token
         const query = `
-            INSERT INTO device_tokens (employee_id, branch_id, device_token, platform, device_name, last_used_at)
-            VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
+            INSERT INTO device_tokens (employee_id, branch_id, device_token, platform, device_name, device_id, last_used_at)
+            VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)
             ON CONFLICT (device_token)
             DO UPDATE SET
                 employee_id = $1,
                 branch_id = $2,
                 platform = $4,
                 device_name = $5,
+                device_id = $6,
                 is_active = true,
                 last_used_at = CURRENT_TIMESTAMP
             RETURNING id, device_token, platform;
@@ -77,7 +90,8 @@ router.post('/register-device', async (req, res) => {
             branchId,
             deviceToken,
             platform,
-            deviceName || `Device-${new Date().getTime()}`
+            deviceName || `Device-${new Date().getTime()}`,
+            deviceId || null
         ]);
 
         console.log(`[Notifications] ✅ Device registered: Employee ${employeeId} - ${platform} - ${result.rows[0].device_token.substring(0, 20)}...`);
