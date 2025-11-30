@@ -202,10 +202,11 @@ module.exports = (pool, io) => {
     });
 
     // GET /api/shifts/history - Obtener historial de turnos (cortes de caja)
+    // Parámetro open_only=true para obtener solo turnos abiertos (para selector de turnos)
     router.get('/history', authenticateToken, async (req, res) => {
         try {
             const { tenantId, branchId } = req.user;
-            const { limit = 50, offset = 0, all_branches = 'false', employee_id } = req.query;
+            const { limit = 50, offset = 0, all_branches = 'false', employee_id, open_only = 'false' } = req.query;
 
             let query = `
                 SELECT s.id, s.tenant_id, s.branch_id, s.employee_id, s.start_time, s.end_time,
@@ -223,6 +224,12 @@ module.exports = (pool, io) => {
 
             const params = [tenantId];
             let paramIndex = 2;
+
+            // ✅ NUEVO: Filtrar solo turnos abiertos si open_only=true
+            if (open_only === 'true') {
+                query += ` AND s.is_cash_cut_open = true`;
+                console.log(`[Shifts/History] 🔍 Filtrando solo turnos abiertos`);
+            }
 
             // Filtrar por sucursal si no se solicita todas
             if (all_branches !== 'true' && branchId) {
