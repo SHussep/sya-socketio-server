@@ -203,10 +203,13 @@ CREATE TABLE IF NOT EXISTS expenses (
     expense_date TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     payment_type_id INTEGER,  -- 1=Efectivo, 2=Tarjeta
 
+    -- Status (draft = borrador editable, confirmed = confirmado en liquidación, deleted = eliminado)
+    status VARCHAR(20) NOT NULL DEFAULT 'confirmed' CHECK (status IN ('draft', 'confirmed', 'deleted')),
+
     -- Mobile app review system
     reviewed_by_desktop BOOLEAN DEFAULT FALSE,  -- TRUE = aprobado por Desktop, FALSE = pendiente de revisión
 
-    -- Soft delete
+    -- Soft delete (legacy - usar status='deleted' preferiblemente)
     is_active BOOLEAN DEFAULT TRUE,
     deleted_at TIMESTAMP,
 
@@ -231,6 +234,8 @@ CREATE INDEX IF NOT EXISTS idx_expenses_is_active ON expenses(is_active);
 CREATE INDEX IF NOT EXISTS idx_expenses_deleted_at ON expenses(deleted_at);
 CREATE INDEX IF NOT EXISTS idx_expenses_terminal_seq ON expenses(terminal_id, local_op_seq);
 CREATE INDEX IF NOT EXISTS idx_expenses_reviewed_by_desktop ON expenses(employee_id, reviewed_by_desktop) WHERE reviewed_by_desktop = FALSE;
+CREATE INDEX IF NOT EXISTS idx_expenses_status ON expenses(status);
+CREATE INDEX IF NOT EXISTS idx_expenses_employee_status ON expenses(employee_id, status);
 
 -- deposits (depósitos)
 CREATE TABLE IF NOT EXISTS deposits (
@@ -665,71 +670,6 @@ CREATE INDEX IF NOT EXISTS idx_repartidor_returns_source ON repartidor_returns(s
 CREATE INDEX IF NOT EXISTS idx_repartidor_returns_status ON repartidor_returns(status);
 CREATE INDEX IF NOT EXISTS idx_repartidor_returns_employee_status ON repartidor_returns(employee_id, status);
 CREATE UNIQUE INDEX IF NOT EXISTS unique_repartidor_returns_global_terminal ON repartidor_returns(global_id, terminal_id);
-
--- shift_cash_snapshot (snapshot de corte de caja para todos los roles)
-CREATE TABLE IF NOT EXISTS shift_cash_snapshot (
-    id SERIAL PRIMARY KEY,
-    tenant_id INTEGER NOT NULL,
-    branch_id INTEGER NOT NULL,
-    employee_id INTEGER NOT NULL,
-    shift_id INTEGER NOT NULL UNIQUE,
-    employee_role VARCHAR(50) NOT NULL,
-
-    -- Montos básicos del corte de caja
-    initial_amount DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
-    cash_sales DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
-    card_sales DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
-    credit_sales DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
-    cash_payments DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
-    card_payments DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
-    expenses DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
-    deposits DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
-    withdrawals DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
-
-    -- Asignaciones y devoluciones (solo para repartidores)
-    total_assigned_amount DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
-    total_assigned_quantity DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
-    total_returned_amount DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
-    total_returned_quantity DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
-    net_amount_to_deliver DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
-    net_quantity_delivered DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
-
-    -- Liquidación
-    actual_cash_delivered DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
-    cash_difference DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
-
-    -- Campo calculado (se agregará con ALTER TABLE en migraciones)
-    expected_cash DECIMAL(10,2),
-
-    -- Contadores
-    assignment_count INTEGER DEFAULT 0 NOT NULL,
-    liquidated_assignment_count INTEGER DEFAULT 0 NOT NULL,
-    return_count INTEGER DEFAULT 0 NOT NULL,
-    expense_count INTEGER DEFAULT 0 NOT NULL,
-    deposit_count INTEGER DEFAULT 0 NOT NULL,
-    withdrawal_count INTEGER DEFAULT 0 NOT NULL,
-
-    -- Metadata de sincronización offline-first
-    last_updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
-    needs_recalculation BOOLEAN DEFAULT FALSE NOT NULL,
-    needs_update BOOLEAN DEFAULT FALSE NOT NULL,
-    needs_deletion BOOLEAN DEFAULT FALSE NOT NULL,
-    synced_at TIMESTAMPTZ,
-    global_id VARCHAR(36) UNIQUE,
-    terminal_id VARCHAR(100),
-    created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
-    updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_shift_cash_snapshot_shift ON shift_cash_snapshot(shift_id);
-CREATE INDEX IF NOT EXISTS idx_shift_cash_snapshot_employee ON shift_cash_snapshot(employee_id);
-CREATE INDEX IF NOT EXISTS idx_shift_cash_snapshot_branch ON shift_cash_snapshot(branch_id, tenant_id);
-CREATE INDEX IF NOT EXISTS idx_shift_cash_snapshot_role ON shift_cash_snapshot(employee_role);
-CREATE INDEX IF NOT EXISTS idx_shift_cash_snapshot_needs_recalc ON shift_cash_snapshot(needs_recalculation) WHERE needs_recalculation = TRUE;
-CREATE INDEX IF NOT EXISTS idx_shift_cash_snapshot_needs_update ON shift_cash_snapshot(needs_update) WHERE needs_update = TRUE;
-CREATE INDEX IF NOT EXISTS idx_shift_cash_snapshot_needs_deletion ON shift_cash_snapshot(needs_deletion) WHERE needs_deletion = TRUE;
-CREATE INDEX IF NOT EXISTS idx_shift_cash_snapshot_global_id ON shift_cash_snapshot(global_id) WHERE global_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_shift_cash_snapshot_updated_at ON shift_cash_snapshot(updated_at DESC);
 
 -- ========== CREDIT PAYMENTS ==========
 

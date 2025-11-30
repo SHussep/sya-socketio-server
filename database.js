@@ -342,82 +342,12 @@ async function initializeDatabase() {
         `);
         */
 
-        // Tabla: shift_cash_snapshot (snapshot de corte de caja para todos los roles)
-        await client.query(`
-            CREATE TABLE IF NOT EXISTS shift_cash_snapshot (
-                id SERIAL PRIMARY KEY,
-                tenant_id INTEGER NOT NULL,
-                branch_id INTEGER NOT NULL,
-                employee_id INTEGER NOT NULL,
-                shift_id INTEGER NOT NULL,
-                employee_role VARCHAR(50) NOT NULL,
-
-                -- Montos básicos del corte de caja
-                initial_amount DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
-                cash_sales DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
-                card_sales DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
-                credit_sales DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
-                cash_payments DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
-                card_payments DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
-                expenses DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
-                deposits DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
-                withdrawals DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
-
-                -- Asignaciones y devoluciones (solo para repartidores)
-                total_assigned_amount DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
-                total_assigned_quantity DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
-                total_returned_amount DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
-                total_returned_quantity DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
-                net_amount_to_deliver DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
-                net_quantity_delivered DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
-
-                -- Liquidación
-                actual_cash_delivered DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
-                cash_difference DECIMAL(10,2) DEFAULT 0.00 NOT NULL,
-
-                -- Campo calculado (expected_cash) se agregará con ALTER TABLE después
-                expected_cash DECIMAL(10,2),
-
-                -- Contadores
-                assignment_count INTEGER DEFAULT 0 NOT NULL,
-                liquidated_assignment_count INTEGER DEFAULT 0 NOT NULL,
-                return_count INTEGER DEFAULT 0 NOT NULL,
-                expense_count INTEGER DEFAULT 0 NOT NULL,
-                deposit_count INTEGER DEFAULT 0 NOT NULL,
-                withdrawal_count INTEGER DEFAULT 0 NOT NULL,
-
-                -- Metadata de sincronización offline-first
-                last_updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
-                needs_recalculation BOOLEAN DEFAULT FALSE NOT NULL,
-                needs_update BOOLEAN DEFAULT FALSE NOT NULL,
-                needs_deletion BOOLEAN DEFAULT FALSE NOT NULL,
-                synced_at TIMESTAMPTZ,
-                global_id VARCHAR(36) UNIQUE,
-                terminal_id VARCHAR(100),
-                created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
-                updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
-
-                UNIQUE(shift_id)
-            )
-        `);
-
-        // Índices
+        // Índices básicos
         await client.query('CREATE INDEX IF NOT EXISTS idx_employees_tenant_id ON employees(tenant_id)');
         await client.query('CREATE INDEX IF NOT EXISTS idx_employees_email ON employees(email)');
         await client.query('CREATE INDEX IF NOT EXISTS idx_devices_tenant_id ON devices(tenant_id)');
         await client.query('CREATE INDEX IF NOT EXISTS idx_sessions_tenant_id ON sessions(tenant_id)');
         await client.query('CREATE INDEX IF NOT EXISTS idx_branches_tenant_id ON branches(tenant_id)');
-
-        // Índices para shift_cash_snapshot
-        await client.query('CREATE INDEX IF NOT EXISTS idx_shift_cash_snapshot_shift ON shift_cash_snapshot(shift_id)');
-        await client.query('CREATE INDEX IF NOT EXISTS idx_shift_cash_snapshot_employee ON shift_cash_snapshot(employee_id)');
-        await client.query('CREATE INDEX IF NOT EXISTS idx_shift_cash_snapshot_branch ON shift_cash_snapshot(branch_id, tenant_id)');
-        await client.query('CREATE INDEX IF NOT EXISTS idx_shift_cash_snapshot_role ON shift_cash_snapshot(employee_role)');
-        await client.query('CREATE INDEX IF NOT EXISTS idx_shift_cash_snapshot_needs_recalc ON shift_cash_snapshot(needs_recalculation) WHERE needs_recalculation = TRUE');
-        await client.query('CREATE INDEX IF NOT EXISTS idx_shift_cash_snapshot_needs_update ON shift_cash_snapshot(needs_update) WHERE needs_update = TRUE');
-        await client.query('CREATE INDEX IF NOT EXISTS idx_shift_cash_snapshot_needs_deletion ON shift_cash_snapshot(needs_deletion) WHERE needs_deletion = TRUE');
-        await client.query('CREATE INDEX IF NOT EXISTS idx_shift_cash_snapshot_global_id ON shift_cash_snapshot(global_id) WHERE global_id IS NOT NULL');
-        await client.query('CREATE INDEX IF NOT EXISTS idx_shift_cash_snapshot_updated_at ON shift_cash_snapshot(updated_at DESC)');
 
         // ⚠️ ÍNDICES OBSOLETOS: sales → ahora se usan índices en 'ventas' (migration 046)
         // await client.query('CREATE INDEX IF NOT EXISTS idx_sales_tenant_id ON sales(tenant_id)');

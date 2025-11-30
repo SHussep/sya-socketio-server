@@ -107,12 +107,16 @@ module.exports = (pool, io) => {
 
     // POST /api/sync/expenses - Alias de /api/expenses (para compatibilidad con Desktop)
     // Ahora también acepta localShiftId para offline-first reconciliation
+    // Soporta estados: draft, confirmed, deleted (para flujo de borradores)
     router.post('/sync', async (req, res) => {
         try {
             const {
                 tenantId, branchId, employeeId, category, description, amount, quantity, userEmail,
                 payment_type_id, expense_date_utc, id_turno,
                 reviewed_by_desktop,
+                // Status (draft = borrador editable, confirmed = confirmado, deleted = eliminado)
+                status = 'confirmed',
+                needs_update = false,
                 // OFFLINE-FIRST FIELDS (OPCIONALES - solo Desktop los envía, Mobile NO)
                 global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw
             } = req.body;
@@ -120,6 +124,7 @@ module.exports = (pool, io) => {
             // Detectar tipo de cliente: Desktop (offline-first) vs Mobile (online-only)
             const isDesktop = !!global_id && !!terminal_id;
             const reviewedValue = reviewed_by_desktop !== undefined ? reviewed_by_desktop : false;
+            const finalStatus = status || 'confirmed';
 
             // Si es Mobile (online-only), generar valores simples
             const finalGlobalId = global_id || uuidv4(); // Generate valid UUID for Mobile
@@ -131,6 +136,7 @@ module.exports = (pool, io) => {
             console.log(`[Sync/Expenses] 📥 Client Type: ${isDesktop ? 'DESKTOP (offline-first)' : 'MOBILE (online-only)'}`);
             console.log(`[Sync/Expenses] 📦 Tenant: ${tenantId}, Branch: ${branchId}, Category: ${category}`);
             console.log(`[Sync/Expenses] 💰 Amount: ${amount}, Quantity: ${quantity || 'N/A'}, Payment: ${payment_type_id}, Shift: ${id_turno || 'N/A'}`);
+            console.log(`[Sync/Expenses] 📊 Status: ${finalStatus}, NeedsUpdate: ${needs_update}`);
             if (isDesktop) {
                 console.log(`[Sync/Expenses] 🔐 Desktop IDs - Global: ${global_id}, Terminal: ${terminal_id}, Seq: ${local_op_seq}`);
             } else {
@@ -183,42 +189,77 @@ module.exports = (pool, io) => {
             const expenseDate = expense_date_utc || new Date().toISOString();
             console.log(`[Sync/Expenses] 📅 Using expense timestamp: ${expenseDate}`);
 
-            // ✅ IDEMPOTENTE: INSERT con ON CONFLICT (global_id) DO UPDATE
-            const result = await pool.query(
-                `INSERT INTO expenses (
-                    tenant_id, branch_id, employee_id, payment_type_id, id_turno, category_id, description, amount, quantity, expense_date,
-                    reviewed_by_desktop,
-                    global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw
-                 )
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-                 ON CONFLICT (global_id) DO UPDATE
-                 SET amount = EXCLUDED.amount,
-                     quantity = EXCLUDED.quantity,
-                     description = EXCLUDED.description,
-                     expense_date = EXCLUDED.expense_date,
-                     payment_type_id = EXCLUDED.payment_type_id,
-                     id_turno = EXCLUDED.id_turno,
-                     reviewed_by_desktop = EXCLUDED.reviewed_by_desktop
-                 RETURNING *`,
-                [
-                    tenantId,
-                    branchId,
-                    finalEmployeeId,
-                    payment_type_id,              // $4
-                    id_turno || null,             // $5 - Turno al que pertenece el gasto
-                    categoryId,                   // $6
-                    description || '',            // $7
-                    numericAmount,                // $8
-                    quantity || null,             // $9 - Cantidad (litros, kg, etc.)
-                    expenseDate,                  // $10
-                    reviewedValue,                // $11 - TRUE para Desktop, FALSE para Mobile
-                    finalGlobalId,                // $12 - UUID (Desktop) o generado (Mobile)
-                    finalTerminalId,              // $13 - UUID (Desktop) o generado (Mobile)
-                    finalLocalOpSeq,              // $14 - Sequence (Desktop) o 0 (Mobile)
-                    finalCreatedLocalUtc,         // $15 - ISO 8601 timestamp
-                    finalDeviceEventRaw           // $16 - Raw ticks
-                ]
+            // Verificar si ya existe para manejar UPDATE vs INSERT
+            const existing = await pool.query(
+                'SELECT id, status FROM expenses WHERE global_id = $1',
+                [finalGlobalId]
             );
+
+            let result;
+            if (existing.rows.length > 0 && needs_update) {
+                // Ya existe y necesita actualización
+                console.log(`[Sync/Expenses] 🔄 Actualizando gasto existente: ${finalGlobalId} (status: ${finalStatus})`);
+                result = await pool.query(
+                    `UPDATE expenses
+                     SET amount = $1,
+                         quantity = $2,
+                         description = $3,
+                         expense_date = $4,
+                         payment_type_id = $5,
+                         id_turno = $6,
+                         status = $7,
+                         reviewed_by_desktop = $8,
+                         updated_at = NOW()
+                     WHERE global_id = $9
+                     RETURNING *`,
+                    [
+                        numericAmount,
+                        quantity || null,
+                        description || '',
+                        expenseDate,
+                        payment_type_id,
+                        id_turno || null,
+                        finalStatus,
+                        reviewedValue,
+                        finalGlobalId
+                    ]
+                );
+            } else if (existing.rows.length > 0) {
+                // Ya existe pero no necesita actualización (idempotente)
+                console.log(`[Sync/Expenses] ⏭️ Gasto ya existe (idempotente): ${finalGlobalId}`);
+                return res.json({ success: true, data: existing.rows[0], message: 'Gasto ya registrado (idempotente)' });
+            } else {
+                // No existe, INSERT nuevo
+                console.log(`[Sync/Expenses] ➕ Insertando nuevo gasto: ${finalGlobalId} (status: ${finalStatus})`);
+                result = await pool.query(
+                    `INSERT INTO expenses (
+                        tenant_id, branch_id, employee_id, payment_type_id, id_turno, category_id, description, amount, quantity, expense_date,
+                        status, reviewed_by_desktop,
+                        global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw
+                     )
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                     RETURNING *`,
+                    [
+                        tenantId,
+                        branchId,
+                        finalEmployeeId,
+                        payment_type_id,              // $4
+                        id_turno || null,             // $5 - Turno al que pertenece el gasto
+                        categoryId,                   // $6
+                        description || '',            // $7
+                        numericAmount,                // $8
+                        quantity || null,             // $9 - Cantidad (litros, kg, etc.)
+                        expenseDate,                  // $10
+                        finalStatus,                  // $11 - Status (draft/confirmed/deleted)
+                        reviewedValue,                // $12 - TRUE para Desktop, FALSE para Mobile
+                        finalGlobalId,                // $13 - UUID (Desktop) o generado (Mobile)
+                        finalTerminalId,              // $14 - UUID (Desktop) o generado (Mobile)
+                        finalLocalOpSeq,              // $15 - Sequence (Desktop) o 0 (Mobile)
+                        finalCreatedLocalUtc,         // $16 - ISO 8601 timestamp
+                        finalDeviceEventRaw           // $17 - Raw ticks
+                    ]
+                );
+            }
 
             console.log(`[Sync/Expenses] ✅ Gasto sincronizado: ${category} - $${numericAmount} | PaymentType: ${payment_type_id}`);
 
