@@ -604,6 +604,28 @@ io.on('connection', (socket) => {
         }
     });
 
+    socket.on('user-logout', async (data) => {
+        stats.totalEvents++;
+        const roomName = `branch_${data.branchId}`;
+        console.log(`[USER-LOGOUT] Sucursal ${data.branchId}: ${data.employeeName} (${data.employeeRole}) cerró sesión`);
+
+        // Broadcast al escritorio y móviles en la sucursal
+        io.to(roomName).emit('user-logout', { ...data, receivedAt: new Date().toISOString() });
+
+        // Enviar notificación FCM a admins/encargados + al empleado que hizo logout
+        try {
+            await notificationHelper.notifyUserLogout(data.branchId, {
+                employeeId: data.employeeId,
+                employeeName: data.employeeName,
+                branchName: data.branchName
+            });
+            console.log(`[FCM] 📨 Notificación de logout enviada a sucursal ${data.branchId}`);
+        } catch (error) {
+            console.error(`[USER-LOGOUT] ⚠️ Error enviando notificación FCM:`, error.message);
+            // No fallar el broadcast si hay error en la notificación
+        }
+    });
+
     socket.on('shift_started', async (data) => {
         stats.totalEvents++;
         const roomName = `branch_${data.branchId}`;
