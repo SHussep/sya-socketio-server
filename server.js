@@ -89,6 +89,7 @@ const scaleDisconnectionLogsRoutes = require('./routes/scaleDisconnectionLogs');
 const employeeMetricsRoutes = require('./routes/employeeMetrics'); // Rutas de métricas diarias de empleados
 const cancelacionesRoutes = require('./routes/cancelaciones'); // Rutas de cancelaciones bitácora con sync offline-first
 const repartidoresRoutes = require('./routes/repartidores'); // Rutas de resumen y detalles de repartidores
+const syncDiagnosticsRoutes = require('./routes/sync-diagnostics'); // Rutas de diagnóstico de sincronización
 
 // Inicializar Firebase para notificaciones push
 initializeFirebase();
@@ -352,6 +353,7 @@ app.use('/api/repartidores', repartidoresRoutes(pool)); // Rutas de resumen y de
 // FASE 1: Cash Management Routes (Deposits, Withdrawals)
 app.use('/api/deposits', depositsRoutes(pool));
 app.use('/api/withdrawals', withdrawalsRoutes(pool));
+app.use('/api/sync-diagnostics', syncDiagnosticsRoutes(pool)); // Diagnóstico de sincronización (debug)
 // Note: cash-cuts now uses newCashCutsRoutes at /api/cash-cuts (line 337)
 
 // Sync endpoints are mounted at their service-specific paths

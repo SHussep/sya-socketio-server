@@ -94,6 +94,7 @@ module.exports = (pool) => {
     });
 
     // POST /api/credit-payments/sync - Sincronizar pagos desde Desktop (SIN AUTENTICACIÓN - offline-first)
+    // ✅ ACTUALIZADO: Soporta resolución de GlobalIds para relaciones
     router.post('/sync', async (req, res) => {
         try {
             const payments = Array.isArray(req.body) ? req.body : [req.body];
@@ -113,14 +114,63 @@ module.exports = (pool) => {
                     const {
                         tenantId: paymentTenantId, branchId, customerId, shiftId, employeeId,
                         amount, paymentMethod, paymentDate, notes,
+                        // ✅ NUEVO: GlobalIds para resolución offline-first
+                        customer_global_id, shift_global_id, employee_global_id,
                         // Campos offline-first para idempotencia
                         global_id, terminal_id, local_op_seq, device_event_raw, created_local_utc
                     } = payment;
 
                     const effectiveTenantId = paymentTenantId || tenantId;
 
-                    if (!customerId || !amount || !paymentMethod || !branchId) {
-                        results.push({ success: false, error: 'Missing required fields (customerId, amount, paymentMethod, branchId)' });
+                    // ✅ RESOLVER customer_global_id → PostgreSQL ID
+                    let finalCustomerId = customerId || null;
+                    if (customer_global_id) {
+                        const custResult = await pool.query(
+                            'SELECT id FROM customers WHERE global_id = $1 AND tenant_id = $2',
+                            [customer_global_id, effectiveTenantId]
+                        );
+                        if (custResult.rows.length > 0) {
+                            finalCustomerId = custResult.rows[0].id;
+                            console.log(`[CreditPayments/Sync] ✅ Cliente resuelto: ${customer_global_id} → ${finalCustomerId}`);
+                        } else {
+                            console.log(`[CreditPayments/Sync] ❌ Cliente no encontrado: ${customer_global_id}`);
+                            results.push({ success: false, error: `Cliente no encontrado: ${customer_global_id}`, global_id });
+                            continue;
+                        }
+                    }
+
+                    // ✅ RESOLVER shift_global_id → PostgreSQL ID
+                    let finalShiftId = shiftId || null;
+                    if (shift_global_id) {
+                        const shiftResult = await pool.query(
+                            'SELECT id FROM shifts WHERE global_id = $1 AND tenant_id = $2',
+                            [shift_global_id, effectiveTenantId]
+                        );
+                        if (shiftResult.rows.length > 0) {
+                            finalShiftId = shiftResult.rows[0].id;
+                            console.log(`[CreditPayments/Sync] ✅ Turno resuelto: ${shift_global_id} → ${finalShiftId}`);
+                        } else {
+                            console.log(`[CreditPayments/Sync] ⚠️ Turno no encontrado: ${shift_global_id}`);
+                        }
+                    }
+
+                    // ✅ RESOLVER employee_global_id → PostgreSQL ID
+                    let finalEmployeeId = employeeId || null;
+                    if (employee_global_id) {
+                        const empResult = await pool.query(
+                            'SELECT id FROM employees WHERE global_id = $1 AND tenant_id = $2',
+                            [employee_global_id, effectiveTenantId]
+                        );
+                        if (empResult.rows.length > 0) {
+                            finalEmployeeId = empResult.rows[0].id;
+                            console.log(`[CreditPayments/Sync] ✅ Empleado resuelto: ${employee_global_id} → ${finalEmployeeId}`);
+                        } else {
+                            console.log(`[CreditPayments/Sync] ⚠️ Empleado no encontrado: ${employee_global_id}`);
+                        }
+                    }
+
+                    if (!finalCustomerId || !amount || !paymentMethod || !branchId) {
+                        results.push({ success: false, error: 'Missing required fields (customerId/customer_global_id, amount, paymentMethod, branchId)', global_id });
                         continue;
                     }
 
@@ -136,10 +186,13 @@ module.exports = (pool) => {
                          ON CONFLICT (global_id)
                          DO UPDATE SET
                             amount = EXCLUDED.amount,
-                            notes = EXCLUDED.notes
+                            notes = EXCLUDED.notes,
+                            customer_id = EXCLUDED.customer_id,
+                            shift_id = EXCLUDED.shift_id,
+                            employee_id = EXCLUDED.employee_id
                          RETURNING *`,
                         [
-                            effectiveTenantId, branchId, customerId, shiftId || null, employeeId || null,
+                            effectiveTenantId, branchId, finalCustomerId, finalShiftId, finalEmployeeId,
                             numericAmount, paymentMethod, paymentDate,
                             notes || null,
                             global_id, terminal_id, local_op_seq, device_event_raw, created_local_utc
@@ -147,9 +200,9 @@ module.exports = (pool) => {
                     );
 
                     results.push({ success: true, data: result.rows[0] });
-                    console.log(`[CreditPayments/Sync] ✅ Payment synced: $${numericAmount} from customer ${customerId} (global_id: ${global_id})`);
+                    console.log(`[CreditPayments/Sync] ✅ Payment synced: $${numericAmount} from customer ${finalCustomerId} (global_id: ${global_id})`);
                 } catch (error) {
-                    results.push({ success: false, error: error.message });
+                    results.push({ success: false, error: error.message, global_id: payment.global_id });
                     console.error(`[CreditPayments/Sync] ❌ Error:`, error.message);
                 }
             }

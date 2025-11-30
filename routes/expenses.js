@@ -111,8 +111,14 @@ module.exports = (pool, io) => {
     router.post('/sync', async (req, res) => {
         try {
             const {
-                tenantId, branchId, employeeId, category, description, amount, quantity, userEmail,
-                payment_type_id, expense_date_utc, id_turno,
+                tenantId, branchId,
+                employeeId,              // LEGACY: ID local (no usar)
+                employee_global_id,      // ✅ NUEVO: UUID del empleado (idempotente)
+                consumer_employee_global_id, // ✅ NUEVO: UUID del consumidor (si aplica)
+                category, description, amount, quantity, userEmail,
+                payment_type_id, expense_date_utc,
+                id_turno,               // LEGACY: ID local del turno
+                shift_global_id,        // ✅ NUEVO: UUID del turno (idempotente)
                 reviewed_by_desktop,
                 // Status (draft = borrador editable, confirmed = confirmado, deleted = eliminado)
                 status = 'confirmed',
@@ -165,15 +171,69 @@ module.exports = (pool, io) => {
                 return res.status(400).json({ success: false, message: 'amount debe ser un número válido' });
             }
 
-            // Usar employeeId del body si viene, sino buscar por email
-            let finalEmployeeId = employeeId;
-            if (!finalEmployeeId && userEmail) {
+            // ✅ IDEMPOTENCIA: Resolver employee_global_id → PostgreSQL ID
+            let finalEmployeeId = null;
+            if (employee_global_id) {
+                console.log(`[Sync/Expenses] 🔍 Resolviendo empleado con global_id: ${employee_global_id}`);
+                const empResult = await pool.query(
+                    'SELECT id FROM employees WHERE global_id = $1 AND tenant_id = $2',
+                    [employee_global_id, tenantId]
+                );
+                if (empResult.rows.length > 0) {
+                    finalEmployeeId = empResult.rows[0].id;
+                    console.log(`[Sync/Expenses] ✅ Empleado resuelto: global_id ${employee_global_id} → id ${finalEmployeeId}`);
+                } else {
+                    console.log(`[Sync/Expenses] ❌ Empleado no encontrado con global_id: ${employee_global_id}`);
+                    return res.status(400).json({
+                        success: false,
+                        message: `Empleado no encontrado con global_id: ${employee_global_id}`
+                    });
+                }
+            } else if (employeeId) {
+                // LEGACY: usar employeeId directo (no recomendado)
+                finalEmployeeId = employeeId;
+                console.log(`[Sync/Expenses] ⚠️ Usando employeeId legacy: ${employeeId}`);
+            } else if (userEmail) {
+                // Fallback: buscar por email
                 const empResult = await pool.query(
                     'SELECT id FROM employees WHERE LOWER(email) = LOWER($1) AND tenant_id = $2',
                     [userEmail, tenantId]
                 );
                 if (empResult.rows.length > 0) {
                     finalEmployeeId = empResult.rows[0].id;
+                }
+            }
+
+            // ✅ IDEMPOTENCIA: Resolver shift_global_id → PostgreSQL ID
+            let finalShiftId = null;
+            if (shift_global_id) {
+                console.log(`[Sync/Expenses] 🔍 Resolviendo turno con global_id: ${shift_global_id}`);
+                const shiftResult = await pool.query(
+                    'SELECT id FROM shifts WHERE global_id = $1 AND tenant_id = $2',
+                    [shift_global_id, tenantId]
+                );
+                if (shiftResult.rows.length > 0) {
+                    finalShiftId = shiftResult.rows[0].id;
+                    console.log(`[Sync/Expenses] ✅ Turno resuelto: global_id ${shift_global_id} → id ${finalShiftId}`);
+                } else {
+                    console.log(`[Sync/Expenses] ⚠️ Turno no encontrado con global_id: ${shift_global_id}`);
+                    // No es error crítico, el turno puede no existir aún
+                }
+            } else if (id_turno) {
+                // LEGACY: usar id_turno directo (no recomendado)
+                finalShiftId = id_turno;
+                console.log(`[Sync/Expenses] ⚠️ Usando id_turno legacy: ${id_turno}`);
+            }
+
+            // ✅ IDEMPOTENCIA: Resolver consumer_employee_global_id si existe
+            let finalConsumerEmployeeId = null;
+            if (consumer_employee_global_id) {
+                const consumerResult = await pool.query(
+                    'SELECT id FROM employees WHERE global_id = $1 AND tenant_id = $2',
+                    [consumer_employee_global_id, tenantId]
+                );
+                if (consumerResult.rows.length > 0) {
+                    finalConsumerEmployeeId = consumerResult.rows[0].id;
                 }
             }
 
@@ -229,7 +289,7 @@ module.exports = (pool, io) => {
                         description || '',
                         expenseDate,
                         payment_type_id,
-                        id_turno || null,
+                        finalShiftId,  // Usar ID resuelto por GlobalId
                         finalStatus,
                         reviewedValue,
                         finalGlobalId
@@ -255,7 +315,7 @@ module.exports = (pool, io) => {
                         branchId,
                         finalEmployeeId,
                         payment_type_id,              // $4
-                        id_turno || null,             // $5 - Turno al que pertenece el gasto
+                        finalShiftId,                 // $5 - Turno (resuelto por GlobalId)
                         categoryId,                   // $6
                         description || '',            // $7
                         numericAmount,                // $8

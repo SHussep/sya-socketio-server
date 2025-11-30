@@ -24,8 +24,11 @@ function createRepartidorReturnRoutes(io) {
       branch_id,
       assignment_global_id,  // ✅ OFFLINE-FIRST: Usar GlobalId en lugar de ID numérico
       employee_id,
+      employee_global_id,    // ✅ NUEVO: GlobalId del repartidor
       registered_by_employee_id,
+      registered_by_employee_global_id,  // ✅ NUEVO: GlobalId de quien registró
       shift_id,
+      shift_global_id,       // ✅ NUEVO: GlobalId del turno
       quantity,
       unit_price,
       amount,
@@ -44,11 +47,27 @@ function createRepartidorReturnRoutes(io) {
       console.log('[RepartidorReturns] 📦 POST /api/repartidor-returns/sync');
       console.log(`  GlobalId: ${global_id}, AssignmentGlobalId: ${assignment_global_id}, Quantity: ${quantity} kg, Source: ${source}`);
 
-      // Validar campos requeridos
-      if (!tenant_id || !branch_id || !assignment_global_id || !employee_id || !registered_by_employee_id) {
+      // Validar campos requeridos (ahora permite GlobalIds o IDs numéricos)
+      if (!tenant_id || !branch_id || !assignment_global_id) {
         return res.status(400).json({
           success: false,
-          message: 'tenant_id, branch_id, assignment_global_id, employee_id, registered_by_employee_id son requeridos'
+          message: 'tenant_id, branch_id, assignment_global_id son requeridos'
+        });
+      }
+
+      // Validar que al menos uno de employee_id o employee_global_id esté presente
+      if (!employee_id && !employee_global_id) {
+        return res.status(400).json({
+          success: false,
+          message: 'Se requiere employee_id o employee_global_id'
+        });
+      }
+
+      // Validar que al menos uno de registered_by_employee_id o registered_by_employee_global_id esté presente
+      if (!registered_by_employee_id && !registered_by_employee_global_id) {
+        return res.status(400).json({
+          success: false,
+          message: 'Se requiere registered_by_employee_id o registered_by_employee_global_id'
         });
       }
 
@@ -78,6 +97,63 @@ function createRepartidorReturnRoutes(io) {
           success: false,
           message: 'source debe ser "desktop" o "mobile"'
         });
+      }
+
+      // ✅ RESOLVER employee_global_id → PostgreSQL ID
+      let resolvedEmployeeId = employee_id;
+      if (employee_global_id) {
+        console.log(`[RepartidorReturns] 🔍 Resolviendo empleado con global_id: ${employee_global_id}`);
+        const empResult = await pool.query(
+          'SELECT id FROM employees WHERE global_id = $1 AND tenant_id = $2',
+          [employee_global_id, tenant_id]
+        );
+        if (empResult.rows.length > 0) {
+          resolvedEmployeeId = empResult.rows[0].id;
+          console.log(`[RepartidorReturns] ✅ Empleado resuelto: ${employee_global_id} → ${resolvedEmployeeId}`);
+        } else {
+          console.log(`[RepartidorReturns] ❌ Empleado no encontrado: ${employee_global_id}`);
+          return res.status(404).json({
+            success: false,
+            message: `Empleado no encontrado con global_id: ${employee_global_id}`
+          });
+        }
+      }
+
+      // ✅ RESOLVER registered_by_employee_global_id → PostgreSQL ID
+      let resolvedRegisteredByEmployeeId = registered_by_employee_id;
+      if (registered_by_employee_global_id) {
+        console.log(`[RepartidorReturns] 🔍 Resolviendo quien registró con global_id: ${registered_by_employee_global_id}`);
+        const regResult = await pool.query(
+          'SELECT id FROM employees WHERE global_id = $1 AND tenant_id = $2',
+          [registered_by_employee_global_id, tenant_id]
+        );
+        if (regResult.rows.length > 0) {
+          resolvedRegisteredByEmployeeId = regResult.rows[0].id;
+          console.log(`[RepartidorReturns] ✅ Quien registró resuelto: ${registered_by_employee_global_id} → ${resolvedRegisteredByEmployeeId}`);
+        } else {
+          console.log(`[RepartidorReturns] ❌ Quien registró no encontrado: ${registered_by_employee_global_id}`);
+          return res.status(404).json({
+            success: false,
+            message: `Empleado que registra no encontrado con global_id: ${registered_by_employee_global_id}`
+          });
+        }
+      }
+
+      // ✅ RESOLVER shift_global_id → PostgreSQL ID
+      let resolvedShiftId = shift_id || null;
+      if (shift_global_id) {
+        console.log(`[RepartidorReturns] 🔍 Resolviendo turno con global_id: ${shift_global_id}`);
+        const shiftResult = await pool.query(
+          'SELECT id FROM shifts WHERE global_id = $1 AND tenant_id = $2',
+          [shift_global_id, tenant_id]
+        );
+        if (shiftResult.rows.length > 0) {
+          resolvedShiftId = shiftResult.rows[0].id;
+          console.log(`[RepartidorReturns] ✅ Turno resuelto: ${shift_global_id} → ${resolvedShiftId}`);
+        } else {
+          console.log(`[RepartidorReturns] ⚠️ Turno no encontrado: ${shift_global_id}`);
+          // No es crítico, permitir null
+        }
       }
 
       // ✅ OFFLINE-FIRST: Buscar asignación por GlobalId en lugar de ID numérico
@@ -122,9 +198,9 @@ function createRepartidorReturnRoutes(io) {
         tenant_id,
         branch_id,
         assignment_id,
-        employee_id,
-        registered_by_employee_id,
-        shift_id || null,
+        resolvedEmployeeId,              // ✅ Usar ID resuelto
+        resolvedRegisteredByEmployeeId,  // ✅ Usar ID resuelto
+        resolvedShiftId,                 // ✅ Usar ID resuelto
         parseFloat(quantity),
         parseFloat(unit_price),
         parseFloat(finalAmount),

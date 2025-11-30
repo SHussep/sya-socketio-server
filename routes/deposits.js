@@ -129,6 +129,7 @@ module.exports = (pool) => {
 
     // POST /api/deposits/sync - Sync deposits from mobile/desktop (SIN AUTENTICACIÓN - para Desktop offline-first)
     // ✅ Soporte completo para idempotencia con global_id
+    // ✅ ACTUALIZADO: Soporta resolución de GlobalIds para relaciones
     router.post('/sync', async (req, res) => {
         try {
             const deposits = Array.isArray(req.body) ? req.body : [req.body];
@@ -147,16 +148,50 @@ module.exports = (pool) => {
                 try {
                     const {
                         branchId, shiftId, employeeId, amount, description, deposit_date,
+                        // ✅ NUEVO: GlobalIds para resolución offline-first
+                        shift_global_id, employee_global_id,
                         // Campos offline-first para idempotencia
                         global_id, terminal_id, local_op_seq, device_event_raw, created_local_utc
                     } = deposit;
 
                     if (!amount || amount <= 0 || !branchId) {
-                        results.push({ success: false, error: 'Missing required fields' });
+                        results.push({ success: false, error: 'Missing required fields', global_id });
                         continue;
                     }
 
                     const numericAmount = parseFloat(amount);
+
+                    // ✅ RESOLVER shift_global_id → PostgreSQL ID
+                    let finalShiftId = shiftId || null;
+                    if (shift_global_id) {
+                        const shiftResult = await pool.query(
+                            'SELECT id FROM shifts WHERE global_id = $1 AND tenant_id = $2',
+                            [shift_global_id, tenantId]
+                        );
+                        if (shiftResult.rows.length > 0) {
+                            finalShiftId = shiftResult.rows[0].id;
+                            console.log(`[Deposits/Sync] ✅ Turno resuelto: ${shift_global_id} → ${finalShiftId}`);
+                        } else {
+                            console.log(`[Deposits/Sync] ⚠️ Turno no encontrado: ${shift_global_id}`);
+                            // No es crítico, permitir null
+                        }
+                    }
+
+                    // ✅ RESOLVER employee_global_id → PostgreSQL ID
+                    let finalEmployeeId = employeeId || null;
+                    if (employee_global_id) {
+                        const empResult = await pool.query(
+                            'SELECT id FROM employees WHERE global_id = $1 AND tenant_id = $2',
+                            [employee_global_id, tenantId]
+                        );
+                        if (empResult.rows.length > 0) {
+                            finalEmployeeId = empResult.rows[0].id;
+                            console.log(`[Deposits/Sync] ✅ Empleado resuelto: ${employee_global_id} → ${finalEmployeeId}`);
+                        } else {
+                            console.log(`[Deposits/Sync] ⚠️ Empleado no encontrado: ${employee_global_id}`);
+                            // No es crítico, permitir null
+                        }
+                    }
 
                     // ✅ UPSERT con global_id para evitar duplicados
                     const result = await pool.query(
@@ -168,10 +203,12 @@ module.exports = (pool) => {
                          ON CONFLICT (global_id)
                          DO UPDATE SET
                             amount = EXCLUDED.amount,
-                            description = EXCLUDED.description
+                            description = EXCLUDED.description,
+                            shift_id = EXCLUDED.shift_id,
+                            employee_id = EXCLUDED.employee_id
                          RETURNING *`,
                         [
-                            tenantId, branchId, shiftId || null, employeeId || null,
+                            tenantId, branchId, finalShiftId, finalEmployeeId,
                             numericAmount, description || '', deposit_date,
                             global_id, terminal_id, local_op_seq, device_event_raw, created_local_utc
                         ]
@@ -180,7 +217,7 @@ module.exports = (pool) => {
                     results.push({ success: true, data: result.rows[0] });
                     console.log(`[Deposits/Sync] ✅ Deposit synced: $${numericAmount} (global_id: ${global_id})`);
                 } catch (error) {
-                    results.push({ success: false, error: error.message });
+                    results.push({ success: false, error: error.message, global_id: deposit.global_id });
                     console.error(`[Deposits/Sync] ❌ Error:`, error.message);
                 }
             }
