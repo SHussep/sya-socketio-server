@@ -29,10 +29,12 @@ module.exports = (pool) => {
 
     // GET /api/sales - Lista de ventas (con soporte de timezone)
     // ✅ ACTUALIZADO: Ahora usa tabla 'ventas' con nomenclatura correcta
+    // ✅ Por defecto solo muestra ventas COBRADAS (estado 3=Completada, 5=Liquidada)
+    //    Usar include_pending=true para incluir asignadas (estado 2)
     router.get('/', authenticateToken, async (req, res) => {
         try {
             const { tenantId, branchId: userBranchId } = req.user;
-            const { limit = 50, offset = 0, all_branches = 'false', branch_id, timezone, startDate, endDate, shift_id } = req.query;
+            const { limit = 50, offset = 0, all_branches = 'false', branch_id, timezone, startDate, endDate, shift_id, include_pending = 'false' } = req.query;
 
             // Prioridad: 1. branch_id del query, 2. branchId del JWT
             const targetBranchId = branch_id ? parseInt(branch_id) : userBranchId;
@@ -40,10 +42,19 @@ module.exports = (pool) => {
             // Usar timezone si viene en query, sino usar UTC por defecto
             const userTimezone = timezone || 'UTC';
 
+            // ✅ FILTRO DE ESTADOS:
+            // - Por defecto: solo ventas COBRADAS (3=Completada, 5=Liquidada)
+            // - Con include_pending=true: incluye asignadas (2) para monitoreo
+            // - Siempre excluye: 1=Borrador, 4=Cancelada
+            const estadoFilter = include_pending === 'true'
+                ? 'v.estado_venta_id IN (2, 3, 5)'  // Asignada + Completada + Liquidada
+                : 'v.estado_venta_id IN (3, 5)';    // Solo Completada + Liquidada (cobradas)
+
             let query = `
                 SELECT v.id_venta as id, v.ticket_number, v.total as total_amount,
                        v.tipo_pago_id as payment_method, v.fecha_venta_utc as sale_date,
                        v.venta_tipo_id as sale_type, v.id_empleado as employee_id,
+                       v.estado_venta_id, v.status,
                        v.tenant_id, v.branch_id, v.id_turno as shift_id,
                        CONCAT(e.first_name, ' ', e.last_name) as employee_name,
                        r.name as employee_role,
@@ -55,7 +66,7 @@ module.exports = (pool) => {
                 LEFT JOIN roles r ON e.role_id = r.id
                 LEFT JOIN branches b ON v.branch_id = b.id
                 LEFT JOIN repartidor_assignments ra ON v.id_venta = ra.venta_id
-                WHERE v.tenant_id = $1
+                WHERE v.tenant_id = $1 AND ${estadoFilter}
             `;
 
             const params = [tenantId];
