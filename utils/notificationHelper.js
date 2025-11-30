@@ -417,10 +417,11 @@ async function notifyShiftEnded(branchId, employeeGlobalId, { employeeName, bran
 
 /**
  * Envía notificación cuando la báscula se desconecta
+ * Solo notifica a administradores y encargados (no a todos los empleados)
  */
 async function notifyScaleDisconnection(branchId, { message }) {
-    return await sendNotificationToBranch(branchId, {
-        title: 'Báscula Desconectada',
+    return await sendNotificationToAdminsInBranch(branchId, {
+        title: '⚠️ Báscula Desconectada',
         body: message || 'La báscula se ha desconectado',
         data: {
             type: 'scale_disconnected'
@@ -430,15 +431,68 @@ async function notifyScaleDisconnection(branchId, { message }) {
 
 /**
  * Envía notificación cuando la báscula se conecta
+ * Solo notifica a administradores y encargados (no a todos los empleados)
  */
 async function notifyScaleConnection(branchId, { message }) {
-    return await sendNotificationToBranch(branchId, {
-        title: 'Báscula Conectada',
+    return await sendNotificationToAdminsInBranch(branchId, {
+        title: '✅ Báscula Conectada',
         body: message || 'La báscula se ha conectado',
         data: {
             type: 'scale_connected'
         }
     });
+}
+
+/**
+ * Envía notificación cuando se registra un gasto para un empleado/repartidor
+ * Notifica a:
+ * 1. El empleado/repartidor que registró el gasto (personalizada)
+ * 2. Los administradores y encargados de la sucursal
+ * @param {string} employeeGlobalId - GlobalId (UUID) del empleado/repartidor
+ * @param {object} params - Datos del gasto
+ */
+async function notifyExpenseCreated(employeeGlobalId, { expenseId, amount, description, category, branchId, branchName, employeeName }) {
+    try {
+        // 1️⃣ Notificar al empleado/repartidor (notificación personalizada)
+        const employeeResult = await sendNotificationToEmployee(employeeGlobalId, {
+            title: '✏️ Gasto Registrado',
+            body: `$${amount.toFixed(2)} - ${description || category}`,
+            data: {
+                type: 'expense_created_self',
+                expenseId: expenseId.toString(),
+                amount: amount.toString(),
+                description,
+                category
+            }
+        });
+
+        console.log(`[NotificationHelper] ✅ Notificación de gasto enviada al empleado ${employeeName} (global_id: ${employeeGlobalId}): ${employeeResult.sent}/${employeeResult.total || employeeResult.sent}`);
+
+        // 2️⃣ Notificar a administradores/encargados
+        const adminResult = await sendNotificationToAdminsInBranch(branchId, {
+            title: '💸 Gasto Registrado',
+            body: `${employeeName} registró $${amount.toFixed(2)} - ${description || category}`,
+            data: {
+                type: 'expense_created',
+                expenseId: expenseId.toString(),
+                employeeName,
+                amount: amount.toString(),
+                description,
+                category
+            }
+        });
+
+        console.log(`[NotificationHelper] ✅ Notificaciones de gasto enviadas a admins/encargados de sucursal ${branchId}: ${adminResult.sent}/${adminResult.total || adminResult.sent}`);
+
+        return {
+            employee: employeeResult,
+            admins: adminResult,
+            totalSent: (employeeResult.sent || 0) + (adminResult.sent || 0)
+        };
+    } catch (error) {
+        console.error('[NotificationHelper] ❌ Error enviando notificaciones de gasto:', error.message);
+        return { employee: { sent: 0, failed: 0 }, admins: { sent: 0, failed: 0 }, error: error.message };
+    }
 }
 
 /**
@@ -498,5 +552,6 @@ module.exports = {
     notifyShiftEnded,
     notifyScaleDisconnection,
     notifyScaleConnection,
+    notifyExpenseCreated,
     notifyAssignmentCreated
 };

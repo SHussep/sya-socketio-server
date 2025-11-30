@@ -6,6 +6,7 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
 const JWT_SECRET = process.env.JWT_SECRET;
+const { notifyExpenseCreated } = require('../utils/notificationHelper');
 
 // Middleware: Autenticación JWT
 function authenticateToken(req, res, next) {
@@ -225,6 +226,41 @@ module.exports = (pool, io) => {
             const responseData = result.rows[0];
             if (responseData) {
                 responseData.amount = parseFloat(responseData.amount);
+            }
+
+            // 🔔 ENVIAR NOTIFICACIONES FCM si el gasto tiene empleado asignado
+            if (finalEmployeeId) {
+                try {
+                    // Obtener datos del empleado y sucursal para las notificaciones
+                    const employeeData = await pool.query(
+                        `SELECT e.full_name, e.global_id, b.name as branch_name
+                         FROM employees e
+                         JOIN branches b ON e.branch_id = b.id
+                         WHERE e.id = $1`,
+                        [finalEmployeeId]
+                    );
+
+                    if (employeeData.rows.length > 0) {
+                        const employee = employeeData.rows[0];
+
+                        console.log(`[Sync/Expenses] 📨 Enviando notificaciones FCM para gasto de ${employee.full_name}`);
+
+                        await notifyExpenseCreated(employee.global_id, {
+                            expenseId: responseData.id,
+                            amount: numericAmount,
+                            description: description || category,
+                            category,
+                            branchId,
+                            branchName: employee.branch_name,
+                            employeeName: employee.full_name
+                        });
+
+                        console.log(`[Sync/Expenses] ✅ Notificaciones de gasto enviadas`);
+                    }
+                } catch (notifError) {
+                    console.error(`[Sync/Expenses] ⚠️ Error enviando notificaciones: ${notifError.message}`);
+                    // No fallar la sincronización si falla el envío de notificaciones
+                }
             }
 
             res.json({ success: true, data: responseData });
