@@ -441,7 +441,7 @@ module.exports = (pool) => {
 
             // Verificar que el turno pertenece al tenant del usuario
             const shiftCheck = await pool.query(
-                `SELECT id, tenant_id, employee_id FROM repartidor_shifts WHERE id = $1`,
+                `SELECT id, tenant_id, employee_id FROM shifts WHERE id = $1`,
                 [shiftId]
             );
 
@@ -567,7 +567,7 @@ module.exports = (pool) => {
 
             // Verificar que el turno pertenece al tenant
             const shiftCheck = await pool.query(
-                `SELECT id, tenant_id FROM repartidor_shifts WHERE id = $1`,
+                `SELECT id, tenant_id FROM shifts WHERE id = $1`,
                 [shiftId]
             );
 
@@ -619,7 +619,7 @@ module.exports = (pool) => {
 
             // Verificar que el turno pertenece al tenant
             const shiftCheck = await pool.query(
-                `SELECT id, tenant_id FROM repartidor_shifts WHERE id = $1`,
+                `SELECT id, tenant_id FROM shifts WHERE id = $1`,
                 [shiftId]
             );
 
