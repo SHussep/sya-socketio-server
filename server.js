@@ -693,28 +693,33 @@ io.on('connection', (socket) => {
             if (shiftResult.rows.length > 0) {
                 console.log(`[SHIFT] ✅ Turno #${data.shiftId} actualizado en PostgreSQL`);
 
-                // Enviar notificación FCM a todos los repartidores de la sucursal
-                const statusIcon = data.difference === 0
-                    ? '✅'
-                    : data.difference > 0
-                        ? '💰'
-                        : '⚠️';
+                // Obtener global_id del empleado para notificaciones
+                const employeeData = await pool.query(
+                    `SELECT e.global_id FROM employees e
+                     JOIN shifts s ON s.employee_id = e.id
+                     WHERE s.id = $1`,
+                    [data.shiftId]
+                );
 
-                const differenceText = data.difference === 0
-                    ? 'Sin diferencia'
-                    : data.difference > 0
-                        ? `Sobrante: $${Math.abs(data.difference).toFixed(2)}`
-                        : `Faltante: $${Math.abs(data.difference).toFixed(2)}`;
+                if (employeeData.rows.length > 0) {
+                    const employeeGlobalId = employeeData.rows[0].global_id;
 
-                await notificationHelper.notifyShiftEnded(data.branchId, {
-                    employeeName: data.employeeName,
-                    branchName: data.branchName,
-                    difference: data.difference,
-                    countedCash: data.countedCash,
-                    expectedCash: data.expectedCashInDrawer
-                });
+                    await notificationHelper.notifyShiftEnded(
+                        data.branchId,
+                        employeeGlobalId,
+                        {
+                            employeeName: data.employeeName,
+                            branchName: data.branchName,
+                            difference: data.difference,
+                            countedCash: data.countedCash,
+                            expectedCash: data.expectedCashInDrawer
+                        }
+                    );
 
-                console.log(`[FCM] 📨 Notificación de cierre de turno enviada a sucursal ${data.branchId}`);
+                    console.log(`[FCM] 📨 Notificación de cierre de turno enviada a sucursal ${data.branchId} y empleado ${employeeGlobalId}`);
+                } else {
+                    console.log(`[SHIFT] ⚠️ No se pudo obtener global_id del empleado para el turno #${data.shiftId}`);
+                }
             } else {
                 console.log(`[SHIFT] ⚠️ No se encontró turno #${data.shiftId} en PostgreSQL`);
             }
