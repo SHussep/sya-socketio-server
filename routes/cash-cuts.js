@@ -340,9 +340,9 @@ module.exports = (pool) => {
 
                     await client.query('BEGIN');
 
-                    // Get shift details for time range
+                    // Get shift details for time range and employee_id
                     const shiftResult = await client.query(
-                        'SELECT start_time, end_time FROM shifts WHERE id = $1 AND tenant_id = $2',
+                        'SELECT start_time, end_time, employee_id FROM shifts WHERE id = $1 AND tenant_id = $2',
                         [shiftId, effectiveTenantId]
                     );
 
@@ -352,7 +352,7 @@ module.exports = (pool) => {
                         continue;
                     }
 
-                    const { start_time: startTime, end_time: endTime } = shiftResult.rows[0];
+                    const { start_time: startTime, end_time: endTime, employee_id: shiftEmployeeId } = shiftResult.rows[0];
 
                     // ✅ UPSERT cash cut record con global_id para idempotencia
                     const insertResult = await client.query(
@@ -376,7 +376,7 @@ module.exports = (pool) => {
                             notes = EXCLUDED.notes
                         RETURNING *`,
                         [
-                            effectiveTenantId, branchId, shiftId, employeeId || null,
+                            effectiveTenantId, branchId, shiftId, shiftEmployeeId, // Usar employee_id del shift, no del payload
                             startTime, endTime,
                             parseFloat(initialAmount || 0),
                             parseFloat(totalCashSales || 0),
