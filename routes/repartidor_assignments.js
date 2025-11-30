@@ -28,12 +28,13 @@ function createRepartidorAssignmentRoutes(io) {
       venta_id,                         // ID numérico (legacy, puede no venir)
       venta_global_id,                  // ✅ UUID de la venta (offline-first, preferido)
       employee_id,                      // DEPRECATED: ID numérico (legacy)
-      employee_global_id,               // ✅ NUEVO: UUID del repartidor (offline-first, preferido)
+      employee_global_id,               // ✅ UUID del repartidor (offline-first, preferido)
       created_by_employee_id,           // DEPRECATED: ID numérico (legacy)
-      created_by_employee_global_id,    // ✅ NUEVO: UUID del empleado que autorizó (offline-first, preferido)
-      shift_id,
-      repartidor_shift_id,              // ID numérico (legacy, puede no existir en PostgreSQL)
-      repartidor_shift_global_id,       // ✅ UUID del turno (offline-first, preferido)
+      created_by_employee_global_id,    // ✅ UUID del empleado que autorizó (offline-first, preferido)
+      shift_id,                         // DEPRECATED: ID numérico (legacy)
+      shift_global_id,                  // ✅ UUID del turno del vendedor (offline-first, preferido)
+      repartidor_shift_id,              // DEPRECATED: ID numérico (legacy)
+      repartidor_shift_global_id,       // ✅ UUID del turno del repartidor (offline-first, preferido)
       assigned_quantity,
       assigned_amount,
       unit_price,
@@ -55,10 +56,10 @@ function createRepartidorAssignmentRoutes(io) {
       console.log(`  RepartidorShiftGlobalId: ${repartidor_shift_global_id || 'N/A'}, RepartidorShiftId: ${repartidor_shift_id || 'N/A'}`);
 
       // Validar campos requeridos (ahora permite GlobalIds o IDs numéricos)
-      if (!tenant_id || !branch_id || (!venta_id && !venta_global_id) || !shift_id) {
+      if (!tenant_id || !branch_id || (!venta_id && !venta_global_id) || (!shift_id && !shift_global_id)) {
         return res.status(400).json({
           success: false,
-          message: 'tenant_id, branch_id, venta_id/venta_global_id, shift_id son requeridos'
+          message: 'tenant_id, branch_id, venta_id/venta_global_id, shift_id/shift_global_id son requeridos'
         });
       }
 
@@ -198,6 +199,27 @@ function createRepartidorAssignmentRoutes(io) {
         }
       }
 
+      // ✅ RESOLVER shift_id usando global_id (offline-first)
+      let resolvedShiftId = shift_id;
+      if (shift_global_id) {
+        console.log(`[RepartidorAssignments] 🔍 Resolviendo turno del vendedor con global_id: ${shift_global_id}`);
+        const shiftLookup = await pool.query(
+          'SELECT id FROM shifts WHERE global_id = $1 AND tenant_id = $2',
+          [shift_global_id, tenant_id]
+        );
+
+        if (shiftLookup.rows.length > 0) {
+          resolvedShiftId = shiftLookup.rows[0].id;
+          console.log(`[RepartidorAssignments] ✅ Turno del vendedor resuelto: global_id ${shift_global_id} → id ${resolvedShiftId}`);
+        } else {
+          console.log(`[RepartidorAssignments] ❌ Turno del vendedor no encontrado con global_id: ${shift_global_id}`);
+          return res.status(404).json({
+            success: false,
+            message: `Turno del vendedor no encontrado con global_id: ${shift_global_id}`
+          });
+        }
+      }
+
       // ✅ IDEMPOTENTE: Insertar con global_id único
       // ON CONFLICT: Solo se permiten updates de status, fecha_liquidacion, observaciones
       // Los datos originales (assigned_quantity, assigned_amount) NO cambian
@@ -224,9 +246,9 @@ function createRepartidorAssignmentRoutes(io) {
         tenant_id,
         branch_id,
         resolvedVentaId,                // ✅ Usar ID resuelto desde global_id
-        resolvedEmployeeId,             // ✅ NUEVO: Usar ID resuelto desde global_id
-        resolvedCreatedByEmployeeId,    // ✅ NUEVO: Usar ID resuelto desde global_id
-        shift_id,
+        resolvedEmployeeId,             // ✅ Usar ID resuelto desde global_id
+        resolvedCreatedByEmployeeId,    // ✅ Usar ID resuelto desde global_id
+        resolvedShiftId,                // ✅ Usar ID resuelto desde global_id
         resolvedRepartidorShiftId,      // ✅ Usar ID resuelto desde global_id
         parseFloat(assigned_quantity),
         parseFloat(assigned_amount),
