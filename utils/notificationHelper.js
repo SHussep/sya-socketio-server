@@ -224,7 +224,7 @@ async function notifyUserLogin(branchId, { employeeId, employeeName, branchName,
 
         // Enviar notificación personalizada al empleado que hizo login
         const selfResult = await sendNotificationToEmployee(employeeId, {
-            title: '👤 Acceso de Usuario',
+            title: 'Acceso de Usuario',
             body: `Iniciaste sesión en ${branchName}`,
             data: {
                 type: 'user_login',
@@ -254,7 +254,7 @@ async function notifyUserLogin(branchId, { employeeId, employeeName, branchName,
 
         if (adminDeviceTokens.length > 0) {
             const results = await sendNotificationToMultipleDevices(adminDeviceTokens, {
-                title: '👤 Acceso de Usuario',
+                title: 'Acceso de Usuario',
                 body: `${employeeName} inició sesión en ${branchName}`,
                 data: {
                     type: 'user_login',
@@ -306,16 +306,17 @@ async function notifyUserLogin(branchId, { employeeId, employeeName, branchName,
  * Solo notifica a administradores y encargados (role_id 1, 2)
  */
 async function notifyScaleAlert(branchId, { severity, eventType, details, employeeName }) {
-    const icon = severity === 'high' ? '🔴' : severity === 'medium' ? '🟡' : '🟢';
+    const severityText = severity === 'high' ? 'ALTA' : severity === 'medium' ? 'MEDIA' : 'BAJA';
 
     return await sendNotificationToAdminsInBranch(branchId, {
-        title: `${icon} Alerta de Báscula`,
+        title: `Alerta de Báscula [${severityText}]`,
         body: `${eventType}: ${details} (${employeeName})`,
         data: {
             type: 'scale_alert',
             severity,
             eventType,
-            employeeName
+            employeeName,
+            details
         }
     });
 }
@@ -325,7 +326,7 @@ async function notifyScaleAlert(branchId, { severity, eventType, details, employ
  */
 async function notifySaleCompleted(branchId, { ticketNumber, total, paymentMethod, employeeName }) {
     return await sendNotificationToBranch(branchId, {
-        title: '💰 Venta Completada',
+        title: 'Venta Completada',
         body: `Ticket #${ticketNumber} - $${total.toFixed(2)} (${paymentMethod})`,
         data: {
             type: 'sale_completed',
@@ -343,7 +344,7 @@ async function notifySaleCompleted(branchId, { ticketNumber, total, paymentMetho
  */
 async function notifyShiftStarted(branchId, { employeeName, branchName, initialAmount, startTime }) {
     return await sendNotificationToAdminsInBranch(branchId, {
-        title: '🟢 Turno Iniciado',
+        title: 'Turno Iniciado',
         body: `${employeeName} inició turno en ${branchName} con $${initialAmount.toFixed(2)}`,
         data: {
             type: 'shift_started',
@@ -358,7 +359,7 @@ async function notifyShiftStarted(branchId, { employeeName, branchName, initialA
  * Envía notificación cuando termina un turno
  */
 async function notifyShiftEnded(branchId, { employeeName, branchName, difference, countedCash, expectedCash }) {
-    const icon = difference >= 0 ? '💰' : '⚠️';
+    const icon = difference >= 0 ? '💰' : '';
     const status = difference === 0
         ? 'Sin diferencia'
         : difference > 0
@@ -366,7 +367,7 @@ async function notifyShiftEnded(branchId, { employeeName, branchName, difference
             : `Faltante: $${Math.abs(difference).toFixed(2)}`;
 
     return await sendNotificationToBranch(branchId, {
-        title: `${icon} Corte de Caja`,
+        title: 'Corte de Caja',
         body: `${employeeName} finalizó turno en ${branchName} - ${status}`,
         data: {
             type: 'shift_ended',
@@ -383,7 +384,7 @@ async function notifyShiftEnded(branchId, { employeeName, branchName, difference
  */
 async function notifyScaleDisconnection(branchId, { message }) {
     return await sendNotificationToBranch(branchId, {
-        title: '❌ Báscula Desconectada',
+        title: 'Báscula Desconectada',
         body: message || 'La báscula se ha desconectado',
         data: {
             type: 'scale_disconnected'
@@ -396,7 +397,7 @@ async function notifyScaleDisconnection(branchId, { message }) {
  */
 async function notifyScaleConnection(branchId, { message }) {
     return await sendNotificationToBranch(branchId, {
-        title: '✅ Báscula Conectada',
+        title: 'Báscula Conectada',
         body: message || 'La báscula se ha conectado',
         data: {
             type: 'scale_connected'
@@ -417,7 +418,7 @@ async function notifyScaleConnection(branchId, { message }) {
 async function notifyAssignmentCreated(employeeGlobalId, { assignmentId, quantity, amount, branchName, branchId, employeeName, createdByName }) {
     // Notificar al repartidor (usando GlobalId)
     const employeeResult = await sendNotificationToEmployee(employeeGlobalId, {
-        title: '📦 Nueva Asignación',
+        title: 'Nueva Asignación',
         body: `Se te asignó ${quantity.toFixed(2)} kg ($${amount.toFixed(2)}) en ${branchName}`,
         data: {
             type: 'assignment_created',
@@ -430,7 +431,7 @@ async function notifyAssignmentCreated(employeeGlobalId, { assignmentId, quantit
 
     // Notificar a administradores y encargados
     const adminResult = await sendNotificationToAdminsInBranch(branchId, {
-        title: '📦 Asignación Creada',
+        title: 'Asignación Creada',
         body: `${employeeName} recibió ${quantity.toFixed(2)} kg ($${amount.toFixed(2)}) autorizado por ${createdByName}`,
         data: {
             type: 'assignment_created',
