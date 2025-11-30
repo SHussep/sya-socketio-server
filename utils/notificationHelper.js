@@ -357,26 +357,62 @@ async function notifyShiftStarted(branchId, { employeeName, branchName, initialA
 
 /**
  * Envía notificación cuando termina un turno
+ * @param {number} branchId - ID de la sucursal
+ * @param {string} employeeGlobalId - UUID del empleado (para notificación personalizada)
+ * @param {object} params - Datos del cierre: employeeName, branchName, difference, countedCash, expectedCash
  */
-async function notifyShiftEnded(branchId, { employeeName, branchName, difference, countedCash, expectedCash }) {
-    const icon = difference >= 0 ? '💰' : '';
+async function notifyShiftEnded(branchId, employeeGlobalId, { employeeName, branchName, difference, countedCash, expectedCash }) {
+    const icon = difference >= 0 ? '💰' : '⚠️';
     const status = difference === 0
         ? 'Sin diferencia'
         : difference > 0
             ? `Sobrante: $${difference.toFixed(2)}`
             : `Faltante: $${Math.abs(difference).toFixed(2)}`;
 
-    return await sendNotificationToBranch(branchId, {
-        title: 'Corte de Caja',
-        body: `${employeeName} finalizó turno en ${branchName} - ${status}`,
-        data: {
-            type: 'shift_ended',
-            employeeName,
-            branchName,
-            difference: difference.toString(),
-            status
-        }
-    });
+    try {
+        // 1️⃣ Enviar notificación PERSONALIZADA al empleado que cerró su turno
+        const employeeResult = await sendNotificationToEmployee(employeeGlobalId, {
+            title: '✅ Tu Corte de Caja',
+            body: `Turno finalizado - ${status} | Efectivo contado: $${countedCash.toFixed(2)}`,
+            data: {
+                type: 'shift_ended_self',
+                employeeName,
+                branchName,
+                difference: difference.toString(),
+                countedCash: countedCash.toString(),
+                expectedCash: expectedCash.toString(),
+                status
+            }
+        });
+
+        console.log(`[NotificationHelper] ✅ Notificación de cierre enviada al empleado ${employeeName} (global_id: ${employeeGlobalId}): ${employeeResult.sent}/${employeeResult.total || employeeResult.sent}`);
+
+        // 2️⃣ Enviar notificación a ADMINISTRADORES/ENCARGADOS de la sucursal
+        const adminResult = await sendNotificationToAdminsInBranch(branchId, {
+            title: `${icon} Corte de Caja`,
+            body: `${employeeName} finalizó turno - ${status}`,
+            data: {
+                type: 'shift_ended',
+                employeeName,
+                branchName,
+                difference: difference.toString(),
+                countedCash: countedCash.toString(),
+                expectedCash: expectedCash.toString(),
+                status
+            }
+        });
+
+        console.log(`[NotificationHelper] ✅ Notificaciones de cierre enviadas a admins/encargados de sucursal ${branchId}: ${adminResult.sent}/${adminResult.total || adminResult.sent}`);
+
+        return {
+            employee: employeeResult,
+            admins: adminResult,
+            totalSent: (employeeResult.sent || 0) + (adminResult.sent || 0)
+        };
+    } catch (error) {
+        console.error('[NotificationHelper] ❌ Error enviando notificaciones de cierre de turno:', error.message);
+        return { employee: { sent: 0, failed: 0 }, admins: { sent: 0, failed: 0 }, error: error.message };
+    }
 }
 
 /**

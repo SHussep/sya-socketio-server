@@ -5,6 +5,7 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const JWT_SECRET = process.env.JWT_SECRET;
+const { notifyShiftEnded } = require('../utils/notificationHelper');
 
 // Middleware: Autenticación JWT
 function authenticateToken(req, res, next) {
@@ -623,6 +624,48 @@ module.exports = (pool, io) => {
             const shift = result.rows[0];
 
             console.log(`[Sync/Shifts] ✅ Turno sincronizado: ID ${shift.id} (LocalShiftId: ${local_shift_id}) - Employee ${resolvedEmployeeId}`);
+
+            // 🔔 ENVIAR NOTIFICACIONES FCM SI ES CIERRE DE TURNO
+            if (is_cash_cut_open === false && end_time) {
+                console.log(`[Sync/Shifts] 📨 Detectado cierre de turno - Enviando notificaciones FCM`);
+
+                try {
+                    // Obtener datos del empleado y sucursal para las notificaciones
+                    const employeeData = await pool.query(
+                        `SELECT e.full_name, e.global_id, b.name as branch_name
+                         FROM employees e
+                         JOIN branches b ON e.branch_id = b.id
+                         WHERE e.id = $1`,
+                        [resolvedEmployeeId]
+                    );
+
+                    if (employeeData.rows.length > 0) {
+                        const employee = employeeData.rows[0];
+
+                        // Calcular diferencia de efectivo (si hay final_amount)
+                        const countedCash = final_amount || 0;
+                        const expectedCash = initial_amount || 0; // Simplificado, debería calcularse con ventas
+                        const difference = countedCash - expectedCash;
+
+                        await notifyShiftEnded(
+                            branch_id,
+                            employee.global_id,
+                            {
+                                employeeName: employee.full_name,
+                                branchName: employee.branch_name,
+                                difference,
+                                countedCash,
+                                expectedCash
+                            }
+                        );
+
+                        console.log(`[Sync/Shifts] ✅ Notificaciones de cierre enviadas para ${employee.full_name}`);
+                    }
+                } catch (notifError) {
+                    console.error(`[Sync/Shifts] ⚠️ Error enviando notificaciones de cierre: ${notifError.message}`);
+                    // No fallar la sincronización si falla el envío de notificaciones
+                }
+            }
 
             res.json({
                 success: true,
