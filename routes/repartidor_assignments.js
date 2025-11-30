@@ -142,7 +142,7 @@ function createRepartidorAssignmentRoutes(io) {
       if (repartidor_shift_global_id) {
         console.log(`[RepartidorAssignments] 🔍 Resolviendo turno con global_id: ${repartidor_shift_global_id}`);
         const shiftLookup = await pool.query(
-          'SELECT id FROM shifts WHERE global_id = $1::uuid AND tenant_id = $2',
+          'SELECT id FROM shifts WHERE global_id = $1 AND tenant_id = $2',
           [repartidor_shift_global_id, tenant_id]
         );
 

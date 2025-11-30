@@ -534,7 +534,8 @@ module.exports = (pool, io) => {
             const {
                 tenant_id,
                 branch_id,
-                employee_id,
+                employee_id,  // Deprecated - mantener por compatibilidad
+                employee_global_id,  // ✅ NUEVO: UUID del empleado (idempotente)
                 start_time,
                 end_time,  // Agregar end_time
                 initial_amount,
@@ -551,10 +552,38 @@ module.exports = (pool, io) => {
             } = req.body;
 
             // Validación
-            if (!tenant_id || !branch_id || !employee_id || !global_id) {
+            if (!tenant_id || !branch_id || !global_id) {
                 return res.status(400).json({
                     success: false,
-                    message: 'Datos incompletos (tenant_id, branch_id, employee_id, global_id requeridos)'
+                    message: 'Datos incompletos (tenant_id, branch_id, global_id requeridos)'
+                });
+            }
+
+            // ✅ RESOLVER employee_id usando global_id (offline-first)
+            let resolvedEmployeeId = employee_id;
+            if (employee_global_id) {
+                console.log(`[Sync/Shifts] 🔍 Resolviendo empleado con global_id: ${employee_global_id}`);
+                const employeeLookup = await pool.query(
+                    'SELECT id FROM employees WHERE global_id = $1 AND tenant_id = $2',
+                    [employee_global_id, tenant_id]
+                );
+
+                if (employeeLookup.rows.length > 0) {
+                    resolvedEmployeeId = employeeLookup.rows[0].id;
+                    console.log(`[Sync/Shifts] ✅ Empleado resuelto: global_id ${employee_global_id} → id ${resolvedEmployeeId}`);
+                } else {
+                    console.log(`[Sync/Shifts] ❌ Empleado no encontrado con global_id: ${employee_global_id}`);
+                    return res.status(400).json({
+                        success: false,
+                        message: `Empleado no encontrado con global_id: ${employee_global_id}`
+                    });
+                }
+            }
+
+            if (!resolvedEmployeeId) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'employee_id o employee_global_id requerido'
                 });
             }
 
@@ -576,7 +605,7 @@ module.exports = (pool, io) => {
                 [
                     tenant_id,
                     branch_id,
-                    employee_id,
+                    resolvedEmployeeId,  // ✅ Usar ID resuelto
                     start_time,
                     end_time || null,
                     initial_amount || 0,
@@ -593,7 +622,7 @@ module.exports = (pool, io) => {
 
             const shift = result.rows[0];
 
-            console.log(`[Sync/Shifts] ✅ Turno sincronizado: ID ${shift.id} (LocalShiftId: ${local_shift_id}) - Employee ${employee_id}`);
+            console.log(`[Sync/Shifts] ✅ Turno sincronizado: ID ${shift.id} (LocalShiftId: ${local_shift_id}) - Employee ${resolvedEmployeeId}`);
 
             res.json({
                 success: true,
