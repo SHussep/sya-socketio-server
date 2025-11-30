@@ -807,16 +807,21 @@ async function runMigrations() {
                         const schemaPath = path.join(__dirname, 'schema.sql');
                         if (fs.existsSync(schemaPath)) {
                             const schemaSql = fs.readFileSync(schemaPath, 'utf8');
+                            console.log(`[Schema] 📏 Schema SQL length: ${schemaSql.length} characters`);
                             await client.query('BEGIN');
+                            console.log('[Schema] 🔄 Executing schema.sql...');
                             await client.query(schemaSql);
                             await client.query('COMMIT');
                             console.log('[Schema] ✅ Tables recreated successfully from schema.sql');
                         } else {
                             console.error('[Schema] ❌ schema.sql not found!');
+                            throw new Error('schema.sql file not found');
                         }
                     } catch (cleanError) {
+                        await client.query('ROLLBACK');
                         console.error('[Schema] ❌ Error cleaning/recreating:', cleanError.message);
-                        console.error(cleanError.stack);
+                        console.error('[Schema] Stack trace:', cleanError.stack);
+                        throw cleanError; // Re-throw para que se vea en los logs
                     }
                 } else {
                     console.error('[Schema] ❌ Clean script not found: migrations/999_clean_user_data.sql');
