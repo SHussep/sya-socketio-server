@@ -3,6 +3,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 const express = require('express');
+const notificationHelper = require('../utils/notificationHelper');
 
 module.exports = (pool, io) => {
     const router = express.Router();
@@ -135,6 +136,20 @@ module.exports = (pool, io) => {
                 //     source: 'sync'
                 // });
                 // console.log(`[Sync/GuardianLogs] 📡 Evento 'scale_alert' emitido a branch_${branch_id} para app móvil (${employeeName})`);
+
+                // ✅ Enviar notificación FCM a admins/encargados
+                try {
+                    await notificationHelper.notifyScaleAlert(branch_id, {
+                        severity: severity || 'medium',
+                        eventType: event_type,
+                        details: details || 'Alerta de báscula detectada',
+                        employeeName: employeeName
+                    });
+                    console.log(`[Sync/GuardianLogs] ✅ FCM enviado: ${event_type} - ${employeeName}`);
+                } catch (fcmError) {
+                    console.error(`[Sync/GuardianLogs] ⚠️ Error enviando FCM: ${fcmError.message}`);
+                    // No fallar si hay error en FCM
+                }
             }
 
             res.json({
