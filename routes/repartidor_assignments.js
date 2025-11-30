@@ -201,6 +201,7 @@ function createRepartidorAssignmentRoutes(io) {
       // ✅ IDEMPOTENTE: Insertar con global_id único
       // ON CONFLICT: Solo se permiten updates de status, fecha_liquidacion, observaciones
       // Los datos originales (assigned_quantity, assigned_amount) NO cambian
+      // RETURNING xmax=0 indica INSERT nuevo, xmax>0 indica UPDATE de registro existente
       const query = `
         INSERT INTO repartidor_assignments (
           tenant_id, branch_id, venta_id, employee_id,
@@ -216,7 +217,7 @@ function createRepartidorAssignmentRoutes(io) {
         SET status = EXCLUDED.status,
             fecha_liquidacion = EXCLUDED.fecha_liquidacion,
             observaciones = EXCLUDED.observaciones
-        RETURNING *
+        RETURNING *, (xmax = 0) AS inserted
       `;
 
       const result = await pool.query(query, [
@@ -242,56 +243,63 @@ function createRepartidorAssignmentRoutes(io) {
       ]);
 
       const assignment = result.rows[0];
+      const wasInserted = assignment.inserted; // true = nueva asignación, false = actualización
 
-      // Emitir evento en tiempo real
-      io.to(`branch_${branch_id}`).emit('assignment_created', {
-        assignment,
-        timestamp: new Date().toISOString()
-      });
-
-      // 🆕 Enviar notificación push al repartidor y administradores
-      try {
-        // Obtener nombre de la sucursal
-        const branchResult = await pool.query(
-          'SELECT name FROM branches WHERE id = $1',
-          [branch_id]
-        );
-        const branchName = branchResult.rows[0]?.name || 'Sucursal';
-
-        // Obtener nombre del repartidor (usando ID resuelto)
-        const employeeResult = await pool.query(
-          "SELECT CONCAT(first_name, ' ', last_name) as full_name FROM employees WHERE id = $1",
-          [resolvedEmployeeId]
-        );
-        const employeeName = employeeResult.rows[0]?.full_name || 'Repartidor';
-
-        // Obtener nombre del empleado que autorizó la asignación (usando ID resuelto)
-        const createdByResult = await pool.query(
-          "SELECT CONCAT(first_name, ' ', last_name) as full_name FROM employees WHERE id = $1",
-          [resolvedCreatedByEmployeeId]
-        );
-        const createdByName = createdByResult.rows[0]?.full_name || 'Empleado';
-
-        console.log(`[RepartidorAssignments] 📨 Enviando notificaciones para asignación #${assignment.id}`);
-        console.log(`   Repartidor: ${employeeName} (GlobalId: ${employee_global_id})`);
-        console.log(`   Autorizado por: ${createdByName} (GlobalId: ${created_by_employee_global_id})`);
-        console.log(`   Cantidad: ${assigned_quantity} kg, Monto: $${assigned_amount}`);
-
-        // Enviar notificaciones usando GlobalId (UUID) para idempotencia
-        await notifyAssignmentCreated(employee_global_id, {
-          assignmentId: assignment.id,
-          quantity: parseFloat(assigned_quantity),
-          amount: parseFloat(assigned_amount),
-          branchName,
-          branchId: branch_id,
-          employeeName,
-          createdByName
+      // Emitir evento en tiempo real solo si es nueva asignación
+      if (wasInserted) {
+        io.to(`branch_${branch_id}`).emit('assignment_created', {
+          assignment,
+          timestamp: new Date().toISOString()
         });
+      }
 
-        console.log(`[RepartidorAssignments] ✅ Notificaciones enviadas exitosamente`);
-      } catch (notifError) {
-        console.error('[RepartidorAssignments] ⚠️ Error enviando notificación push:', notifError.message);
-        // No fallar la operación si la notificación falla
+      // 🆕 Enviar notificación push SOLO si es una asignación NUEVA (no actualización)
+      if (wasInserted) {
+        try {
+          // Obtener nombre de la sucursal
+          const branchResult = await pool.query(
+            'SELECT name FROM branches WHERE id = $1',
+            [branch_id]
+          );
+          const branchName = branchResult.rows[0]?.name || 'Sucursal';
+
+          // Obtener nombre del repartidor (usando ID resuelto)
+          const employeeResult = await pool.query(
+            "SELECT CONCAT(first_name, ' ', last_name) as full_name FROM employees WHERE id = $1",
+            [resolvedEmployeeId]
+          );
+          const employeeName = employeeResult.rows[0]?.full_name || 'Repartidor';
+
+          // Obtener nombre del empleado que autorizó la asignación (usando ID resuelto)
+          const createdByResult = await pool.query(
+            "SELECT CONCAT(first_name, ' ', last_name) as full_name FROM employees WHERE id = $1",
+            [resolvedCreatedByEmployeeId]
+          );
+          const createdByName = createdByResult.rows[0]?.full_name || 'Empleado';
+
+          console.log(`[RepartidorAssignments] 📨 Enviando notificaciones para asignación NUEVA #${assignment.id}`);
+          console.log(`   Repartidor: ${employeeName} (GlobalId: ${employee_global_id})`);
+          console.log(`   Autorizado por: ${createdByName} (GlobalId: ${created_by_employee_global_id})`);
+          console.log(`   Cantidad: ${assigned_quantity} kg, Monto: $${assigned_amount}`);
+
+          // Enviar notificaciones usando GlobalId (UUID) para idempotencia
+          await notifyAssignmentCreated(employee_global_id, {
+            assignmentId: assignment.id,
+            quantity: parseFloat(assigned_quantity),
+            amount: parseFloat(assigned_amount),
+            branchName,
+            branchId: branch_id,
+            employeeName,
+            createdByName
+          });
+
+          console.log(`[RepartidorAssignments] ✅ Notificaciones enviadas exitosamente`);
+        } catch (notifError) {
+          console.error('[RepartidorAssignments] ⚠️ Error enviando notificación push:', notifError.message);
+          // No fallar la operación si la notificación falla
+        }
+      } else {
+        console.log(`[RepartidorAssignments] ℹ️ Asignación actualizada (no se envía notificación): GlobalId=${global_id}, Status=${status}`);
       }
 
       console.log(`[RepartidorAssignments] ✅ Assignment synced: ${assignment.assigned_quantity} kg, GlobalId: ${global_id}`);
