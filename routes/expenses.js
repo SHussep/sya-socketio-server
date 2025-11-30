@@ -124,7 +124,18 @@ module.exports = (pool, io) => {
             // Detectar tipo de cliente: Desktop (offline-first) vs Mobile (online-only)
             const isDesktop = !!global_id && !!terminal_id;
             const reviewedValue = reviewed_by_desktop !== undefined ? reviewed_by_desktop : false;
-            const finalStatus = status || 'confirmed';
+
+            // Mapear status de español a inglés para compatibilidad con constraint de PostgreSQL
+            const statusMap = {
+                'confirmado': 'confirmed',
+                'borrador': 'draft',
+                'eliminado': 'deleted',
+                'draft': 'draft',
+                'confirmed': 'confirmed',
+                'deleted': 'deleted'
+            };
+            const rawStatus = (status || 'confirmed').toLowerCase();
+            const finalStatus = statusMap[rawStatus] || 'confirmed';
 
             // Si es Mobile (online-only), generar valores simples
             const finalGlobalId = global_id || uuidv4(); // Generate valid UUID for Mobile
