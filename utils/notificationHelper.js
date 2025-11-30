@@ -203,38 +203,102 @@ async function sendNotificationToEmployee(employeeId, { title, body, data = {} }
 
 /**
  * Envía notificación cuando un usuario inicia sesión
- * A: Administradores y encargados (role_id 1,2) + el empleado que hizo login
+ * A: Administradores y encargados (role_id 1,2) EXCEPTO el que hizo login + el empleado que hizo login
  */
 async function notifyUserLogin(branchId, { employeeId, employeeName, branchName, scaleStatus }) {
-    // Enviar a admins/encargados
-    const adminResult = await sendNotificationToAdminsInBranch(branchId, {
-        title: '👤 Acceso de Usuario',
-        body: `${employeeName} inició sesión en ${branchName}`,
-        data: {
-            type: 'user_login',
-            employeeName,
-            branchName,
-            scaleStatus
-        }
-    });
+    try {
+        // IMPORTANTE: employeeId es el GlobalId (UUID), no el autoincrement ID
+        // Obtener el ID numérico del empleado desde PostgreSQL usando global_id
+        const employeeResult = await pool.query(
+            `SELECT id, role_id FROM employees WHERE global_id = $1 LIMIT 1`,
+            [employeeId]
+        );
 
-    // Enviar también al empleado que hizo login (para que reciba su propia notificación)
-    const employeeResult = await sendNotificationToEmployee(employeeId, {
-        title: '👤 Acceso de Usuario',
-        body: `Iniciaste sesión en ${branchName}`,
-        data: {
-            type: 'user_login',
-            employeeName,
-            branchName,
-            scaleStatus
+        if (employeeResult.rows.length === 0) {
+            console.log(`[NotificationHelper] ⚠️ No se encontró empleado con global_id: ${employeeId}`);
+            return { sent: 0, failed: 0 };
         }
-    });
 
-    return {
-        admins: adminResult,
-        employee: employeeResult,
-        total: adminResult.sent + employeeResult.sent
-    };
+        const employeeIdNumeric = employeeResult.rows[0].id;
+        const employeeRoleId = employeeResult.rows[0].role_id;
+
+        // Enviar notificación personalizada al empleado que hizo login
+        const selfResult = await sendNotificationToEmployee(employeeId, {
+            title: '👤 Acceso de Usuario',
+            body: `Iniciaste sesión en ${branchName}`,
+            data: {
+                type: 'user_login',
+                employeeName,
+                branchName,
+                scaleStatus
+            }
+        });
+
+        // Solo enviar a otros admins/encargados si no es el mismo empleado
+        // Obtener dispositivos de empleados con role_id 1 (Administrador) o 2 (Encargado)
+        // EXCLUYENDO al empleado que hizo login
+        const adminTokensResult = await pool.query(
+            `SELECT DISTINCT dt.device_token
+             FROM device_tokens dt
+             JOIN employees e ON dt.employee_id = e.id
+             WHERE dt.branch_id = $1
+               AND dt.is_active = true
+               AND e.role_id IN (1, 2)
+               AND e.id != $2`,
+            [branchId, employeeIdNumeric]
+        );
+
+        const adminDeviceTokens = adminTokensResult.rows.map(row => row.device_token);
+
+        let adminResult = { sent: 0, failed: 0, total: 0 };
+
+        if (adminDeviceTokens.length > 0) {
+            const results = await sendNotificationToMultipleDevices(adminDeviceTokens, {
+                title: '👤 Acceso de Usuario',
+                body: `${employeeName} inició sesión en ${branchName}`,
+                data: {
+                    type: 'user_login',
+                    employeeName,
+                    branchName,
+                    scaleStatus
+                }
+            });
+
+            const successCount = results.filter(r => r.success).length;
+            const invalidTokens = results
+                .filter(r => r.result === 'INVALID_TOKEN')
+                .map(r => r.deviceToken);
+
+            console.log(`[NotificationHelper] ✅ Notificaciones enviadas a otros admins/encargados de sucursal ${branchId}: ${successCount}/${adminDeviceTokens.length}`);
+
+            // Desactivar tokens inválidos
+            if (invalidTokens.length > 0) {
+                await pool.query(
+                    `UPDATE device_tokens SET is_active = false WHERE device_token = ANY($1)`,
+                    [invalidTokens]
+                );
+                console.log(`[NotificationHelper] 🧹 Deactivated ${invalidTokens.length} invalid tokens`);
+            }
+
+            adminResult = {
+                sent: successCount,
+                failed: adminDeviceTokens.length - successCount,
+                total: adminDeviceTokens.length,
+                invalidTokensRemoved: invalidTokens.length
+            };
+        } else {
+            console.log(`[NotificationHelper] ℹ️ No hay otros admins/encargados en sucursal ${branchId}`);
+        }
+
+        return {
+            self: selfResult,
+            others: adminResult,
+            total: selfResult.sent + adminResult.sent
+        };
+    } catch (error) {
+        console.error('[NotificationHelper] ❌ Error en notifyUserLogin:', error.message);
+        return { sent: 0, failed: 0, error: error.message };
+    }
 }
 
 /**
