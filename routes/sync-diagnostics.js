@@ -69,8 +69,9 @@ module.exports = (pool) => {
             counts.creditPayments = parseInt(creditPaymentsResult.rows[0].count);
 
             // Clientes (todo el tenant, no por sucursal)
+            // Excluir cliente genérico del sistema (is_system_generic = TRUE)
             const customersResult = await pool.query(
-                'SELECT COUNT(*) as count FROM customers WHERE tenant_id = $1',
+                'SELECT COUNT(*) as count FROM customers WHERE tenant_id = $1 AND (is_system_generic = FALSE OR is_system_generic IS NULL)',
                 [tenantId]
             );
             counts.customers = parseInt(customersResult.rows[0].count);
