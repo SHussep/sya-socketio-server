@@ -142,7 +142,7 @@ module.exports = (pool) => {
                         e.first_name || ' ' || e.last_name as employee_name,
                         sdl.disconnected_at as event_time,
                         CASE
-                            WHEN sdl.status = 'reconnected' THEN 'Báscula Reconectada'
+                            WHEN sdl.disconnection_status = 'reconnected' THEN 'Báscula Reconectada'
                             ELSE 'Báscula Desconectada'
                         END as event_type,
                         NULL as weight_detected,
@@ -167,7 +167,7 @@ module.exports = (pool) => {
                         sdl.disconnected_at as created_at,
                         sdl.reconnected_at,
                         sdl.duration_minutes,
-                        sdl.status as disconnection_status
+                        sdl.disconnection_status
                     FROM scale_disconnection_logs sdl
                     LEFT JOIN employees e ON e.id = sdl.employee_id
                     WHERE sdl.tenant_id = $1
