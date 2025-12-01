@@ -323,7 +323,8 @@ module.exports = (pool, io) => {
         }
     });
 
-    // GET /api/shifts/summary - Resumen de cortes de caja (para administradores)
+    // GET /api/shifts/summary - Resumen de cortes de caja CERRADOS (para administradores)
+    // Solo incluye turnos cerrados (is_cash_cut_open = false) para el resumen de cortes
     router.get('/summary', authenticateToken, async (req, res) => {
         try {
             const { tenantId } = req.user;
@@ -339,6 +340,7 @@ module.exports = (pool, io) => {
                 LEFT JOIN employees e ON s.employee_id = e.id
                 LEFT JOIN branches b ON s.branch_id = b.id
                 WHERE s.tenant_id = $1
+                  AND s.is_cash_cut_open = false
             `;
 
             const params = [tenantId];
@@ -350,16 +352,15 @@ module.exports = (pool, io) => {
                 paramIndex++;
             }
 
-            // 🎯 IMPORTANTE: Incluir turnos abiertos siempre, sin importar fecha de inicio
-            // Para turnos cerrados, filtrar por rango de fechas normalmente
+            // Filtrar por rango de fechas (solo aplica a turnos cerrados)
             if (date_from) {
-                query += ` AND (s.is_cash_cut_open = true OR s.start_time >= $${paramIndex})`;
+                query += ` AND s.start_time >= $${paramIndex}`;
                 params.push(date_from);
                 paramIndex++;
             }
 
             if (date_to) {
-                query += ` AND (s.is_cash_cut_open = true OR s.start_time <= $${paramIndex})`;
+                query += ` AND s.start_time <= $${paramIndex}`;
                 params.push(date_to);
                 paramIndex++;
             }
@@ -375,7 +376,7 @@ module.exports = (pool, io) => {
                 end_time: row.end_time ? new Date(row.end_time).toISOString() : null
             }));
 
-            // Calcular totales
+            // Calcular totales (solo de turnos cerrados)
             const summary = {
                 total_shifts: formattedRows.length,
                 total_transactions: formattedRows.reduce((sum, shift) => sum + (shift.transaction_counter || 0), 0),
