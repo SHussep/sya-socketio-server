@@ -32,13 +32,18 @@ module.exports = (pool, io) => {
     // GET /api/expenses - Obtener gastos por sucursal y rango de fechas
     router.get('/', async (req, res) => {
         try {
-            const { branchId, startDate, endDate, timezone, employee_id, tenant_id } = req.query;
+            // Aceptar tanto branchId como branch_id para compatibilidad
+            const branchId = req.query.branchId || req.query.branch_id;
+            const startDate = req.query.startDate || req.query.start_date;
+            const endDate = req.query.endDate || req.query.end_date;
+            const { timezone, employee_id, tenant_id, shift_id, shiftId } = req.query;
+            const shiftIdFilter = shift_id || shiftId;
 
             if (!branchId) {
                 return res.status(400).json({ success: false, message: 'branchId es requerido' });
             }
 
-            console.log(`[Expenses/GET] 📋 Obteniendo gastos - Branch: ${branchId}, Desde: ${startDate}, Hasta: ${endDate}`);
+            console.log(`[Expenses/GET] 📋 Obteniendo gastos - Branch: ${branchId}, Desde: ${startDate}, Hasta: ${endDate}, Shift: ${shiftIdFilter || 'ALL'}`);
 
             // Construir query con filtros opcionales
             let query = `
@@ -96,6 +101,13 @@ module.exports = (pool, io) => {
             if (tenant_id) {
                 query += ` AND e.tenant_id = $${paramIndex}`;
                 params.push(tenant_id);
+                paramIndex++;
+            }
+
+            // Filtro por shift (turno)
+            if (shiftIdFilter) {
+                query += ` AND e.id_turno = $${paramIndex}`;
+                params.push(shiftIdFilter);
                 paramIndex++;
             }
 
