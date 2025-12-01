@@ -716,6 +716,116 @@ async function runMigrations() {
                 console.log('[Schema] ℹ️  Fresh database created - skipping patches');
             }
 
+            // Patch: Add Guardian missing columns (is_hidden, severity, etc.)
+            console.log('[Schema] 🔍 Checking Guardian tables for missing columns...');
+
+            // Check if suspicious_weighing_logs exists
+            const checkSuspiciousTable = await client.query(`
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'suspicious_weighing_logs'
+                )
+            `);
+
+            if (checkSuspiciousTable.rows[0].exists) {
+                // Add is_hidden to suspicious_weighing_logs
+                const checkSuspiciousHidden = await client.query(`
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'suspicious_weighing_logs'
+                    AND column_name = 'is_hidden'
+                `);
+
+                if (checkSuspiciousHidden.rows.length === 0) {
+                    console.log('[Schema] 📝 Adding missing column: suspicious_weighing_logs.is_hidden');
+                    await client.query(`
+                        ALTER TABLE suspicious_weighing_logs
+                        ADD COLUMN is_hidden BOOLEAN DEFAULT FALSE
+                    `);
+                    // Add index
+                    await client.query(`
+                        CREATE INDEX IF NOT EXISTS idx_suspicious_weighing_logs_is_hidden
+                        ON suspicious_weighing_logs(is_hidden) WHERE is_hidden = false
+                    `);
+                    console.log('[Schema] ✅ Column suspicious_weighing_logs.is_hidden added successfully');
+                }
+            }
+
+            // Check if scale_disconnection_logs exists
+            const checkDisconnectionTable = await client.query(`
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'scale_disconnection_logs'
+                )
+            `);
+
+            if (checkDisconnectionTable.rows[0].exists) {
+                // Add is_hidden to scale_disconnection_logs
+                const checkDisconnectionHidden = await client.query(`
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'scale_disconnection_logs'
+                    AND column_name = 'is_hidden'
+                `);
+
+                if (checkDisconnectionHidden.rows.length === 0) {
+                    console.log('[Schema] 📝 Adding missing column: scale_disconnection_logs.is_hidden');
+                    await client.query(`
+                        ALTER TABLE scale_disconnection_logs
+                        ADD COLUMN is_hidden BOOLEAN DEFAULT FALSE
+                    `);
+                    // Add index
+                    await client.query(`
+                        CREATE INDEX IF NOT EXISTS idx_scale_disconnection_logs_is_hidden
+                        ON scale_disconnection_logs(is_hidden) WHERE is_hidden = false
+                    `);
+                    console.log('[Schema] ✅ Column scale_disconnection_logs.is_hidden added successfully');
+                }
+
+                // Add severity to scale_disconnection_logs
+                const checkDisconnectionSeverity = await client.query(`
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'scale_disconnection_logs'
+                    AND column_name = 'severity'
+                `);
+
+                if (checkDisconnectionSeverity.rows.length === 0) {
+                    console.log('[Schema] 📝 Adding missing column: scale_disconnection_logs.severity');
+                    await client.query(`
+                        ALTER TABLE scale_disconnection_logs
+                        ADD COLUMN severity VARCHAR(50) DEFAULT 'Medium'
+                    `);
+                    // Add index
+                    await client.query(`
+                        CREATE INDEX IF NOT EXISTS idx_scale_disconnection_logs_severity
+                        ON scale_disconnection_logs(severity)
+                    `);
+                    console.log('[Schema] ✅ Column scale_disconnection_logs.severity added successfully');
+                }
+
+                // Rename 'status' to 'disconnection_status' if needed
+                const checkDisconnectionStatus = await client.query(`
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'scale_disconnection_logs'
+                    AND column_name IN ('status', 'disconnection_status')
+                    ORDER BY column_name
+                `);
+
+                const hasStatus = checkDisconnectionStatus.rows.some(r => r.column_name === 'status');
+                const hasDisconnectionStatus = checkDisconnectionStatus.rows.some(r => r.column_name === 'disconnection_status');
+
+                if (hasStatus && !hasDisconnectionStatus) {
+                    console.log('[Schema] 📝 Renaming column: scale_disconnection_logs.status → disconnection_status');
+                    await client.query(`
+                        ALTER TABLE scale_disconnection_logs
+                        RENAME COLUMN status TO disconnection_status
+                    `);
+                    console.log('[Schema] ✅ Column renamed successfully');
+                }
+            }
+
             // 2.5. Clean user data if requested (for testing)
             console.log(`[Schema] 🔍 CLEAN_DATABASE_ON_START = "${process.env.CLEAN_DATABASE_ON_START}"`);
 
