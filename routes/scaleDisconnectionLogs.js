@@ -121,9 +121,12 @@ module.exports = (pool) => {
 
         } catch (error) {
             console.error('[Sync/ScaleDisconnection] ❌ Error:', error.message);
+            console.error('[Sync/ScaleDisconnection] ❌ Stack:', error.stack);
+            console.error('[Sync/ScaleDisconnection] ❌ Body recibido:', JSON.stringify(req.body, null, 2));
             res.status(500).json({
                 success: false,
-                message: 'Error al sincronizar log de desconexión de báscula'
+                message: 'Error al sincronizar log de desconexión de báscula',
+                error: error.message
             });
         }
     });
