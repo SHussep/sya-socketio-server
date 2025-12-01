@@ -29,7 +29,102 @@ function authenticateToken(req, res, next) {
 module.exports = (pool, io) => {
     const router = express.Router();
 
-    // ... (GET / remains unchanged)
+    // GET /api/expenses - Obtener gastos por sucursal y rango de fechas
+    router.get('/', async (req, res) => {
+        try {
+            const { branchId, startDate, endDate, timezone, employee_id, tenant_id } = req.query;
+
+            if (!branchId) {
+                return res.status(400).json({ success: false, message: 'branchId es requerido' });
+            }
+
+            console.log(`[Expenses/GET] 📋 Obteniendo gastos - Branch: ${branchId}, Desde: ${startDate}, Hasta: ${endDate}`);
+
+            // Construir query con filtros opcionales
+            let query = `
+                SELECT
+                    e.id,
+                    e.global_id,
+                    e.tenant_id,
+                    e.branch_id,
+                    e.employee_id,
+                    CONCAT(emp.first_name, ' ', emp.last_name) as employee_name,
+                    cat.name as category,
+                    cat.id as category_id,
+                    e.description,
+                    e.amount,
+                    e.quantity,
+                    e.expense_date,
+                    e.payment_type_id,
+                    e.id_turno as shift_id,
+                    e.status,
+                    e.reviewed_by_desktop,
+                    e.is_active,
+                    e.created_at,
+                    e.updated_at
+                FROM expenses e
+                LEFT JOIN employees emp ON e.employee_id = emp.id
+                LEFT JOIN expense_categories cat ON e.category_id = cat.id
+                WHERE e.branch_id = $1
+                  AND e.is_active = true
+            `;
+
+            const params = [branchId];
+            let paramIndex = 2;
+
+            // Filtro por rango de fechas
+            if (startDate) {
+                query += ` AND e.expense_date >= $${paramIndex}`;
+                params.push(startDate);
+                paramIndex++;
+            }
+
+            if (endDate) {
+                query += ` AND e.expense_date <= $${paramIndex}`;
+                params.push(endDate);
+                paramIndex++;
+            }
+
+            // Filtro por empleado
+            if (employee_id) {
+                query += ` AND e.employee_id = $${paramIndex}`;
+                params.push(employee_id);
+                paramIndex++;
+            }
+
+            // Filtro por tenant
+            if (tenant_id) {
+                query += ` AND e.tenant_id = $${paramIndex}`;
+                params.push(tenant_id);
+                paramIndex++;
+            }
+
+            query += ` ORDER BY e.expense_date DESC, e.created_at DESC`;
+
+            const result = await pool.query(query, params);
+
+            console.log(`[Expenses/GET] ✅ Encontrados ${result.rows.length} gastos`);
+
+            // Normalizar amount a número
+            const normalizedRows = result.rows.map(row => ({
+                ...row,
+                amount: parseFloat(row.amount)
+            }));
+
+            res.json({
+                success: true,
+                count: result.rows.length,
+                data: normalizedRows
+            });
+        } catch (error) {
+            console.error('[Expenses/GET] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al obtener gastos',
+                error: error.message
+            });
+        }
+    });
 
     // POST /api/expenses - Crear gasto desde Desktop (sin JWT)
     router.post('/', async (req, res) => {
