@@ -781,15 +781,19 @@ module.exports = (pool) => {
      * POST /api/repartidores/returns
      * Crea o actualiza una devolución de repartidor
      * Soporta estados: draft, confirmed, deleted
+     * SIN autenticación - sincronización offline-first idempotente
      */
-    router.post('/returns', authenticateToken, async (req, res) => {
+    router.post('/returns', async (req, res) => {
         try {
             const {
                 global_id,
                 assignment_id,
                 assignment_global_id,  // ✅ Aceptar GlobalId del assignment
                 employee_id,
+                employee_global_id,    // ✅ Aceptar GlobalId del empleado
                 registered_by_employee_id,
+                registered_by_employee_global_id, // ✅ Aceptar GlobalId del registrador
+                shift_global_id,       // ✅ Aceptar GlobalId del turno
                 tenant_id,
                 branch_id,
                 shift_id,
@@ -809,15 +813,17 @@ module.exports = (pool) => {
 
             console.log(`[RepartidorReturns] ${needs_update ? 'UPDATE' : 'INSERT'} - GlobalId: ${global_id}, Status: ${status}, Quantity: ${quantity}`);
 
-            // Validar campos requeridos
-            if (!global_id || (!assignment_id && !assignment_global_id) || !employee_id || !quantity) {
+            // Validar campos requeridos (aceptar IDs numéricos O GlobalIds)
+            if (!global_id || (!assignment_id && !assignment_global_id) || (!employee_id && !employee_global_id) || !quantity) {
                 return res.status(400).json({
                     success: false,
-                    message: 'Campos requeridos: global_id, (assignment_id o assignment_global_id), employee_id, quantity'
+                    message: 'Campos requeridos: global_id, (assignment_id o assignment_global_id), (employee_id o employee_global_id), quantity'
                 });
             }
 
-            // Si se envió assignment_global_id, resolver el ID numérico
+            // ✅ RESOLVER GLOBALIDS → IDs numéricos
+
+            // Assignment
             let finalAssignmentId = assignment_id;
             if (!finalAssignmentId && assignment_global_id) {
                 const assignmentResult = await pool.query(
@@ -834,6 +840,46 @@ module.exports = (pool) => {
 
                 finalAssignmentId = assignmentResult.rows[0].id;
                 console.log(`[RepartidorReturns] ✅ Assignment resuelto: ${assignment_global_id} → ID ${finalAssignmentId}`);
+            }
+
+            // Employee (repartidor)
+            let finalEmployeeId = employee_id;
+            if (!finalEmployeeId && employee_global_id) {
+                const empResult = await pool.query(
+                    'SELECT id FROM employees WHERE global_id = $1',
+                    [employee_global_id]
+                );
+                if (empResult.rows.length === 0) {
+                    return res.status(404).json({
+                        success: false,
+                        message: `Employee con global_id ${employee_global_id} no encontrado`
+                    });
+                }
+                finalEmployeeId = empResult.rows[0].id;
+            }
+
+            // Registered by employee
+            let finalRegisteredById = registered_by_employee_id;
+            if (!finalRegisteredById && registered_by_employee_global_id) {
+                const regResult = await pool.query(
+                    'SELECT id FROM employees WHERE global_id = $1',
+                    [registered_by_employee_global_id]
+                );
+                if (regResult.rows.length > 0) {
+                    finalRegisteredById = regResult.rows[0].id;
+                }
+            }
+
+            // Shift
+            let finalShiftId = shift_id;
+            if (!finalShiftId && shift_global_id) {
+                const shiftResult = await pool.query(
+                    'SELECT id FROM shifts WHERE global_id = $1',
+                    [shift_global_id]
+                );
+                if (shiftResult.rows.length > 0) {
+                    finalShiftId = shiftResult.rows[0].id;
+                }
             }
 
             // Verificar si ya existe (idempotencia)
@@ -891,12 +937,12 @@ module.exports = (pool) => {
                 RETURNING *
             `, [
                 global_id,
-                finalAssignmentId,  // ✅ Usar el ID resuelto
-                employee_id,
-                registered_by_employee_id || employee_id,
+                finalAssignmentId,       // ✅ Usar el ID resuelto
+                finalEmployeeId,         // ✅ Usar el ID resuelto
+                finalRegisteredById || finalEmployeeId, // ✅ Usar el ID resuelto
                 tenant_id,
                 branch_id,
-                shift_id,
+                finalShiftId,            // ✅ Usar el ID resuelto
                 quantity,
                 unit_price,
                 amount,
