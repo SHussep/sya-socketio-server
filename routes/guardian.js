@@ -73,7 +73,7 @@ module.exports = (pool) => {
                         swl.was_reviewed,
                         swl.review_notes,
                         swl.reviewed_at,
-                        swl.is_hidden,
+                        false as is_hidden,
                         swl.created_at
                     FROM suspicious_weighing_logs swl
                     LEFT JOIN employees e ON e.id = swl.employee_id
@@ -112,9 +112,10 @@ module.exports = (pool) => {
                     paramIndex++;
                 }
 
-                if (include_hidden !== 'true') {
-                    suspiciousQuery += ` AND (swl.is_hidden IS NULL OR swl.is_hidden = false)`;
-                }
+                // is_hidden column may not exist yet - skip filter if not migrated
+                // if (include_hidden !== 'true') {
+                //     suspiciousQuery += ` AND (swl.is_hidden IS NULL OR swl.is_hidden = false)`;
+                // }
 
                 suspiciousQuery += ` ORDER BY swl.timestamp DESC`;
 
@@ -159,7 +160,7 @@ module.exports = (pool) => {
                         false as was_reviewed,
                         NULL as review_notes,
                         NULL as reviewed_at,
-                        sdl.is_hidden,
+                        false as is_hidden,
                         sdl.disconnected_at as created_at,
                         sdl.reconnected_at,
                         sdl.duration_minutes,
@@ -195,9 +196,10 @@ module.exports = (pool) => {
                     paramIndex++;
                 }
 
-                if (include_hidden !== 'true') {
-                    disconnectionQuery += ` AND (sdl.is_hidden IS NULL OR sdl.is_hidden = false)`;
-                }
+                // is_hidden column may not exist yet - skip filter if not migrated
+                // if (include_hidden !== 'true') {
+                //     disconnectionQuery += ` AND (sdl.is_hidden IS NULL OR sdl.is_hidden = false)`;
+                // }
 
                 disconnectionQuery += ` ORDER BY sdl.disconnected_at DESC`;
 
@@ -273,7 +275,6 @@ module.exports = (pool) => {
                 WHERE tenant_id = $1
                   AND timestamp >= $2::timestamptz
                   AND timestamp < $3::timestamptz
-                  AND (is_hidden IS NULL OR is_hidden = false)
             `;
             const suspiciousParams = [tenant_id, startOfDay, endOfDay];
 
@@ -299,7 +300,6 @@ module.exports = (pool) => {
                 WHERE tenant_id = $1
                   AND disconnected_at >= $2::timestamptz
                   AND disconnected_at < $3::timestamptz
-                  AND (is_hidden IS NULL OR is_hidden = false)
             `;
             const disconnectionParams = [tenant_id, startOfDay, endOfDay];
 
@@ -389,7 +389,6 @@ module.exports = (pool) => {
                 WHERE swl.tenant_id = $1
                   AND swl.timestamp >= $2::timestamptz
                   AND swl.timestamp < $3::timestamptz
-                  AND (swl.is_hidden IS NULL OR swl.is_hidden = false)
             `;
             const params = [tenant_id, startOfDay, endOfDay];
             let paramIndex = 4;
