@@ -86,6 +86,7 @@ const customersRoutes = require('./routes/customers'); // Rutas de sincronizaci�
 const creditPaymentsRoutes = require('./routes/credit-payments'); // Rutas de pagos de crédito
 const suspiciousWeighingLogsRoutes = require('./routes/suspiciousWeighingLogs'); // Rutas de Guardian logs de báscula
 const scaleDisconnectionLogsRoutes = require('./routes/scaleDisconnectionLogs'); // Rutas de eventos de desconexión de báscula
+const guardianRoutes = require('./routes/guardian'); // API unificada de Guardian para app móvil
 const employeeMetricsRoutes = require('./routes/employeeMetrics'); // Rutas de métricas diarias de empleados
 const cancelacionesRoutes = require('./routes/cancelaciones'); // Rutas de cancelaciones bitácora con sync offline-first
 const repartidoresRoutes = require('./routes/repartidores'); // Rutas de resumen y detalles de repartidores
@@ -347,6 +348,7 @@ app.use('/api/customers', customersRoutes(pool)); // Rutas de sincronización de
 app.use('/api/credit-payments', creditPaymentsRoutes(pool)); // Rutas de pagos de crédito
 app.use('/api/suspicious-weighing-logs', suspiciousWeighingLogsRoutes(pool, io)); // Rutas de Guardian logs de báscula (con Socket.IO)
 app.use('/api/scale-disconnection-logs', scaleDisconnectionLogsRoutes(pool)); // Rutas de eventos de desconexión de báscula
+app.use('/api/guardian', guardianRoutes(pool)); // API unificada de Guardian para app móvil (events, summary, employees-ranking)
 app.use('/api/employee-metrics', employeeMetricsRoutes(pool)); // Rutas de métricas diarias de empleados
 app.use('/api/repartidores', repartidoresRoutes(pool)); // Rutas de resumen y detalles de repartidores
 
