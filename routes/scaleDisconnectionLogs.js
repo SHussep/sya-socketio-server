@@ -67,7 +67,7 @@ module.exports = (pool) => {
                     disconnected_at,
                     reconnected_at,
                     duration_minutes,
-                    status,
+                    disconnection_status,
                     reason,
                     notes,
                     global_id,
@@ -84,7 +84,7 @@ module.exports = (pool) => {
                 SET
                     reconnected_at = EXCLUDED.reconnected_at,
                     duration_minutes = EXCLUDED.duration_minutes,
-                    status = EXCLUDED.status,
+                    disconnection_status = EXCLUDED.disconnection_status,
                     notes = EXCLUDED.notes,
                     updated_at = NOW()
                 RETURNING id, global_id, created_at`,
