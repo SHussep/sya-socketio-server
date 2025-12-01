@@ -11,8 +11,8 @@ module.exports = (pool) => {
             const {
                 tenant_id,
                 branch_id,
-                shift_id,
-                employee_id,
+                shift_global_id,      // ✅ GlobalId para idempotencia
+                employee_global_id,   // ✅ GlobalId para idempotencia
                 disconnected_at,
                 reconnected_at,
                 duration_minutes,
@@ -27,11 +27,34 @@ module.exports = (pool) => {
             } = req.body;
 
             // Validar campos requeridos
-            if (!tenant_id || !branch_id || !employee_id || !global_id || !disconnected_at || !status) {
+            if (!tenant_id || !branch_id || !employee_global_id || !global_id || !disconnected_at || !status) {
                 return res.status(400).json({
                     success: false,
-                    message: 'Datos incompletos: se requieren tenant_id, branch_id, employee_id, global_id, disconnected_at y status'
+                    message: 'Datos incompletos: se requieren tenant_id, branch_id, employee_global_id, global_id, disconnected_at y status'
                 });
+            }
+
+            // ✅ IDEMPOTENCIA: Resolver employee_global_id -> employee_id (PostgreSQL ID)
+            const employeeResult = await pool.query(
+                'SELECT id FROM employees WHERE global_id = $1 AND tenant_id = $2',
+                [employee_global_id, tenant_id]
+            );
+            if (employeeResult.rows.length === 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Empleado con global_id ${employee_global_id} no encontrado`
+                });
+            }
+            const employee_id = employeeResult.rows[0].id;
+
+            // ✅ IDEMPOTENCIA: Resolver shift_global_id -> shift_id (opcional)
+            let shift_id = null;
+            if (shift_global_id) {
+                const shiftResult = await pool.query(
+                    'SELECT id FROM shifts WHERE global_id = $1',
+                    [shift_global_id]
+                );
+                shift_id = shiftResult.rows.length > 0 ? shiftResult.rows[0].id : null;
             }
 
             // Insertar o actualizar usando ON CONFLICT (idempotente)
