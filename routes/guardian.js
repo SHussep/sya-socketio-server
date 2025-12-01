@@ -75,7 +75,7 @@ module.exports = (pool) => {
                         swl.was_reviewed,
                         swl.review_notes,
                         swl.reviewed_at,
-                        false as is_hidden,
+                        swl.is_hidden,
                         swl.created_at
                     FROM suspicious_weighing_logs swl
                     LEFT JOIN employees e ON e.id = swl.employee_id
@@ -114,10 +114,10 @@ module.exports = (pool) => {
                     paramIndex++;
                 }
 
-                // is_hidden column may not exist yet - skip filter if not migrated
-                // if (include_hidden !== 'true') {
-                //     suspiciousQuery += ` AND (swl.is_hidden IS NULL OR swl.is_hidden = false)`;
-                // }
+                // Filtrar eventos ocultos
+                if (include_hidden !== 'true') {
+                    suspiciousQuery += ` AND (swl.is_hidden IS NULL OR swl.is_hidden = false)`;
+                }
 
                 suspiciousQuery += ` ORDER BY swl.timestamp DESC`;
 
@@ -163,7 +163,7 @@ module.exports = (pool) => {
                         false as was_reviewed,
                         NULL as review_notes,
                         NULL as reviewed_at,
-                        false as is_hidden,
+                        sdl.is_hidden,
                         sdl.disconnected_at as created_at,
                         sdl.reconnected_at,
                         sdl.duration_minutes,
@@ -199,10 +199,10 @@ module.exports = (pool) => {
                     paramIndex++;
                 }
 
-                // is_hidden column may not exist yet - skip filter if not migrated
-                // if (include_hidden !== 'true') {
-                //     disconnectionQuery += ` AND (sdl.is_hidden IS NULL OR sdl.is_hidden = false)`;
-                // }
+                // Filtrar eventos ocultos
+                if (include_hidden !== 'true') {
+                    disconnectionQuery += ` AND (sdl.is_hidden IS NULL OR sdl.is_hidden = false)`;
+                }
 
                 disconnectionQuery += ` ORDER BY sdl.disconnected_at DESC`;
 
