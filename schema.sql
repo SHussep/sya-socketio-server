@@ -822,6 +822,142 @@ CREATE TRIGGER trg_prevent_generic_customer_delete
     FOR EACH ROW
     EXECUTE FUNCTION prevent_generic_customer_delete();
 
+-- ========== GUARDIAN SYSTEM ==========
+
+-- suspicious_weighing_logs (Guardian: pesajes sospechosos detectados)
+CREATE TABLE IF NOT EXISTS suspicious_weighing_logs (
+    -- Primary Key
+    id SERIAL PRIMARY KEY,
+
+    -- Foreign Keys
+    tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+    shift_id INTEGER REFERENCES shifts(id) ON DELETE SET NULL,
+    employee_id INTEGER REFERENCES employees(id) ON DELETE SET NULL,
+
+    -- Event Data
+    timestamp TIMESTAMPTZ NOT NULL,
+    event_type VARCHAR(100) NOT NULL,
+    weight_detected DECIMAL(10,3),
+    details TEXT,
+
+    -- Analysis Fields
+    severity VARCHAR(50), -- Low, Medium, High, Critical
+    suspicion_level VARCHAR(50),
+    scenario_code VARCHAR(100),
+    risk_score INTEGER,
+    points_assigned INTEGER,
+    employee_score_after_event DECIMAL(10,2),
+    employee_score_band VARCHAR(50),
+    page_context VARCHAR(100),
+    trust_score DECIMAL(10,2),
+    additional_data_json TEXT,
+
+    -- Review Fields
+    was_reviewed BOOLEAN DEFAULT FALSE,
+    review_notes TEXT,
+    reviewed_at TIMESTAMPTZ,
+    reviewed_by_employee_id INTEGER REFERENCES employees(id) ON DELETE SET NULL,
+
+    -- Visibility (soft delete)
+    is_hidden BOOLEAN DEFAULT FALSE,
+
+    -- Pattern Metadata
+    similar_events_in_session INTEGER,
+    cycle_duration_seconds DECIMAL(10,2),
+    max_weight_in_cycle DECIMAL(10,3),
+    discrepancy_amount DECIMAL(10,3),
+
+    -- Correlation
+    related_product_id INTEGER,
+    related_sale_id INTEGER,
+
+    -- Offline-first fields (for idempotency)
+    global_id VARCHAR(36) UNIQUE,
+    terminal_id VARCHAR(36),
+    local_op_seq BIGINT,
+    created_local_utc VARCHAR(50),
+    device_event_raw BIGINT,
+
+    -- Timestamps
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_suspicious_weighing_logs_tenant_branch ON suspicious_weighing_logs(tenant_id, branch_id);
+CREATE INDEX IF NOT EXISTS idx_suspicious_weighing_logs_shift ON suspicious_weighing_logs(shift_id);
+CREATE INDEX IF NOT EXISTS idx_suspicious_weighing_logs_employee ON suspicious_weighing_logs(employee_id);
+CREATE INDEX IF NOT EXISTS idx_suspicious_weighing_logs_timestamp ON suspicious_weighing_logs(timestamp);
+CREATE INDEX IF NOT EXISTS idx_suspicious_weighing_logs_severity ON suspicious_weighing_logs(severity);
+CREATE INDEX IF NOT EXISTS idx_suspicious_weighing_logs_is_hidden ON suspicious_weighing_logs(is_hidden) WHERE is_hidden = false;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_suspicious_weighing_logs_global_id ON suspicious_weighing_logs(global_id) WHERE global_id IS NOT NULL;
+
+COMMENT ON TABLE suspicious_weighing_logs IS 'Guardian system: Logs de pesajes sospechosos detectados por la báscula en tiempo real';
+COMMENT ON COLUMN suspicious_weighing_logs.global_id IS 'UUID global único para sincronización idempotente desde Desktop';
+COMMENT ON COLUMN suspicious_weighing_logs.terminal_id IS 'UUID del dispositivo que creó este log';
+COMMENT ON COLUMN suspicious_weighing_logs.scenario_code IS 'Código del escenario detectado (ej: WEIGHT_WITHOUT_SALE, RAPID_CYCLES)';
+COMMENT ON COLUMN suspicious_weighing_logs.risk_score IS 'Puntuación de riesgo 0-100';
+COMMENT ON COLUMN suspicious_weighing_logs.is_hidden IS 'Soft delete: TRUE = evento oculto (no se muestra en app móvil), FALSE = visible';
+
+-- scale_disconnection_logs (Guardian: desconexiones de báscula)
+CREATE TABLE IF NOT EXISTS scale_disconnection_logs (
+    -- Primary Key
+    id SERIAL PRIMARY KEY,
+
+    -- Foreign Keys
+    tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+    shift_id INTEGER REFERENCES shifts(id) ON DELETE SET NULL,
+    employee_id INTEGER REFERENCES employees(id) ON DELETE SET NULL,
+
+    -- Disconnection Data
+    disconnected_at TIMESTAMPTZ NOT NULL,
+    reconnected_at TIMESTAMPTZ,
+    duration_minutes DECIMAL(10,2),
+    disconnection_status VARCHAR(50), -- 'disconnected', 'reconnected'
+    severity VARCHAR(50) DEFAULT 'Medium', -- Low, Medium, High, Critical
+
+    -- Additional Data
+    details TEXT,
+    scale_id VARCHAR(100),
+    page_context VARCHAR(100),
+
+    -- Review Fields
+    was_reviewed BOOLEAN DEFAULT FALSE,
+    review_notes TEXT,
+    reviewed_at TIMESTAMPTZ,
+    reviewed_by_employee_id INTEGER REFERENCES employees(id) ON DELETE SET NULL,
+
+    -- Visibility (soft delete)
+    is_hidden BOOLEAN DEFAULT FALSE,
+
+    -- Offline-first fields (for idempotency)
+    global_id VARCHAR(36) UNIQUE,
+    terminal_id VARCHAR(36),
+    local_op_seq BIGINT,
+    created_local_utc VARCHAR(50),
+    device_event_raw BIGINT,
+
+    -- Timestamps
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_scale_disconnection_logs_tenant_branch ON scale_disconnection_logs(tenant_id, branch_id);
+CREATE INDEX IF NOT EXISTS idx_scale_disconnection_logs_shift ON scale_disconnection_logs(shift_id);
+CREATE INDEX IF NOT EXISTS idx_scale_disconnection_logs_employee ON scale_disconnection_logs(employee_id);
+CREATE INDEX IF NOT EXISTS idx_scale_disconnection_logs_disconnected_at ON scale_disconnection_logs(disconnected_at);
+CREATE INDEX IF NOT EXISTS idx_scale_disconnection_logs_severity ON scale_disconnection_logs(severity);
+CREATE INDEX IF NOT EXISTS idx_scale_disconnection_logs_is_hidden ON scale_disconnection_logs(is_hidden) WHERE is_hidden = false;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_scale_disconnection_logs_global_id ON scale_disconnection_logs(global_id) WHERE global_id IS NOT NULL;
+
+COMMENT ON TABLE scale_disconnection_logs IS 'Guardian system: Logs de desconexiones/reconexiones de báscula';
+COMMENT ON COLUMN scale_disconnection_logs.global_id IS 'UUID global único para sincronización idempotente desde Desktop';
+COMMENT ON COLUMN scale_disconnection_logs.terminal_id IS 'UUID del dispositivo que creó este log';
+COMMENT ON COLUMN scale_disconnection_logs.disconnection_status IS 'Estado: disconnected (desconectada) o reconnected (reconectada)';
+COMMENT ON COLUMN scale_disconnection_logs.duration_minutes IS 'Duración de la desconexión en minutos (calculado cuando reconnected_at != NULL)';
+COMMENT ON COLUMN scale_disconnection_logs.is_hidden IS 'Soft delete: TRUE = evento oculto (no se muestra en app móvil), FALSE = visible';
+
 -- ========== BACKUP METADATA ==========
 
 -- backup_metadata (metadatos de respaldos en Dropbox)
@@ -855,4 +991,6 @@ COMMENT ON TABLE ventas_detalle IS 'Detalle de líneas de venta';
 COMMENT ON TABLE repartidor_assignments IS 'Asignaciones de ventas a repartidores';
 COMMENT ON TABLE repartidor_returns IS 'Devoluciones de repartidores';
 COMMENT ON TABLE credit_payments IS 'Pagos de clientes con crédito';
+COMMENT ON TABLE suspicious_weighing_logs IS 'Guardian: Eventos sospechosos detectados por la báscula';
+COMMENT ON TABLE scale_disconnection_logs IS 'Guardian: Eventos de desconexión/reconexión de báscula';
 COMMENT ON TABLE backup_metadata IS 'Metadatos de respaldos en Dropbox';
