@@ -452,7 +452,7 @@ module.exports = (pool, io) => {
                 try {
                     // Obtener datos del empleado y sucursal para las notificaciones
                     const employeeData = await pool.query(
-                        `SELECT e.full_name, e.global_id
+                        `SELECT CONCAT(e.first_name, ' ', e.last_name) as full_name, e.global_id
                          FROM employees e
                          WHERE e.id = $1`,
                         [finalEmployeeId]
