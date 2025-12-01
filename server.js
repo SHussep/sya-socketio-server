@@ -683,6 +683,40 @@ io.on('connection', (socket) => {
     });
 
     // ═══════════════════════════════════════════════════════════════
+    // DESKTOP → MOBILE BROADCASTING (Notifications from Desktop to Mobile)
+    // ═══════════════════════════════════════════════════════════════
+
+    // EVENT: Desktop creates a new assignment for repartidor
+    socket.on('repartidor:assignment-created', (data) => {
+        console.log(`[ASSIGNMENT] 📦 Desktop creó asignación para repartidor ${data.assignment?.employeeId}: ${data.assignment?.quantity || 0}kg`);
+
+        // Broadcast to all clients in the branch room (Mobile will receive it)
+        const branchRoom = `branch_${data.branchId}`;
+        io.to(branchRoom).emit('repartidor:assignment-created', {
+            ...data,
+            source: 'desktop',
+            receivedAt: new Date().toISOString()
+        });
+
+        console.log(`[ASSIGNMENT] 📤 Notificación enviada a ${branchRoom}`);
+    });
+
+    // EVENT: Desktop registers a return from repartidor
+    socket.on('repartidor:return-created', (data) => {
+        console.log(`[RETURN] 📦 Desktop registró devolución de repartidor: ${data.return?.quantity || 0}kg (${data.return?.reason || 'sin motivo'})`);
+
+        // Broadcast to all clients in the branch room (Mobile will receive it)
+        const branchRoom = `branch_${data.branchId}`;
+        io.to(branchRoom).emit('repartidor:return-created', {
+            ...data,
+            source: 'desktop',
+            receivedAt: new Date().toISOString()
+        });
+
+        console.log(`[RETURN] 📤 Notificación enviada a ${branchRoom}`);
+    });
+
+    // ═══════════════════════════════════════════════════════════════
     // MOBILE REPARTIDOR LISTENERS (Assignment Sync Architecture)
     // ═══════════════════════════════════════════════════════════════
 
