@@ -11,9 +11,9 @@ module.exports = (pool) => {
             const {
                 tenant_id,
                 branch_id,
-                employee_id,
+                employee_global_id,        // ✅ GlobalId para idempotencia
                 date,
-                shift_id,
+                shift_global_id,           // ✅ GlobalId para idempotencia
                 // Contadores de eventos
                 critical_events,
                 high_events,
@@ -46,11 +46,34 @@ module.exports = (pool) => {
             } = req.body;
 
             // Validar campos requeridos
-            if (!tenant_id || !branch_id || !employee_id || !date || !global_id) {
+            if (!tenant_id || !branch_id || !employee_global_id || !date || !global_id) {
                 return res.status(400).json({
                     success: false,
-                    message: 'Datos incompletos: se requieren tenant_id, branch_id, employee_id, date y global_id'
+                    message: 'Datos incompletos: se requieren tenant_id, branch_id, employee_global_id, date y global_id'
                 });
+            }
+
+            // ✅ IDEMPOTENCIA: Resolver employee_global_id -> employee_id (PostgreSQL ID)
+            const employeeResult = await pool.query(
+                'SELECT id FROM employees WHERE global_id = $1 AND tenant_id = $2',
+                [employee_global_id, tenant_id]
+            );
+            if (employeeResult.rows.length === 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Empleado con global_id ${employee_global_id} no encontrado`
+                });
+            }
+            const employee_id = employeeResult.rows[0].id;
+
+            // ✅ IDEMPOTENCIA: Resolver shift_global_id -> shift_id (opcional)
+            let shift_id = null;
+            if (shift_global_id) {
+                const shiftResult = await pool.query(
+                    'SELECT id FROM shifts WHERE global_id = $1',
+                    [shift_global_id]
+                );
+                shift_id = shiftResult.rows.length > 0 ? shiftResult.rows[0].id : null;
             }
 
             // Insertar o actualizar usando ON CONFLICT (idempotente por global_id)
@@ -149,7 +172,7 @@ module.exports = (pool) => {
             );
 
             const metrics = result.rows[0];
-            console.log(`[Sync/EmployeeMetrics] ✅ Métricas sincronizadas: ID ${metrics.id} - Employee ${employee_id} - ${date} - ${daily_status}`);
+            console.log(`[Sync/EmployeeMetrics] ✅ Métricas sincronizadas: ID ${metrics.id} - Employee ${employee_id} (${employee_global_id}) - ${date} - ${daily_status}`);
 
             // También actualizar guardian_employee_scores_daily para compatibilidad
             try {

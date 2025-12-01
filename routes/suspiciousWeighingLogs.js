@@ -14,8 +14,8 @@ module.exports = (pool, io) => {
             const {
                 tenant_id,
                 branch_id,
-                shift_id,
-                employee_id,
+                shift_global_id,           // ✅ GlobalId para idempotencia
+                employee_global_id,        // ✅ GlobalId para idempotencia
                 timestamp,
                 event_type,
                 weight_detected,
@@ -33,13 +33,13 @@ module.exports = (pool, io) => {
                 was_reviewed,
                 review_notes,
                 reviewed_at,
-                reviewed_by_employee_id,
+                reviewed_by_employee_global_id, // ✅ GlobalId para idempotencia
                 similar_events_in_session,
                 cycle_duration_seconds,
                 max_weight_in_cycle,
                 discrepancy_amount,
                 related_product_id,
-                related_sale_id,
+                related_sale_global_id,    // ✅ GlobalId para idempotencia
                 // Offline-first fields
                 global_id,
                 terminal_id,
@@ -49,14 +49,57 @@ module.exports = (pool, io) => {
             } = req.body;
 
             // Validación
-            if (!tenant_id || !branch_id || !employee_id || !global_id) {
+            if (!tenant_id || !branch_id || !employee_global_id || !global_id) {
                 return res.status(400).json({
                     success: false,
-                    message: 'Datos incompletos (tenant_id, branch_id, employee_id, global_id requeridos)'
+                    message: 'Datos incompletos (tenant_id, branch_id, employee_global_id, global_id requeridos)'
                 });
             }
 
-            console.log(`[Sync/GuardianLogs] 🔍 Sincronizando log Guardian - Tenant: ${tenant_id}, Employee: ${employee_id}, EventType: ${event_type}, GlobalId: ${global_id}`);
+            // ✅ IDEMPOTENCIA: Resolver employee_global_id -> employee_id (PostgreSQL ID)
+            const employeeResult = await pool.query(
+                'SELECT id FROM employees WHERE global_id = $1 AND tenant_id = $2',
+                [employee_global_id, tenant_id]
+            );
+            if (employeeResult.rows.length === 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Empleado con global_id ${employee_global_id} no encontrado`
+                });
+            }
+            const employee_id = employeeResult.rows[0].id;
+
+            // ✅ IDEMPOTENCIA: Resolver shift_global_id -> shift_id (opcional)
+            let shift_id = null;
+            if (shift_global_id) {
+                const shiftResult = await pool.query(
+                    'SELECT id FROM shifts WHERE global_id = $1',
+                    [shift_global_id]
+                );
+                shift_id = shiftResult.rows.length > 0 ? shiftResult.rows[0].id : null;
+            }
+
+            // ✅ IDEMPOTENCIA: Resolver reviewed_by_employee_global_id -> reviewed_by_employee_id (opcional)
+            let reviewed_by_employee_id = null;
+            if (reviewed_by_employee_global_id) {
+                const reviewerResult = await pool.query(
+                    'SELECT id FROM employees WHERE global_id = $1 AND tenant_id = $2',
+                    [reviewed_by_employee_global_id, tenant_id]
+                );
+                reviewed_by_employee_id = reviewerResult.rows.length > 0 ? reviewerResult.rows[0].id : null;
+            }
+
+            // ✅ IDEMPOTENCIA: Resolver related_sale_global_id -> related_sale_id (opcional)
+            let related_sale_id = null;
+            if (related_sale_global_id) {
+                const saleResult = await pool.query(
+                    'SELECT id FROM ventas WHERE global_id = $1',
+                    [related_sale_global_id]
+                );
+                related_sale_id = saleResult.rows.length > 0 ? saleResult.rows[0].id : null;
+            }
+
+            console.log(`[Sync/GuardianLogs] 🔍 Sincronizando log Guardian - Tenant: ${tenant_id}, Employee: ${employee_id} (${employee_global_id}), EventType: ${event_type}, GlobalId: ${global_id}`);
 
             // ✅ IDEMPOTENTE: INSERT con ON CONFLICT (global_id) DO UPDATE
             const result = await pool.query(
