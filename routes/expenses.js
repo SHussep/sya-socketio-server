@@ -452,15 +452,21 @@ module.exports = (pool, io) => {
                 try {
                     // Obtener datos del empleado y sucursal para las notificaciones
                     const employeeData = await pool.query(
-                        `SELECT e.full_name, e.global_id, b.name as branch_name
+                        `SELECT e.full_name, e.global_id
                          FROM employees e
-                         JOIN branches b ON e.branch_id = b.id
                          WHERE e.id = $1`,
                         [finalEmployeeId]
                     );
 
+                    // Obtener nombre de la sucursal del gasto
+                    const branchData = await pool.query(
+                        `SELECT name FROM branches WHERE id = $1`,
+                        [branchId]
+                    );
+
                     if (employeeData.rows.length > 0) {
                         const employee = employeeData.rows[0];
+                        const branchName = branchData.rows.length > 0 ? branchData.rows[0].name : 'Sucursal';
 
                         console.log(`[Sync/Expenses] 📨 Enviando notificaciones FCM para gasto de ${employee.full_name}`);
 
@@ -470,7 +476,7 @@ module.exports = (pool, io) => {
                             description: description || category,
                             category,
                             branchId,
-                            branchName: employee.branch_name,
+                            branchName: branchName,
                             employeeName: employee.full_name
                         });
 
