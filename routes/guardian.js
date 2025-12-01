@@ -33,6 +33,8 @@ module.exports = (pool) => {
                 offset = 0
             } = req.query;
 
+            console.log(`[Guardian/Events] 🔍 Request: tenant=${tenant_id}, branch=${branch_id}, type=${event_type}, dates=${start_date} to ${end_date}`);
+
             if (!tenant_id) {
                 return res.status(400).json({
                     success: false,
@@ -120,6 +122,7 @@ module.exports = (pool) => {
                 suspiciousQuery += ` ORDER BY swl.timestamp DESC`;
 
                 const suspiciousResult = await pool.query(suspiciousQuery, suspiciousParams);
+                console.log(`[Guardian/Events] 📊 Suspicious query returned ${suspiciousResult.rows.length} rows`);
                 events.push(...suspiciousResult.rows);
             }
 
@@ -204,6 +207,7 @@ module.exports = (pool) => {
                 disconnectionQuery += ` ORDER BY sdl.disconnected_at DESC`;
 
                 const disconnectionResult = await pool.query(disconnectionQuery, disconnectionParams);
+                console.log(`[Guardian/Events] 📊 Disconnection query returned ${disconnectionResult.rows.length} rows`);
                 events.push(...disconnectionResult.rows);
             }
 
@@ -214,6 +218,8 @@ module.exports = (pool) => {
 
             // Apply pagination
             const paginatedEvents = events.slice(parseInt(offset), parseInt(offset) + parseInt(limit));
+
+            console.log(`[Guardian/Events] ✅ Returning ${paginatedEvents.length} events (total: ${events.length})`);
 
             res.json({
                 success: true,
