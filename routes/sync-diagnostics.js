@@ -21,7 +21,7 @@ module.exports = (pool) => {
 
             // Ventas (solo de esta sucursal)
             const salesResult = await pool.query(
-                'SELECT COUNT(*) as count FROM ventas WHERE tenant_id = $1 AND id_sucursal = $2',
+                'SELECT COUNT(*) as count FROM ventas WHERE tenant_id = $1 AND branch_id = $2',
                 [tenantId, branchId]
             );
             counts.sales = parseInt(salesResult.rows[0].count);
