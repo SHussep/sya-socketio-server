@@ -590,6 +590,10 @@ module.exports = (pool, io) => {
 
             console.log(`[Expenses/PendingReview] 🔍 Buscando gastos pendientes para employee_id: ${employee_id}`);
 
+            // ✅ FILTRO: Solo gastos de MÓVIL pendientes de aprobación
+            // - reviewed_by_desktop = false (no aprobado)
+            // - local_op_seq = 0 (móvil no envía secuencia, o la envía como 0)
+            // - Excluir gastos de Desktop que tienen local_op_seq > 0
             const query = `
             SELECT
                 e.id,
@@ -617,6 +621,7 @@ module.exports = (pool, io) => {
             LEFT JOIN expense_categories cat ON e.category_id = cat.id
             WHERE e.employee_id = $1
               AND e.reviewed_by_desktop = false
+              AND (e.local_op_seq IS NULL OR e.local_op_seq = 0)
               ${tenant_id ? 'AND e.tenant_id = $2' : ''}
             ORDER BY e.created_at DESC
         `;
