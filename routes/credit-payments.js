@@ -219,14 +219,17 @@ module.exports = (pool) => {
         }
     });
 
-    // GET /api/credit-payments/customer/:customerId - Historial de pagos de un cliente
+    // GET /api/credit-payments/customer/:customerId - Historial de pagos de un cliente con saldo anterior
     router.get('/customer/:customerId', authenticateToken, async (req, res) => {
         try {
             const { tenantId } = req.user;
             const { customerId } = req.params;
-            const { limit = 100 } = req.query;
+            const { limit = 50, include_balance = 'true' } = req.query;
 
-            const result = await pool.query(
+            console.log(`[CreditPayments/History] 📊 Obteniendo historial para cliente ${customerId}, tenant ${tenantId}`);
+
+            // 1. Obtener pagos con info detallada
+            const paymentsResult = await pool.query(
                 `SELECT cp.id, cp.amount, cp.payment_method, cp.payment_date, cp.notes,
                         cp.branch_id, cp.employee_id, cp.shift_id,
                         CONCAT(e.first_name, ' ', e.last_name) as employee_name,
@@ -238,26 +241,95 @@ module.exports = (pool) => {
                  WHERE cp.tenant_id = $1 AND cp.customer_id = $2
                  ORDER BY cp.payment_date DESC
                  LIMIT $3`,
-                [tenantId, parseInt(customerId), limit]
+                [tenantId, parseInt(customerId), parseInt(limit)]
             );
 
-            const normalizedRows = result.rows.map(row => ({
+            let normalizedPayments = paymentsResult.rows.map(row => ({
                 ...row,
                 amount: parseFloat(row.amount),
                 payment_date: row.payment_date ? new Date(row.payment_date).toISOString() : null,
                 created_at: row.created_at ? new Date(row.created_at).toISOString() : null
             }));
 
-            // Calcular totales
-            const totalPaid = normalizedRows.reduce((sum, p) => sum + p.amount, 0);
-            const totalPayments = normalizedRows.length;
+            // 2. Si se requiere balance, calcular saldo antes/después de cada pago
+            if (include_balance === 'true' && normalizedPayments.length > 0) {
+                // Obtener TODAS las transacciones del cliente ordenadas por fecha
+                const transactionsResult = await pool.query(
+                    `SELECT * FROM (
+                        -- Ventas a crédito (aumentan deuda)
+                        SELECT
+                            'sale' as type,
+                            id_venta as id,
+                            ticket_number,
+                            total as amount,
+                            fecha_venta_utc as date
+                        FROM ventas
+                        WHERE id_cliente = $1 AND tenant_id = $2 AND tipo_pago_id = 3
+
+                        UNION ALL
+
+                        -- Pagos (reducen deuda)
+                        SELECT
+                            'payment' as type,
+                            id,
+                            NULL as ticket_number,
+                            amount,
+                            payment_date as date
+                        FROM credit_payments
+                        WHERE customer_id = $1 AND tenant_id = $2
+                    ) AS transactions
+                    ORDER BY date ASC`,
+                    [parseInt(customerId), tenantId]
+                );
+
+                // Calcular running balance
+                let runningBalance = 0;
+                const balanceByPaymentId = {};
+
+                for (const tx of transactionsResult.rows) {
+                    const amount = parseFloat(tx.amount);
+                    if (tx.type === 'sale') {
+                        runningBalance += amount;
+                    } else if (tx.type === 'payment') {
+                        // Guardar saldo ANTES del pago
+                        balanceByPaymentId[tx.id] = {
+                            balance_before: runningBalance,
+                            balance_after: runningBalance - amount
+                        };
+                        runningBalance -= amount;
+                    }
+                }
+
+                // Agregar balance_before y balance_after a cada pago
+                normalizedPayments = normalizedPayments.map(payment => ({
+                    ...payment,
+                    balance_before: balanceByPaymentId[payment.id]?.balance_before ?? null,
+                    balance_after: balanceByPaymentId[payment.id]?.balance_after ?? null
+                }));
+
+                console.log(`[CreditPayments/History] ✅ ${normalizedPayments.length} pagos con balance calculado`);
+            }
+
+            // 3. Calcular totales
+            const totalPaid = normalizedPayments.reduce((sum, p) => sum + p.amount, 0);
+            const totalPayments = normalizedPayments.length;
+
+            // 4. Obtener saldo actual del cliente
+            const customerResult = await pool.query(
+                'SELECT saldo_deudor FROM customers WHERE id = $1 AND tenant_id = $2',
+                [parseInt(customerId), tenantId]
+            );
+            const currentBalance = customerResult.rows[0]?.saldo_deudor
+                ? parseFloat(customerResult.rows[0].saldo_deudor)
+                : 0;
 
             res.json({
                 success: true,
-                data: normalizedRows,
+                data: normalizedPayments,
                 summary: {
                     total_paid: totalPaid,
-                    total_payments: totalPayments
+                    total_payments: totalPayments,
+                    current_balance: currentBalance
                 }
             });
         } catch (error) {
