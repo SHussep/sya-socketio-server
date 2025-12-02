@@ -224,6 +224,7 @@ module.exports = (pool) => {
                 total_descuentos,
                 total,
                 monto_pagado,
+                credito_original, // ✅ AUDITORÍA: Crédito generado al momento de la venta (INMUTABLE)
                 fecha_venta_raw,
                 fecha_liquidacion_raw,
                 notas,
@@ -238,7 +239,7 @@ module.exports = (pool) => {
             console.log(`[Sync/Sales] 🔄 Sincronizando venta - Tenant: ${tenant_id}, Branch: ${branch_id}, Ticket: ${ticket_number}`);
             console.log(`[Sync/Sales] 🔑 GlobalIds - empleado: ${empleado_global_id}, turno: ${turno_global_id}, cliente: ${cliente_global_id || 'null'}`);
             console.log(`[Sync/Sales] 🔑 Repartidor - global_id: ${repartidor_global_id || 'null'}, turno_global_id: ${turno_repartidor_global_id || 'null'}`);
-            console.log(`[Sync/Sales] 💰 Montos - Subtotal: ${subtotal}, Descuentos: ${total_descuentos}, Total: ${total}, Pagado: ${monto_pagado}`);
+            console.log(`[Sync/Sales] 💰 Montos - Subtotal: ${subtotal}, Descuentos: ${total_descuentos}, Total: ${total}, Pagado: ${monto_pagado}, Crédito Original: ${credito_original || 0}`);
 
             // Validar campos requeridos (incluyendo global_id para idempotencia)
             if (!tenant_id || !branch_id || !empleado_global_id || !turno_global_id || !ticket_number || total === null || total === undefined || !global_id) {
@@ -326,6 +327,7 @@ module.exports = (pool) => {
             const numericTotalDescuentos = parseFloat(total_descuentos) || 0;
             const numericTotal = parseFloat(total);
             const numericMontoPagado = parseFloat(monto_pagado) || 0;
+            const numericCreditoOriginal = parseFloat(credito_original) || 0; // ✅ AUDITORÍA: Crédito inmutable
 
             if (isNaN(numericTotal)) {
                 return res.status(400).json({ success: false, message: 'total debe ser un número válido' });
@@ -362,17 +364,18 @@ module.exports = (pool) => {
                     estado_venta_id, venta_tipo_id, tipo_pago_id,
                     id_repartidor_asignado, id_turno_repartidor,
                     ticket_number, id_cliente,
-                    subtotal, total_descuentos, total, monto_pagado,
+                    subtotal, total_descuentos, total, monto_pagado, credito_original,
                     fecha_venta_raw, fecha_liquidacion_raw,
                     notas, status,
                     global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw
                  )
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
                  ON CONFLICT (tenant_id, branch_id, ticket_number, id_turno) DO UPDATE
                  SET subtotal = EXCLUDED.subtotal,
                      total_descuentos = EXCLUDED.total_descuentos,
                      total = EXCLUDED.total,
                      monto_pagado = EXCLUDED.monto_pagado,
+                     credito_original = CASE WHEN ventas.credito_original = 0 OR ventas.credito_original IS NULL THEN EXCLUDED.credito_original ELSE ventas.credito_original END,
                      estado_venta_id = EXCLUDED.estado_venta_id,
                      status = EXCLUDED.status,
                      notas = EXCLUDED.notas,
@@ -396,6 +399,7 @@ module.exports = (pool) => {
                     numericTotalDescuentos,
                     numericTotal,
                     numericMontoPagado,
+                    numericCreditoOriginal,                   // ✅ AUDITORÍA: Crédito original inmutable
                     fecha_venta_raw || null,
                     fecha_liquidacion_raw || null,
                     notas || null,
