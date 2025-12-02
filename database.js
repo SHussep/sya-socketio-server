@@ -826,6 +826,81 @@ async function runMigrations() {
                 }
             }
 
+            // Patch: Create employee_debts table if missing (for cash drawer shortages)
+            console.log('[Schema] 🔍 Checking employee_debts table...');
+            const checkEmployeeDebtsTable = await client.query(`
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'employee_debts'
+                )
+            `);
+
+            if (!checkEmployeeDebtsTable.rows[0].exists) {
+                console.log('[Schema] 📝 Creating table: employee_debts (faltantes de corte de caja)');
+                await client.query(`
+                    CREATE TABLE employee_debts (
+                        id SERIAL PRIMARY KEY,
+                        global_id VARCHAR(50) UNIQUE NOT NULL,
+                        tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+                        branch_id INTEGER NOT NULL REFERENCES branches(id),
+                        employee_id INTEGER NOT NULL REFERENCES employees(id),
+                        cash_drawer_session_id INTEGER REFERENCES cash_drawer_sessions(id),
+                        shift_id INTEGER REFERENCES shifts(id),
+                        monto_deuda DECIMAL(12, 2) NOT NULL DEFAULT 0,
+                        monto_pagado DECIMAL(12, 2) NOT NULL DEFAULT 0,
+                        estado VARCHAR(30) NOT NULL DEFAULT 'pendiente',
+                        fecha_deuda TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                        fecha_pago TIMESTAMP WITH TIME ZONE,
+                        notas TEXT,
+                        terminal_id VARCHAR(50),
+                        local_op_seq BIGINT,
+                        device_event_raw BIGINT,
+                        created_local_utc VARCHAR(50),
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                    )
+                `);
+                // Create indexes
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_employee_debts_tenant ON employee_debts(tenant_id)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_employee_debts_branch ON employee_debts(branch_id)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_employee_debts_employee ON employee_debts(employee_id)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_employee_debts_estado ON employee_debts(estado)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_employee_debts_fecha ON employee_debts(fecha_deuda)`);
+                console.log('[Schema] ✅ Table employee_debts created successfully');
+            }
+
+            // Patch: Add credito_original to ventas table if missing (for credit audit trail)
+            if (checkVentasTable.rows[0].exists) {
+                const checkCreditoOriginal = await client.query(`
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'ventas'
+                    AND column_name = 'credito_original'
+                `);
+
+                if (checkCreditoOriginal.rows.length === 0) {
+                    console.log('[Schema] 📝 Adding missing column: ventas.credito_original');
+                    await client.query(`
+                        ALTER TABLE ventas
+                        ADD COLUMN credito_original DECIMAL(12, 2) NOT NULL DEFAULT 0
+                    `);
+                    // Recalculate for existing sales
+                    console.log('[Schema] 📝 Recalculating credito_original for existing ventas...');
+                    // Contado (tipo 1,2): credito = 0
+                    await client.query(`UPDATE ventas SET credito_original = 0 WHERE tipo_pago_id IN (1, 2)`);
+                    // Crédito puro (tipo 3): credito = total
+                    await client.query(`UPDATE ventas SET credito_original = total WHERE tipo_pago_id = 3`);
+                    // Mixto (tipo 4): credito = total - monto_pagado (aproximación)
+                    await client.query(`UPDATE ventas SET credito_original = GREATEST(0, total - monto_pagado) WHERE tipo_pago_id = 4`);
+                    // Create index
+                    await client.query(`
+                        CREATE INDEX IF NOT EXISTS idx_ventas_credito_original
+                        ON ventas(credito_original) WHERE credito_original > 0
+                    `);
+                    console.log('[Schema] ✅ Column ventas.credito_original added and calculated successfully');
+                }
+            }
+
             // 2.5. Clean user data if requested (for testing)
             console.log(`[Schema] 🔍 CLEAN_DATABASE_ON_START = "${process.env.CLEAN_DATABASE_ON_START}"`);
 
