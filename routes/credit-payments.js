@@ -227,9 +227,14 @@ module.exports = (pool) => {
             const { limit = 100 } = req.query;
 
             const result = await pool.query(
-                `SELECT cp.*, CONCAT(e.first_name, ' ', e.last_name) as employee_name
+                `SELECT cp.id, cp.amount, cp.payment_method, cp.payment_date, cp.notes,
+                        cp.branch_id, cp.employee_id, cp.shift_id,
+                        CONCAT(e.first_name, ' ', e.last_name) as employee_name,
+                        b.name as branch_name,
+                        cp.created_at
                  FROM credit_payments cp
                  LEFT JOIN employees e ON cp.employee_id = e.id
+                 LEFT JOIN branches b ON cp.branch_id = b.id
                  WHERE cp.tenant_id = $1 AND cp.customer_id = $2
                  ORDER BY cp.payment_date DESC
                  LIMIT $3`,
@@ -239,12 +244,21 @@ module.exports = (pool) => {
             const normalizedRows = result.rows.map(row => ({
                 ...row,
                 amount: parseFloat(row.amount),
-                payment_date: row.payment_date ? new Date(row.payment_date).toISOString() : null
+                payment_date: row.payment_date ? new Date(row.payment_date).toISOString() : null,
+                created_at: row.created_at ? new Date(row.created_at).toISOString() : null
             }));
+
+            // Calcular totales
+            const totalPaid = normalizedRows.reduce((sum, p) => sum + p.amount, 0);
+            const totalPayments = normalizedRows.length;
 
             res.json({
                 success: true,
-                data: normalizedRows
+                data: normalizedRows,
+                summary: {
+                    total_paid: totalPaid,
+                    total_payments: totalPayments
+                }
             });
         } catch (error) {
             console.error('[CreditPayments] ❌ Error:', error.message);
