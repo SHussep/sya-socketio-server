@@ -837,6 +837,8 @@ async function runMigrations() {
 
             if (!checkEmployeeDebtsTable.rows[0].exists) {
                 console.log('[Schema] 📝 Creating table: employee_debts (faltantes de corte de caja)');
+                // Note: cash_drawer_session_id has no FK constraint because cash_drawer_sessions
+                // table may not exist in PostgreSQL (it's Desktop-only for now)
                 await client.query(`
                     CREATE TABLE employee_debts (
                         id SERIAL PRIMARY KEY,
@@ -844,7 +846,7 @@ async function runMigrations() {
                         tenant_id INTEGER NOT NULL REFERENCES tenants(id),
                         branch_id INTEGER NOT NULL REFERENCES branches(id),
                         employee_id INTEGER NOT NULL REFERENCES employees(id),
-                        cash_drawer_session_id INTEGER REFERENCES cash_drawer_sessions(id),
+                        cash_drawer_session_id INTEGER,
                         shift_id INTEGER REFERENCES shifts(id),
                         monto_deuda DECIMAL(12, 2) NOT NULL DEFAULT 0,
                         monto_pagado DECIMAL(12, 2) NOT NULL DEFAULT 0,
