@@ -8,6 +8,26 @@ const { sendNotificationToMultipleDevices } = require('./firebaseAdmin');
 const { pool } = require('../database');
 
 /**
+ * Helper interno para guardar notificación en la tabla de historial (campana)
+ * Excluye: guardian (tiene su propia página)
+ */
+async function saveToNotificationHistory({ tenant_id, branch_id, employee_id, category, event_type, title, body, data }) {
+    try {
+        // Excluir eventos de Guardian (tienen su propia página)
+        if (category === 'guardian') return null;
+
+        await pool.query(
+            `INSERT INTO notifications (tenant_id, branch_id, employee_id, category, event_type, title, body, data)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+            [tenant_id, branch_id, employee_id, category, event_type, title, body, data ? JSON.stringify(data) : null]
+        );
+    } catch (error) {
+        // No fallar si no se puede guardar, solo loguear
+        console.error('[NotificationHelper] ⚠️ Error guardando en historial:', error.message);
+    }
+}
+
+/**
  * Envía notificación a todos los dispositivos de una sucursal
  */
 async function sendNotificationToBranch(branchId, { title, body, data = {} }) {
@@ -290,6 +310,22 @@ async function notifyUserLogin(branchId, { employeeId, employeeName, branchName,
             console.log(`[NotificationHelper] ℹ️ No hay otros admins/encargados en sucursal ${branchId}`);
         }
 
+        // Guardar en historial de notificaciones (campana)
+        const tenantResult = await pool.query('SELECT tenant_id FROM branches WHERE id = $1', [branchId]);
+        const tenantId = tenantResult.rows[0]?.tenant_id;
+        if (tenantId) {
+            await saveToNotificationHistory({
+                tenant_id: tenantId,
+                branch_id: branchId,
+                employee_id: employeeIdNumeric,
+                category: 'login',
+                event_type: 'user_login',
+                title: 'Inicio de Sesión',
+                body: `${employeeName} inició sesión en ${branchName}`,
+                data: { employeeName, branchName, scaleStatus }
+            });
+        }
+
         return {
             self: selfResult,
             others: adminResult,
@@ -404,6 +440,24 @@ async function notifyShiftEnded(branchId, employeeGlobalId, { employeeName, bran
 
         console.log(`[NotificationHelper] ✅ Notificaciones de cierre enviadas a admins/encargados de sucursal ${branchId}: ${adminResult.sent}/${adminResult.total || adminResult.sent}`);
 
+        // Guardar en historial de notificaciones (campana)
+        const tenantResult = await pool.query('SELECT tenant_id FROM branches WHERE id = $1', [branchId]);
+        const tenantId = tenantResult.rows[0]?.tenant_id;
+        const empResult = await pool.query('SELECT id FROM employees WHERE global_id = $1', [employeeGlobalId]);
+        const employeeIdNumeric = empResult.rows[0]?.id;
+        if (tenantId) {
+            await saveToNotificationHistory({
+                tenant_id: tenantId,
+                branch_id: branchId,
+                employee_id: employeeIdNumeric,
+                category: 'cash_cut',
+                event_type: 'shift_ended',
+                title: icon + ' Corte de Caja',
+                body: `${employeeName} finalizó turno - ${status}`,
+                data: { employeeName, branchName, difference, countedCash, expectedCash, status }
+            });
+        }
+
         return {
             employee: employeeResult,
             admins: adminResult,
@@ -483,6 +537,24 @@ async function notifyExpenseCreated(employeeGlobalId, { expenseId, amount, descr
         });
 
         console.log(`[NotificationHelper] ✅ Notificaciones de gasto enviadas a admins/encargados de sucursal ${branchId}: ${adminResult.sent}/${adminResult.total || adminResult.sent}`);
+
+        // Guardar en historial de notificaciones (campana)
+        const tenantResult = await pool.query('SELECT tenant_id FROM branches WHERE id = $1', [branchId]);
+        const tenantId = tenantResult.rows[0]?.tenant_id;
+        const empResult = await pool.query('SELECT id FROM employees WHERE global_id = $1', [employeeGlobalId]);
+        const employeeIdNumeric = empResult.rows[0]?.id;
+        if (tenantId) {
+            await saveToNotificationHistory({
+                tenant_id: tenantId,
+                branch_id: branchId,
+                employee_id: employeeIdNumeric,
+                category: 'expense',
+                event_type: 'expense_created',
+                title: '💸 Gasto Registrado',
+                body: `${employeeName} registró $${amount.toFixed(2)} - ${description || category}`,
+                data: { expenseId, employeeName, amount, description, category }
+            });
+        }
 
         return {
             employee: employeeResult,
