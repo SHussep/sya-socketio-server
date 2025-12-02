@@ -6,7 +6,7 @@
  *   GET /api/employee-debts/employee/:employeeId - Obtener deudas de empleado
  *   GET /api/employee-debts/branch/:branchId/summary - Obtener resumen de deudas por sucursal
  *
- * Columnas PostgreSQL: id, global_id, tenant_id, branch_id, employee_id, cash_drawer_session_id,
+ * Columnas PostgreSQL: id, global_id, tenant_id, branch_id, employee_id, cash_cut_id,
  *                      shift_id, monto_deuda, monto_pagado, estado, fecha_deuda, fecha_pago,
  *                      notas, terminal_id, local_op_seq, device_event_raw, created_local_utc,
  *                      created_at, updated_at
@@ -78,18 +78,19 @@ function createEmployeeDebtsRoutes(io) {
             continue;
           }
 
-          // ✅ RESOLVER cash_drawer_session_global_id → PostgreSQL ID
-          let finalCashDrawerSessionId = null;
+          // ✅ RESOLVER cash_drawer_session_global_id → cash_cuts.id en PostgreSQL
+          // Desktop usa CashDrawerSession localmente, pero sincroniza a cash_cuts en PG
+          let finalCashCutId = null;
           if (cash_drawer_session_global_id) {
             const sessionResult = await pool.query(
-              'SELECT id FROM cash_drawer_sessions WHERE global_id = $1 AND tenant_id = $2',
+              'SELECT id FROM cash_cuts WHERE global_id = $1 AND tenant_id = $2',
               [cash_drawer_session_global_id, effectiveTenantId]
             );
             if (sessionResult.rows.length > 0) {
-              finalCashDrawerSessionId = sessionResult.rows[0].id;
-              console.log(`[EmployeeDebts/Sync] ✅ CashDrawerSession resuelto: ${cash_drawer_session_global_id} → ${finalCashDrawerSessionId}`);
+              finalCashCutId = sessionResult.rows[0].id;
+              console.log(`[EmployeeDebts/Sync] ✅ CashCut resuelto: ${cash_drawer_session_global_id} → ${finalCashCutId}`);
             } else {
-              console.log(`[EmployeeDebts/Sync] ⚠️ CashDrawerSession no encontrado: ${cash_drawer_session_global_id}`);
+              console.log(`[EmployeeDebts/Sync] ⚠️ CashCut no encontrado: ${cash_drawer_session_global_id}`);
             }
           }
 
@@ -111,7 +112,7 @@ function createEmployeeDebtsRoutes(io) {
           // ✅ UPSERT con global_id para idempotencia
           const result = await pool.query(
             `INSERT INTO employee_debts (
-              tenant_id, branch_id, employee_id, cash_drawer_session_id, shift_id,
+              tenant_id, branch_id, employee_id, cash_cut_id, shift_id,
               monto_deuda, monto_pagado, estado, fecha_deuda, fecha_pago, notas,
               global_id, terminal_id, local_op_seq, device_event_raw, created_local_utc
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
@@ -124,7 +125,7 @@ function createEmployeeDebtsRoutes(io) {
               updated_at = NOW()
             RETURNING *`,
             [
-              effectiveTenantId, branchId, finalEmployeeId, finalCashDrawerSessionId, finalShiftId,
+              effectiveTenantId, branchId, finalEmployeeId, finalCashCutId, finalShiftId,
               parseFloat(monto_deuda), parseFloat(monto_pagado || 0), estado || 'pendiente',
               fecha_deuda, fecha_pago || null, notas || null,
               global_id, terminal_id, local_op_seq, device_event_raw, created_local_utc
@@ -171,7 +172,7 @@ function createEmployeeDebtsRoutes(io) {
           CONCAT(e.first_name, ' ', e.last_name) as employee_name,
           ed.branch_id,
           b.name as branch_name,
-          ed.cash_drawer_session_id,
+          ed.cash_cut_id,
           ed.shift_id,
           ed.monto_deuda,
           ed.monto_pagado,
