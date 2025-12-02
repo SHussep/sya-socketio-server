@@ -61,6 +61,7 @@ const tenantsRoutes = require('./routes/tenants')(pool); // Rutas de tenants (li
 const createRepartidorAssignmentRoutes = require('./routes/repartidor_assignments'); // Rutas de asignaciones a repartidores
 const createRepartidorReturnRoutes = require('./routes/repartidor_returns'); // Rutas de devoluciones de repartidores
 const createRepartidorDebtsRoutes = require('./routes/repartidor_debts'); // Rutas de deudas de repartidores
+const createEmployeeDebtsRoutes = require('./routes/employee_debts'); // Rutas de deudas de empleados (faltantes corte caja)
 const notificationRoutes = require('./routes/notifications'); // Rutas de notificaciones FCM
 const { initializeFirebase } = require('./utils/firebaseAdmin'); // Firebase Admin SDK
 const notificationHelper = require('./utils/notificationHelper');
@@ -324,10 +325,12 @@ let stats = {
 const repartidorAssignmentRoutes = createRepartidorAssignmentRoutes(io);
 const repartidorReturnRoutes = createRepartidorReturnRoutes(io);
 const repartidorDebtsRoutes = createRepartidorDebtsRoutes(io);
+const employeeDebtsRoutes = createEmployeeDebtsRoutes(io);
 app.use('/api/repartidor-assignments', repartidorAssignmentRoutes);
 app.use('/api/repartidor-returns', repartidorReturnRoutes);
 app.use('/api/repartidor-liquidations', repartidorAssignmentRoutes);
 app.use('/api/repartidor-debts', repartidorDebtsRoutes);
+app.use('/api/employee-debts', employeeDebtsRoutes);
 
 // Registrar nuevas rutas modulares
 // Note: Mount routes under their respective base paths to avoid conflicts
