@@ -310,6 +310,7 @@ module.exports = (pool) => {
     });
 
     // PATCH /api/customers/:id/balance - Actualizar saldo del cliente (desde Desktop offline-first)
+    // :id puede ser el ID numérico O el GlobalId (UUID)
     router.patch('/:id/balance', async (req, res) => {
         try {
             const { id } = req.params;
@@ -325,13 +326,34 @@ module.exports = (pool) => {
                 });
             }
 
-            // Validar que el cliente pertenece al tenant
-            const checkResult = await pool.query(
-                'SELECT id, is_system_generic FROM customers WHERE id = $1 AND tenant_id = $2',
-                [id, tenant_id]
-            );
+            // 🔄 RESOLVER ID: puede ser numérico o GlobalId (UUID)
+            let customerId;
+            let checkResult;
 
-            if (checkResult.rows.length === 0) {
+            // Verificar si es UUID (contiene guiones y tiene longitud de UUID)
+            const isUuid = id.includes('-') && id.length >= 32;
+
+            if (isUuid) {
+                // Buscar por global_id
+                checkResult = await pool.query(
+                    'SELECT id, is_system_generic FROM customers WHERE global_id = $1 AND tenant_id = $2',
+                    [id, tenant_id]
+                );
+                if (checkResult.rows.length > 0) {
+                    customerId = checkResult.rows[0].id;
+                }
+            } else {
+                // Buscar por ID numérico
+                checkResult = await pool.query(
+                    'SELECT id, is_system_generic FROM customers WHERE id = $1 AND tenant_id = $2',
+                    [id, tenant_id]
+                );
+                if (checkResult.rows.length > 0) {
+                    customerId = checkResult.rows[0].id;
+                }
+            }
+
+            if (!customerId || checkResult.rows.length === 0) {
                 return res.status(404).json({
                     success: false,
                     message: 'Cliente no encontrado o no pertenece al tenant'
@@ -344,32 +366,33 @@ module.exports = (pool) => {
                 return res.json({
                     success: true,
                     message: 'Cliente genérico - saldo no modificado',
-                    data: { id, current_balance: 0 }
+                    data: { id: customerId, current_balance: 0 }
                 });
             }
 
             // UPDATE saldo - SOBRESCRIBE el saldo calculado por triggers
-            // Esto es necesario porque las devoluciones en Desktop no se reflejan en los triggers de PostgreSQL
+            // OFFLINE-FIRST: El saldo de Desktop es la fuente de verdad
             const result = await pool.query(
                 `UPDATE customers
                  SET saldo_deudor = $1,
                      updated_at = NOW()
                  WHERE id = $2 AND tenant_id = $3
-                 RETURNING id, nombre, saldo_deudor, updated_at`,
-                [current_balance, id, tenant_id]
+                 RETURNING id, nombre, saldo_deudor, global_id, updated_at`,
+                [current_balance, customerId, tenant_id]
             );
 
             const customer = result.rows[0];
 
-            console.log(`[Customers/Balance] ✅ Saldo actualizado: ${customer.nombre} → $${customer.saldo_deudor}`);
+            console.log(`[Customers/Balance] ✅ Saldo actualizado (offline-first): ${customer.nombre} → $${customer.saldo_deudor}`);
 
             res.json({
                 success: true,
                 message: 'Saldo actualizado exitosamente',
                 data: {
                     id: customer.id,
+                    global_id: customer.global_id,
                     name: customer.nombre,
-                    current_balance: customer.saldo_deudor,
+                    current_balance: parseFloat(customer.saldo_deudor),
                     updated_at: customer.updated_at
                 }
             });
