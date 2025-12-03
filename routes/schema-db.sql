@@ -823,6 +823,43 @@ CREATE TABLE IF NOT EXISTS backup_metadata (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- ========== EMPLOYEE DEBTS (FALTANTES DE CORTE DE CAJA) ==========
+
+-- employee_debts (faltantes/deudas de empleados en cortes de caja)
+CREATE TABLE IF NOT EXISTS employee_debts (
+    id SERIAL PRIMARY KEY,
+    global_id VARCHAR(50) UNIQUE NOT NULL,
+    tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+    employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+    cash_cut_id INTEGER REFERENCES cash_cuts(id) ON DELETE SET NULL,
+    shift_id INTEGER REFERENCES shifts(id) ON DELETE SET NULL,
+    monto_deuda DECIMAL(12, 2) NOT NULL DEFAULT 0,
+    monto_pagado DECIMAL(12, 2) NOT NULL DEFAULT 0,
+    estado VARCHAR(30) NOT NULL DEFAULT 'pendiente',  -- pendiente, pagado, perdonado
+    fecha_deuda TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    fecha_pago TIMESTAMP WITH TIME ZONE,
+    notas TEXT,
+
+    -- Offline-first sync columns
+    terminal_id VARCHAR(50),
+    local_op_seq BIGINT,
+    device_event_raw BIGINT,
+    created_local_utc VARCHAR(50),
+
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_employee_debts_tenant ON employee_debts(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_employee_debts_branch ON employee_debts(branch_id);
+CREATE INDEX IF NOT EXISTS idx_employee_debts_employee ON employee_debts(employee_id);
+CREATE INDEX IF NOT EXISTS idx_employee_debts_cash_cut ON employee_debts(cash_cut_id) WHERE cash_cut_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_employee_debts_shift ON employee_debts(shift_id) WHERE shift_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_employee_debts_estado ON employee_debts(estado);
+CREATE INDEX IF NOT EXISTS idx_employee_debts_fecha ON employee_debts(fecha_deuda);
+CREATE INDEX IF NOT EXISTS idx_employee_debts_pendientes ON employee_debts(employee_id, estado) WHERE estado = 'pendiente';
+
 -- ========== COMENTARIOS ==========
 COMMENT ON TABLE tenants IS 'Empresas/organizaciones multi-tenant';
 COMMENT ON TABLE branches IS 'Sucursales por tenant';
@@ -839,3 +876,4 @@ COMMENT ON TABLE repartidor_assignments IS 'Asignaciones de ventas a repartidore
 COMMENT ON TABLE repartidor_returns IS 'Devoluciones de repartidores';
 COMMENT ON TABLE credit_payments IS 'Pagos de clientes con crédito';
 COMMENT ON TABLE backup_metadata IS 'Metadatos de respaldos en Dropbox';
+COMMENT ON TABLE employee_debts IS 'Faltantes/deudas de empleados en cortes de caja';
