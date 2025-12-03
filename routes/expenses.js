@@ -813,6 +813,217 @@ module.exports = (pool, io) => {
         }
     });
 
+    // ═══════════════════════════════════════════════════════════════
+    // SHIFT-BASED EXPENSE VALIDATION ENDPOINTS
+    // Para validar gastos pendientes antes de cerrar turnos
+    // ═══════════════════════════════════════════════════════════════
+
+    // GET /api/expenses/pending-for-shift - Gastos pendientes de revisión para un turno específico
+    // Desktop usa esto para verificar antes de cerrar turno
+    router.get('/pending-for-shift', async (req, res) => {
+        try {
+            const { shift_global_id, shift_id, tenant_id, employee_id, employee_global_id } = req.query;
+
+            console.log(`[Expenses/PendingForShift] 🔍 Buscando gastos pendientes`);
+            console.log(`  - shift_global_id: ${shift_global_id || 'N/A'}`);
+            console.log(`  - shift_id: ${shift_id || 'N/A'}`);
+            console.log(`  - tenant_id: ${tenant_id}`);
+            console.log(`  - employee_id: ${employee_id || 'N/A'}`);
+            console.log(`  - employee_global_id: ${employee_global_id || 'N/A'}`);
+
+            if (!tenant_id) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'tenant_id es requerido'
+                });
+            }
+
+            // Resolver shift_global_id → PostgreSQL ID si se proporciona
+            let resolvedShiftId = shift_id;
+            if (shift_global_id) {
+                const shiftResult = await pool.query(
+                    'SELECT id FROM shifts WHERE global_id = $1 AND tenant_id = $2',
+                    [shift_global_id, tenant_id]
+                );
+                if (shiftResult.rows.length > 0) {
+                    resolvedShiftId = shiftResult.rows[0].id;
+                    console.log(`[Expenses/PendingForShift] ✅ Turno resuelto: ${shift_global_id} → ${resolvedShiftId}`);
+                } else {
+                    console.log(`[Expenses/PendingForShift] ⚠️ Turno no encontrado: ${shift_global_id}`);
+                    // Si no existe el turno en PG, no hay gastos pendientes
+                    return res.json({ success: true, count: 0, data: [] });
+                }
+            }
+
+            // Resolver employee_global_id → PostgreSQL ID si se proporciona
+            let resolvedEmployeeId = employee_id;
+            if (employee_global_id) {
+                const empResult = await pool.query(
+                    'SELECT id FROM employees WHERE global_id = $1 AND tenant_id = $2',
+                    [employee_global_id, tenant_id]
+                );
+                if (empResult.rows.length > 0) {
+                    resolvedEmployeeId = empResult.rows[0].id;
+                }
+            }
+
+            // Construir query dinámicamente
+            let query = `
+                SELECT
+                    e.id,
+                    e.global_id,
+                    e.tenant_id,
+                    e.branch_id,
+                    e.employee_id,
+                    CONCAT(emp.first_name, ' ', emp.last_name) as employee_name,
+                    cat.name as category,
+                    cat.id as category_id,
+                    e.description,
+                    e.amount,
+                    e.quantity,
+                    e.expense_date,
+                    e.payment_type_id,
+                    e.id_turno as shift_id,
+                    sh.global_id as shift_global_id,
+                    e.reviewed_by_desktop,
+                    e.status,
+                    e.is_active,
+                    e.created_at
+                FROM expenses e
+                LEFT JOIN employees emp ON e.employee_id = emp.id
+                LEFT JOIN expense_categories cat ON e.category_id = cat.id
+                LEFT JOIN shifts sh ON e.id_turno = sh.id
+                WHERE e.tenant_id = $1
+                  AND e.reviewed_by_desktop = false
+                  AND e.is_active = true
+                  AND (e.status IS NULL OR e.status != 'deleted')
+            `;
+
+            const params = [tenant_id];
+            let paramIndex = 2;
+
+            // Filtro por turno
+            if (resolvedShiftId) {
+                query += ` AND e.id_turno = $${paramIndex}`;
+                params.push(resolvedShiftId);
+                paramIndex++;
+            }
+
+            // Filtro por empleado
+            if (resolvedEmployeeId) {
+                query += ` AND e.employee_id = $${paramIndex}`;
+                params.push(resolvedEmployeeId);
+                paramIndex++;
+            }
+
+            query += ` ORDER BY e.created_at DESC`;
+
+            const result = await pool.query(query, params);
+
+            console.log(`[Expenses/PendingForShift] ✅ Encontrados ${result.rows.length} gastos pendientes`);
+
+            // Normalizar amount a número
+            const normalizedRows = result.rows.map(row => ({
+                ...row,
+                amount: parseFloat(row.amount)
+            }));
+
+            res.json({
+                success: true,
+                count: result.rows.length,
+                data: normalizedRows
+            });
+        } catch (error) {
+            console.error('[Expenses/PendingForShift] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al obtener gastos pendientes del turno',
+                error: error.message
+            });
+        }
+    });
+
+    // POST /api/expenses/bulk-reject-orphaned - Rechazar gastos huérfanos de turnos cerrados
+    // Desktop llama esto al reconectarse para limpiar gastos de turnos que ya cerró offline
+    router.post('/bulk-reject-orphaned', async (req, res) => {
+        try {
+            const { tenant_id, shift_global_ids, reason } = req.body;
+
+            console.log(`[Expenses/BulkRejectOrphaned] 🧹 Rechazando gastos huérfanos`);
+            console.log(`  - tenant_id: ${tenant_id}`);
+            console.log(`  - shift_global_ids: ${shift_global_ids?.length || 0} turnos`);
+            console.log(`  - reason: ${reason || 'Turno cerrado sin revisión'}`);
+
+            if (!tenant_id || !shift_global_ids || !Array.isArray(shift_global_ids)) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'tenant_id y shift_global_ids (array) son requeridos'
+                });
+            }
+
+            if (shift_global_ids.length === 0) {
+                return res.json({ success: true, rejected_count: 0, message: 'No hay turnos para procesar' });
+            }
+
+            // Resolver shift_global_ids → PostgreSQL IDs
+            const shiftIdsResult = await pool.query(
+                'SELECT id, global_id FROM shifts WHERE global_id = ANY($1) AND tenant_id = $2',
+                [shift_global_ids, tenant_id]
+            );
+
+            if (shiftIdsResult.rows.length === 0) {
+                return res.json({ success: true, rejected_count: 0, message: 'Turnos no encontrados en PostgreSQL' });
+            }
+
+            const shiftIds = shiftIdsResult.rows.map(r => r.id);
+            console.log(`[Expenses/BulkRejectOrphaned] ✅ Turnos resueltos: ${shiftIds.join(', ')}`);
+
+            // Marcar gastos pendientes de esos turnos como rechazados/eliminados
+            const rejectResult = await pool.query(
+                `UPDATE expenses
+                 SET status = 'deleted',
+                     is_active = false,
+                     reviewed_by_desktop = true,
+                     deleted_at = NOW(),
+                     updated_at = NOW()
+                 WHERE tenant_id = $1
+                   AND id_turno = ANY($2)
+                   AND reviewed_by_desktop = false
+                   AND is_active = true
+                 RETURNING id, global_id, amount, description`,
+                [tenant_id, shiftIds]
+            );
+
+            const rejectedCount = rejectResult.rows.length;
+            console.log(`[Expenses/BulkRejectOrphaned] ✅ ${rejectedCount} gastos huérfanos rechazados`);
+
+            // Registrar en bitácora los gastos rechazados
+            if (rejectedCount > 0) {
+                const rejectedDetails = rejectResult.rows.map(r => ({
+                    id: r.id,
+                    global_id: r.global_id,
+                    amount: parseFloat(r.amount),
+                    description: r.description
+                }));
+                console.log(`[Expenses/BulkRejectOrphaned] 📋 Detalles:`, rejectedDetails);
+            }
+
+            res.json({
+                success: true,
+                rejected_count: rejectedCount,
+                rejected_expenses: rejectResult.rows,
+                message: `${rejectedCount} gasto(s) rechazado(s) por: ${reason || 'Turno cerrado sin revisión'}`
+            });
+        } catch (error) {
+            console.error('[Expenses/BulkRejectOrphaned] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al rechazar gastos huérfanos',
+                error: error.message
+            });
+        }
+    });
+
     // DELETE /api/expenses/:global_id - Eliminar gasto rechazado
     router.delete('/:global_id', async (req, res) => {
         try {
