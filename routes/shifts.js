@@ -678,6 +678,33 @@ module.exports = (pool, io) => {
                     console.error(`[Sync/Shifts] ⚠️ Error enviando notificaciones de cierre: ${notifError.message}`);
                     // No fallar la sincronización si falla el envío de notificaciones
                 }
+
+                // 🧹 AUTO-RECHAZAR GASTOS PENDIENTES DE MÓVIL PARA ESTE TURNO
+                // Si el turno se cerró (probablemente offline), cualquier gasto móvil
+                // pendiente de revisión debe ser marcado como rechazado automáticamente
+                try {
+                    const rejectResult = await pool.query(`
+                        UPDATE expenses
+                        SET is_deleted = true,
+                            reviewed_by_desktop = true,
+                            updated_at = NOW()
+                        WHERE id_turno = $1
+                          AND reviewed_by_desktop = false
+                          AND (local_op_seq IS NULL OR local_op_seq = 0)
+                          AND (is_deleted IS NULL OR is_deleted = false)
+                        RETURNING id, global_id, amount, description
+                    `, [shift.id]);
+
+                    if (rejectResult.rows.length > 0) {
+                        console.log(`[Sync/Shifts] 🧹 Auto-rechazados ${rejectResult.rows.length} gastos móviles huérfanos:`);
+                        rejectResult.rows.forEach(exp => {
+                            console.log(`  - Gasto ${exp.id} (${exp.global_id}): $${exp.amount} - ${exp.description}`);
+                        });
+                    }
+                } catch (rejectError) {
+                    console.error(`[Sync/Shifts] ⚠️ Error auto-rechazando gastos: ${rejectError.message}`);
+                    // No fallar la sincronización
+                }
             }
 
             res.json({
