@@ -679,30 +679,26 @@ module.exports = (pool, io) => {
                     // No fallar la sincronización si falla el envío de notificaciones
                 }
 
-                // 🧹 AUTO-RECHAZAR GASTOS PENDIENTES DE MÓVIL PARA ESTE TURNO
+                // 🧹 AUTO-ELIMINAR GASTOS HUÉRFANOS DE MÓVIL PARA ESTE TURNO CERRADO
                 // Si el turno se cerró (probablemente offline), cualquier gasto móvil
-                // pendiente de revisión debe ser marcado como rechazado automáticamente
+                // pendiente de revisión debe ser eliminado porque el turno ya está cerrado
                 try {
-                    const rejectResult = await pool.query(`
-                        UPDATE expenses
-                        SET is_deleted = true,
-                            reviewed_by_desktop = true,
-                            updated_at = NOW()
+                    const deleteResult = await pool.query(`
+                        DELETE FROM expenses
                         WHERE id_turno = $1
                           AND reviewed_by_desktop = false
                           AND (local_op_seq IS NULL OR local_op_seq = 0)
-                          AND (is_deleted IS NULL OR is_deleted = false)
                         RETURNING id, global_id, amount, description
                     `, [shift.id]);
 
-                    if (rejectResult.rows.length > 0) {
-                        console.log(`[Sync/Shifts] 🧹 Auto-rechazados ${rejectResult.rows.length} gastos móviles huérfanos:`);
-                        rejectResult.rows.forEach(exp => {
+                    if (deleteResult.rows.length > 0) {
+                        console.log(`[Sync/Shifts] 🧹 Auto-eliminados ${deleteResult.rows.length} gastos móviles huérfanos:`);
+                        deleteResult.rows.forEach(exp => {
                             console.log(`  - Gasto ${exp.id} (${exp.global_id}): $${exp.amount} - ${exp.description}`);
                         });
                     }
-                } catch (rejectError) {
-                    console.error(`[Sync/Shifts] ⚠️ Error auto-rechazando gastos: ${rejectError.message}`);
+                } catch (deleteError) {
+                    console.error(`[Sync/Shifts] ⚠️ Error auto-eliminando gastos: ${deleteError.message}`);
                     // No fallar la sincronización
                 }
             }

@@ -708,7 +708,7 @@ module.exports = (pool, io) => {
             // - local_op_seq = 0 (móvil no envía secuencia, o la envía como 0)
             // - Excluir gastos de Desktop que tienen local_op_seq > 0
             // - ✅ SOLO de turnos ABIERTOS (is_cash_cut_open = true)
-            // - ✅ Excluir gastos eliminados (is_deleted = false)
+            // - Los gastos de turnos cerrados son eliminados físicamente (ver shifts.js)
             const query = `
             SELECT
                 e.id,
@@ -740,7 +740,6 @@ module.exports = (pool, io) => {
             WHERE e.employee_id = $1
               AND e.reviewed_by_desktop = false
               AND (e.local_op_seq IS NULL OR e.local_op_seq = 0)
-              AND (e.is_deleted IS NULL OR e.is_deleted = false)
               AND s.is_cash_cut_open = true
               ${tenant_id ? 'AND e.tenant_id = $2' : ''}
             ORDER BY e.created_at DESC
