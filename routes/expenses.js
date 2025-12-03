@@ -707,6 +707,8 @@ module.exports = (pool, io) => {
             // - reviewed_by_desktop = false (no aprobado)
             // - local_op_seq = 0 (móvil no envía secuencia, o la envía como 0)
             // - Excluir gastos de Desktop que tienen local_op_seq > 0
+            // - ✅ SOLO de turnos ABIERTOS (is_cash_cut_open = true)
+            // - ✅ Excluir gastos eliminados (is_deleted = false)
             const query = `
             SELECT
                 e.id,
@@ -723,6 +725,8 @@ module.exports = (pool, io) => {
                 e.expense_date,
                 e.payment_type_id,
                 e.id_turno as shift_id,
+                s.global_id as shift_global_id,
+                s.is_cash_cut_open as shift_is_open,
                 e.reviewed_by_desktop,
                 e.terminal_id,
                 e.local_op_seq,
@@ -732,9 +736,12 @@ module.exports = (pool, io) => {
             FROM expenses e
             LEFT JOIN employees emp ON e.employee_id = emp.id
             LEFT JOIN expense_categories cat ON e.category_id = cat.id
+            LEFT JOIN shifts s ON e.id_turno = s.id
             WHERE e.employee_id = $1
               AND e.reviewed_by_desktop = false
               AND (e.local_op_seq IS NULL OR e.local_op_seq = 0)
+              AND (e.is_deleted IS NULL OR e.is_deleted = false)
+              AND s.is_cash_cut_open = true
               ${tenant_id ? 'AND e.tenant_id = $2' : ''}
             ORDER BY e.created_at DESC
         `;
