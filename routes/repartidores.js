@@ -800,12 +800,13 @@ module.exports = (pool) => {
                 ),
                 shift_expenses AS (
                     SELECT
-                        ex.shift_id,
+                        ex.id_turno as shift_id,
                         SUM(ex.amount) as total_expenses,
                         COUNT(*) as expense_count
                     FROM expenses ex
                     WHERE ex.employee_id = $1 AND ex.tenant_id = $2
-                    GROUP BY ex.shift_id
+                      AND ex.is_active = true
+                    GROUP BY ex.id_turno
                 ),
                 shift_debts AS (
                     SELECT
