@@ -1109,5 +1109,286 @@ module.exports = (pool) => {
         }
     });
 
+    // ============================================================================
+    // GET /api/repartidores/:employeeId/shifts-summary
+    // Obtiene resumen de turnos de caja de un repartidor con estadísticas
+    // ============================================================================
+    router.get('/:employeeId/shifts-summary', authenticateToken, async (req, res) => {
+        try {
+            const { tenantId, branchId: userBranchId } = req.user;
+            const { employeeId } = req.params;
+            const { limit = 20, offset = 0, status = 'all' } = req.query;
+
+            console.log(`[Repartidor Shifts] GET - Employee: ${employeeId}, Tenant: ${tenantId}, Status: ${status}`);
+
+            // Query para obtener turnos con resumen de asignaciones y devoluciones
+            let query = `
+                WITH shift_assignments AS (
+                    SELECT
+                        ra.repartidor_shift_id,
+                        SUM(ra.assigned_quantity) as total_assigned_kg,
+                        SUM(ra.assigned_amount) as total_assigned_amount,
+                        COUNT(*) as assignment_count,
+                        COUNT(CASE WHEN ra.status = 'liquidated' THEN 1 END) as liquidated_count
+                    FROM repartidor_assignments ra
+                    WHERE ra.employee_id = $1 AND ra.tenant_id = $2
+                    GROUP BY ra.repartidor_shift_id
+                ),
+                shift_returns AS (
+                    SELECT
+                        ra.repartidor_shift_id,
+                        SUM(rr.quantity) as total_returned_kg,
+                        SUM(rr.amount) as total_returned_amount,
+                        COUNT(rr.id) as return_count
+                    FROM repartidor_returns rr
+                    INNER JOIN repartidor_assignments ra ON rr.assignment_id = ra.id
+                    WHERE rr.employee_id = $1 AND rr.tenant_id = $2
+                      AND (rr.status IS NULL OR rr.status != 'deleted')
+                    GROUP BY ra.repartidor_shift_id
+                ),
+                shift_expenses AS (
+                    SELECT
+                        e.shift_id,
+                        SUM(e.amount) as total_expenses,
+                        COUNT(*) as expense_count
+                    FROM expenses e
+                    WHERE e.employee_id = $1 AND e.tenant_id = $2
+                    GROUP BY e.shift_id
+                )
+                SELECT
+                    s.id as shift_id,
+                    s.start_time,
+                    s.end_time,
+                    s.is_cash_cut_open,
+                    s.initial_amount,
+                    CONCAT(e.first_name, ' ', e.last_name) as employee_name,
+                    b.name as branch_name,
+                    COALESCE(sa.total_assigned_kg, 0) as total_assigned_kg,
+                    COALESCE(sa.total_assigned_amount, 0) as total_assigned_amount,
+                    COALESCE(sa.assignment_count, 0) as assignment_count,
+                    COALESCE(sa.liquidated_count, 0) as liquidated_count,
+                    COALESCE(sr.total_returned_kg, 0) as total_returned_kg,
+                    COALESCE(sr.total_returned_amount, 0) as total_returned_amount,
+                    COALESCE(sr.return_count, 0) as return_count,
+                    COALESCE(se.total_expenses, 0) as total_expenses,
+                    COALESCE(se.expense_count, 0) as expense_count,
+                    -- Neto a entregar
+                    (COALESCE(sa.total_assigned_amount, 0) - COALESCE(sr.total_returned_amount, 0) - COALESCE(se.total_expenses, 0)) as net_to_deliver,
+                    (COALESCE(sa.total_assigned_kg, 0) - COALESCE(sr.total_returned_kg, 0)) as net_delivered_kg
+                FROM shifts s
+                LEFT JOIN employees e ON s.employee_id = e.id
+                LEFT JOIN branches b ON s.branch_id = b.id
+                LEFT JOIN shift_assignments sa ON s.id = sa.repartidor_shift_id
+                LEFT JOIN shift_returns sr ON s.id = sr.repartidor_shift_id
+                LEFT JOIN shift_expenses se ON s.id = se.shift_id
+                WHERE s.employee_id = $1 AND s.tenant_id = $2
+            `;
+
+            const params = [parseInt(employeeId), tenantId];
+            let paramIndex = 3;
+
+            // Filtrar por estado del turno
+            if (status === 'open') {
+                query += ` AND s.is_cash_cut_open = true`;
+            } else if (status === 'closed') {
+                query += ` AND s.is_cash_cut_open = false`;
+            }
+
+            query += ` ORDER BY s.start_time DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+            params.push(parseInt(limit), parseInt(offset));
+
+            const result = await pool.query(query, params);
+
+            console.log(`[Repartidor Shifts] ✅ Found ${result.rows.length} shifts`);
+
+            res.json({
+                success: true,
+                data: result.rows.map(row => ({
+                    shift_id: row.shift_id,
+                    start_time: row.start_time,
+                    end_time: row.end_time,
+                    is_open: row.is_cash_cut_open,
+                    initial_amount: parseFloat(row.initial_amount || 0),
+                    employee_name: row.employee_name,
+                    branch_name: row.branch_name,
+                    // Asignaciones
+                    total_assigned_kg: parseFloat(row.total_assigned_kg),
+                    total_assigned_amount: parseFloat(row.total_assigned_amount),
+                    assignment_count: parseInt(row.assignment_count),
+                    liquidated_count: parseInt(row.liquidated_count),
+                    // Devoluciones
+                    total_returned_kg: parseFloat(row.total_returned_kg),
+                    total_returned_amount: parseFloat(row.total_returned_amount),
+                    return_count: parseInt(row.return_count),
+                    // Gastos
+                    total_expenses: parseFloat(row.total_expenses),
+                    expense_count: parseInt(row.expense_count),
+                    // Netos
+                    net_to_deliver: parseFloat(row.net_to_deliver),
+                    net_delivered_kg: parseFloat(row.net_delivered_kg)
+                })),
+                count: result.rows.length
+            });
+
+        } catch (error) {
+            console.error('[Repartidor Shifts] Error:', error);
+            res.status(500).json({ success: false, message: 'Error al obtener turnos', error: error.message });
+        }
+    });
+
+    // ============================================================================
+    // POST /api/repartidores/:employeeId/register-shortage
+    // Registra un faltante de repartidor en employee_debts
+    // ============================================================================
+    router.post('/:employeeId/register-shortage', authenticateToken, async (req, res) => {
+        try {
+            const { tenantId, branchId, employeeId: registeredByEmployeeId } = req.user;
+            const { employeeId } = req.params;
+            const {
+                shift_id,
+                monto_deuda,
+                notas,
+                fecha_deuda
+            } = req.body;
+
+            console.log(`[Repartidor Shortage] POST - Employee: ${employeeId}, Amount: ${monto_deuda}, Shift: ${shift_id}`);
+
+            if (!monto_deuda || monto_deuda <= 0) {
+                return res.status(400).json({ success: false, message: 'monto_deuda es requerido y debe ser mayor a 0' });
+            }
+
+            // Generar global_id único para idempotencia
+            const globalId = `shortage_${tenantId}_${employeeId}_${shift_id || 'manual'}_${Date.now()}`;
+
+            const result = await pool.query(`
+                INSERT INTO employee_debts (
+                    tenant_id, branch_id, employee_id, shift_id,
+                    monto_deuda, monto_pagado, estado, fecha_deuda, notas,
+                    global_id
+                ) VALUES ($1, $2, $3, $4, $5, 0, 'pendiente', $6, $7, $8)
+                RETURNING *
+            `, [
+                tenantId,
+                branchId,
+                parseInt(employeeId),
+                shift_id || null,
+                parseFloat(monto_deuda),
+                fecha_deuda || new Date(),
+                notas || `Faltante registrado desde app móvil`,
+                globalId
+            ]);
+
+            console.log(`[Repartidor Shortage] ✅ Shortage registered: $${monto_deuda} for employee ${employeeId}`);
+
+            res.json({
+                success: true,
+                data: result.rows[0],
+                message: 'Faltante registrado correctamente'
+            });
+
+        } catch (error) {
+            console.error('[Repartidor Shortage] Error:', error);
+            res.status(500).json({ success: false, message: 'Error al registrar faltante', error: error.message });
+        }
+    });
+
+    // ============================================================================
+    // GET /api/repartidores/:employeeId/debts
+    // Obtiene las deudas/faltantes de un repartidor
+    // ============================================================================
+    router.get('/:employeeId/debts', authenticateToken, async (req, res) => {
+        try {
+            const { tenantId } = req.user;
+            const { employeeId } = req.params;
+            const { estado = 'pendiente', limit = 50, offset = 0 } = req.query;
+
+            console.log(`[Repartidor Debts] GET - Employee: ${employeeId}, Estado: ${estado}`);
+
+            let query = `
+                SELECT
+                    ed.id,
+                    ed.global_id,
+                    ed.employee_id,
+                    CONCAT(e.first_name, ' ', e.last_name) as employee_name,
+                    ed.branch_id,
+                    b.name as branch_name,
+                    ed.shift_id,
+                    ed.monto_deuda,
+                    ed.monto_pagado,
+                    (ed.monto_deuda - COALESCE(ed.monto_pagado, 0)) as monto_pendiente,
+                    ed.estado,
+                    ed.fecha_deuda,
+                    ed.fecha_pago,
+                    ed.notas,
+                    ed.created_at
+                FROM employee_debts ed
+                LEFT JOIN employees e ON e.id = ed.employee_id
+                LEFT JOIN branches b ON b.id = ed.branch_id
+                WHERE ed.employee_id = $1 AND ed.tenant_id = $2
+            `;
+
+            const params = [parseInt(employeeId), tenantId];
+            let paramIndex = 3;
+
+            if (estado && estado !== 'all') {
+                query += ` AND ed.estado = $${paramIndex}`;
+                params.push(estado);
+                paramIndex++;
+            }
+
+            query += ` ORDER BY ed.fecha_deuda DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+            params.push(parseInt(limit), parseInt(offset));
+
+            const result = await pool.query(query, params);
+
+            // Calcular total pendiente
+            const totalQuery = await pool.query(`
+                SELECT
+                    SUM(monto_deuda) as total_deuda,
+                    SUM(monto_pagado) as total_pagado,
+                    SUM(monto_deuda - COALESCE(monto_pagado, 0)) as total_pendiente,
+                    COUNT(*) as count
+                FROM employee_debts
+                WHERE employee_id = $1 AND tenant_id = $2 AND estado = 'pendiente'
+            `, [parseInt(employeeId), tenantId]);
+
+            const totals = totalQuery.rows[0];
+
+            console.log(`[Repartidor Debts] ✅ Found ${result.rows.length} debts, Total pendiente: $${totals.total_pendiente || 0}`);
+
+            res.json({
+                success: true,
+                data: result.rows.map(row => ({
+                    id: row.id,
+                    global_id: row.global_id,
+                    employee_id: row.employee_id,
+                    employee_name: row.employee_name,
+                    branch_id: row.branch_id,
+                    branch_name: row.branch_name,
+                    shift_id: row.shift_id,
+                    monto_deuda: parseFloat(row.monto_deuda),
+                    monto_pagado: parseFloat(row.monto_pagado || 0),
+                    monto_pendiente: parseFloat(row.monto_pendiente),
+                    estado: row.estado,
+                    fecha_deuda: row.fecha_deuda,
+                    fecha_pago: row.fecha_pago,
+                    notas: row.notas,
+                    created_at: row.created_at
+                })),
+                summary: {
+                    total_deuda: parseFloat(totals.total_deuda || 0),
+                    total_pagado: parseFloat(totals.total_pagado || 0),
+                    total_pendiente: parseFloat(totals.total_pendiente || 0),
+                    count: parseInt(totals.count || 0)
+                },
+                count: result.rows.length
+            });
+
+        } catch (error) {
+            console.error('[Repartidor Debts] Error:', error);
+            res.status(500).json({ success: false, message: 'Error al obtener deudas', error: error.message });
+        }
+    });
+
     return router;
 };
