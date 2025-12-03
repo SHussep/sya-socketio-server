@@ -105,6 +105,47 @@ module.exports = (pool) => {
         }
     });
 
+    // Marcar como leída y eliminar (ocultar) en una sola operación
+    router.patch("/:id/read-and-delete", authenticateToken, async (req, res) => {
+        try {
+            const { id } = req.params;
+            const { tenantId, employeeId } = req.user;
+            const result = await pool.query(
+                `UPDATE notifications SET
+                    is_read = TRUE, read_at = NOW(), read_by_employee_id = $1,
+                    is_hidden = TRUE, hidden_at = NOW(), hidden_by_employee_id = $1,
+                    updated_at = NOW()
+                WHERE id = $2 AND tenant_id = $3 RETURNING id`,
+                [employeeId, id, tenantId]
+            );
+            if (result.rows.length === 0) return res.status(404).json({ success: false, message: "No encontrada" });
+            res.json({ success: true, data: result.rows[0] });
+        } catch (error) {
+            res.status(500).json({ success: false, message: error.message });
+        }
+    });
+
+    // Marcar todas como leídas y eliminar (ocultar) en una sola operación
+    router.patch("/read-and-delete-all", authenticateToken, async (req, res) => {
+        try {
+            const { tenantId, branchId, employeeId } = req.user;
+            const { category } = req.body;
+            let query = `UPDATE notifications SET
+                is_read = TRUE, read_at = NOW(), read_by_employee_id = $1,
+                is_hidden = TRUE, hidden_at = NOW(), hidden_by_employee_id = $1,
+                updated_at = NOW()
+            WHERE tenant_id = $2 AND (is_hidden = FALSE OR is_hidden IS NULL)`;
+            const params = [employeeId, tenantId];
+            let idx = 3;
+            if (branchId) { query += ` AND (branch_id = $${idx} OR branch_id IS NULL)`; params.push(branchId); idx++; }
+            if (category) { query += ` AND category = $${idx}`; params.push(category); }
+            const result = await pool.query(query, params);
+            res.json({ success: true, data: { count: result.rowCount } });
+        } catch (error) {
+            res.status(500).json({ success: false, message: error.message });
+        }
+    });
+
     return router;
 };
 
