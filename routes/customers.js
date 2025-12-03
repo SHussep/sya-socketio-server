@@ -202,6 +202,7 @@ module.exports = (pool) => {
     });
 
     // PUT /api/customers/:id - Actualizar cliente existente desde Desktop
+    // :id puede ser el ID numérico O el GlobalId (UUID)
     router.put('/:id', async (req, res) => {
         try {
             const { id } = req.params;
@@ -223,14 +224,38 @@ module.exports = (pool) => {
             } = req.body;
 
             console.log(`[Customers/Update] 🔄 Actualizando cliente ${id} - Tenant: ${tenant_id}`);
+            console.log(`[Customers/Update] 📝 has_credit: ${has_credit}, credit_limit: ${credit_limit}`);
 
-            // Validar que el cliente pertenece al tenant
-            const checkResult = await pool.query(
-                'SELECT id FROM customers WHERE id = $1 AND tenant_id = $2',
-                [id, tenant_id]
-            );
+            // 🔄 RESOLVER ID: puede ser numérico o GlobalId (UUID)
+            let customerId;
+            let checkResult;
 
-            if (checkResult.rows.length === 0) {
+            // Verificar si es UUID (contiene guiones y tiene longitud de UUID)
+            const isUuid = id.includes('-') && id.length >= 32;
+
+            if (isUuid) {
+                // Buscar por global_id
+                checkResult = await pool.query(
+                    'SELECT id, is_system_generic FROM customers WHERE global_id = $1 AND tenant_id = $2',
+                    [id, tenant_id]
+                );
+                if (checkResult.rows.length > 0) {
+                    customerId = checkResult.rows[0].id;
+                }
+                console.log(`[Customers/Update] 🔐 Resolviendo GlobalId ${id} → ID: ${customerId}`);
+            } else {
+                // Buscar por ID numérico
+                checkResult = await pool.query(
+                    'SELECT id, is_system_generic FROM customers WHERE id = $1 AND tenant_id = $2',
+                    [id, tenant_id]
+                );
+                if (checkResult.rows.length > 0) {
+                    customerId = checkResult.rows[0].id;
+                }
+            }
+
+            if (!customerId || checkResult.rows.length === 0) {
+                console.log(`[Customers/Update] ❌ Cliente no encontrado: ${id}`);
                 return res.status(404).json({
                     success: false,
                     message: 'Cliente no encontrado o no pertenece al tenant'
@@ -238,19 +263,14 @@ module.exports = (pool) => {
             }
 
             // ⚠️ NO permitir modificar el cliente genérico
-            const genericCheck = await pool.query(
-                'SELECT is_system_generic FROM customers WHERE id = $1',
-                [id]
-            );
-
-            if (genericCheck.rows[0]?.is_system_generic) {
+            if (checkResult.rows[0]?.is_system_generic) {
                 return res.status(403).json({
                     success: false,
                     message: 'No se puede modificar el cliente genérico del sistema'
                 });
             }
 
-            // UPDATE cliente
+            // UPDATE cliente usando el ID numérico resuelto
             const result = await pool.query(
                 `UPDATE customers
                  SET nombre = $1,
@@ -281,7 +301,7 @@ module.exports = (pool) => {
                     tipo_descuento || 0,
                     monto_descuento_fijo || 0,
                     aplicar_redondeo || false,
-                    id,
+                    customerId,  // Usar el ID numérico resuelto
                     tenant_id
                 ]
             );
@@ -289,6 +309,7 @@ module.exports = (pool) => {
             const customer = result.rows[0];
 
             console.log(`[Customers/Update] ✅ Cliente ${customer.nombre} (ID: ${customer.id}) actualizado exitosamente`);
+            console.log(`[Customers/Update] 💳 tiene_credito: ${customer.tiene_credito}, credito_limite: ${customer.credito_limite}`);
 
             res.json({
                 success: true,
@@ -296,6 +317,9 @@ module.exports = (pool) => {
                 data: {
                     id: customer.id,
                     name: customer.nombre,
+                    global_id: customer.global_id,
+                    has_credit: customer.tiene_credito,
+                    credit_limit: parseFloat(customer.credito_limite || 0),
                     updated_at: customer.updated_at
                 }
             });
@@ -407,6 +431,7 @@ module.exports = (pool) => {
     });
 
     // PATCH /api/customers/:id/deactivate - Soft delete (desactivar cliente)
+    // :id puede ser el ID numérico O el GlobalId (UUID)
     router.patch('/:id/deactivate', async (req, res) => {
         try {
             const { id } = req.params;
@@ -414,13 +439,35 @@ module.exports = (pool) => {
 
             console.log(`[Customers/Deactivate] 🗑️ Desactivando cliente ${id} - Tenant: ${tenant_id}`);
 
-            // Validar que el cliente pertenece al tenant
-            const checkResult = await pool.query(
-                'SELECT id, is_system_generic FROM customers WHERE id = $1 AND tenant_id = $2',
-                [id, tenant_id]
-            );
+            // 🔄 RESOLVER ID: puede ser numérico o GlobalId (UUID)
+            let customerId;
+            let checkResult;
 
-            if (checkResult.rows.length === 0) {
+            // Verificar si es UUID (contiene guiones y tiene longitud de UUID)
+            const isUuid = id.includes('-') && id.length >= 32;
+
+            if (isUuid) {
+                // Buscar por global_id
+                checkResult = await pool.query(
+                    'SELECT id, is_system_generic FROM customers WHERE global_id = $1 AND tenant_id = $2',
+                    [id, tenant_id]
+                );
+                if (checkResult.rows.length > 0) {
+                    customerId = checkResult.rows[0].id;
+                }
+                console.log(`[Customers/Deactivate] 🔐 Resolviendo GlobalId ${id} → ID: ${customerId}`);
+            } else {
+                // Buscar por ID numérico
+                checkResult = await pool.query(
+                    'SELECT id, is_system_generic FROM customers WHERE id = $1 AND tenant_id = $2',
+                    [id, tenant_id]
+                );
+                if (checkResult.rows.length > 0) {
+                    customerId = checkResult.rows[0].id;
+                }
+            }
+
+            if (!customerId || checkResult.rows.length === 0) {
                 return res.status(404).json({
                     success: false,
                     message: 'Cliente no encontrado o no pertenece al tenant'
@@ -435,14 +482,14 @@ module.exports = (pool) => {
                 });
             }
 
-            // Soft delete: marcar como inactivo
+            // Soft delete: marcar como inactivo usando el ID numérico resuelto
             const result = await pool.query(
                 `UPDATE customers
                  SET activo = FALSE,
                      updated_at = NOW()
                  WHERE id = $1 AND tenant_id = $2
-                 RETURNING id, nombre, activo`,
-                [id, tenant_id]
+                 RETURNING id, nombre, activo, global_id`,
+                [customerId, tenant_id]
             );
 
             const customer = result.rows[0];
@@ -455,6 +502,7 @@ module.exports = (pool) => {
                 data: {
                     id: customer.id,
                     name: customer.nombre,
+                    global_id: customer.global_id,
                     activo: customer.activo
                 }
             });
