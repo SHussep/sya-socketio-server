@@ -176,15 +176,21 @@ async function initializeDatabase() {
         // Tabla: devices
         await client.query(`
             CREATE TABLE IF NOT EXISTS devices (
-                id VARCHAR(255) PRIMARY KEY,
-                name VARCHAR(255) NOT NULL,
+                id SERIAL PRIMARY KEY,
                 tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-                employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
-                device_type VARCHAR(50) DEFAULT 'mobile',
+                branch_id INTEGER REFERENCES branches(id) ON DELETE SET NULL,
+                employee_id INTEGER REFERENCES employees(id) ON DELETE SET NULL,
+                device_id TEXT,
+                device_name VARCHAR(255),
+                device_type VARCHAR(50) NOT NULL,
                 platform VARCHAR(50),
-                last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                device_token TEXT,
+                is_active BOOLEAN DEFAULT true,
+                last_seen TIMESTAMP,
+                last_active TIMESTAMP,
                 linked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                is_active BOOLEAN DEFAULT true
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         `);
 

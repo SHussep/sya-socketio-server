@@ -2257,24 +2257,33 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
             console.log(`[Sync Init] ✅ ${branches.length} sucursales encontradas`);
 
             // ═══════════════════════════════════════════════════════════════
-            // OBTENER DATOS DE PRODUCTOS, CATEGORÍAS Y CLIENTES (legado)
+            // OBTENER DATOS DE PRODUCTOS, CATEGORÍAS Y CLIENTES (legado - opcional)
             // ═══════════════════════════════════════════════════════════════
-            const productsResult = await this.pool.query(
-                'SELECT * FROM products WHERE tenant_id = $1 AND is_active = true',
-                [tenantId]
-            );
+            let productsResult = { rows: [] };
+            let categoriesResult = { rows: [] };
+            let customersResult = { rows: [] };
 
-            const categoriesResult = await this.pool.query(
-                'SELECT * FROM categories WHERE tenant_id = $1 AND is_active = true',
-                [tenantId]
-            );
+            try {
+                productsResult = await this.pool.query(
+                    'SELECT * FROM products WHERE tenant_id = $1 AND is_active = true',
+                    [tenantId]
+                );
 
-            const customersResult = await this.pool.query(
-                'SELECT * FROM customers WHERE tenant_id = $1 AND is_active = true',
-                [tenantId]
-            );
+                categoriesResult = await this.pool.query(
+                    'SELECT * FROM categories WHERE tenant_id = $1 AND is_active = true',
+                    [tenantId]
+                );
 
-            console.log(`[Sync Init] Enviando datos base: ${productsResult.rows.length} productos, ${categoriesResult.rows.length} categorías`);
+                customersResult = await this.pool.query(
+                    'SELECT * FROM customers WHERE tenant_id = $1 AND is_active = true',
+                    [tenantId]
+                );
+
+                console.log(`[Sync Init] Enviando datos base: ${productsResult.rows.length} productos, ${categoriesResult.rows.length} categorías`);
+            } catch (legacyDataError) {
+                console.log(`[Sync Init] ⚠️ Tablas legacy no disponibles (ignorando): ${legacyDataError.message}`);
+                // Continuar sin datos legacy - no es crítico
+            }
 
             // ═══════════════════════════════════════════════════════════════
             // RESPUESTA CON ESTRUCTURA COMPLETA (para WinUI y app móvil)
