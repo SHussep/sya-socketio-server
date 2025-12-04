@@ -811,12 +811,13 @@ module.exports = (pool) => {
                 shift_debts AS (
                     SELECT
                         ed.shift_id,
-                        SUM(ed.monto_deuda) as total_debt,
+                        SUM(CASE WHEN ed.monto_deuda > 0 THEN ed.monto_deuda ELSE 0 END) as total_debt,
                         SUM(ed.monto_pagado) as total_paid,
-                        SUM(ed.monto_deuda - COALESCE(ed.monto_pagado, 0)) as pending_debt,
+                        SUM(CASE WHEN ed.monto_deuda > 0 THEN (ed.monto_deuda - COALESCE(ed.monto_pagado, 0)) ELSE 0 END) as pending_debt,
                         COUNT(*) as debt_count
                     FROM employee_debts ed
                     WHERE ed.employee_id = $1 AND ed.tenant_id = $2
+                      AND ed.monto_deuda > 0
                     GROUP BY ed.shift_id
                 )
                 SELECT
@@ -1014,15 +1015,16 @@ module.exports = (pool) => {
 
             const result = await pool.query(query, params);
 
-            // Calcular total pendiente
+            // Calcular total pendiente - SOLO faltantes (valores positivos)
             const totalQuery = await pool.query(`
                 SELECT
-                    SUM(monto_deuda) as total_deuda,
+                    SUM(CASE WHEN monto_deuda > 0 THEN monto_deuda ELSE 0 END) as total_deuda,
                     SUM(monto_pagado) as total_pagado,
-                    SUM(monto_deuda - COALESCE(monto_pagado, 0)) as total_pendiente,
+                    SUM(CASE WHEN monto_deuda > 0 THEN (monto_deuda - COALESCE(monto_pagado, 0)) ELSE 0 END) as total_pendiente,
                     COUNT(*) as count
                 FROM employee_debts
                 WHERE employee_id = $1 AND tenant_id = $2 AND estado = 'pendiente'
+                  AND monto_deuda > 0
             `, [parseInt(employeeId), tenantId]);
 
             const totals = totalQuery.rows[0];

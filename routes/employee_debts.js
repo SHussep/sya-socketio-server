@@ -240,12 +240,13 @@ function createEmployeeDebtsRoutes(io) {
           b.name as branch_name,
           ed.estado,
           COUNT(*) as total_deudas,
-          SUM(ed.monto_deuda) as monto_total_deudas,
+          SUM(CASE WHEN ed.monto_deuda > 0 THEN ed.monto_deuda ELSE 0 END) as monto_total_deudas,
           SUM(ed.monto_pagado) as monto_total_pagado,
-          SUM(ed.monto_deuda - COALESCE(ed.monto_pagado, 0)) as monto_total_pendiente
+          SUM(CASE WHEN ed.monto_deuda > 0 THEN (ed.monto_deuda - COALESCE(ed.monto_pagado, 0)) ELSE 0 END) as monto_total_pendiente
         FROM employee_debts ed
         LEFT JOIN branches b ON b.id = ed.branch_id
         WHERE ed.branch_id = $1
+          AND ed.monto_deuda > 0
       `;
 
       const params = [branchId];
