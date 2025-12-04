@@ -194,6 +194,19 @@ async function initializeDatabase() {
             )
         `);
 
+        // ⚠️ MIGRACIÓN CRÍTICA: Agregar columnas faltantes a tabla devices existente
+        console.log('[Schema] 🔄 Migrando tabla devices a nuevo schema...');
+        try {
+            await client.query(`ALTER TABLE devices ADD COLUMN IF NOT EXISTS branch_id INTEGER REFERENCES branches(id) ON DELETE SET NULL`);
+            await client.query(`ALTER TABLE devices ADD COLUMN IF NOT EXISTS device_id TEXT`);
+            await client.query(`ALTER TABLE devices ADD COLUMN IF NOT EXISTS device_name VARCHAR(255)`);
+            await client.query(`ALTER TABLE devices ADD COLUMN IF NOT EXISTS last_seen TIMESTAMP`);
+            await client.query(`ALTER TABLE devices ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`);
+            console.log('[Schema] ✅ Migración de tabla devices completada');
+        } catch (migrationError) {
+            console.error('[Schema] ⚠️ Error en migración de devices (puede ignorarse si ya existen):', migrationError.message);
+        }
+
         // Tabla: sessions
         await client.query(`
             CREATE TABLE IF NOT EXISTS sessions (
