@@ -146,6 +146,56 @@ module.exports = (pool) => {
         }
     });
 
+    // ==========================================
+    // ELIMINACIÓN PERMANENTE DE POSTGRESQL
+    // ==========================================
+
+    // Eliminar permanentemente una notificación
+    router.delete("/:id", authenticateToken, async (req, res) => {
+        try {
+            const { id } = req.params;
+            const { tenantId } = req.user;
+            const result = await pool.query(
+                "DELETE FROM notifications WHERE id = $1 AND tenant_id = $2 RETURNING id",
+                [id, tenantId]
+            );
+            if (result.rows.length === 0) {
+                return res.status(404).json({ success: false, message: "Notificación no encontrada" });
+            }
+            res.json({ success: true, data: { id: result.rows[0].id, deleted: true } });
+        } catch (error) {
+            res.status(500).json({ success: false, message: error.message });
+        }
+    });
+
+    // Eliminar permanentemente todas las notificaciones (leídas u ocultas)
+    router.delete("/delete-read", authenticateToken, async (req, res) => {
+        try {
+            const { tenantId, branchId } = req.user;
+            const { category } = req.query;
+
+            // Eliminar notificaciones que ya fueron leídas o están ocultas
+            let query = "DELETE FROM notifications WHERE tenant_id = $1 AND (is_read = TRUE OR is_hidden = TRUE)";
+            const params = [tenantId];
+            let idx = 2;
+
+            if (branchId) {
+                query += ` AND (branch_id = $${idx} OR branch_id IS NULL)`;
+                params.push(branchId);
+                idx++;
+            }
+            if (category) {
+                query += ` AND category = $${idx}`;
+                params.push(category);
+            }
+
+            const result = await pool.query(query, params);
+            res.json({ success: true, data: { count: result.rowCount, deleted: true } });
+        } catch (error) {
+            res.status(500).json({ success: false, message: error.message });
+        }
+    });
+
     return router;
 };
 
