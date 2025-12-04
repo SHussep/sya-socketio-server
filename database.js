@@ -871,6 +871,36 @@ async function runMigrations() {
                 console.log('[Schema] ✅ Table employee_debts created successfully');
             }
 
+            // Patch: Add CHECK constraint to ensure monto_deuda is always positive
+            console.log('[Schema] 🔍 Checking employee_debts CHECK constraint for positive amounts...');
+            const checkConstraint = await client.query(`
+                SELECT constraint_name
+                FROM information_schema.table_constraints
+                WHERE table_name = 'employee_debts'
+                  AND constraint_type = 'CHECK'
+                  AND constraint_name = 'check_monto_deuda_positive'
+            `);
+
+            if (checkConstraint.rows.length === 0) {
+                console.log('[Schema] 📝 Adding CHECK constraint: monto_deuda must be positive');
+                // First, clean up any existing invalid data
+                await client.query(`
+                    UPDATE employee_debts
+                    SET monto_deuda = ABS(monto_deuda),
+                        notas = COALESCE(notas, '') || ' [AUTO-CORRECTED: was negative]'
+                    WHERE monto_deuda < 0
+                `);
+                await client.query(`DELETE FROM employee_debts WHERE monto_deuda = 0`);
+
+                // Now add the constraint
+                await client.query(`
+                    ALTER TABLE employee_debts
+                    ADD CONSTRAINT check_monto_deuda_positive
+                    CHECK (monto_deuda > 0)
+                `);
+                console.log('[Schema] ✅ CHECK constraint added - monto_deuda must be > 0');
+            }
+
             // Patch: Add credito_original to ventas table if missing (for credit audit trail)
             if (checkVentasTable.rows[0].exists) {
                 const checkCreditoOriginal = await client.query(`
