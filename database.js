@@ -173,7 +173,28 @@ async function initializeDatabase() {
             )
         `);
 
-        // Tabla: devices
+        // ⚠️ MIGRACIÓN CRÍTICA: Recrear tabla devices con schema correcto
+        console.log('[Schema] 🔄 Verificando schema de tabla devices...');
+        try {
+            // Verificar si existe la tabla con schema viejo (id como VARCHAR)
+            const schemaCheck = await client.query(`
+                SELECT column_name, data_type
+                FROM information_schema.columns
+                WHERE table_name = 'devices' AND column_name = 'id'
+            `);
+
+            if (schemaCheck.rows.length > 0 && schemaCheck.rows[0].data_type === 'character varying') {
+                console.log('[Schema] ⚠️ Detectado schema viejo de devices (id VARCHAR) - RECREANDO tabla...');
+
+                // Eliminar tabla vieja (CASCADE elimina FK dependencies)
+                await client.query(`DROP TABLE IF EXISTS devices CASCADE`);
+                console.log('[Schema] ✅ Tabla devices vieja eliminada');
+            }
+        } catch (checkError) {
+            console.log('[Schema] ℹ️ Tabla devices no existe o error verificando schema:', checkError.message);
+        }
+
+        // Tabla: devices (schema correcto con SERIAL id)
         await client.query(`
             CREATE TABLE IF NOT EXISTS devices (
                 id SERIAL PRIMARY KEY,
@@ -193,19 +214,7 @@ async function initializeDatabase() {
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         `);
-
-        // ⚠️ MIGRACIÓN CRÍTICA: Agregar columnas faltantes a tabla devices existente
-        console.log('[Schema] 🔄 Migrando tabla devices a nuevo schema...');
-        try {
-            await client.query(`ALTER TABLE devices ADD COLUMN IF NOT EXISTS branch_id INTEGER REFERENCES branches(id) ON DELETE SET NULL`);
-            await client.query(`ALTER TABLE devices ADD COLUMN IF NOT EXISTS device_id TEXT`);
-            await client.query(`ALTER TABLE devices ADD COLUMN IF NOT EXISTS device_name VARCHAR(255)`);
-            await client.query(`ALTER TABLE devices ADD COLUMN IF NOT EXISTS last_seen TIMESTAMP`);
-            await client.query(`ALTER TABLE devices ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`);
-            console.log('[Schema] ✅ Migración de tabla devices completada');
-        } catch (migrationError) {
-            console.error('[Schema] ⚠️ Error en migración de devices (puede ignorarse si ya existen):', migrationError.message);
-        }
+        console.log('[Schema] ✅ Tabla devices creada con schema correcto (id SERIAL)');
 
         // Tabla: sessions
         await client.query(`
