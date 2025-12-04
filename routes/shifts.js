@@ -155,11 +155,10 @@ module.exports = (pool, io) => {
 
             const params = [tenantId];
 
-            // Si NO es administrador, filtrar por empleado específico
-            if (!isAdmin) {
-                query += ' AND s.employee_id = $2';
-                params.push(employeeId);
-            }
+            // 🔒 CRÍTICO: SIEMPRE filtrar por employee_id para evitar confusión de turnos
+            // Incluso si es admin, el turno ACTUAL debe ser del empleado logueado
+            query += ' AND s.employee_id = $2';
+            params.push(employeeId);
 
             // Si el JWT incluye branchId (Desktop), filtrar por sucursal
             if (branchId) {
