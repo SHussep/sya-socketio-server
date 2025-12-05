@@ -269,7 +269,13 @@ module.exports = (pool, io) => {
             query += ` ORDER BY s.start_time DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
             params.push(limit, offset);
 
+            // 🔍 DEBUG: Log query completa y parámetros
+            console.log(`[Shifts/History] 🔍 QUERY COMPLETA:`);
+            console.log(`[Shifts/History] 📝 SQL: ${query}`);
+            console.log(`[Shifts/History] 📊 Params: ${JSON.stringify(params)}`);
+
             const result = await pool.query(query, params);
+            console.log(`[Shifts/History] ✅ Turnos encontrados: ${result.rows.length}`);
 
             // Para cada turno, calcular totales de ventas, gastos, pagos, etc.
             const enrichedShifts = [];
