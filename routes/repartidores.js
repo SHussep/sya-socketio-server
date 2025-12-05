@@ -32,17 +32,6 @@ module.exports = (pool) => {
             const targetBranchId = branch_id ? parseInt(branch_id) : userBranchId;
 
             console.log(`[Repartidores Summary] Fetching - Tenant: ${tenantId}, Branch: ${targetBranchId}, Shift: ${shift_id || 'ALL'}, all_branches: ${all_branches}, Only Open Shifts: ${only_open_shifts}`);
-            console.log(`[Repartidores Summary] JWT user branchId: ${userBranchId}, Query branch_id: ${branch_id}`);
-
-            // DIAGNÓSTICO: Verificar cuántas asignaciones hay sin filtros
-            const diagQuery = await pool.query(`
-                SELECT COUNT(*) as total,
-                       COUNT(DISTINCT employee_id) as unique_employees,
-                       array_agg(DISTINCT branch_id) as branches
-                FROM repartidor_assignments
-                WHERE tenant_id = $1
-            `, [tenantId]);
-            console.log(`[Repartidores Summary] DIAGNOSTICO - Total asignaciones en BD: ${diagQuery.rows[0].total}, Empleados únicos: ${diagQuery.rows[0].unique_employees}, Branches: ${diagQuery.rows[0].branches}`);
 
             let query = `
                 WITH assignment_stats AS (
