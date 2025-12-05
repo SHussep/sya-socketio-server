@@ -201,11 +201,14 @@ module.exports = (pool, io) => {
     });
 
     // GET /api/shifts/history - Obtener historial de turnos (cortes de caja)
-    // Parámetro open_only=true para obtener solo turnos abiertos (para selector de turnos)
+    // Parámetros:
+    // - open_only=true: solo turnos abiertos (para selector de turnos)
+    // - start_date: fecha inicio del filtro (ISO string)
+    // - end_date: fecha fin del filtro (ISO string)
     router.get('/history', authenticateToken, async (req, res) => {
         try {
             const { tenantId, branchId } = req.user;
-            const { limit = 50, offset = 0, all_branches = 'false', employee_id, open_only = 'false' } = req.query;
+            const { limit = 50, offset = 0, all_branches = 'false', employee_id, open_only = 'false', start_date, end_date } = req.query;
 
             let query = `
                 SELECT s.id, s.tenant_id, s.branch_id, s.employee_id, s.start_time, s.end_time,
@@ -242,6 +245,21 @@ module.exports = (pool, io) => {
                 query += ` AND s.employee_id = $${paramIndex}`;
                 params.push(employee_id);
                 paramIndex++;
+            }
+
+            // 📅 NUEVO: Filtrar por rango de fechas
+            if (start_date) {
+                query += ` AND s.start_time >= $${paramIndex}`;
+                params.push(start_date);
+                paramIndex++;
+                console.log(`[Shifts/History] 📅 Filtrando desde: ${start_date}`);
+            }
+
+            if (end_date) {
+                query += ` AND s.start_time <= $${paramIndex}`;
+                params.push(end_date);
+                paramIndex++;
+                console.log(`[Shifts/History] 📅 Filtrando hasta: ${end_date}`);
             }
 
             query += ` ORDER BY s.start_time DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
