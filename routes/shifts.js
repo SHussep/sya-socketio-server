@@ -207,8 +207,12 @@ module.exports = (pool, io) => {
     // - end_date: fecha fin del filtro (ISO string)
     router.get('/history', authenticateToken, async (req, res) => {
         try {
-            const { tenantId, branchId } = req.user;
-            const { limit = 50, offset = 0, all_branches = 'false', employee_id, open_only = 'false', start_date, end_date } = req.query;
+            const { tenantId, branchId: jwtBranchId } = req.user;
+            const { limit = 50, offset = 0, all_branches = 'false', employee_id, open_only = 'false', start_date, end_date, branch_id } = req.query;
+
+            // 🔧 IMPORTANTE: Permitir sobrescribir branchId via query parameter
+            // Esto es necesario para que mobile app pueda ver datos de diferentes sucursales
+            const branchId = branch_id ? parseInt(branch_id) : jwtBranchId;
 
             let query = `
                 SELECT s.id, s.tenant_id, s.branch_id, s.employee_id, s.start_time, s.end_time,
