@@ -212,7 +212,9 @@ module.exports = (pool, io) => {
 
             // 🔧 IMPORTANTE: Permitir sobrescribir branchId via query parameter
             // Esto es necesario para que mobile app pueda ver datos de diferentes sucursales
+            console.log(`[Shifts/History] 🔍 branch_id query param: ${branch_id}, jwtBranchId: ${jwtBranchId}`);
             const branchId = branch_id ? parseInt(branch_id) : jwtBranchId;
+            console.log(`[Shifts/History] 🎯 branchId final usado: ${branchId}`);
 
             let query = `
                 SELECT s.id, s.tenant_id, s.branch_id, s.employee_id, s.start_time, s.end_time,
@@ -323,12 +325,12 @@ module.exports = (pool, io) => {
                 `, [shift.id]);
 
                 // 6. 🆕 Contar asignaciones pendientes de repartidor
-                // Solo contar asignaciones NO liquidadas (sin cash_cut_id)
+                // Solo contar asignaciones NO liquidadas (fecha_liquidacion IS NULL)
                 const assignmentsResult = await pool.query(`
                     SELECT COUNT(*) as pending_assignments
                     FROM repartidor_assignments
                     WHERE shift_id = $1
-                      AND cash_cut_id IS NULL
+                      AND fecha_liquidacion IS NULL
                 `, [shift.id]);
 
                 enrichedShifts.push({
