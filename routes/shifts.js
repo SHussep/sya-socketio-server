@@ -316,6 +316,15 @@ module.exports = (pool, io) => {
                     WHERE shift_id = $1
                 `, [shift.id]);
 
+                // 6. 🆕 Contar asignaciones pendientes de repartidor
+                // Solo contar asignaciones NO liquidadas (sin cash_cut_id)
+                const assignmentsResult = await pool.query(`
+                    SELECT COUNT(*) as pending_assignments
+                    FROM repartidor_assignments
+                    WHERE shift_id = $1
+                      AND cash_cut_id IS NULL
+                `, [shift.id]);
+
                 enrichedShifts.push({
                     ...shift,
                     start_time: shift.start_time ? new Date(shift.start_time).toISOString() : null,
@@ -330,6 +339,7 @@ module.exports = (pool, io) => {
                     total_withdrawals: parseFloat(withdrawalsResult.rows[0]?.total_withdrawals || 0),
                     total_cash_payments: parseFloat(paymentsResult.rows[0]?.total_cash_payments || 0),
                     total_card_payments: parseFloat(paymentsResult.rows[0]?.total_card_payments || 0),
+                    pending_assignments: parseInt(assignmentsResult.rows[0]?.pending_assignments || 0),
                 });
             }
 
