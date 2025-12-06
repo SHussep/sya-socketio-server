@@ -961,6 +961,82 @@ async function runMigrations() {
                 }
             }
 
+            // Patch: Add offline-first columns to purchases table
+            const checkPurchasesTable = await client.query(`
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'purchases'
+                );
+            `);
+
+            if (checkPurchasesTable.rows[0].exists) {
+                const checkPurchaseGlobalId = await client.query(`
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'purchases'
+                    AND column_name = 'global_id'
+                `);
+
+                if (checkPurchaseGlobalId.rows.length === 0) {
+                    console.log('[Schema] 📝 Adding offline-first columns to purchases table...');
+
+                    await client.query(`
+                        ALTER TABLE purchases
+                        ADD COLUMN IF NOT EXISTS global_id VARCHAR(36) UNIQUE,
+                        ADD COLUMN IF NOT EXISTS terminal_id VARCHAR(100),
+                        ADD COLUMN IF NOT EXISTS local_op_seq BIGINT,
+                        ADD COLUMN IF NOT EXISTS created_local_utc VARCHAR(50),
+                        ADD COLUMN IF NOT EXISTS last_modified_local_utc VARCHAR(50),
+                        ADD COLUMN IF NOT EXISTS supplier_name VARCHAR(200),
+                        ADD COLUMN IF NOT EXISTS shift_id INTEGER,
+                        ADD COLUMN IF NOT EXISTS subtotal DECIMAL(12,2) DEFAULT 0,
+                        ADD COLUMN IF NOT EXISTS taxes DECIMAL(12,2) DEFAULT 0,
+                        ADD COLUMN IF NOT EXISTS amount_paid DECIMAL(12,2) DEFAULT 0,
+                        ADD COLUMN IF NOT EXISTS payment_type_id INTEGER,
+                        ADD COLUMN IF NOT EXISTS invoice_number VARCHAR(100),
+                        ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()
+                    `);
+
+                    await client.query(`
+                        CREATE INDEX IF NOT EXISTS idx_purchases_global_id ON purchases(global_id)
+                    `);
+
+                    console.log('[Schema] ✅ Purchases offline-first columns added successfully');
+                }
+
+                // Create purchase_details table if not exists
+                const checkPurchaseDetails = await client.query(`
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables
+                        WHERE table_name = 'purchase_details'
+                    );
+                `);
+
+                if (!checkPurchaseDetails.rows[0].exists) {
+                    console.log('[Schema] 📝 Creating purchase_details table...');
+                    await client.query(`
+                        CREATE TABLE purchase_details (
+                            id SERIAL PRIMARY KEY,
+                            purchase_id INTEGER NOT NULL REFERENCES purchases(id) ON DELETE CASCADE,
+                            product_id BIGINT,
+                            product_name VARCHAR(200),
+                            quantity DECIMAL(12,3) DEFAULT 0,
+                            unit_price DECIMAL(12,2) DEFAULT 0,
+                            subtotal DECIMAL(12,2) DEFAULT 0,
+                            global_id VARCHAR(36) UNIQUE,
+                            created_at TIMESTAMP DEFAULT NOW()
+                        )
+                    `);
+                    await client.query(`
+                        CREATE INDEX IF NOT EXISTS idx_purchase_details_purchase_id ON purchase_details(purchase_id)
+                    `);
+                    await client.query(`
+                        CREATE INDEX IF NOT EXISTS idx_purchase_details_global_id ON purchase_details(global_id)
+                    `);
+                    console.log('[Schema] ✅ purchase_details table created successfully');
+                }
+            }
+
             // 2.5. Clean user data if requested (for testing)
             console.log(`[Schema] 🔍 CLEAN_DATABASE_ON_START = "${process.env.CLEAN_DATABASE_ON_START}"`);
 
