@@ -338,12 +338,12 @@ module.exports = (pool, io) => {
                 `, [shift.id]);
 
                 // 6B. Asignaciones RECIBIDAS por este turno (repartidor tiene mercancía asignada)
-                // Usar turno_repartidor_id (columna real) en lugar de repartidor_shift_global_id (no existe)
+                // Usar repartidor_shift_id (columna real del schema en Render)
                 // Solo contar asignaciones NO liquidadas (fecha_liquidacion IS NULL)
                 const receivedAssignmentsResult = await pool.query(`
                     SELECT COUNT(*) as received_assignments
                     FROM repartidor_assignments ra
-                    WHERE ra.turno_repartidor_id = $1
+                    WHERE ra.repartidor_shift_id = $1
                       AND ra.fecha_liquidacion IS NULL
                 `, [shift.id]);
 
