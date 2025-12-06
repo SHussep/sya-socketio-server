@@ -195,18 +195,21 @@ module.exports = (pool) => {
             const statusMap = { 1: 'pending', 2: 'paid', 3: 'partial', 4: 'cancelled' };
             const paymentStatus = statusMap[status_id] || 'pending';
 
+            // Generar purchase_number si no viene (usando global_id corto o timestamp)
+            const purchaseNumber = invoice_number || `PUR-${global_id.substring(0, 8).toUpperCase()}`;
+
             // Insertar compra
             const purchaseResult = await client.query(
                 `INSERT INTO purchases (
                     tenant_id, branch_id, supplier_id, supplier_name, employee_id, shift_id,
-                    subtotal, taxes, total_amount, amount_paid, payment_status, payment_type_id,
+                    purchase_number, subtotal, taxes, total_amount, amount_paid, payment_status, payment_type_id,
                     notes, invoice_number, purchase_date,
                     global_id, terminal_id, local_op_seq, created_local_utc
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
                 RETURNING id`,
                 [
                     tenantId, branchId, proveedor_id, proveedor_name, employeeId, shiftId,
-                    subtotal || 0, taxes || 0, total || 0, amount_paid || 0, paymentStatus, payment_type_id,
+                    purchaseNumber, subtotal || 0, taxes || 0, total || 0, amount_paid || 0, paymentStatus, payment_type_id,
                     notes || null, invoice_number || null, purchase_date_utc ? new Date(purchase_date_utc) : new Date(),
                     global_id, terminal_id, local_op_seq, created_local_utc
                 ]
