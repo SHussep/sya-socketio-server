@@ -324,14 +324,25 @@ module.exports = (pool, io) => {
                     WHERE shift_id = $1
                 `, [shift.id]);
 
-                // 6. 🆕 Contar asignaciones pendientes de repartidor
+                // 6. 🆕 Contar asignaciones de repartidor (DOS tipos diferentes)
                 // IMPORTANTE: Usar shift_global_id para compatibilidad Desktop-PostgreSQL
-                // Contar asignaciones CREADAS durante este turno (shift_global_id del vendedor/mostrador)
+
+                // 6A. Asignaciones CREADAS por este turno (vendedor/mostrador asignó mercancía)
                 // Solo contar asignaciones NO liquidadas (fecha_liquidacion IS NULL)
-                const assignmentsResult = await pool.query(`
-                    SELECT COUNT(*) as pending_assignments
+                const createdAssignmentsResult = await pool.query(`
+                    SELECT COUNT(*) as created_assignments
                     FROM repartidor_assignments ra
                     WHERE ra.shift_global_id = $1
+                      AND ra.fecha_liquidacion IS NULL
+                `, [shift.global_id]);
+
+                // 6B. Asignaciones RECIBIDAS por este turno (repartidor tiene mercancía asignada)
+                // Usar repartidor_shift_global_id para saber qué repartidor las tiene
+                // Solo contar asignaciones NO liquidadas (fecha_liquidacion IS NULL)
+                const receivedAssignmentsResult = await pool.query(`
+                    SELECT COUNT(*) as received_assignments
+                    FROM repartidor_assignments ra
+                    WHERE ra.repartidor_shift_global_id = $1
                       AND ra.fecha_liquidacion IS NULL
                 `, [shift.global_id]);
 
@@ -349,7 +360,9 @@ module.exports = (pool, io) => {
                     total_withdrawals: parseFloat(withdrawalsResult.rows[0]?.total_withdrawals || 0),
                     total_cash_payments: parseFloat(paymentsResult.rows[0]?.total_cash_payments || 0),
                     total_card_payments: parseFloat(paymentsResult.rows[0]?.total_card_payments || 0),
-                    pending_assignments: parseInt(assignmentsResult.rows[0]?.pending_assignments || 0),
+                    // 🚚 Asignaciones de repartidor (DOS contadores diferentes)
+                    created_assignments: parseInt(createdAssignmentsResult.rows[0]?.created_assignments || 0),
+                    received_assignments: parseInt(receivedAssignmentsResult.rows[0]?.received_assignments || 0),
                 });
             }
 
