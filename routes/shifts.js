@@ -217,7 +217,7 @@ module.exports = (pool, io) => {
             console.log(`[Shifts/History] 🎯 branchId final usado: ${branchId}`);
 
             let query = `
-                SELECT s.id, s.tenant_id, s.branch_id, s.employee_id, s.start_time, s.end_time,
+                SELECT s.id, s.global_id, s.tenant_id, s.branch_id, s.employee_id, s.start_time, s.end_time,
                        s.initial_amount, s.final_amount, s.transaction_counter, s.is_cash_cut_open,
                        s.created_at, s.updated_at,
                        COALESCE(NULLIF(CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, '')), ' '), e.username, 'Sin nombre') as employee_name,
@@ -325,13 +325,15 @@ module.exports = (pool, io) => {
                 `, [shift.id]);
 
                 // 6. 🆕 Contar asignaciones pendientes de repartidor
+                // IMPORTANTE: Usar shift_global_id para compatibilidad Desktop-PostgreSQL
+                // Contar asignaciones CREADAS durante este turno (shift_global_id del vendedor/mostrador)
                 // Solo contar asignaciones NO liquidadas (fecha_liquidacion IS NULL)
                 const assignmentsResult = await pool.query(`
                     SELECT COUNT(*) as pending_assignments
-                    FROM repartidor_assignments
-                    WHERE shift_id = $1
-                      AND fecha_liquidacion IS NULL
-                `, [shift.id]);
+                    FROM repartidor_assignments ra
+                    WHERE ra.shift_global_id = $1
+                      AND ra.fecha_liquidacion IS NULL
+                `, [shift.global_id]);
 
                 enrichedShifts.push({
                     ...shift,
