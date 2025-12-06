@@ -970,6 +970,16 @@ async function runMigrations() {
             `);
 
             if (checkPurchasesTable.rows[0].exists) {
+                // First, drop FK constraint on supplier_id if exists (suppliers aren't synced)
+                try {
+                    await client.query(`
+                        ALTER TABLE purchases DROP CONSTRAINT IF EXISTS purchases_supplier_id_fkey
+                    `);
+                    console.log('[Schema] ℹ️ Dropped purchases_supplier_id_fkey constraint (suppliers not synced)');
+                } catch (fkErr) {
+                    // Ignore if doesn't exist
+                }
+
                 const checkPurchaseGlobalId = await client.query(`
                     SELECT column_name
                     FROM information_schema.columns
