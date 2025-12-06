@@ -169,6 +169,7 @@ module.exports = (pool, io) => {
             query += ' ORDER BY s.start_time DESC LIMIT 1';
 
             console.log(`[Shifts Current] Fetching current shift - Tenant: ${tenantId}, Employee: ${employeeId}, Branch: ${branchId || 'all'}, isAdmin: ${isAdmin}`);
+            console.log(`[Shifts Current] Query params: ${JSON.stringify(params)}`);
 
             const result = await pool.query(query, params);
 
