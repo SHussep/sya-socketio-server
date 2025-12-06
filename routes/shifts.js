@@ -329,22 +329,23 @@ module.exports = (pool, io) => {
 
                 // 6A. Asignaciones CREADAS por este turno (vendedor/mostrador asignó mercancía)
                 // Solo contar asignaciones NO liquidadas (fecha_liquidacion IS NULL)
+                // FIX: Usar shift_id (INTEGER) en lugar de shift_global_id (no existe en la tabla)
                 const createdAssignmentsResult = await pool.query(`
                     SELECT COUNT(*) as created_assignments
                     FROM repartidor_assignments ra
-                    WHERE ra.shift_global_id = $1
+                    WHERE ra.shift_id = $1
                       AND ra.fecha_liquidacion IS NULL
-                `, [shift.global_id]);
+                `, [shift.id]);
 
                 // 6B. Asignaciones RECIBIDAS por este turno (repartidor tiene mercancía asignada)
-                // Usar repartidor_shift_global_id para saber qué repartidor las tiene
+                // Usar turno_repartidor_id (columna real) en lugar de repartidor_shift_global_id (no existe)
                 // Solo contar asignaciones NO liquidadas (fecha_liquidacion IS NULL)
                 const receivedAssignmentsResult = await pool.query(`
                     SELECT COUNT(*) as received_assignments
                     FROM repartidor_assignments ra
-                    WHERE ra.repartidor_shift_global_id = $1
+                    WHERE ra.turno_repartidor_id = $1
                       AND ra.fecha_liquidacion IS NULL
-                `, [shift.global_id]);
+                `, [shift.id]);
 
                 enrichedShifts.push({
                     ...shift,
