@@ -1091,6 +1091,38 @@ async function runMigrations() {
                 console.log('[Schema] ℹ️  Database clean skipped (CLEAN_DATABASE_ON_START not set to "true")');
             }
 
+            // Patch: Add unit_abbreviation to repartidor_assignments if missing
+            const checkRepartidorAssignmentsTable = await client.query(`
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'repartidor_assignments'
+                )
+            `);
+
+            if (checkRepartidorAssignmentsTable.rows[0].exists) {
+                const checkUnitAbbreviation = await client.query(`
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'repartidor_assignments'
+                    AND column_name = 'unit_abbreviation'
+                `);
+
+                if (checkUnitAbbreviation.rows.length === 0) {
+                    console.log('[Schema] 📝 Adding missing column: repartidor_assignments.unit_abbreviation');
+                    await client.query(`
+                        ALTER TABLE repartidor_assignments
+                        ADD COLUMN unit_abbreviation VARCHAR(10) DEFAULT 'kg'
+                    `);
+                    // Backfill existing records
+                    await client.query(`
+                        UPDATE repartidor_assignments
+                        SET unit_abbreviation = 'kg'
+                        WHERE unit_abbreviation IS NULL
+                    `);
+                    console.log('[Schema] ✅ Column repartidor_assignments.unit_abbreviation added successfully');
+                }
+            }
+
             // 3. Always run seeds (idempotent - uses ON CONFLICT)
             console.log('[Seeds] 📝 Running seeds.sql...');
             const seedsPath = path.join(__dirname, 'seeds.sql');
