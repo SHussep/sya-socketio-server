@@ -692,16 +692,34 @@ module.exports = (pool, io) => {
     // ═══════════════════════════════════════════════════════════════
     router.get('/pending-review', async (req, res) => {
         try {
-            const { employee_id, tenant_id } = req.query;
+            const { employee_id, employee_global_id, tenant_id } = req.query;
 
-            if (!employee_id) {
+            // ✅ IDEMPOTENCIA: Aceptar employee_global_id O employee_id
+            if (!employee_id && !employee_global_id) {
                 return res.status(400).json({
                     success: false,
-                    message: 'employee_id es requerido'
+                    message: 'employee_id o employee_global_id es requerido'
                 });
             }
 
-            console.log(`[Expenses/PendingReview] 🔍 Buscando gastos pendientes para employee_id: ${employee_id}`);
+            // Resolver employee_global_id → PostgreSQL ID si se proporciona
+            let resolvedEmployeeId = employee_id;
+            if (employee_global_id && !employee_id) {
+                console.log(`[Expenses/PendingReview] 🔍 Resolviendo employee_global_id: ${employee_global_id}`);
+                const empResult = await pool.query(
+                    'SELECT id FROM employees WHERE global_id = $1' + (tenant_id ? ' AND tenant_id = $2' : ''),
+                    tenant_id ? [employee_global_id, tenant_id] : [employee_global_id]
+                );
+                if (empResult.rows.length > 0) {
+                    resolvedEmployeeId = empResult.rows[0].id;
+                    console.log(`[Expenses/PendingReview] ✅ Empleado resuelto: ${employee_global_id} → ${resolvedEmployeeId}`);
+                } else {
+                    console.log(`[Expenses/PendingReview] ⚠️ Empleado no encontrado: ${employee_global_id}`);
+                    return res.json({ success: true, count: 0, data: [] });
+                }
+            }
+
+            console.log(`[Expenses/PendingReview] 🔍 Buscando gastos pendientes para employee_id: ${resolvedEmployeeId}`);
 
             // ✅ FILTRO: Solo gastos de MÓVIL pendientes de aprobación
             // - reviewed_by_desktop = false (no aprobado)
@@ -745,7 +763,7 @@ module.exports = (pool, io) => {
             ORDER BY e.created_at DESC
         `;
 
-            const params = tenant_id ? [employee_id, tenant_id] : [employee_id];
+            const params = tenant_id ? [resolvedEmployeeId, tenant_id] : [resolvedEmployeeId];
             const result = await pool.query(query, params);
 
             console.log(`[Expenses/PendingReview] ✅ Encontrados ${result.rows.length} gastos pendientes`);
