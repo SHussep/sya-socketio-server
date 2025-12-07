@@ -1081,6 +1081,49 @@ const MIGRATIONS = [
                 // Don't throw - continue even if there are issues
             }
         }
+    },
+    {
+        id: '041_add_unit_abbreviation_to_repartidor_assignments',
+        name: 'Add unit_abbreviation column to repartidor_assignments',
+        async execute(client) {
+            console.log('🔄 Ejecutando migración 041: Agregando unit_abbreviation a repartidor_assignments...');
+
+            try {
+                // Check if column exists
+                const checkColumn = await client.query(`
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'repartidor_assignments' AND column_name = 'unit_abbreviation'
+                `);
+
+                if (checkColumn.rows.length > 0) {
+                    console.log('ℹ️  Migración 041: Columna unit_abbreviation ya existe');
+                    return;
+                }
+
+                // Add unit_abbreviation column
+                console.log('   📝 Agregando columna unit_abbreviation...');
+                await client.query(`
+                    ALTER TABLE repartidor_assignments
+                    ADD COLUMN unit_abbreviation VARCHAR(10) DEFAULT 'kg'
+                `);
+                console.log('   ✅ Columna unit_abbreviation agregada');
+
+                // Backfill existing records
+                console.log('   📝 Rellenando registros existentes con "kg"...');
+                await client.query(`
+                    UPDATE repartidor_assignments
+                    SET unit_abbreviation = 'kg'
+                    WHERE unit_abbreviation IS NULL
+                `);
+                console.log('   ✅ Registros existentes actualizados');
+
+                console.log('✅ Migración 041 completada: unit_abbreviation agregado a repartidor_assignments');
+            } catch (error) {
+                console.log('⚠️  Migración 041: ' + error.message);
+                // Don't throw - continue even if there are issues
+            }
+        }
     }
 ];
 
