@@ -208,6 +208,8 @@ CREATE TABLE IF NOT EXISTS expenses (
 
     -- Mobile app review system
     reviewed_by_desktop BOOLEAN DEFAULT FALSE,  -- TRUE = aprobado por Desktop, FALSE = pendiente de revisión
+    reviewed_by_employee_id INTEGER REFERENCES employees(id) ON DELETE SET NULL,  -- Quién aprobó el gasto
+    reviewed_at TIMESTAMP,  -- Cuándo se aprobó
 
     -- Soft delete (legacy - usar status='deleted' preferiblemente)
     is_active BOOLEAN DEFAULT TRUE,

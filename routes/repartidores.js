@@ -299,8 +299,10 @@ module.exports = (pool) => {
                         vd.descripcion_producto,
                         vd.cantidad,
                         vd.precio_unitario,
-                        vd.total_linea
+                        vd.total_linea,
+                        COALESCE(p.unidad_venta, 'kg') as unit_abbreviation
                     FROM ventas_detalle vd
+                    LEFT JOIN productos p ON vd.id_producto = p.id_producto
                     WHERE vd.id_venta = ANY($1)
                     ORDER BY vd.id_venta, vd.id_venta_detalle
                 `;
@@ -316,7 +318,8 @@ module.exports = (pool) => {
                         product_name: item.descripcion_producto,
                         quantity: parseFloat(item.cantidad),
                         unit_price: parseFloat(item.precio_unitario),
-                        line_total: parseFloat(item.total_linea)
+                        line_total: parseFloat(item.total_linea),
+                        unit_abbreviation: item.unit_abbreviation || 'kg'
                     });
                 });
 
@@ -421,6 +424,7 @@ module.exports = (pool) => {
                     ra.assigned_quantity,
                     ra.assigned_amount,
                     ra.repartidor_shift_id,
+                    COALESCE(ra.unit_abbreviation, 'kg') as unit_abbreviation,
                     v.ticket_number
                 FROM repartidor_returns rr
                 INNER JOIN repartidor_assignments ra ON rr.assignment_id = ra.id
@@ -454,7 +458,8 @@ module.exports = (pool) => {
                     registered_by_name: row.registered_by_name,
                     assigned_quantity: parseFloat(row.assigned_quantity),
                     assigned_amount: parseFloat(row.assigned_amount),
-                    repartidor_shift_id: row.repartidor_shift_id
+                    repartidor_shift_id: row.repartidor_shift_id,
+                    unit_abbreviation: row.unit_abbreviation || 'kg'
                 }))
             });
         } catch (error) {
@@ -824,6 +829,49 @@ module.exports = (pool) => {
                     WHERE ra.employee_id = $1 AND ra.tenant_id = $2
                     GROUP BY ra.repartidor_shift_id
                 ),
+                -- Cantidades agrupadas por unidad de medida (para mostrar "60 kg · 2 pz")
+                shift_assigned_by_unit AS (
+                    SELECT
+                        ra.repartidor_shift_id,
+                        json_agg(json_build_object(
+                            'unit', COALESCE(ra.unit_abbreviation, 'kg'),
+                            'quantity', sum_qty,
+                            'amount', sum_amt
+                        )) as assigned_by_unit
+                    FROM (
+                        SELECT
+                            repartidor_shift_id,
+                            COALESCE(unit_abbreviation, 'kg') as unit_abbreviation,
+                            SUM(assigned_quantity) as sum_qty,
+                            SUM(assigned_amount) as sum_amt
+                        FROM repartidor_assignments
+                        WHERE employee_id = $1 AND tenant_id = $2
+                        GROUP BY repartidor_shift_id, COALESCE(unit_abbreviation, 'kg')
+                    ) ra
+                    GROUP BY ra.repartidor_shift_id
+                ),
+                shift_returned_by_unit AS (
+                    SELECT
+                        ra.repartidor_shift_id,
+                        json_agg(json_build_object(
+                            'unit', COALESCE(ra.unit_abbreviation, 'kg'),
+                            'quantity', sum_qty,
+                            'amount', sum_amt
+                        )) as returned_by_unit
+                    FROM (
+                        SELECT
+                            a.repartidor_shift_id,
+                            COALESCE(a.unit_abbreviation, 'kg') as unit_abbreviation,
+                            SUM(rr.quantity) as sum_qty,
+                            SUM(rr.amount) as sum_amt
+                        FROM repartidor_returns rr
+                        INNER JOIN repartidor_assignments a ON rr.assignment_id = a.id
+                        WHERE rr.employee_id = $1 AND rr.tenant_id = $2
+                          AND (rr.status IS NULL OR rr.status != 'deleted')
+                        GROUP BY a.repartidor_shift_id, COALESCE(a.unit_abbreviation, 'kg')
+                    ) ra
+                    GROUP BY ra.repartidor_shift_id
+                ),
                 shift_returns AS (
                     SELECT
                         ra.repartidor_shift_id,
@@ -881,7 +929,10 @@ module.exports = (pool) => {
                     COALESCE(sd.debt_count, 0) as debt_count,
                     -- Neto a entregar
                     (COALESCE(sa.total_assigned_amount, 0) - COALESCE(sr.total_returned_amount, 0) - COALESCE(se.total_expenses, 0)) as net_to_deliver,
-                    (COALESCE(sa.total_assigned_kg, 0) - COALESCE(sr.total_returned_kg, 0)) as net_delivered_kg
+                    (COALESCE(sa.total_assigned_kg, 0) - COALESCE(sr.total_returned_kg, 0)) as net_delivered_kg,
+                    -- Cantidades agrupadas por unidad
+                    sabu.assigned_by_unit,
+                    srbu.returned_by_unit
                 FROM shifts s
                 LEFT JOIN employees e ON s.employee_id = e.id
                 LEFT JOIN branches b ON s.branch_id = b.id
@@ -889,6 +940,8 @@ module.exports = (pool) => {
                 LEFT JOIN shift_returns sr ON s.id = sr.repartidor_shift_id
                 LEFT JOIN shift_expenses se ON s.id = se.shift_id
                 LEFT JOIN shift_debts sd ON s.id = sd.shift_id
+                LEFT JOIN shift_assigned_by_unit sabu ON s.id = sabu.repartidor_shift_id
+                LEFT JOIN shift_returned_by_unit srbu ON s.id = srbu.repartidor_shift_id
                 WHERE s.employee_id = $1 AND s.tenant_id = $2
             `;
 
@@ -937,7 +990,10 @@ module.exports = (pool) => {
                     debt_count: parseInt(row.debt_count),
                     // Netos
                     net_to_deliver: parseFloat(row.net_to_deliver),
-                    net_delivered_kg: parseFloat(row.net_delivered_kg)
+                    net_delivered_kg: parseFloat(row.net_delivered_kg),
+                    // Cantidades agrupadas por unidad (para mostrar "60 kg · 2 pz")
+                    assigned_by_unit: row.assigned_by_unit || [],
+                    returned_by_unit: row.returned_by_unit || []
                 })),
                 count: result.rows.length
             });

@@ -1123,6 +1123,50 @@ async function runMigrations() {
                 }
             }
 
+            // Patch: Add expense review tracking columns to expenses table
+            const checkExpensesTable = await client.query(`
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'expenses'
+                )
+            `);
+
+            if (checkExpensesTable.rows[0].exists) {
+                // Add reviewed_by_employee_id if missing
+                const checkReviewedByEmployee = await client.query(`
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'expenses'
+                    AND column_name = 'reviewed_by_employee_id'
+                `);
+
+                if (checkReviewedByEmployee.rows.length === 0) {
+                    console.log('[Schema] 📝 Adding missing column: expenses.reviewed_by_employee_id');
+                    await client.query(`
+                        ALTER TABLE expenses
+                        ADD COLUMN reviewed_by_employee_id INTEGER REFERENCES employees(id) ON DELETE SET NULL
+                    `);
+                    console.log('[Schema] ✅ Column expenses.reviewed_by_employee_id added successfully');
+                }
+
+                // Add reviewed_at if missing
+                const checkReviewedAt = await client.query(`
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'expenses'
+                    AND column_name = 'reviewed_at'
+                `);
+
+                if (checkReviewedAt.rows.length === 0) {
+                    console.log('[Schema] 📝 Adding missing column: expenses.reviewed_at');
+                    await client.query(`
+                        ALTER TABLE expenses
+                        ADD COLUMN reviewed_at TIMESTAMP
+                    `);
+                    console.log('[Schema] ✅ Column expenses.reviewed_at added successfully');
+                }
+            }
+
             // 3. Always run seeds (idempotent - uses ON CONFLICT)
             console.log('[Seeds] 📝 Running seeds.sql...');
             const seedsPath = path.join(__dirname, 'seeds.sql');
