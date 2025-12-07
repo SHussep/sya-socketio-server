@@ -587,6 +587,7 @@ CREATE TABLE IF NOT EXISTS repartidor_assignments (
     assigned_quantity NUMERIC(10, 2) NOT NULL,
     assigned_amount NUMERIC(10, 2) NOT NULL,
     unit_price NUMERIC(10, 2) NOT NULL,
+    unit_abbreviation VARCHAR(10) DEFAULT 'kg',  -- Product unit (kg, pz, L, etc.)
 
     -- Status
     status VARCHAR(30) NOT NULL DEFAULT 'pending',  -- pending | in_progress | liquidated | cancelled

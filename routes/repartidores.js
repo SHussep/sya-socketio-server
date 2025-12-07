@@ -185,6 +185,7 @@ module.exports = (pool) => {
                     ra.assigned_quantity,
                     ra.assigned_amount,
                     ra.unit_price,
+                    COALESCE(ra.unit_abbreviation, 'kg') as unit_abbreviation,
                     ra.status,
                     ra.fecha_asignacion,
                     ra.fecha_liquidacion,
@@ -338,6 +339,7 @@ module.exports = (pool) => {
                         assigned_quantity: parseFloat(row.assigned_quantity),
                         assigned_amount: parseFloat(row.assigned_amount),
                         unit_price: parseFloat(row.unit_price),
+                        unit_abbreviation: row.unit_abbreviation || 'kg', // Unidad del producto
                         status: row.status,
                         fecha_asignacion: row.fecha_asignacion,
                         fecha_liquidacion: row.fecha_liquidacion,

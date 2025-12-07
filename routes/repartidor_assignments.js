@@ -38,6 +38,7 @@ function createRepartidorAssignmentRoutes(io) {
       assigned_quantity,
       assigned_amount,
       unit_price,
+      unit_abbreviation,  // Product unit (kg, pz, L, etc.)
       status,
       fecha_asignacion,
       fecha_liquidacion,
@@ -228,12 +229,12 @@ function createRepartidorAssignmentRoutes(io) {
         INSERT INTO repartidor_assignments (
           tenant_id, branch_id, venta_id, employee_id,
           created_by_employee_id, shift_id, repartidor_shift_id,
-          assigned_quantity, assigned_amount, unit_price,
+          assigned_quantity, assigned_amount, unit_price, unit_abbreviation,
           status, fecha_asignacion, fecha_liquidacion, observaciones,
           global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-          $15::uuid, $16::uuid, $17, $18, $19
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
+          $16::uuid, $17::uuid, $18, $19, $20
         )
         ON CONFLICT (global_id) DO UPDATE
         SET status = EXCLUDED.status,
@@ -253,6 +254,7 @@ function createRepartidorAssignmentRoutes(io) {
         parseFloat(assigned_quantity),
         parseFloat(assigned_amount),
         parseFloat(unit_price),
+        unit_abbreviation || 'kg',      // ✅ Unidad del producto (default 'kg')
         status || 'pending',
         fecha_asignacion || new Date().toISOString(),
         fecha_liquidacion || null,
@@ -518,6 +520,7 @@ function createRepartidorAssignmentRoutes(io) {
           ra.assigned_quantity,
           ra.assigned_amount,
           ra.unit_price,
+          ra.unit_abbreviation,
           ra.status,
           ra.fecha_asignacion,
           ra.fecha_liquidacion,
