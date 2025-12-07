@@ -520,7 +520,7 @@ function createRepartidorAssignmentRoutes(io) {
           ra.assigned_quantity,
           ra.assigned_amount,
           ra.unit_price,
-          ra.unit_abbreviation,
+          'kg' as unit_abbreviation,
           ra.status,
           ra.fecha_asignacion,
           ra.fecha_liquidacion,
