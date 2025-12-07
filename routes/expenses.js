@@ -64,12 +64,16 @@ module.exports = (pool, io) => {
                     e.id_turno as shift_id,
                     e.status,
                     e.reviewed_by_desktop,
+                    e.reviewed_by_employee_id,
+                    CONCAT(reviewer.first_name, ' ', reviewer.last_name) as reviewed_by_name,
+                    e.reviewed_at,
                     e.is_active,
                     e.created_at,
                     e.updated_at
                 FROM expenses e
                 LEFT JOIN employees emp ON e.employee_id = emp.id
                 LEFT JOIN expense_categories cat ON e.category_id = cat.id
+                LEFT JOIN employees reviewer ON e.reviewed_by_employee_id = reviewer.id
                 WHERE e.branch_id = $1
                   AND e.is_active = true
             `;
@@ -344,7 +348,91 @@ module.exports = (pool, io) => {
                 }
             }
 
-            // Buscar o crear categoría
+            // ═══════════════════════════════════════════════════════════════════════════════
+            // RESOLUCIÓN DE CATEGORÍA GLOBAL (IDs CANÓNICOS)
+            // ═══════════════════════════════════════════════════════════════════════════════
+            // Usamos global_expense_categories (sin tenant_id) con IDs fijos.
+            // Si no existe la categoría, asignamos "Otros Gastos" (ID 25).
+            // ═══════════════════════════════════════════════════════════════════════════════
+            let globalCategoryId = null;
+
+            // 1. Buscar en global_expense_categories por nombre exacto o variantes
+            const globalCatResult = await pool.query(
+                `SELECT id FROM global_expense_categories
+                 WHERE LOWER(name) = LOWER($1)
+                    OR LOWER(name) LIKE '%' || LOWER($1) || '%'
+                 LIMIT 1`,
+                [category]
+            );
+
+            if (globalCatResult.rows.length > 0) {
+                globalCategoryId = globalCatResult.rows[0].id;
+                console.log(`[Sync/Expenses] ✅ Categoría global encontrada: '${category}' → ID ${globalCategoryId}`);
+            } else {
+                // 2. Mapeo manual de variantes conocidas → IDs canónicos
+                // IMPORTANTE: Incluye nombres canónicos de DomainConstants.cs y Flutter
+                const categoryMappings = {
+                    // --- Materias Primas (IDs 1-10) ---
+                    'maíz / maseca / harina': 1,
+                    'maíz': 1,
+                    'maiz': 1,
+                    'maseca': 1,
+                    'harina': 1,
+                    'gas lp': 2,
+                    'gaslp': 2,
+                    'gas': 2,
+                    'combustible vehículos': 3,  // ✅ Nombre canónico Flutter
+                    'combustible vehiculos': 3,
+                    'gasolina': 3,
+                    'combustible': 3,
+                    'diesel': 3,
+                    // --- Operativos (IDs 11-20) ---
+                    'consumibles (papel, bolsas)': 11,  // ✅ Nombre canónico
+                    'consumibles': 11,
+                    'bolsas': 11,
+                    'papel': 11,
+                    'refacciones moto': 12,
+                    'moto': 12,
+                    'refacciones auto': 13,
+                    'auto': 13,
+                    'reparaciones': 13,
+                    'mantenimiento maquinaria': 14,  // ✅ Nombre canónico
+                    'mantenimiento': 14,
+                    'maquinaria': 14,
+                    'comida': 15,
+                    'almuerzo': 15,
+                    'desayuno': 15,
+                    'cena': 15,
+                    'viáticos': 15,
+                    'viaticos': 15,
+                    // --- Administrativos (IDs 21-30) ---
+                    'sueldos y salarios': 21,  // ✅ Nombre canónico
+                    'sueldos': 21,
+                    'salarios': 21,
+                    'impuestos (isr, iva)': 22,  // ✅ Nombre canónico
+                    'impuestos': 22,
+                    'isr': 22,
+                    'iva': 22,
+                    'servicios (luz, agua, teléfono)': 23,  // ✅ Nombre canónico
+                    'servicios (luz, agua, telefono)': 23,
+                    'servicios': 23,
+                    'luz': 23,
+                    'agua': 23,
+                    'telefono': 23,
+                    'teléfono': 23,
+                    'limpieza': 24,
+                    'otros gastos': 25,  // ✅ Nombre canónico
+                    'otros': 25,
+                    'otro': 25,
+                    'transporte': 25  // Mapea a Otros
+                };
+
+                const lowerCategory = (category || '').toLowerCase().trim();
+                globalCategoryId = categoryMappings[lowerCategory] || 25;  // Default: Otros Gastos
+                console.log(`[Sync/Expenses] 🔄 Categoría mapeada: '${category}' → ID ${globalCategoryId}`);
+            }
+
+            // LEGACY: También guardar en expense_categories por tenant (compatibilidad)
             let categoryId = null;
             const catResult = await pool.query(
                 'SELECT id FROM expense_categories WHERE LOWER(name) = LOWER($1) AND tenant_id = $2',
@@ -359,7 +447,6 @@ module.exports = (pool, io) => {
                     [tenantId, category]
                 );
                 categoryId = newCat.rows[0].id;
-                console.log(`[Sync/Expenses] Categoría creada: ${category} (ID: ${categoryId})`);
             }
 
             // ✅ Use client-provided UTC timestamp (already converted to UTC by Desktop)
@@ -408,14 +495,14 @@ module.exports = (pool, io) => {
                 return res.json({ success: true, data: existing.rows[0], message: 'Gasto ya registrado (idempotente)' });
             } else {
                 // No existe, INSERT nuevo
-                console.log(`[Sync/Expenses] ➕ Insertando nuevo gasto: ${finalGlobalId} (status: ${finalStatus})`);
+                console.log(`[Sync/Expenses] ➕ Insertando nuevo gasto: ${finalGlobalId} (status: ${finalStatus}, globalCategoryId: ${globalCategoryId})`);
                 result = await pool.query(
                     `INSERT INTO expenses (
-                        tenant_id, branch_id, employee_id, payment_type_id, id_turno, category_id, description, amount, quantity, expense_date,
+                        tenant_id, branch_id, employee_id, payment_type_id, id_turno, category_id, global_category_id, description, amount, quantity, expense_date,
                         status, reviewed_by_desktop,
                         global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw
                      )
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
                      RETURNING *`,
                     [
                         tenantId,
@@ -423,18 +510,19 @@ module.exports = (pool, io) => {
                         finalEmployeeId,
                         payment_type_id,              // $4
                         finalShiftId,                 // $5 - Turno (resuelto por GlobalId)
-                        categoryId,                   // $6
-                        description || '',            // $7
-                        numericAmount,                // $8
-                        quantity || null,             // $9 - Cantidad (litros, kg, etc.)
-                        expenseDate,                  // $10
-                        finalStatus,                  // $11 - Status (draft/confirmed/deleted)
-                        reviewedValue,                // $12 - TRUE para Desktop, FALSE para Mobile
-                        finalGlobalId,                // $13 - UUID (Desktop) o generado (Mobile)
-                        finalTerminalId,              // $14 - UUID (Desktop) o generado (Mobile)
-                        finalLocalOpSeq,              // $15 - Sequence (Desktop) o 0 (Mobile)
-                        finalCreatedLocalUtc,         // $16 - ISO 8601 timestamp
-                        finalDeviceEventRaw           // $17 - Raw ticks
+                        categoryId,                   // $6 - LEGACY: tenant-specific category
+                        globalCategoryId,             // $7 - CANÓNICO: global category ID
+                        description || '',            // $8
+                        numericAmount,                // $9
+                        quantity || null,             // $10 - Cantidad (litros, kg, etc.)
+                        expenseDate,                  // $11
+                        finalStatus,                  // $12 - Status (draft/confirmed/deleted)
+                        reviewedValue,                // $13 - TRUE para Desktop, FALSE para Mobile
+                        finalGlobalId,                // $14 - UUID (Desktop) o generado (Mobile)
+                        finalTerminalId,              // $15 - UUID (Desktop) o generado (Mobile)
+                        finalLocalOpSeq,              // $16 - Sequence (Desktop) o 0 (Mobile)
+                        finalCreatedLocalUtc,         // $17 - ISO 8601 timestamp
+                        finalDeviceEventRaw           // $18 - Raw ticks
                     ]
                 );
             }
@@ -727,6 +815,7 @@ module.exports = (pool, io) => {
             // - Excluir gastos de Desktop que tienen local_op_seq > 0
             // - ✅ SOLO de turnos ABIERTOS (is_cash_cut_open = true)
             // - Los gastos de turnos cerrados son eliminados físicamente (ver shifts.js)
+            // ✅ CRÍTICO: Incluir GlobalIds para que Desktop pueda resolver IDs locales
             const query = `
             SELECT
                 e.id,
@@ -734,9 +823,11 @@ module.exports = (pool, io) => {
                 e.tenant_id,
                 e.branch_id,
                 e.employee_id,
+                emp.global_id as employee_global_id,
                 CONCAT(emp.first_name, ' ', emp.last_name) as employee_name,
-                cat.name as category,
-                cat.id as category_id,
+                COALESCE(gcat.name, cat.name) as category,
+                COALESCE(e.global_category_id, cat.id) as category_id,
+                e.global_category_id,
                 e.description,
                 e.amount,
                 e.quantity,
@@ -754,6 +845,7 @@ module.exports = (pool, io) => {
             FROM expenses e
             LEFT JOIN employees emp ON e.employee_id = emp.id
             LEFT JOIN expense_categories cat ON e.category_id = cat.id
+            LEFT JOIN global_expense_categories gcat ON e.global_category_id = gcat.id
             LEFT JOIN shifts s ON e.id_turno = s.id
             WHERE e.employee_id = $1
               AND e.reviewed_by_desktop = false
@@ -793,7 +885,7 @@ module.exports = (pool, io) => {
     router.patch('/:global_id/approve', async (req, res) => {
         try {
             const { global_id } = req.params;
-            const { tenant_id } = req.body;
+            const { tenant_id, reviewer_employee_id, reviewer_employee_global_id } = req.body;
 
             console.log(`[Expenses/Approve] ✅ Aprobando gasto ${global_id} - Tenant: ${tenant_id}`);
 
@@ -810,17 +902,31 @@ module.exports = (pool, io) => {
                 });
             }
 
-            // Marcar como revisado
+            // Resolver reviewer_employee_global_id → PostgreSQL ID si se proporciona
+            let reviewerEmployeeId = reviewer_employee_id || null;
+            if (reviewer_employee_global_id && !reviewer_employee_id) {
+                const empResult = await pool.query(
+                    'SELECT id FROM employees WHERE global_id = $1 AND tenant_id = $2',
+                    [reviewer_employee_global_id, tenant_id]
+                );
+                if (empResult.rows.length > 0) {
+                    reviewerEmployeeId = empResult.rows[0].id;
+                }
+            }
+
+            // Marcar como revisado con información de quién aprobó
             const result = await pool.query(
                 `UPDATE expenses
-             SET reviewed_by_desktop = true,
-                 updated_at = NOW()
-             WHERE global_id = $1 AND tenant_id = $2
-             RETURNING *`,
-                [global_id, tenant_id]
+                 SET reviewed_by_desktop = true,
+                     reviewed_by_employee_id = $3,
+                     reviewed_at = NOW(),
+                     updated_at = NOW()
+                 WHERE global_id = $1 AND tenant_id = $2
+                 RETURNING *`,
+                [global_id, tenant_id, reviewerEmployeeId]
             );
 
-            console.log(`[Expenses/Approve] ✅ Gasto ${global_id} aprobado exitosamente`);
+            console.log(`[Expenses/Approve] ✅ Gasto ${global_id} aprobado por employee_id: ${reviewerEmployeeId}`);
 
             res.json({
                 success: true,
