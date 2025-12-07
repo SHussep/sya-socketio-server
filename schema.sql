@@ -179,15 +179,22 @@ CREATE TABLE IF NOT EXISTS shifts (
 
 CREATE UNIQUE INDEX IF NOT EXISTS shifts_uq_global_id ON shifts(global_id);
 
--- expense_categories (categorías de gastos)
-CREATE TABLE IF NOT EXISTS expense_categories (
-    id SERIAL PRIMARY KEY,
-    tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-    name VARCHAR(100) NOT NULL,
+-- global_expense_categories (categorías de gastos GLOBALES con IDs canónicos)
+-- NO usar SERIAL - Los IDs son fijos y deben coincidir con Desktop y Mobile
+CREATE TABLE IF NOT EXISTS global_expense_categories (
+    id INTEGER PRIMARY KEY,
+    name VARCHAR(100) NOT NULL UNIQUE,
     description TEXT,
+    is_measurable BOOLEAN DEFAULT FALSE,
+    unit_abbreviation VARCHAR(10),
+    is_available BOOLEAN DEFAULT TRUE,
+    sort_order INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX IF NOT EXISTS idx_global_expense_categories_name ON global_expense_categories(name);
+CREATE INDEX IF NOT EXISTS idx_global_expense_categories_sort ON global_expense_categories(sort_order);
 
 -- expenses (gastos)
 CREATE TABLE IF NOT EXISTS expenses (
@@ -196,7 +203,7 @@ CREATE TABLE IF NOT EXISTS expenses (
     branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
     employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
     id_turno INTEGER REFERENCES shifts(id) ON DELETE SET NULL,
-    category_id INTEGER REFERENCES expense_categories(id) ON DELETE SET NULL,
+    global_category_id INTEGER REFERENCES global_expense_categories(id) ON DELETE SET NULL,
     description TEXT,
     amount DECIMAL(10, 2) NOT NULL,
     quantity DECIMAL(10, 3),  -- Cantidad medible (litros para combustible, kg para materiales, etc.)

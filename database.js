@@ -246,16 +246,18 @@ async function initializeDatabase() {
             )
         `);
 
-        // Tabla: expense_categories (categorías de gastos)
+        // Tabla: global_expense_categories (categorías de gastos GLOBALES con IDs canónicos 1-14)
         await client.query(`
-            CREATE TABLE IF NOT EXISTS expense_categories (
-                id SERIAL PRIMARY KEY,
-                tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-                name VARCHAR(100) NOT NULL,
+            CREATE TABLE IF NOT EXISTS global_expense_categories (
+                id INTEGER PRIMARY KEY,
+                name VARCHAR(100) NOT NULL UNIQUE,
                 description TEXT,
-                is_active BOOLEAN DEFAULT true,
+                is_measurable BOOLEAN DEFAULT FALSE,
+                unit_abbreviation VARCHAR(10),
+                is_available BOOLEAN DEFAULT TRUE,
+                sort_order INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(tenant_id, name)
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         `);
 
@@ -319,7 +321,7 @@ async function initializeDatabase() {
                 tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
                 branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
                 employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
-                category_id INTEGER REFERENCES expense_categories(id) ON DELETE SET NULL,
+                global_category_id INTEGER REFERENCES global_expense_categories(id) ON DELETE SET NULL,
                 description TEXT,
                 amount DECIMAL(10, 2) NOT NULL,
                 expense_date TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -542,12 +544,12 @@ async function initializeDatabase() {
         }
         */
 
-        // Migraciones para expenses - agregar category_id
+        // Migraciones para expenses - agregar global_category_id
         try {
-            await client.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS category_id INTEGER REFERENCES expense_categories(id) ON DELETE SET NULL`);
-            console.log('[DB] ✅ Columna expenses.category_id verificada/agregada');
+            await client.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS global_category_id INTEGER REFERENCES global_expense_categories(id) ON DELETE SET NULL`);
+            console.log('[DB] ✅ Columna expenses.global_category_id verificada/agregada');
         } catch (error) {
-            console.log('[DB] ⚠️ expenses.category_id:', error.message);
+            console.log('[DB] ⚠️ expenses.global_category_id:', error.message);
         }
 
         // ⚠️ MIGRACIONES OBSOLETAS: guardian_events → ahora se usan tablas específicas (migration 057)
@@ -1184,7 +1186,6 @@ async function runMigrations() {
                         description TEXT,
                         is_measurable BOOLEAN DEFAULT FALSE,
                         unit_abbreviation VARCHAR(10),
-                        icon VARCHAR(20),
                         is_available BOOLEAN DEFAULT TRUE,
                         sort_order INTEGER DEFAULT 0,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -1192,27 +1193,28 @@ async function runMigrations() {
                     )
                 `);
 
-                // Insert canonical categories
+                // Insert canonical categories with IDs 1-14
                 await client.query(`
-                    INSERT INTO global_expense_categories (id, name, description, is_measurable, unit_abbreviation, icon, sort_order)
+                    INSERT INTO global_expense_categories (id, name, description, is_measurable, unit_abbreviation, sort_order)
                     VALUES
-                        (1, 'Maíz / Maseca / Harina', 'Materias primas para producción', TRUE, 'kg', 'E9D2', 1),
-                        (2, 'Gas LP', 'Gas para producción (tortilladoras)', TRUE, 'L', 'E945', 2),
-                        (3, 'Combustible Vehículos', 'Gasolina/Diésel para reparto', TRUE, 'L', 'E804', 3),
-                        (11, 'Consumibles (Papel, Bolsas)', 'Materiales de empaque y consumibles', FALSE, NULL, 'E719', 11),
-                        (12, 'Refacciones Moto', 'Refacciones para motocicletas de reparto', FALSE, NULL, 'E7EE', 12),
-                        (13, 'Refacciones Auto', 'Refacciones para vehículos de reparto', FALSE, NULL, 'E804', 13),
-                        (14, 'Mantenimiento Maquinaria', 'Mantenimiento de tortilladoras y equipo', FALSE, NULL, 'E90F', 14),
-                        (15, 'Comida', 'Viáticos y alimentación de repartidores', FALSE, NULL, 'E799', 15),
-                        (21, 'Sueldos y Salarios', 'Nómina de empleados', FALSE, NULL, 'E716', 21),
-                        (22, 'Impuestos (ISR, IVA)', 'Obligaciones fiscales', FALSE, NULL, 'E8EF', 22),
-                        (23, 'Servicios (Luz, Agua, Teléfono)', 'Servicios públicos y comunicación', FALSE, NULL, 'E80F', 23),
-                        (24, 'Limpieza', 'Materiales y servicios de limpieza', FALSE, NULL, 'E894', 24),
-                        (25, 'Otros Gastos', 'Gastos no clasificados', FALSE, NULL, 'E712', 25)
+                        (1, 'Maíz / Maseca / Harina', 'Materias primas', TRUE, 'kg', 1),
+                        (2, 'Gas LP', 'Gas para producción', TRUE, 'L', 2),
+                        (3, 'Combustible Vehículos', 'Gasolina/Diésel para reparto', TRUE, 'L', 3),
+                        (4, 'Consumibles (Papel, Bolsas)', 'Materiales empaque', FALSE, NULL, 4),
+                        (5, 'Refacciones Moto', 'Refacciones moto', FALSE, NULL, 5),
+                        (6, 'Refacciones Auto', 'Refacciones auto', FALSE, NULL, 6),
+                        (7, 'Mantenimiento Maquinaria', 'Mantenimiento equipo', FALSE, NULL, 7),
+                        (8, 'Sueldos y Salarios', 'Nómina', FALSE, NULL, 8),
+                        (9, 'Impuestos (ISR, IVA)', 'Obligaciones fiscales', FALSE, NULL, 9),
+                        (10, 'Servicios (Luz, Agua, Teléfono)', 'Servicios públicos', FALSE, NULL, 10),
+                        (11, 'Limpieza', 'Materiales limpieza', FALSE, NULL, 11),
+                        (12, 'Otros Gastos', 'No clasificados', FALSE, NULL, 12),
+                        (13, 'Comida', 'Viáticos y alimentación', FALSE, NULL, 13),
+                        (14, 'Otros', 'Otros gastos', FALSE, NULL, 14)
                     ON CONFLICT (id) DO NOTHING
                 `);
 
-                console.log('[Schema] ✅ global_expense_categories table created with canonical IDs');
+                console.log('[Schema] ✅ global_expense_categories table created with canonical IDs 1-14');
             }
 
             // Patch: Add global_category_id to expenses if missing

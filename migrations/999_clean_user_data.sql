@@ -25,7 +25,8 @@ DROP TABLE IF EXISTS repartidor_shift_cash_snapshot CASCADE;
 DROP TABLE IF EXISTS shift_cash_snapshot CASCADE;
 DROP TABLE IF EXISTS employee_debts CASCADE;
 DROP TABLE IF EXISTS expenses CASCADE;
-DROP TABLE IF EXISTS expense_categories CASCADE;
+DROP TABLE IF EXISTS expense_categories CASCADE;          -- Tabla OBSOLETA (ya no se usa)
+DROP TABLE IF EXISTS global_expense_categories CASCADE;   -- Recrear con IDs canónicos 1-14
 DROP TABLE IF EXISTS deposits CASCADE;
 DROP TABLE IF EXISTS withdrawals CASCADE;
 DROP TABLE IF EXISTS cash_cuts CASCADE;

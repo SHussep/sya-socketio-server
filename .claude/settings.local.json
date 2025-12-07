@@ -28,7 +28,11 @@
       "Bash(curl:*)",
       "WebFetch(domain:syatortillerias.com.mx)",
       "Bash(npm run build:*)",
-      "Bash(npm run dev:*)"
+      "Bash(npm run dev:*)",
+      "Bash(del C:SYAsya-socketio-servertest_write.txt)",
+      "Bash(rm:*)",
+      "Bash(dir /B \"C:\\Users\\saul_\\source\\repos\\SyaTortilleriasWinUi\" /S)",
+      "Bash(dir:*)"
     ],
     "deny": [],
     "ask": []

@@ -54,8 +54,8 @@ module.exports = (pool, io) => {
                     e.branch_id,
                     e.employee_id,
                     CONCAT(emp.first_name, ' ', emp.last_name) as employee_name,
-                    cat.name as category,
-                    cat.id as category_id,
+                    gcat.name as category,
+                    e.global_category_id as category_id,
                     e.description,
                     e.amount,
                     e.quantity,
@@ -72,7 +72,7 @@ module.exports = (pool, io) => {
                     e.updated_at
                 FROM expenses e
                 LEFT JOIN employees emp ON e.employee_id = emp.id
-                LEFT JOIN expense_categories cat ON e.category_id = cat.id
+                LEFT JOIN global_expense_categories gcat ON e.global_category_id = gcat.id
                 LEFT JOIN employees reviewer ON e.reviewed_by_employee_id = reviewer.id
                 WHERE e.branch_id = $1
                   AND e.is_active = true
@@ -166,29 +166,28 @@ module.exports = (pool, io) => {
                 }
             }
 
-            // Buscar o crear categoría
-            let categoryId = null;
+            // Buscar categoría global por nombre
+            let globalCategoryId = 12; // Default: Otros Gastos (ID 12)
             const catResult = await pool.query(
-                'SELECT id FROM expense_categories WHERE LOWER(name) = LOWER($1) AND tenant_id = $2',
-                [category, tenantId]
+                `SELECT id FROM global_expense_categories
+                 WHERE LOWER(name) = LOWER($1)
+                    OR LOWER(name) LIKE '%' || LOWER($1) || '%'
+                 LIMIT 1`,
+                [category]
             );
 
             if (catResult.rows.length > 0) {
-                categoryId = catResult.rows[0].id;
+                globalCategoryId = catResult.rows[0].id;
+                console.log(`[Expenses] Categoría global encontrada: ${category} (ID: ${globalCategoryId})`);
             } else {
-                const newCat = await pool.query(
-                    'INSERT INTO expense_categories (tenant_id, name) VALUES ($1, $2) RETURNING id',
-                    [tenantId, category]
-                );
-                categoryId = newCat.rows[0].id;
-                console.log(`[Expenses] Categoría creada: ${category} (ID: ${categoryId})`);
+                console.log(`[Expenses] Categoría '${category}' no encontrada, usando Otros Gastos (ID: 12)`);
             }
 
             const result = await pool.query(
-                `INSERT INTO expenses (tenant_id, branch_id, employee_id, category_id, description, amount)
-                 VALUES ($1, $2, $3, $4, $5, $6)
+                `INSERT INTO expenses (tenant_id, branch_id, employee_id, global_category_id, description, amount, global_id, terminal_id, local_op_seq, created_local_utc)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $9)
                  RETURNING *`,
-                [tenantId, branchId, employeeId, categoryId, description, amount]
+                [tenantId, branchId, employeeId, globalCategoryId, description, amount, uuidv4(), uuidv4(), new Date().toISOString()]
             );
 
             const newExpense = result.rows[0];
@@ -227,6 +226,7 @@ module.exports = (pool, io) => {
                 employee_global_id,      // ✅ NUEVO: UUID del empleado (idempotente)
                 consumer_employee_global_id, // ✅ NUEVO: UUID del consumidor (si aplica)
                 category, description, amount, quantity, userEmail,
+                global_category_id,      // ✅ NUEVO: ID canónico de categoría (1-14) desde Desktop
                 payment_type_id, expense_date_utc,
                 id_turno,               // LEGACY: ID local del turno
                 shift_global_id,        // ✅ NUEVO: UUID del turno (idempotente)
@@ -349,104 +349,94 @@ module.exports = (pool, io) => {
             }
 
             // ═══════════════════════════════════════════════════════════════════════════════
-            // RESOLUCIÓN DE CATEGORÍA GLOBAL (IDs CANÓNICOS)
+            // RESOLUCIÓN DE CATEGORÍA GLOBAL (IDs CANÓNICOS 1-14)
             // ═══════════════════════════════════════════════════════════════════════════════
-            // Usamos global_expense_categories (sin tenant_id) con IDs fijos.
-            // Si no existe la categoría, asignamos "Otros Gastos" (ID 25).
+            // Desktop envía global_category_id directamente (IDs canónicos inmutables 1-14).
+            // Mobile envía solo category (nombre) y lo resolvemos.
             // ═══════════════════════════════════════════════════════════════════════════════
             let globalCategoryId = null;
 
-            // 1. Buscar en global_expense_categories por nombre exacto o variantes
-            const globalCatResult = await pool.query(
-                `SELECT id FROM global_expense_categories
-                 WHERE LOWER(name) = LOWER($1)
-                    OR LOWER(name) LIKE '%' || LOWER($1) || '%'
-                 LIMIT 1`,
-                [category]
-            );
-
-            if (globalCatResult.rows.length > 0) {
-                globalCategoryId = globalCatResult.rows[0].id;
-                console.log(`[Sync/Expenses] ✅ Categoría global encontrada: '${category}' → ID ${globalCategoryId}`);
-            } else {
-                // 2. Mapeo manual de variantes conocidas → IDs canónicos
-                // IMPORTANTE: Incluye nombres canónicos de DomainConstants.cs y Flutter
-                const categoryMappings = {
-                    // --- Materias Primas (IDs 1-10) ---
-                    'maíz / maseca / harina': 1,
-                    'maíz': 1,
-                    'maiz': 1,
-                    'maseca': 1,
-                    'harina': 1,
-                    'gas lp': 2,
-                    'gaslp': 2,
-                    'gas': 2,
-                    'combustible vehículos': 3,  // ✅ Nombre canónico Flutter
-                    'combustible vehiculos': 3,
-                    'gasolina': 3,
-                    'combustible': 3,
-                    'diesel': 3,
-                    // --- Operativos (IDs 11-20) ---
-                    'consumibles (papel, bolsas)': 11,  // ✅ Nombre canónico
-                    'consumibles': 11,
-                    'bolsas': 11,
-                    'papel': 11,
-                    'refacciones moto': 12,
-                    'moto': 12,
-                    'refacciones auto': 13,
-                    'auto': 13,
-                    'reparaciones': 13,
-                    'mantenimiento maquinaria': 14,  // ✅ Nombre canónico
-                    'mantenimiento': 14,
-                    'maquinaria': 14,
-                    'comida': 15,
-                    'almuerzo': 15,
-                    'desayuno': 15,
-                    'cena': 15,
-                    'viáticos': 15,
-                    'viaticos': 15,
-                    // --- Administrativos (IDs 21-30) ---
-                    'sueldos y salarios': 21,  // ✅ Nombre canónico
-                    'sueldos': 21,
-                    'salarios': 21,
-                    'impuestos (isr, iva)': 22,  // ✅ Nombre canónico
-                    'impuestos': 22,
-                    'isr': 22,
-                    'iva': 22,
-                    'servicios (luz, agua, teléfono)': 23,  // ✅ Nombre canónico
-                    'servicios (luz, agua, telefono)': 23,
-                    'servicios': 23,
-                    'luz': 23,
-                    'agua': 23,
-                    'telefono': 23,
-                    'teléfono': 23,
-                    'limpieza': 24,
-                    'otros gastos': 25,  // ✅ Nombre canónico
-                    'otros': 25,
-                    'otro': 25,
-                    'transporte': 25  // Mapea a Otros
-                };
-
-                const lowerCategory = (category || '').toLowerCase().trim();
-                globalCategoryId = categoryMappings[lowerCategory] || 25;  // Default: Otros Gastos
-                console.log(`[Sync/Expenses] 🔄 Categoría mapeada: '${category}' → ID ${globalCategoryId}`);
+            // ✅ PRIORIDAD 1: Si Desktop envía global_category_id, usarlo directamente
+            if (global_category_id && Number.isInteger(Number(global_category_id)) && Number(global_category_id) >= 1 && Number(global_category_id) <= 14) {
+                globalCategoryId = Number(global_category_id);
+                console.log(`[Sync/Expenses] ✅ Usando global_category_id del cliente: ${globalCategoryId} (${category})`);
             }
-
-            // LEGACY: También guardar en expense_categories por tenant (compatibilidad)
-            let categoryId = null;
-            const catResult = await pool.query(
-                'SELECT id FROM expense_categories WHERE LOWER(name) = LOWER($1) AND tenant_id = $2',
-                [category, tenantId]
-            );
-
-            if (catResult.rows.length > 0) {
-                categoryId = catResult.rows[0].id;
-            } else {
-                const newCat = await pool.query(
-                    'INSERT INTO expense_categories (tenant_id, name) VALUES ($1, $2) RETURNING id',
-                    [tenantId, category]
+            // PRIORIDAD 2: Buscar en global_expense_categories por nombre
+            else {
+                const globalCatResult = await pool.query(
+                    `SELECT id FROM global_expense_categories
+                     WHERE LOWER(name) = LOWER($1)
+                        OR LOWER(name) LIKE '%' || LOWER($1) || '%'
+                     LIMIT 1`,
+                    [category]
                 );
-                categoryId = newCat.rows[0].id;
+
+                if (globalCatResult.rows.length > 0) {
+                    globalCategoryId = globalCatResult.rows[0].id;
+                    console.log(`[Sync/Expenses] ✅ Categoría global por nombre: '${category}' → ID ${globalCategoryId}`);
+                } else {
+                    // 3. Mapeo manual de variantes conocidas → IDs canónicos (1-14)
+                    const categoryMappings = {
+                        // --- Materias Primas (IDs 1-3) ---
+                        'maíz / maseca / harina': 1,
+                        'maíz': 1,
+                        'maiz': 1,
+                        'maseca': 1,
+                        'harina': 1,
+                        'gas lp': 2,
+                        'gaslp': 2,
+                        'gas': 2,
+                        'combustible vehículos': 3,
+                        'combustible vehiculos': 3,
+                        'gasolina': 3,
+                        'combustible': 3,
+                        'diesel': 3,
+                        // --- Operativos (IDs 4-7) ---
+                        'consumibles (papel, bolsas)': 4,
+                        'consumibles': 4,
+                        'bolsas': 4,
+                        'papel': 4,
+                        'refacciones moto': 5,
+                        'moto': 5,
+                        'refacciones auto': 6,
+                        'auto': 6,
+                        'reparaciones': 6,
+                        'mantenimiento maquinaria': 7,
+                        'mantenimiento': 7,
+                        'maquinaria': 7,
+                        // --- Administrativos (IDs 8-11) ---
+                        'sueldos y salarios': 8,
+                        'sueldos': 8,
+                        'salarios': 8,
+                        'impuestos (isr, iva)': 9,
+                        'impuestos': 9,
+                        'isr': 9,
+                        'iva': 9,
+                        'servicios (luz, agua, teléfono)': 10,
+                        'servicios (luz, agua, telefono)': 10,
+                        'servicios': 10,
+                        'luz': 10,
+                        'agua': 10,
+                        'telefono': 10,
+                        'teléfono': 10,
+                        'limpieza': 11,
+                        // --- Otros (IDs 12-14) ---
+                        'otros gastos': 12,
+                        'otros': 14,
+                        'otro': 14,
+                        'transporte': 12,
+                        'comida': 13,
+                        'almuerzo': 13,
+                        'desayuno': 13,
+                        'cena': 13,
+                        'viáticos': 13,
+                        'viaticos': 13
+                    };
+
+                    const lowerCategory = (category || '').toLowerCase().trim();
+                    globalCategoryId = categoryMappings[lowerCategory] || 12;  // Default: Otros Gastos (ID 12)
+                    console.log(`[Sync/Expenses] 🔄 Categoría mapeada: '${category}' → ID ${globalCategoryId}`);
+                }
             }
 
             // ✅ Use client-provided UTC timestamp (already converted to UTC by Desktop)
@@ -498,11 +488,11 @@ module.exports = (pool, io) => {
                 console.log(`[Sync/Expenses] ➕ Insertando nuevo gasto: ${finalGlobalId} (status: ${finalStatus}, globalCategoryId: ${globalCategoryId})`);
                 result = await pool.query(
                     `INSERT INTO expenses (
-                        tenant_id, branch_id, employee_id, payment_type_id, id_turno, category_id, global_category_id, description, amount, quantity, expense_date,
+                        tenant_id, branch_id, employee_id, payment_type_id, id_turno, global_category_id, description, amount, quantity, expense_date,
                         status, reviewed_by_desktop,
                         global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw
                      )
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
                      RETURNING *`,
                     [
                         tenantId,
@@ -510,19 +500,18 @@ module.exports = (pool, io) => {
                         finalEmployeeId,
                         payment_type_id,              // $4
                         finalShiftId,                 // $5 - Turno (resuelto por GlobalId)
-                        categoryId,                   // $6 - LEGACY: tenant-specific category
-                        globalCategoryId,             // $7 - CANÓNICO: global category ID
-                        description || '',            // $8
-                        numericAmount,                // $9
-                        quantity || null,             // $10 - Cantidad (litros, kg, etc.)
-                        expenseDate,                  // $11
-                        finalStatus,                  // $12 - Status (draft/confirmed/deleted)
-                        reviewedValue,                // $13 - TRUE para Desktop, FALSE para Mobile
-                        finalGlobalId,                // $14 - UUID (Desktop) o generado (Mobile)
-                        finalTerminalId,              // $15 - UUID (Desktop) o generado (Mobile)
-                        finalLocalOpSeq,              // $16 - Sequence (Desktop) o 0 (Mobile)
-                        finalCreatedLocalUtc,         // $17 - ISO 8601 timestamp
-                        finalDeviceEventRaw           // $18 - Raw ticks
+                        globalCategoryId,             // $6 - CANÓNICO: global category ID (1-14)
+                        description || '',            // $7
+                        numericAmount,                // $8
+                        quantity || null,             // $9 - Cantidad (litros, kg, etc.)
+                        expenseDate,                  // $10
+                        finalStatus,                  // $11 - Status (draft/confirmed/deleted)
+                        reviewedValue,                // $12 - TRUE para Desktop, FALSE para Mobile
+                        finalGlobalId,                // $13 - UUID (Desktop) o generado (Mobile)
+                        finalTerminalId,              // $14 - UUID (Desktop) o generado (Mobile)
+                        finalLocalOpSeq,              // $15 - Sequence (Desktop) o 0 (Mobile)
+                        finalCreatedLocalUtc,         // $16 - ISO 8601 timestamp
+                        finalDeviceEventRaw           // $17 - Raw ticks
                     ]
                 );
             }
@@ -621,22 +610,20 @@ module.exports = (pool, io) => {
                 });
             }
 
-            // Buscar o crear categoría
-            let categoryId = null;
+            // Buscar categoría global por nombre
+            let globalCategoryId = 12; // Default: Otros Gastos
             const catResult = await pool.query(
-                'SELECT id FROM expense_categories WHERE LOWER(name) = LOWER($1) AND tenant_id = $2',
-                [category, tenant_id]
+                `SELECT id FROM global_expense_categories
+                 WHERE LOWER(name) = LOWER($1)
+                    OR LOWER(name) LIKE '%' || LOWER($1) || '%'
+                 LIMIT 1`,
+                [category]
             );
 
             if (catResult.rows.length > 0) {
-                categoryId = catResult.rows[0].id;
+                globalCategoryId = catResult.rows[0].id;
             } else {
-                const newCat = await pool.query(
-                    'INSERT INTO expense_categories (tenant_id, name) VALUES ($1, $2) RETURNING id',
-                    [tenant_id, category]
-                );
-                categoryId = newCat.rows[0].id;
-                console.log(`[Expenses/Update] Categoría creada: ${category} (ID: ${categoryId})`);
+                console.log(`[Expenses/Update] Categoría '${category}' no encontrada, usando Otros Gastos (ID: 12)`);
             }
 
             // Actualizar gasto
@@ -644,7 +631,7 @@ module.exports = (pool, io) => {
             const numericAmount = parseFloat(amount);
             const updateResult = await pool.query(
                 `UPDATE expenses
-                 SET category_id = $1,
+                 SET global_category_id = $1,
                      description = $2,
                      amount = $3,
                      payment_type_id = $4,
@@ -653,7 +640,7 @@ module.exports = (pool, io) => {
                  WHERE global_id = $6 AND tenant_id = $7
                  RETURNING *`,
                 [
-                    categoryId,
+                    globalCategoryId,
                     description || '',
                     numericAmount,
                     payment_type_id,
@@ -735,30 +722,21 @@ module.exports = (pool, io) => {
     // EXPENSE CATEGORIES ENDPOINTS
     // ═══════════════════════════════════════════════════════════════
 
-    // GET /api/expense-categories - Obtener categorías de gastos
+    // GET /api/expense-categories - Obtener categorías de gastos globales
     router.get('/categories', async (req, res) => {
         try {
-            const { tenant_id } = req.query;
-
-            if (!tenant_id) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'tenant_id es requerido'
-                });
-            }
-
-            console.log(`[Expenses/Categories] 📋 Obteniendo categorías para tenant_id: ${tenant_id}`);
+            console.log(`[Expenses/Categories] 📋 Obteniendo categorías globales`);
 
             const query = `
-                SELECT id, tenant_id, name, description, created_at, updated_at
-                FROM expense_categories
-                WHERE tenant_id = $1
-                ORDER BY name ASC
+                SELECT id, name, description, is_measurable, unit_abbreviation, is_available, sort_order, created_at, updated_at
+                FROM global_expense_categories
+                WHERE is_available = true
+                ORDER BY sort_order ASC
             `;
 
-            const result = await pool.query(query, [tenant_id]);
+            const result = await pool.query(query);
 
-            console.log(`[Expenses/Categories] ✅ Encontradas ${result.rows.length} categorías`);
+            console.log(`[Expenses/Categories] ✅ Encontradas ${result.rows.length} categorías globales`);
 
             res.json({
                 success: true,
@@ -825,8 +803,8 @@ module.exports = (pool, io) => {
                 e.employee_id,
                 emp.global_id as employee_global_id,
                 CONCAT(emp.first_name, ' ', emp.last_name) as employee_name,
-                COALESCE(gcat.name, cat.name) as category,
-                COALESCE(e.global_category_id, cat.id) as category_id,
+                gcat.name as category,
+                e.global_category_id as category_id,
                 e.global_category_id,
                 e.description,
                 e.amount,
@@ -844,7 +822,6 @@ module.exports = (pool, io) => {
                 e.created_at
             FROM expenses e
             LEFT JOIN employees emp ON e.employee_id = emp.id
-            LEFT JOIN expense_categories cat ON e.category_id = cat.id
             LEFT JOIN global_expense_categories gcat ON e.global_category_id = gcat.id
             LEFT JOIN shifts s ON e.id_turno = s.id
             WHERE e.employee_id = $1
@@ -1006,8 +983,8 @@ module.exports = (pool, io) => {
                     e.branch_id,
                     e.employee_id,
                     CONCAT(emp.first_name, ' ', emp.last_name) as employee_name,
-                    cat.name as category,
-                    cat.id as category_id,
+                    gcat.name as category,
+                    e.global_category_id as category_id,
                     e.description,
                     e.amount,
                     e.quantity,
@@ -1021,7 +998,7 @@ module.exports = (pool, io) => {
                     e.created_at
                 FROM expenses e
                 LEFT JOIN employees emp ON e.employee_id = emp.id
-                LEFT JOIN expense_categories cat ON e.category_id = cat.id
+                LEFT JOIN global_expense_categories gcat ON e.global_category_id = gcat.id
                 LEFT JOIN shifts sh ON e.id_turno = sh.id
                 WHERE e.tenant_id = $1
                   AND e.reviewed_by_desktop = false

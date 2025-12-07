@@ -18,6 +18,7 @@ async function cleanDatabase() {
     await pool.query('SET CONSTRAINTS ALL DEFERRED');
 
     // Lista de tablas a limpiar (en orden inverso de dependencias)
+    // NOTA: global_expense_categories NO se limpia (es master data)
     const tablesToClean = [
       'guardian_events',
       'cash_cuts',
@@ -28,7 +29,6 @@ async function cleanDatabase() {
       'sale_items',
       'sales',
       'expenses',
-      'expense_categories',
       'suppliers',
       'customers',
       'branch_inventory',
