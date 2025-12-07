@@ -1167,6 +1167,99 @@ async function runMigrations() {
                 }
             }
 
+            // Patch: Create global_expense_categories table if not exists
+            const checkGlobalCategories = await client.query(`
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'global_expense_categories'
+                )
+            `);
+
+            if (!checkGlobalCategories.rows[0].exists) {
+                console.log('[Schema] 📝 Creating global_expense_categories table...');
+                await client.query(`
+                    CREATE TABLE IF NOT EXISTS global_expense_categories (
+                        id INTEGER PRIMARY KEY,
+                        name VARCHAR(100) NOT NULL UNIQUE,
+                        description TEXT,
+                        is_measurable BOOLEAN DEFAULT FALSE,
+                        unit_abbreviation VARCHAR(10),
+                        icon VARCHAR(20),
+                        is_available BOOLEAN DEFAULT TRUE,
+                        sort_order INTEGER DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                `);
+
+                // Insert canonical categories
+                await client.query(`
+                    INSERT INTO global_expense_categories (id, name, description, is_measurable, unit_abbreviation, icon, sort_order)
+                    VALUES
+                        (1, 'Maíz / Maseca / Harina', 'Materias primas para producción', TRUE, 'kg', 'E9D2', 1),
+                        (2, 'Gas LP', 'Gas para producción (tortilladoras)', TRUE, 'L', 'E945', 2),
+                        (3, 'Combustible Vehículos', 'Gasolina/Diésel para reparto', TRUE, 'L', 'E804', 3),
+                        (11, 'Consumibles (Papel, Bolsas)', 'Materiales de empaque y consumibles', FALSE, NULL, 'E719', 11),
+                        (12, 'Refacciones Moto', 'Refacciones para motocicletas de reparto', FALSE, NULL, 'E7EE', 12),
+                        (13, 'Refacciones Auto', 'Refacciones para vehículos de reparto', FALSE, NULL, 'E804', 13),
+                        (14, 'Mantenimiento Maquinaria', 'Mantenimiento de tortilladoras y equipo', FALSE, NULL, 'E90F', 14),
+                        (15, 'Comida', 'Viáticos y alimentación de repartidores', FALSE, NULL, 'E799', 15),
+                        (21, 'Sueldos y Salarios', 'Nómina de empleados', FALSE, NULL, 'E716', 21),
+                        (22, 'Impuestos (ISR, IVA)', 'Obligaciones fiscales', FALSE, NULL, 'E8EF', 22),
+                        (23, 'Servicios (Luz, Agua, Teléfono)', 'Servicios públicos y comunicación', FALSE, NULL, 'E80F', 23),
+                        (24, 'Limpieza', 'Materiales y servicios de limpieza', FALSE, NULL, 'E894', 24),
+                        (25, 'Otros Gastos', 'Gastos no clasificados', FALSE, NULL, 'E712', 25)
+                    ON CONFLICT (id) DO NOTHING
+                `);
+
+                console.log('[Schema] ✅ global_expense_categories table created with canonical IDs');
+            }
+
+            // Patch: Add global_category_id to expenses if missing
+            if (checkExpensesTable.rows[0].exists) {
+                const checkGlobalCategoryId = await client.query(`
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'expenses'
+                    AND column_name = 'global_category_id'
+                `);
+
+                if (checkGlobalCategoryId.rows.length === 0) {
+                    console.log('[Schema] 📝 Adding expenses.global_category_id column...');
+                    await client.query(`
+                        ALTER TABLE expenses
+                        ADD COLUMN global_category_id INTEGER REFERENCES global_expense_categories(id)
+                    `);
+                    console.log('[Schema] ✅ Column expenses.global_category_id added');
+                }
+            }
+
+            // Patch: Add unidad_venta to productos if missing
+            const checkProductosTable = await client.query(`
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'productos'
+                )
+            `);
+
+            if (checkProductosTable.rows[0].exists) {
+                const checkUnidadVenta = await client.query(`
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'productos'
+                    AND column_name = 'unidad_venta'
+                `);
+
+                if (checkUnidadVenta.rows.length === 0) {
+                    console.log('[Schema] 📝 Adding productos.unidad_venta column...');
+                    await client.query(`
+                        ALTER TABLE productos
+                        ADD COLUMN unidad_venta VARCHAR(20) DEFAULT 'kg'
+                    `);
+                    console.log('[Schema] ✅ Column productos.unidad_venta added');
+                }
+            }
+
             // 3. Always run seeds (idempotent - uses ON CONFLICT)
             console.log('[Seeds] 📝 Running seeds.sql...');
             const seedsPath = path.join(__dirname, 'seeds.sql');
