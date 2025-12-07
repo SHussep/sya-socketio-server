@@ -117,6 +117,38 @@ module.exports = (pool) => {
 
             query += `
                     GROUP BY ra.employee_id
+                ),
+                -- Agrupar totales por unidad de medida (para mostrar "200 kg, 100 pz" en vez de "300 kg")
+                quantity_by_unit AS (
+                    SELECT
+                        ra.employee_id,
+                        COALESCE(ra.unit_abbreviation, 'kg') as unit,
+                        SUM(CASE WHEN ra.status IN ('pending', 'in_progress') THEN ra.assigned_quantity ELSE 0 END) as active_qty,
+                        SUM(CASE WHEN ra.status IN ('pending', 'in_progress') THEN ra.assigned_amount ELSE 0 END) as active_amt
+                    FROM repartidor_assignments ra
+                    LEFT JOIN shifts s ON ra.repartidor_shift_id = s.id
+                    WHERE ra.tenant_id = $1
+                      AND ra.status IN ('pending', 'in_progress')
+            `;
+
+            // Repetir filtros para quantity_by_unit
+            if (only_open_shifts === 'true') {
+                query += ` AND (s.id IS NULL OR s.is_cash_cut_open = true)`;
+            }
+            if (all_branches !== 'true' && targetBranchId) {
+                query += ` AND ra.branch_id = $2`;
+            }
+
+            query += `
+                    GROUP BY ra.employee_id, COALESCE(ra.unit_abbreviation, 'kg')
+                ),
+                quantity_by_unit_agg AS (
+                    SELECT
+                        employee_id,
+                        json_agg(json_build_object('unit', unit, 'quantity', active_qty, 'amount', active_amt) ORDER BY active_qty DESC) as quantities_by_unit
+                    FROM quantity_by_unit
+                    WHERE active_qty > 0
+                    GROUP BY employee_id
                 )
                 SELECT
                     a.*,
@@ -124,9 +156,11 @@ module.exports = (pool) => {
                     COALESCE(rs.total_returned_amount, 0) as total_returned_amount,
                     COALESCE(rs.return_count, 0) as return_count,
                     (a.pending_quantity + a.in_progress_quantity) as active_quantity,
-                    (a.pending_amount + a.in_progress_amount) as active_amount
+                    (a.pending_amount + a.in_progress_amount) as active_amount,
+                    COALESCE(qbu.quantities_by_unit, '[]'::json) as quantities_by_unit
                 FROM assignment_stats a
                 LEFT JOIN returns_stats rs ON a.employee_id = rs.employee_id
+                LEFT JOIN quantity_by_unit_agg qbu ON a.employee_id = qbu.employee_id
                 ORDER BY a.last_assignment_date DESC
             `;
 
@@ -148,6 +182,8 @@ module.exports = (pool) => {
                     liquidated_amount: parseFloat(row.liquidated_amount),
                     active_quantity: parseFloat(row.active_quantity),
                     active_amount: parseFloat(row.active_amount),
+                    // Totales agrupados por unidad: [{unit: "kg", quantity: 200, amount: 5000}, {unit: "pz", quantity: 100, amount: 3500}]
+                    quantities_by_unit: row.quantities_by_unit || [],
                     total_returned_quantity: parseFloat(row.total_returned_quantity),
                     total_returned_amount: parseFloat(row.total_returned_amount),
                     total_assignments: parseInt(row.total_assignments),
