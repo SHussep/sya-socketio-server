@@ -7,6 +7,68 @@ const axios = require('axios');
 const { sendNotificationToMultipleDevices } = require('./firebaseAdmin');
 const { pool } = require('../database');
 
+// ═══════════════════════════════════════════════════════════════
+// PREFERENCIAS DE NOTIFICACIONES
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Obtiene las preferencias de notificación de un empleado
+ * @param {number} employeeId - ID numérico del empleado
+ * @returns {Object} Preferencias del empleado o valores por defecto
+ */
+async function getNotificationPreferences(employeeId) {
+    const defaults = {
+        notify_login: true,
+        notify_shift_start: true,
+        notify_shift_end: true,
+        notify_expense_created: true,
+        notify_assignment_created: true,
+        notify_guardian_peso_no_registrado: true,
+        notify_guardian_operacion_irregular: true,
+        notify_guardian_discrepancia: true
+    };
+
+    try {
+        const result = await pool.query(
+            `SELECT * FROM notification_preferences WHERE employee_id = $1`,
+            [employeeId]
+        );
+
+        if (result.rows.length === 0) {
+            return defaults;
+        }
+
+        return { ...defaults, ...result.rows[0] };
+    } catch (error) {
+        // Si la tabla no existe o hay error, retornar defaults
+        console.error('[NotificationHelper] ⚠️ Error obteniendo preferencias:', error.message);
+        return defaults;
+    }
+}
+
+/**
+ * Filtra dispositivos según preferencias de notificación
+ * @param {Array} deviceTokensWithEmployeeId - Array de {device_token, employee_id}
+ * @param {string} notificationType - Tipo de notificación (notify_login, notify_shift_start, etc.)
+ * @returns {Array} Dispositivos filtrados que quieren recibir esta notificación
+ */
+async function filterDevicesByPreferences(deviceTokensWithEmployeeId, notificationType) {
+    const filteredTokens = [];
+
+    for (const device of deviceTokensWithEmployeeId) {
+        const prefs = await getNotificationPreferences(device.employee_id);
+
+        // Verificar si el empleado quiere recibir este tipo de notificación
+        if (prefs[notificationType] !== false) {
+            filteredTokens.push(device.device_token);
+        } else {
+            console.log(`[NotificationHelper] ⏭️ Empleado ${device.employee_id} no quiere ${notificationType}`);
+        }
+    }
+
+    return filteredTokens;
+}
+
 /**
  * Helper interno para guardar notificación en la tabla de historial (campana)
  * Excluye: guardian (tiene su propia página)
@@ -90,11 +152,11 @@ async function sendNotificationToBranch(branchId, { title, body, data = {} }) {
  * Útil para eventos que solo los supervisores deben ver (login, alertas, etc.)
  * @param {number} branchId - ID de la sucursal
  * @param {object} notification - { title, body, data }
- * @param {object} options - { excludeEmployeeGlobalId: string } - Excluir empleado de la lista (evita duplicados)
+ * @param {object} options - { excludeEmployeeGlobalId: string, notificationType: string } - Opciones de filtrado
  */
 async function sendNotificationToAdminsInBranch(branchId, { title, body, data = {} }, options = {}) {
     try {
-        const { excludeEmployeeGlobalId } = options;
+        const { excludeEmployeeGlobalId, notificationType } = options;
 
         // Obtener ID numérico del empleado a excluir (si se especificó)
         let excludeEmployeeId = null;
@@ -110,16 +172,17 @@ async function sendNotificationToAdminsInBranch(branchId, { title, body, data = 
         }
 
         // Obtener dispositivos de empleados con role_id 1 (Administrador) o 2 (Encargado)
+        // INCLUYENDO employee_id para filtrar por preferencias
         // Excluyendo al empleado que ya recibió notificación personal (si aplica)
         const query = excludeEmployeeId
-            ? `SELECT DISTINCT dt.device_token
+            ? `SELECT DISTINCT dt.device_token, dt.employee_id
                FROM device_tokens dt
                JOIN employees e ON dt.employee_id = e.id
                WHERE dt.branch_id = $1
                  AND dt.is_active = true
                  AND e.role_id IN (1, 2)
                  AND e.id != $2`
-            : `SELECT DISTINCT dt.device_token
+            : `SELECT DISTINCT dt.device_token, dt.employee_id
                FROM device_tokens dt
                JOIN employees e ON dt.employee_id = e.id
                WHERE dt.branch_id = $1
@@ -130,7 +193,13 @@ async function sendNotificationToAdminsInBranch(branchId, { title, body, data = 
             ? await pool.query(query, [branchId, excludeEmployeeId])
             : await pool.query(query, [branchId]);
 
-        const deviceTokens = result.rows.map(row => row.device_token);
+        // Filtrar según preferencias de notificación (si se especificó tipo)
+        let deviceTokens;
+        if (notificationType) {
+            deviceTokens = await filterDevicesByPreferences(result.rows, notificationType);
+        } else {
+            deviceTokens = result.rows.map(row => row.device_token);
+        }
 
         // 🔍 DEBUG: Log cantidad de admins encontrados
         console.log(`[NotificationHelper] 👥 Admins/Encargados en sucursal ${branchId}: ${deviceTokens.length} dispositivo(s)${excludeEmployeeId ? ` (excluyendo employee ${excludeEmployeeId})` : ''}`);
@@ -291,8 +360,9 @@ async function notifyUserLogin(branchId, { employeeId, employeeName, branchName,
         // Solo enviar a otros admins/encargados si no es el mismo empleado
         // Obtener dispositivos de empleados con role_id 1 (Administrador) o 2 (Encargado)
         // EXCLUYENDO al empleado que hizo login
+        // INCLUYENDO employee_id para filtrar por preferencias
         const adminTokensResult = await pool.query(
-            `SELECT DISTINCT dt.device_token
+            `SELECT DISTINCT dt.device_token, dt.employee_id
              FROM device_tokens dt
              JOIN employees e ON dt.employee_id = e.id
              WHERE dt.branch_id = $1
@@ -302,7 +372,11 @@ async function notifyUserLogin(branchId, { employeeId, employeeName, branchName,
             [branchId, employeeIdNumeric]
         );
 
-        const adminDeviceTokens = adminTokensResult.rows.map(row => row.device_token);
+        // Filtrar según preferencias de cada empleado
+        const adminDeviceTokens = await filterDevicesByPreferences(
+            adminTokensResult.rows,
+            'notify_login'
+        );
 
         let adminResult = { sent: 0, failed: 0, total: 0 };
 
@@ -372,11 +446,74 @@ async function notifyUserLogin(branchId, { employeeId, employeeName, branchName,
 }
 
 /**
- * Envía notificación cuando hay una alerta de báscula
- * Solo notifica a administradores y encargados (role_id 1, 2)
+ * Mapea el título del evento (eventType) a la categoría simple del Guardian
+ * Basado en GuardianScenarioCatalog.cs
  */
-async function notifyScaleAlert(branchId, { severity, eventType, details, employeeName }) {
+function getGuardianSimpleCategory(eventType) {
+    // Normalizar para comparación
+    const et = (eventType || '').toLowerCase();
+
+    // 🔴 PesoNoRegistrado - Se pesó producto pero no se cobró
+    const pesoNoRegistrado = [
+        'peso no cobrado', 'peso sin registro', 'pesosinregistro',
+        'múltiples pesos sin cobrar', 'multiplespesossinregistro',
+        'retiro parcial sin cobrar', 'pesoparcialsinregistro',
+        'peso fuera de ventas', 'pesoenpantallanoautorizada',
+        'salió de ventas con peso', 'cambiopantalladurantepesaje',
+        'peso sin sesión', 'sesionnoiniciadaconpeso',
+        'pesaje abandonado', 'pesosinconfirmacionfinal',
+        'producto pesado eliminado', 'productopesadoeliminado',
+        'pesaje cancelado', 'dialogocanceladoconpeso',
+        'actividad fuera de horario', 'actividadfuerahorario'
+    ];
+
+    // 🟠 Discrepancia - El peso cobrado no coincide con lo detectado
+    const discrepancia = [
+        'peso cobrado diferente al pesado', 'pesorealvsregistrado',
+        'cobró $0 con producto en báscula', 'pesoceroconpesoenbascula',
+        'peso muy bajo para el producto', 'pesoinferiorpromedioproducto',
+        'inventario no cuadra', 'discrepanciainventariocierre',
+        'peso no corresponde al producto', 'correlacionpesoproductoincorrecta'
+    ];
+
+    // 🟡 OperacionIrregular - Todo lo demás (cancelaciones, tiempos, desconexiones, etc.)
+    // No necesitamos listar explícitamente porque es el default
+
+    for (const keyword of pesoNoRegistrado) {
+        if (et.includes(keyword)) return 'peso_no_registrado';
+    }
+
+    for (const keyword of discrepancia) {
+        if (et.includes(keyword)) return 'discrepancia';
+    }
+
+    // Default: operación irregular
+    return 'operacion_irregular';
+}
+
+/**
+ * Envía notificación cuando hay una alerta de báscula (Guardian)
+ * Solo notifica a administradores y encargados (role_id 1, 2)
+ * Filtra según preferencias: notify_guardian_peso_no_registrado,
+ *   notify_guardian_operacion_irregular, notify_guardian_discrepancia
+ */
+async function notifyScaleAlert(branchId, { severity, eventType, details, employeeName, simpleCategory }) {
     const severityText = severity === 'high' ? 'ALTA' : severity === 'medium' ? 'MEDIA' : 'BAJA';
+
+    // Si no viene simpleCategory del frontend, determinarla a partir del eventType
+    const resolvedCategory = simpleCategory || getGuardianSimpleCategory(eventType);
+
+    // Determinar el tipo de notificación según la categoría simple
+    let notificationType = null;
+    if (resolvedCategory === 'peso_no_registrado') {
+        notificationType = 'notify_guardian_peso_no_registrado';
+    } else if (resolvedCategory === 'operacion_irregular') {
+        notificationType = 'notify_guardian_operacion_irregular';
+    } else if (resolvedCategory === 'discrepancia') {
+        notificationType = 'notify_guardian_discrepancia';
+    }
+
+    console.log(`[NotificationHelper] 🎯 Guardian Alert: ${eventType} → categoría: ${resolvedCategory}`);
 
     return await sendNotificationToAdminsInBranch(branchId, {
         title: `Alerta de Báscula [${severityText}]`,
@@ -386,9 +523,10 @@ async function notifyScaleAlert(branchId, { severity, eventType, details, employ
             severity,
             eventType,
             employeeName,
-            details
+            details,
+            simpleCategory: resolvedCategory
         }
-    });
+    }, notificationType ? { notificationType } : {});
 }
 
 /**
@@ -422,7 +560,7 @@ async function notifyShiftStarted(branchId, { employeeName, branchName, initialA
             branchName,
             initialAmount: initialAmount.toString()
         }
-    });
+    }, { notificationType: 'notify_shift_start' });
 }
 
 /**
@@ -471,7 +609,7 @@ async function notifyShiftEnded(branchId, employeeGlobalId, { employeeName, bran
                 expectedCash: expectedCash.toString(),
                 status
             }
-        }, { excludeEmployeeGlobalId: employeeGlobalId });
+        }, { excludeEmployeeGlobalId: employeeGlobalId, notificationType: 'notify_shift_end' });
 
         console.log(`[NotificationHelper] ✅ Notificaciones de cierre enviadas a admins/encargados de sucursal ${branchId}: ${adminResult.sent}/${adminResult.total || adminResult.sent}`);
 
@@ -570,7 +708,7 @@ async function notifyExpenseCreated(employeeGlobalId, { expenseId, amount, descr
                 description,
                 category
             }
-        }, { excludeEmployeeGlobalId: employeeGlobalId });
+        }, { excludeEmployeeGlobalId: employeeGlobalId, notificationType: 'notify_expense_created' });
 
         console.log(`[NotificationHelper] ✅ Notificaciones de gasto enviadas a admins/encargados de sucursal ${branchId}: ${adminResult.sent}/${adminResult.total || adminResult.sent}`);
 
@@ -641,7 +779,7 @@ async function notifyAssignmentCreated(employeeGlobalId, { assignmentId, quantit
             amount: amount.toString(),
             branchName
         }
-    }, { excludeEmployeeGlobalId: employeeGlobalId });
+    }, { excludeEmployeeGlobalId: employeeGlobalId, notificationType: 'notify_assignment_created' });
 
     return {
         employee: employeeResult,

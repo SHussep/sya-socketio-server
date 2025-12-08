@@ -1262,6 +1262,40 @@ async function runMigrations() {
                 }
             }
 
+            // Patch: Create notification_preferences table if missing
+            console.log('[Schema] 🔍 Checking notification_preferences table...');
+            const checkNotificationPrefsTable = await client.query(`
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'notification_preferences'
+                )
+            `);
+
+            if (!checkNotificationPrefsTable.rows[0].exists) {
+                console.log('[Schema] 📝 Creating table: notification_preferences');
+                await client.query(`
+                    CREATE TABLE notification_preferences (
+                        id SERIAL PRIMARY KEY,
+                        tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                        employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+                        notify_login BOOLEAN DEFAULT true,
+                        notify_shift_start BOOLEAN DEFAULT true,
+                        notify_shift_end BOOLEAN DEFAULT true,
+                        notify_expense_created BOOLEAN DEFAULT true,
+                        notify_assignment_created BOOLEAN DEFAULT true,
+                        notify_guardian_peso_no_registrado BOOLEAN DEFAULT true,
+                        notify_guardian_operacion_irregular BOOLEAN DEFAULT true,
+                        notify_guardian_discrepancia BOOLEAN DEFAULT true,
+                        created_at TIMESTAMPTZ DEFAULT NOW(),
+                        updated_at TIMESTAMPTZ DEFAULT NOW(),
+                        UNIQUE(tenant_id, employee_id)
+                    )
+                `);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_notification_preferences_employee ON notification_preferences(employee_id)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_notification_preferences_tenant ON notification_preferences(tenant_id)`);
+                console.log('[Schema] ✅ Table notification_preferences created successfully');
+            }
+
             // 3. Always run seeds (idempotent - uses ON CONFLICT)
             console.log('[Seeds] 📝 Running seeds.sql...');
             const seedsPath = path.join(__dirname, 'seeds.sql');

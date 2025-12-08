@@ -93,6 +93,7 @@ const cancelacionesRoutes = require('./routes/cancelaciones'); // Rutas de cance
 const repartidoresRoutes = require('./routes/repartidores'); // Rutas de resumen y detalles de repartidores
 const syncDiagnosticsRoutes = require('./routes/sync-diagnostics'); // Rutas de diagnóstico de sincronización
 const notificationHistoryRoutes = require('./routes/notification-history'); // Rutas de historial de notificaciones (campana)
+const notificationPreferencesRoutes = require('./routes/notificationPreferences'); // Preferencias de notificaciones por empleado
 
 // Inicializar Firebase para notificaciones push
 initializeFirebase();
@@ -104,6 +105,7 @@ app.use('/api/auth', authRoutes); // Registrar rutas de autenticación
 app.use('/api/tenants', tenantsRoutes); // Registrar rutas de tenants (licencias, info)
 app.use('/api/notifications', notificationRoutes); // Registrar rutas de notificaciones FCM
 app.use('/api/notification-history', notificationHistoryRoutes(pool)); // Historial de notificaciones (campana)
+app.use('/api/notification-preferences', notificationPreferencesRoutes); // Preferencias de notificaciones por empleado
 app.use('/api/employees', employeesRoutes); // Registrar rutas de empleados con sync-role endpoint
 app.use('/api/employee-branches', employeeBranchesRoutes); // Registrar rutas de relaciones empleado-sucursal
 
