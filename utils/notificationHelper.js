@@ -88,19 +88,46 @@ async function sendNotificationToBranch(branchId, { title, body, data = {} }) {
 /**
  * Envía notificación SOLO a administradores y encargados de una sucursal
  * Útil para eventos que solo los supervisores deben ver (login, alertas, etc.)
+ * @param {number} branchId - ID de la sucursal
+ * @param {object} notification - { title, body, data }
+ * @param {object} options - { excludeEmployeeGlobalId: string } - Excluir empleado de la lista (evita duplicados)
  */
-async function sendNotificationToAdminsInBranch(branchId, { title, body, data = {} }) {
+async function sendNotificationToAdminsInBranch(branchId, { title, body, data = {} }, options = {}) {
     try {
+        const { excludeEmployeeGlobalId } = options;
+
+        // Obtener ID numérico del empleado a excluir (si se especificó)
+        let excludeEmployeeId = null;
+        if (excludeEmployeeGlobalId) {
+            const excludeResult = await pool.query(
+                `SELECT id FROM employees WHERE global_id = $1 LIMIT 1`,
+                [excludeEmployeeGlobalId]
+            );
+            if (excludeResult.rows.length > 0) {
+                excludeEmployeeId = excludeResult.rows[0].id;
+            }
+        }
+
         // Obtener dispositivos de empleados con role_id 1 (Administrador) o 2 (Encargado)
-        const result = await pool.query(
-            `SELECT DISTINCT dt.device_token
-             FROM device_tokens dt
-             JOIN employees e ON dt.employee_id = e.id
-             WHERE dt.branch_id = $1
-               AND dt.is_active = true
-               AND e.role_id IN (1, 2)`,
-            [branchId]
-        );
+        // Excluyendo al empleado que ya recibió notificación personal (si aplica)
+        const query = excludeEmployeeId
+            ? `SELECT DISTINCT dt.device_token
+               FROM device_tokens dt
+               JOIN employees e ON dt.employee_id = e.id
+               WHERE dt.branch_id = $1
+                 AND dt.is_active = true
+                 AND e.role_id IN (1, 2)
+                 AND e.id != $2`
+            : `SELECT DISTINCT dt.device_token
+               FROM device_tokens dt
+               JOIN employees e ON dt.employee_id = e.id
+               WHERE dt.branch_id = $1
+                 AND dt.is_active = true
+                 AND e.role_id IN (1, 2)`;
+
+        const result = excludeEmployeeId
+            ? await pool.query(query, [branchId, excludeEmployeeId])
+            : await pool.query(query, [branchId]);
 
         const deviceTokens = result.rows.map(row => row.device_token);
 
@@ -424,6 +451,7 @@ async function notifyShiftEnded(branchId, employeeGlobalId, { employeeName, bran
         console.log(`[NotificationHelper] ✅ Notificación de cierre enviada al empleado ${employeeName} (global_id: ${employeeGlobalId}): ${employeeResult.sent}/${employeeResult.total || employeeResult.sent}`);
 
         // 2️⃣ Enviar notificación a ADMINISTRADORES/ENCARGADOS de la sucursal
+        // EXCLUIR al empleado que ya recibió su notificación personal (evita duplicados)
         const adminResult = await sendNotificationToAdminsInBranch(branchId, {
             title: `${icon} Corte de Caja`,
             body: `${employeeName} finalizó turno - ${status}`,
@@ -436,7 +464,7 @@ async function notifyShiftEnded(branchId, employeeGlobalId, { employeeName, bran
                 expectedCash: expectedCash.toString(),
                 status
             }
-        });
+        }, { excludeEmployeeGlobalId: employeeGlobalId });
 
         console.log(`[NotificationHelper] ✅ Notificaciones de cierre enviadas a admins/encargados de sucursal ${branchId}: ${adminResult.sent}/${adminResult.total || adminResult.sent}`);
 
@@ -523,6 +551,7 @@ async function notifyExpenseCreated(employeeGlobalId, { expenseId, amount, descr
         console.log(`[NotificationHelper] ✅ Notificación de gasto enviada al empleado ${employeeName} (global_id: ${employeeGlobalId}): ${employeeResult.sent}/${employeeResult.total || employeeResult.sent}`);
 
         // 2️⃣ Notificar a administradores/encargados
+        // EXCLUIR al empleado que ya recibió su notificación personal (evita duplicados)
         const adminResult = await sendNotificationToAdminsInBranch(branchId, {
             title: '💸 Gasto Registrado',
             body: `${employeeName} registró $${amount.toFixed(2)} - ${description || category}`,
@@ -534,7 +563,7 @@ async function notifyExpenseCreated(employeeGlobalId, { expenseId, amount, descr
                 description,
                 category
             }
-        });
+        }, { excludeEmployeeGlobalId: employeeGlobalId });
 
         console.log(`[NotificationHelper] ✅ Notificaciones de gasto enviadas a admins/encargados de sucursal ${branchId}: ${adminResult.sent}/${adminResult.total || adminResult.sent}`);
 
@@ -592,6 +621,7 @@ async function notifyAssignmentCreated(employeeGlobalId, { assignmentId, quantit
     });
 
     // Notificar a administradores y encargados
+    // EXCLUIR al repartidor que ya recibió su notificación personal (evita duplicados)
     const adminResult = await sendNotificationToAdminsInBranch(branchId, {
         title: 'Asignación Creada',
         body: `${employeeName} recibió ${quantity.toFixed(2)} kg ($${amount.toFixed(2)}) autorizado por ${createdByName}`,
@@ -604,7 +634,7 @@ async function notifyAssignmentCreated(employeeGlobalId, { assignmentId, quantit
             amount: amount.toString(),
             branchName
         }
-    });
+    }, { excludeEmployeeGlobalId: employeeGlobalId });
 
     return {
         employee: employeeResult,
