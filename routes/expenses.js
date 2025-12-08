@@ -525,7 +525,13 @@ module.exports = (pool, io) => {
             }
 
             // 🔔 ENVIAR NOTIFICACIONES FCM si el gasto tiene empleado asignado
-            if (finalEmployeeId) {
+            // ⚠️ NO enviar notificación si es un gasto de Desktop ya revisado (el usuario que lo registra no necesita notificación)
+            // Solo notificar cuando:
+            // 1. Gasto de MÓVIL (reviewed_by_desktop = false) - para que admins lo vean
+            // 2. Gasto de Desktop para OTRO empleado (no implementado aún)
+            const shouldNotify = finalEmployeeId && !reviewedValue; // Solo notificar gastos de móvil (pendientes de revisión)
+
+            if (shouldNotify) {
                 try {
                     // Obtener datos del empleado y sucursal para las notificaciones
                     const employeeData = await pool.query(
@@ -563,6 +569,8 @@ module.exports = (pool, io) => {
                     console.error(`[Sync/Expenses] ⚠️ Error enviando notificaciones: ${notifError.message}`);
                     // No fallar la sincronización si falla el envío de notificaciones
                 }
+            } else if (finalEmployeeId && reviewedValue) {
+                console.log(`[Sync/Expenses] ℹ️ Gasto de Desktop (reviewed_by_desktop=true) - NO se envía notificación push`);
             }
 
             res.json({ success: true, data: responseData });
