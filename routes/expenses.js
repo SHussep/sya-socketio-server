@@ -117,9 +117,24 @@ module.exports = (pool, io) => {
 
             query += ` ORDER BY e.expense_date DESC, e.created_at DESC`;
 
+            console.log(`[Expenses/GET] Query: ${query}`);
+            console.log(`[Expenses/GET] Params: ${JSON.stringify(params)}`);
             const result = await pool.query(query, params);
 
             console.log(`[Expenses/GET] ✅ Encontrados ${result.rows.length} gastos`);
+
+            // Debug: Si no hay gastos con shift, verificar cuántos hay sin filtro de shift
+            if (result.rows.length === 0 && shiftIdFilter) {
+                const debugResult = await pool.query(
+                    `SELECT COUNT(*) as total,
+                            COUNT(CASE WHEN id_turno = $2 THEN 1 END) as with_shift,
+                            COUNT(CASE WHEN id_turno IS NULL THEN 1 END) as null_shift
+                     FROM expenses
+                     WHERE branch_id = $1 AND is_active = true`,
+                    [branchId, shiftIdFilter]
+                );
+                console.log(`[Expenses/GET] 🔍 Debug: Total gastos: ${debugResult.rows[0].total}, Con shift ${shiftIdFilter}: ${debugResult.rows[0].with_shift}, Sin shift: ${debugResult.rows[0].null_shift}`);
+            }
 
             // Normalizar amount a número
             const normalizedRows = result.rows.map(row => ({

@@ -124,7 +124,10 @@ module.exports = (pool) => {
                 expParamIndex++;
             }
 
+            console.log(`[Dashboard Summary] Expenses Query: ${expensesQuery}`);
+            console.log(`[Dashboard Summary] Expenses Params: ${JSON.stringify(expensesParams)}`);
             const expensesResult = await pool.query(expensesQuery, expensesParams);
+            console.log(`[Dashboard Summary] ✅ Total expenses: ${expensesResult.rows[0].total}`);
 
             // Último corte de caja
             let cashCutQuery = `SELECT counted_cash FROM cash_cuts WHERE tenant_id = $1`;
