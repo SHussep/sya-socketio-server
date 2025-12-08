@@ -53,15 +53,18 @@ module.exports = (pool) => {
                 device_event_raw
             } = req.body;
 
-            console.log(`[Employees/Sync] 🔄 Sincronizando empleado: ${fullName} (${username}) - Tenant: ${tenantId}, Role: ${roleId}`);
+            // Auto-generar username del email si no se proporciona
+            const derivedUsername = username || (email ? email.split('@')[0].replace(/[^a-zA-Z0-9]/g, '').toLowerCase() : null);
+
+            console.log(`[Employees/Sync] 🔄 Sincronizando empleado: ${fullName} (${derivedUsername}) - Tenant: ${tenantId}, Role: ${roleId}`);
             console.log(`[Employees/Sync] 🔑 GlobalId: ${global_id || 'null'}, TerminalId: ${terminal_id || 'null'}`);
 
-            // Validate required fields
-            if (!tenantId || !fullName || !username || !email || !global_id) {
+            // Validate required fields (username ya NO es requerido, se deriva del email)
+            if (!tenantId || !fullName || !email || !global_id) {
                 console.log(`[Employees/Sync] ❌ Datos incompletos`);
                 return res.status(400).json({
                     success: false,
-                    message: 'Faltan campos requeridos: tenantId, fullName, username, email, global_id'
+                    message: 'Faltan campos requeridos: tenantId, fullName, email, global_id'
                 });
             }
 
@@ -261,7 +264,7 @@ module.exports = (pool) => {
                         tenantId,
                         firstName,
                         lastName,
-                        username,
+                        derivedUsername,  // ✅ Username auto-generado del email
                         email,
                         password || null,  // Can be null if not provided
                         branchId || mainBranchId,
@@ -955,6 +958,200 @@ module.exports = (pool) => {
             });
         } finally {
             client.release();
+        }
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // VERIFICACIÓN DE EMAIL - Desktop genera código, lo guarda aquí, valida aquí
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // POST /api/employees/:id/verification-code - Desktop guarda el código de verificación
+    router.post('/:id/verification-code', async (req, res) => {
+        const client = await pool.connect();
+        try {
+            const employeeId = parseInt(req.params.id);
+            const { tenantId, code, expiresAt } = req.body;
+
+            console.log(`[Employees/VerificationCode] 🔑 Guardando código de verificación para empleado ID: ${employeeId}`);
+
+            if (!employeeId || !tenantId || !code) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Parámetros requeridos: employeeId, tenantId, code'
+                });
+            }
+
+            // Verificar que el empleado existe
+            const employeeCheck = await client.query(
+                `SELECT id, email FROM employees WHERE id = $1 AND tenant_id = $2`,
+                [employeeId, tenantId]
+            );
+
+            if (employeeCheck.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Empleado no encontrado'
+                });
+            }
+
+            // Guardar código de verificación (expira en 24h por defecto)
+            const expiration = expiresAt || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+
+            await client.query(
+                `UPDATE employees
+                 SET verification_code = $1, verification_expires_at = $2, updated_at = NOW()
+                 WHERE id = $3 AND tenant_id = $4`,
+                [code, expiration, employeeId, tenantId]
+            );
+
+            console.log(`[Employees/VerificationCode] ✅ Código guardado para ${employeeCheck.rows[0].email}, expira: ${expiration}`);
+
+            return res.json({
+                success: true,
+                message: 'Código de verificación guardado',
+                expiresAt: expiration
+            });
+
+        } catch (error) {
+            console.error('[Employees/VerificationCode] ❌ Error:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Error al guardar código de verificación',
+                error: error.message
+            });
+        } finally {
+            client.release();
+        }
+    });
+
+    // POST /api/employees/verify-email - Valida código y marca email como verificado
+    router.post('/verify-email', async (req, res) => {
+        const client = await pool.connect();
+        try {
+            const { email, code, tenantId } = req.body;
+
+            console.log(`[Employees/VerifyEmail] 🔍 Verificando código para email: ${email}`);
+
+            if (!email || !code) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Parámetros requeridos: email, code'
+                });
+            }
+
+            // Buscar empleado con código válido y no expirado
+            let query = `
+                UPDATE employees
+                SET email_verified = true, verification_code = NULL, verification_expires_at = NULL, updated_at = NOW()
+                WHERE LOWER(email) = LOWER($1)
+                  AND verification_code = $2
+                  AND verification_expires_at > NOW()
+            `;
+            const params = [email, code];
+
+            // Si se proporciona tenantId, agregar filtro
+            if (tenantId) {
+                query = `
+                    UPDATE employees
+                    SET email_verified = true, verification_code = NULL, verification_expires_at = NULL, updated_at = NOW()
+                    WHERE LOWER(email) = LOWER($1)
+                      AND verification_code = $2
+                      AND verification_expires_at > NOW()
+                      AND tenant_id = $3
+                `;
+                params.push(tenantId);
+            }
+
+            query += ' RETURNING id, email, first_name, last_name';
+
+            const result = await client.query(query, params);
+
+            if (result.rowCount === 0) {
+                console.log(`[Employees/VerifyEmail] ❌ Código inválido o expirado para: ${email}`);
+                return res.status(400).json({
+                    success: false,
+                    message: 'Código inválido o expirado'
+                });
+            }
+
+            const employee = result.rows[0];
+            const fullName = `${employee.first_name || ''} ${employee.last_name || ''}`.trim();
+
+            console.log(`[Employees/VerifyEmail] ✅ Email verificado para: ${fullName} (${employee.email})`);
+
+            return res.json({
+                success: true,
+                message: 'Email verificado exitosamente',
+                data: {
+                    employeeId: employee.id,
+                    email: employee.email,
+                    fullName: fullName,
+                    emailVerified: true
+                }
+            });
+
+        } catch (error) {
+            console.error('[Employees/VerifyEmail] ❌ Error:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Error al verificar email',
+                error: error.message
+            });
+        } finally {
+            client.release();
+        }
+    });
+
+    // GET /api/employees/:id/verification-status - Obtiene estado de verificación de email
+    router.get('/:id/verification-status', async (req, res) => {
+        try {
+            const employeeId = parseInt(req.params.id);
+            const { tenantId } = req.query;
+
+            if (!employeeId) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'employeeId es requerido'
+                });
+            }
+
+            let query = `SELECT id, email, email_verified, verification_expires_at FROM employees WHERE id = $1`;
+            const params = [employeeId];
+
+            if (tenantId) {
+                query += ' AND tenant_id = $2';
+                params.push(tenantId);
+            }
+
+            const result = await pool.query(query, params);
+
+            if (result.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Empleado no encontrado'
+                });
+            }
+
+            const employee = result.rows[0];
+
+            return res.json({
+                success: true,
+                data: {
+                    employeeId: employee.id,
+                    email: employee.email,
+                    emailVerified: employee.email_verified,
+                    verificationPending: employee.verification_expires_at && !employee.email_verified,
+                    verificationExpiresAt: employee.verification_expires_at
+                }
+            });
+
+        } catch (error) {
+            console.error('[Employees/VerificationStatus] ❌ Error:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Error al obtener estado de verificación',
+                error: error.message
+            });
         }
     });
 

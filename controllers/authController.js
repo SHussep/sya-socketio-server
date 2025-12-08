@@ -249,20 +249,19 @@ class AuthController {
         console.log('[Desktop Login] Headers:', JSON.stringify(req.headers));
         console.log('[Desktop Login] Body:', JSON.stringify(req.body));
 
-        const { email, username, password, branchId, tenantCode } = req.body;
+        const { email, password, branchId, tenantCode } = req.body;
 
         console.log('[Desktop Login] Parsed values:');
         console.log('  - tenantCode:', tenantCode);
         console.log('  - email:', email);
-        console.log('  - username:', username);
         console.log('  - password:', password ? `(${password.length} chars)` : 'undefined');
         console.log('  - branchId:', branchId);
 
-        if (!tenantCode || (!email && !username) || !password) {
+        if (!tenantCode || !email || !password) {
             console.log('[Desktop Login] ❌ Validación falló - credenciales incompletas');
             return res.status(400).json({
                 success: false,
-                message: 'TenantCode, Email/username y contraseña son requeridos'
+                message: 'TenantCode, Email y contraseña son requeridos'
             });
         }
 
@@ -284,14 +283,9 @@ class AuthController {
             const tenantId = tenantLookup.rows[0].id;
             console.log(`[Desktop Login] ✅ Tenant encontrado: ID ${tenantId}`);
 
-            let query, params;
-            if (email) {
-                query = 'SELECT * FROM employees WHERE LOWER(email) = LOWER($1) AND tenant_id = $2 AND is_active = true';
-                params = [email, tenantId];
-            } else {
-                query = 'SELECT * FROM employees WHERE LOWER(username) = LOWER($1) AND tenant_id = $2 AND is_active = true';
-                params = [username, tenantId];
-            }
+            // Buscar empleado SOLO por email
+            const query = 'SELECT * FROM employees WHERE LOWER(email) = LOWER($1) AND tenant_id = $2 AND is_active = true';
+            const params = [email, tenantId];
 
             console.log('[Desktop Login] Ejecutando query:', query);
             console.log('[Desktop Login] Parámetros:', params);
@@ -536,24 +530,19 @@ class AuthController {
     async mobileLogin(req, res) {
         console.log('[Mobile Login] Nueva solicitud de login desde app móvil');
 
-        const { email, username, password, branchId } = req.body;
+        const { email, password, branchId } = req.body;
 
-        if ((!email && !username) || !password) {
+        if (!email || !password) {
             return res.status(400).json({
                 success: false,
-                message: 'Email/username y contraseña son requeridos'
+                message: 'Email y contraseña son requeridos'
             });
         }
 
         try {
-            let query, params;
-            if (email) {
-                query = 'SELECT * FROM employees WHERE LOWER(email) = LOWER($1) AND is_active = true';
-                params = [email];
-            } else {
-                query = 'SELECT * FROM employees WHERE LOWER(username) = LOWER($1) AND is_active = true';
-                params = [username];
-            }
+            // Buscar empleado SOLO por email
+            const query = 'SELECT * FROM employees WHERE LOWER(email) = LOWER($1) AND is_active = true';
+            const params = [email];
 
             const employeeResult = await this.pool.query(query, params);
 
@@ -571,6 +560,16 @@ class AuthController {
                 return res.status(403).json({
                     success: false,
                     message: 'No tienes permiso para usar la aplicación móvil. Contacta al administrador.'
+                });
+            }
+
+            // Verificar que el email esté verificado (solo si can_use_mobile_app = true)
+            if (employee.email_verified === false) {
+                console.log(`[Mobile Login] ❌ Empleado ${employee.email} NO tiene email verificado`);
+                return res.status(403).json({
+                    success: false,
+                    message: 'Tu email no ha sido verificado. Contacta al administrador para completar la verificación.',
+                    error: 'EMAIL_NOT_VERIFIED'
                 });
             }
 
