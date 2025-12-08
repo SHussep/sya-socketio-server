@@ -497,6 +497,7 @@ CREATE TABLE IF NOT EXISTS ventas (
     total_descuentos NUMERIC(14,2) DEFAULT 0,
     total NUMERIC(14,2) NOT NULL,
     monto_pagado NUMERIC(14,2) DEFAULT 0,
+    credito_original NUMERIC(12,2) NOT NULL DEFAULT 0,  -- Crédito generado al momento de la venta (INMUTABLE para auditoría)
 
     -- Notes
     notas TEXT,
