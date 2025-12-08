@@ -105,6 +105,7 @@ async function sendNotificationToAdminsInBranch(branchId, { title, body, data = 
             );
             if (excludeResult.rows.length > 0) {
                 excludeEmployeeId = excludeResult.rows[0].id;
+                console.log(`[NotificationHelper] 🚫 Excluyendo employee_id ${excludeEmployeeId} (global: ${excludeEmployeeGlobalId}) de notificación a admins`);
             }
         }
 
@@ -130,6 +131,9 @@ async function sendNotificationToAdminsInBranch(branchId, { title, body, data = 
             : await pool.query(query, [branchId]);
 
         const deviceTokens = result.rows.map(row => row.device_token);
+
+        // 🔍 DEBUG: Log cantidad de admins encontrados
+        console.log(`[NotificationHelper] 👥 Admins/Encargados en sucursal ${branchId}: ${deviceTokens.length} dispositivo(s)${excludeEmployeeId ? ` (excluyendo employee ${excludeEmployeeId})` : ''}`);
 
         if (deviceTokens.length === 0) {
             console.log(`[NotificationHelper] ℹ️ No hay administradores/encargados con dispositivos activos en sucursal ${branchId}`);
@@ -208,6 +212,9 @@ async function sendNotificationToEmployee(employeeId, { title, body, data = {} }
             console.log(`[NotificationHelper] ℹ️ No hay dispositivos activos para employee ${employeeId}`);
             return { sent: 0, failed: 0 };
         }
+
+        // 🔍 DEBUG: Log cantidad de tokens para detectar duplicados
+        console.log(`[NotificationHelper] 📱 Employee ${employeeIdNumeric} tiene ${deviceTokens.length} dispositivo(s) activo(s)`);
 
         const results = await sendNotificationToMultipleDevices(deviceTokens, {
             title,
