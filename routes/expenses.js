@@ -111,8 +111,11 @@ module.exports = (pool, io) => {
             // Filtro por shift (turno)
             if (shiftIdFilter) {
                 query += ` AND e.id_turno = $${paramIndex}`;
-                params.push(shiftIdFilter);
+                params.push(parseInt(shiftIdFilter)); // Asegurar que es entero
                 paramIndex++;
+                console.log(`[Expenses/GET] 🔒 Aplicando filtro de turno: id_turno = ${shiftIdFilter}`);
+            } else {
+                console.log(`[Expenses/GET] ⚠️ Sin filtro de turno - retornando TODOS los gastos`);
             }
 
             query += ` ORDER BY e.expense_date DESC, e.created_at DESC`;
