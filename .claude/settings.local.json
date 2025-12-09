@@ -32,7 +32,10 @@
       "Bash(del C:SYAsya-socketio-servertest_write.txt)",
       "Bash(rm:*)",
       "Bash(dir /B \"C:\\Users\\saul_\\source\\repos\\SyaTortilleriasWinUi\" /S)",
-      "Bash(dir:*)"
+      "Bash(dir:*)",
+      "Bash(grep:*)",
+      "WebFetch(domain:sya-socketio-server.onrender.com)",
+      "Bash(ls:*)"
     ],
     "deny": [],
     "ask": []

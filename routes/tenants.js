@@ -144,9 +144,9 @@ module.exports = function(pool) {
             const employeeResult = await pool.query(
                 `INSERT INTO employees (
                     tenant_id, main_branch_id, email, username, password_hash,
-                    first_name, role_id, is_owner, is_active, global_id
+                    first_name, role_id, is_owner, is_active, global_id, email_verified
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, 1, true, true, $7)
+                VALUES ($1, $2, $3, $4, $5, $6, 1, true, true, $7, true)
                 RETURNING id, tenant_id, main_branch_id, email, username, first_name, role_id, is_owner, is_active, created_at`,
                 [
                     tenant.id,

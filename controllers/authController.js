@@ -563,9 +563,10 @@ class AuthController {
                 });
             }
 
-            // Verificar que el email esté verificado (solo si can_use_mobile_app = true)
-            if (employee.email_verified === false) {
-                console.log(`[Mobile Login] ❌ Empleado ${employee.email} NO tiene email verificado`);
+            // Verificar que el email esté verificado (requerido para app móvil)
+            // NOTA: El owner (is_owner = true) está verificado implícitamente por haber usado Gmail OAuth
+            if (employee.email_verified !== true && !employee.is_owner) {
+                console.log(`[Mobile Login] ❌ Empleado ${employee.email} NO tiene email verificado (email_verified=${employee.email_verified})`);
                 return res.status(403).json({
                     success: false,
                     message: 'Tu email no ha sido verificado. Contacta al administrador para completar la verificación.',
@@ -918,9 +919,9 @@ class AuthController {
                 INSERT INTO employees (
                     tenant_id, email, username, first_name, last_name, password_hash,
                     role_id, main_branch_id, can_use_mobile_app, is_active, is_owner,
-                    google_user_identifier, global_id, password_updated_at, created_at, updated_at
+                    google_user_identifier, global_id, password_updated_at, email_verified, created_at, updated_at
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, true, true, $9, gen_random_uuid()::text, NOW(), NOW(), NOW())
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, true, true, $9, gen_random_uuid()::text, NOW(), true, NOW(), NOW())
                 RETURNING id, email, username, first_name, last_name, role_id, can_use_mobile_app, is_active, global_id, created_at
             `, [tenant.id, email, username, firstName, lastName, passwordHash, accesoTotalRoleId, branch.id, email]);
 
