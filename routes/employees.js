@@ -389,6 +389,7 @@ module.exports = (pool) => {
                 `SELECT id, tenant_id, first_name, last_name, username, email, is_active,
                         role_id, main_branch_id, can_use_mobile_app, google_user_identifier,
                         global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw,
+                        email_verified, is_owner,
                         created_at, updated_at
                  FROM employees
                  WHERE tenant_id = $1
