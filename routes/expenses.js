@@ -944,6 +944,98 @@ module.exports = (pool, io) => {
     });
 
     // ═══════════════════════════════════════════════════════════════
+    // PATCH /:global_id - Editar descripción y monto de un gasto
+    // Desktop usa esto para corregir errores antes de aprobar
+    // ═══════════════════════════════════════════════════════════════
+    router.patch('/:global_id', async (req, res) => {
+        try {
+            const { global_id } = req.params;
+            const { tenant_id, description, amount } = req.body;
+
+            console.log(`[Expenses/Edit] ✏️ Editando gasto ${global_id} - Tenant: ${tenant_id}`);
+
+            if (!tenant_id) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'tenant_id es requerido'
+                });
+            }
+
+            // Validar que el gasto existe y pertenece al tenant
+            const checkResult = await pool.query(
+                'SELECT id, description, amount FROM expenses WHERE global_id = $1 AND tenant_id = $2',
+                [global_id, tenant_id]
+            );
+
+            if (checkResult.rows.length === 0) {
+                console.log(`[Expenses/Edit] ❌ Gasto no encontrado: ${global_id}`);
+                return res.status(404).json({
+                    success: false,
+                    message: 'Gasto no encontrado'
+                });
+            }
+
+            const currentExpense = checkResult.rows[0];
+
+            // Construir campos a actualizar
+            const updates = [];
+            const values = [];
+            let paramIndex = 1;
+
+            if (description !== undefined && description !== currentExpense.description) {
+                updates.push(`description = $${paramIndex}`);
+                values.push(description);
+                paramIndex++;
+            }
+
+            if (amount !== undefined && parseFloat(amount) !== parseFloat(currentExpense.amount)) {
+                updates.push(`amount = $${paramIndex}`);
+                values.push(parseFloat(amount));
+                paramIndex++;
+            }
+
+            if (updates.length === 0) {
+                console.log(`[Expenses/Edit] ℹ️ Sin cambios para gasto ${global_id}`);
+                return res.json({
+                    success: true,
+                    message: 'Sin cambios',
+                    data: currentExpense
+                });
+            }
+
+            // Agregar updated_at
+            updates.push(`updated_at = NOW()`);
+
+            // Ejecutar actualización
+            const updateQuery = `
+                UPDATE expenses
+                SET ${updates.join(', ')}
+                WHERE global_id = $${paramIndex} AND tenant_id = $${paramIndex + 1}
+                RETURNING *
+            `;
+            values.push(global_id, tenant_id);
+
+            const updateResult = await pool.query(updateQuery, values);
+
+            console.log(`[Expenses/Edit] ✅ Gasto editado: ${global_id}`);
+
+            res.json({
+                success: true,
+                message: 'Gasto actualizado correctamente',
+                data: updateResult.rows[0]
+            });
+
+        } catch (error) {
+            console.error(`[Expenses/Edit] ❌ Error editando gasto:`, error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al editar gasto',
+                error: error.message
+            });
+        }
+    });
+
+    // ═══════════════════════════════════════════════════════════════
     // SHIFT-BASED EXPENSE VALIDATION ENDPOINTS
     // Para validar gastos pendientes antes de cerrar turnos
     // ═══════════════════════════════════════════════════════════════
