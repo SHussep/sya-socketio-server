@@ -950,7 +950,7 @@ module.exports = (pool, io) => {
     router.patch('/:global_id', async (req, res) => {
         try {
             const { global_id } = req.params;
-            const { tenant_id, description, amount } = req.body;
+            const { tenant_id, category, description, amount } = req.body;
 
             console.log(`[Expenses/Edit] ✏️ Editando gasto ${global_id} - Tenant: ${tenant_id}`);
 
@@ -963,7 +963,10 @@ module.exports = (pool, io) => {
 
             // Validar que el gasto existe y pertenece al tenant
             const checkResult = await pool.query(
-                'SELECT id, description, amount FROM expenses WHERE global_id = $1 AND tenant_id = $2',
+                `SELECT e.id, e.description, e.amount, e.global_category_id, gcat.name as category_name
+                 FROM expenses e
+                 LEFT JOIN global_expense_categories gcat ON e.global_category_id = gcat.id
+                 WHERE e.global_id = $1 AND e.tenant_id = $2`,
                 [global_id, tenant_id]
             );
 
@@ -981,6 +984,21 @@ module.exports = (pool, io) => {
             const updates = [];
             const values = [];
             let paramIndex = 1;
+
+            // Actualizar categoría si cambió
+            if (category !== undefined && category !== currentExpense.category_name) {
+                // Buscar el ID de la categoría global por nombre
+                const categoryResult = await pool.query(
+                    'SELECT id FROM global_expense_categories WHERE LOWER(name) = LOWER($1)',
+                    [category]
+                );
+                if (categoryResult.rows.length > 0) {
+                    updates.push(`global_category_id = $${paramIndex}`);
+                    values.push(categoryResult.rows[0].id);
+                    paramIndex++;
+                    console.log(`[Expenses/Edit] 📂 Categoría cambiada: ${currentExpense.category_name} → ${category}`);
+                }
+            }
 
             if (description !== undefined && description !== currentExpense.description) {
                 updates.push(`description = $${paramIndex}`);
