@@ -599,6 +599,30 @@ async function initializeDatabase() {
         await client.query('CREATE INDEX IF NOT EXISTS idx_guardian_events_unread ON guardian_events(tenant_id, is_read) WHERE is_read = false');
         */
 
+        // ═══════════════════════════════════════════════════════════════════════════════
+        // MIGRACIONES PARA EMAIL VERIFICATION (verificación de correo de empleados)
+        // ═══════════════════════════════════════════════════════════════════════════════
+        try {
+            await client.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT NULL`);
+            console.log('[DB] ✅ Columna employees.email_verified verificada/agregada');
+        } catch (error) {
+            console.log('[DB] ⚠️ employees.email_verified:', error.message);
+        }
+
+        try {
+            await client.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS verification_code VARCHAR(6)`);
+            console.log('[DB] ✅ Columna employees.verification_code verificada/agregada');
+        } catch (error) {
+            console.log('[DB] ⚠️ employees.verification_code:', error.message);
+        }
+
+        try {
+            await client.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS verification_expires_at TIMESTAMP`);
+            console.log('[DB] ✅ Columna employees.verification_expires_at verificada/agregada');
+        } catch (error) {
+            console.log('[DB] ⚠️ employees.verification_expires_at:', error.message);
+        }
+
         console.log('[DB] ✅ Database schema initialized successfully');
     } catch (error) {
         console.error('[DB] ❌ Error initializing database:', error);
