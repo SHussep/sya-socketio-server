@@ -1124,6 +1124,81 @@ const MIGRATIONS = [
                 // Don't throw - continue even if there are issues
             }
         }
+    },
+    {
+        id: '042_add_email_verification_columns',
+        name: 'Add email verification columns to employees table',
+        async execute(client) {
+            console.log('🔄 Ejecutando migración 042: Agregando columnas de verificación de email...');
+
+            try {
+                // Check if email_verified column exists
+                const checkEmailVerified = await client.query(`
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'employees' AND column_name = 'email_verified'
+                `);
+
+                if (checkEmailVerified.rows.length === 0) {
+                    console.log('   📝 Agregando columna email_verified...');
+                    await client.query(`
+                        ALTER TABLE employees
+                        ADD COLUMN email_verified BOOLEAN DEFAULT NULL
+                    `);
+                    console.log('   ✅ Columna email_verified agregada');
+                } else {
+                    console.log('   ℹ️  Columna email_verified ya existe');
+                }
+
+                // Check if verification_code column exists
+                const checkVerificationCode = await client.query(`
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'employees' AND column_name = 'verification_code'
+                `);
+
+                if (checkVerificationCode.rows.length === 0) {
+                    console.log('   📝 Agregando columna verification_code...');
+                    await client.query(`
+                        ALTER TABLE employees
+                        ADD COLUMN verification_code VARCHAR(6)
+                    `);
+                    console.log('   ✅ Columna verification_code agregada');
+                } else {
+                    console.log('   ℹ️  Columna verification_code ya existe');
+                }
+
+                // Check if verification_expires_at column exists
+                const checkVerificationExpires = await client.query(`
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'employees' AND column_name = 'verification_expires_at'
+                `);
+
+                if (checkVerificationExpires.rows.length === 0) {
+                    console.log('   📝 Agregando columna verification_expires_at...');
+                    await client.query(`
+                        ALTER TABLE employees
+                        ADD COLUMN verification_expires_at TIMESTAMP WITH TIME ZONE
+                    `);
+                    console.log('   ✅ Columna verification_expires_at agregada');
+                } else {
+                    console.log('   ℹ️  Columna verification_expires_at ya existe');
+                }
+
+                // Create index for faster lookups
+                console.log('   📝 Creando índice para email_verified...');
+                await client.query(`
+                    CREATE INDEX IF NOT EXISTS idx_employees_email_verified ON employees(email_verified)
+                `);
+                console.log('   ✅ Índice creado');
+
+                console.log('✅ Migración 042 completada: Columnas de verificación de email agregadas');
+            } catch (error) {
+                console.log('⚠️  Migración 042: ' + error.message);
+                // Don't throw - continue even if there are issues
+            }
+        }
     }
 ];
 
