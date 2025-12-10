@@ -94,6 +94,11 @@ CREATE TABLE IF NOT EXISTS employees (
     created_local_utc TEXT,
     device_event_raw BIGINT,
 
+    -- Email verification columns
+    email_verified BOOLEAN DEFAULT NULL,
+    verification_code VARCHAR(6),
+    verification_expires_at TIMESTAMP,
+
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(tenant_id, username),
