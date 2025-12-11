@@ -2412,9 +2412,12 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
 
         jwt.verify(token, JWT_SECRET, async (err, user) => {
             if (err) {
-                return res.status(403).json({
+                // ✅ 401 para token expirado (la app debe intentar renovar)
+                // 403 se reserva para "no tienes permiso" (tenant eliminado, etc.)
+                return res.status(401).json({
                     success: false,
-                    message: 'Token inválido o expirado'
+                    message: 'Token inválido o expirado',
+                    code: 'TOKEN_EXPIRED'
                 });
             }
 
