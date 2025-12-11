@@ -2410,12 +2410,37 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
             });
         }
 
-        jwt.verify(token, JWT_SECRET, (err, user) => {
+        jwt.verify(token, JWT_SECRET, async (err, user) => {
             if (err) {
                 return res.status(403).json({
                     success: false,
                     message: 'Token inválido o expirado'
                 });
+            }
+
+            // ✅ FIX: Verificar que el tenant realmente existe en la base de datos
+            // Esto previene que usuarios con tokens válidos pero tenants eliminados
+            // sigan accediendo a la aplicación
+            if (user.tenantId) {
+                try {
+                    const tenantCheck = await this.pool.query(
+                        'SELECT id FROM tenants WHERE id = $1',
+                        [user.tenantId]
+                    );
+
+                    if (tenantCheck.rows.length === 0) {
+                        console.log(`[Auth] ❌ Tenant ${user.tenantId} no existe en la base de datos`);
+                        return res.status(403).json({
+                            success: false,
+                            message: 'Tu cuenta ha sido desactivada o eliminada. Por favor, contacta al administrador.',
+                            code: 'TENANT_NOT_FOUND'
+                        });
+                    }
+                } catch (dbError) {
+                    console.error('[Auth] Error verificando tenant:', dbError);
+                    // En caso de error de BD, dejamos pasar para no bloquear el servicio
+                    // pero registramos el error
+                }
             }
 
             req.user = user;
