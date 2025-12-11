@@ -651,6 +651,10 @@ CREATE TABLE IF NOT EXISTS repartidor_returns (
     branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
     shift_id INTEGER REFERENCES shifts(id) ON DELETE SET NULL,
 
+    -- Product traceability (for per-product inventory tracking)
+    product_id INTEGER REFERENCES productos(id) ON DELETE SET NULL,
+    product_name VARCHAR(200), -- Denormalized for display
+
     -- Return details
     quantity NUMERIC(10,2) NOT NULL CHECK (quantity > 0),
     unit_price NUMERIC(10,2) NOT NULL,
@@ -685,6 +689,7 @@ CREATE INDEX IF NOT EXISTS idx_repartidor_returns_return_date ON repartidor_retu
 CREATE INDEX IF NOT EXISTS idx_repartidor_returns_source ON repartidor_returns(source);
 CREATE INDEX IF NOT EXISTS idx_repartidor_returns_status ON repartidor_returns(status);
 CREATE INDEX IF NOT EXISTS idx_repartidor_returns_employee_status ON repartidor_returns(employee_id, status);
+CREATE INDEX IF NOT EXISTS idx_repartidor_returns_product ON repartidor_returns(product_id);
 CREATE UNIQUE INDEX IF NOT EXISTS unique_repartidor_returns_global_terminal ON repartidor_returns(global_id, terminal_id);
 
 -- ========== CREDIT PAYMENTS ==========

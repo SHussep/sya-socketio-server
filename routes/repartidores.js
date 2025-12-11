@@ -420,6 +420,8 @@ module.exports = (pool) => {
                     rr.notes,
                     rr.status,
                     rr.global_id,
+                    rr.product_id,
+                    rr.product_name,
                     CONCAT(e_registered.first_name, ' ', e_registered.last_name) as registered_by_name,
                     ra.assigned_quantity,
                     ra.assigned_amount,
@@ -455,6 +457,8 @@ module.exports = (pool) => {
                     notes: row.notes,
                     status: row.status || 'confirmed',
                     global_id: row.global_id,
+                    product_id: row.product_id,
+                    product_name: row.product_name,
                     registered_by_name: row.registered_by_name,
                     assigned_quantity: parseFloat(row.assigned_quantity),
                     assigned_amount: parseFloat(row.assigned_amount),
@@ -489,6 +493,8 @@ module.exports = (pool) => {
                 registered_by_employee_id,
                 registered_by_employee_global_id, // ✅ Aceptar GlobalId del registrador
                 shift_global_id,       // ✅ Aceptar GlobalId del turno
+                product_global_id,     // 🆕 GlobalId del producto para trazabilidad de inventario
+                product_name,          // 🆕 Nombre del producto (denormalizado)
                 tenant_id,
                 branch_id,
                 shift_id,
@@ -577,6 +583,19 @@ module.exports = (pool) => {
                 }
             }
 
+            // 🆕 Product (para trazabilidad de inventario)
+            let finalProductId = null;
+            if (product_global_id) {
+                const productResult = await pool.query(
+                    'SELECT id FROM productos WHERE global_id = $1',
+                    [product_global_id]
+                );
+                if (productResult.rows.length > 0) {
+                    finalProductId = productResult.rows[0].id;
+                    console.log(`[RepartidorReturns] ✅ Producto resuelto: ${product_global_id} → ID ${finalProductId}`);
+                }
+            }
+
             // Verificar si ya existe (idempotencia)
             const existing = await pool.query(
                 'SELECT * FROM repartidor_returns WHERE global_id = $1',
@@ -595,10 +614,12 @@ module.exports = (pool) => {
                             amount = $2,
                             status = $3,
                             notes = $4,
+                            product_id = COALESCE($5, product_id),
+                            product_name = COALESCE($6, product_name),
                             updated_at = NOW()
-                        WHERE global_id = $5
+                        WHERE global_id = $7
                         RETURNING *
-                    `, [quantity, amount, status, notes, global_id]);
+                    `, [quantity, amount, status, notes, finalProductId, product_name, global_id]);
 
                     console.log(`[RepartidorReturns] ✅ Return actualizado: ${global_id} (status: ${status})`);
 
@@ -625,10 +646,10 @@ module.exports = (pool) => {
                 INSERT INTO repartidor_returns (
                     global_id, assignment_id, employee_id,
                     registered_by_employee_id, tenant_id, branch_id,
-                    shift_id, quantity, unit_price, amount,
+                    shift_id, product_id, product_name, quantity, unit_price, amount,
                     return_date, source, status, notes,
                     terminal_id, local_op_seq, created_local_utc, device_event_raw
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
                 RETURNING *
             `, [
                 global_id,
@@ -638,6 +659,8 @@ module.exports = (pool) => {
                 tenant_id,
                 branch_id,
                 finalShiftId,            // ✅ Usar el ID resuelto
+                finalProductId,          // 🆕 ID del producto resuelto
+                product_name || null,    // 🆕 Nombre del producto
                 quantity,
                 unit_price,
                 amount,
@@ -927,8 +950,8 @@ module.exports = (pool) => {
                     COALESCE(sd.total_debt, 0) as total_debt,
                     COALESCE(sd.pending_debt, 0) as pending_debt,
                     COALESCE(sd.debt_count, 0) as debt_count,
-                    -- Neto a entregar
-                    (COALESCE(sa.total_assigned_amount, 0) - COALESCE(sr.total_returned_amount, 0) - COALESCE(se.total_expenses, 0)) as net_to_deliver,
+                    -- Neto a entregar (Fondo Inicial + Asignado - Devuelto - Gastos)
+                    (COALESCE(s.initial_amount, 0) + COALESCE(sa.total_assigned_amount, 0) - COALESCE(sr.total_returned_amount, 0) - COALESCE(se.total_expenses, 0)) as net_to_deliver,
                     (COALESCE(sa.total_assigned_kg, 0) - COALESCE(sr.total_returned_kg, 0)) as net_delivered_kg,
                     -- Cantidades agrupadas por unidad
                     sabu.assigned_by_unit,
