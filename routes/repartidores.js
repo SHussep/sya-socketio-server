@@ -288,6 +288,18 @@ module.exports = (pool) => {
             query += ` ORDER BY MIN(ra.fecha_asignacion) DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
             params.push(parseInt(limit), parseInt(offset));
 
+            // DEBUG: Query RAW sin agrupación para ver valores reales en la DB
+            const rawDebug = await pool.query(`
+                SELECT id, venta_id, status, repartidor_shift_id, product_name
+                FROM repartidor_assignments
+                WHERE tenant_id = $1 AND employee_id = $2
+                ORDER BY id DESC LIMIT 15
+            `, [tenantId, parseInt(employeeId)]);
+            console.log(`[Repartidor Assignments] 🔍 RAW DB VALUES (sin agrupación):`);
+            rawDebug.rows.forEach(r => {
+                console.log(`[Repartidor Assignments]   RAW: id=${r.id}, venta_id=${r.venta_id}, status="${r.status}", shift=${r.repartidor_shift_id}, product=${r.product_name}`);
+            });
+
             console.log(`[Repartidor Assignments] 📊 Executing GROUPED query with params:`, params);
             const result = await pool.query(query, params);
 
