@@ -292,6 +292,11 @@ module.exports = (pool) => {
             const result = await pool.query(query, params);
 
             console.log(`[Repartidor Assignments] ✅ Found ${result.rows.length} GROUPED assignments (by venta_id)`);
+
+            // DEBUG: Mostrar status de cada asignación
+            result.rows.forEach((row, idx) => {
+                console.log(`[Repartidor Assignments] 📦 Row ${idx}: id=${row.id}, venta_id=${row.venta_id}, status="${row.status}", repartidor_shift_id=${row.repartidor_shift_id}`);
+            });
             if (result.rows.length === 0) {
                 console.log(`[Repartidor Assignments] ⚠️ No assignments found for employeeId=${employeeId}, tenantId=${tenantId}`);
                 // Verificar si el empleado existe
