@@ -35,7 +35,21 @@
       "Bash(dir:*)",
       "Bash(grep:*)",
       "WebFetch(domain:sya-socketio-server.onrender.com)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(timeout 30 flutter analyze:*)",
+      "Bash(timeout 60 flutter analyze:*)",
+      "Bash(flutter analyze:*)",
+      "Bash(pm2 restart:*)",
+      "Bash(npm restart)",
+      "Bash(powershell -ExecutionPolicy Bypass -Command \"echo ''S'' | .\\publish-beta.ps1 -Version ''1.0.0'' -Notes ''Primera versión beta - Sistema completo de ventas con báscula''\")",
+      "Bash(powershell -ExecutionPolicy Bypass -File \".\\publish-beta.ps1\" -Version \"1.0.0\" -Notes \"Primera version beta - Sistema completo de ventas con bascula\" -NoConfirm)",
+      "Bash(powershell -ExecutionPolicy Bypass -File \".\\publish-beta.ps1\" -Version \"1.0.0\" -Notes \"Primera version beta\" -NoConfirm)",
+      "Bash(\"C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe\" installer.iss)",
+      "Bash(\"C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe\" \"C:\\Users\\saul_\\source\\repos\\SyaTortilleriasWinUi\\installer.iss\")",
+      "Bash(dotnet publish:*)",
+      "Bash(dotnet msbuild:*)",
+      "Bash(xcopy:*)",
+      "WebSearch"
     ],
     "deny": [],
     "ask": []

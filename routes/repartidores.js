@@ -312,26 +312,31 @@ module.exports = (pool) => {
                 });
             }
 
-            // Obtener los items de cada venta (desde ventas_detalle para tener info completa del producto)
+            // Obtener los items de cada venta desde repartidor_assignments
+            // IMPORTANTE: Usamos unit_abbreviation de repartidor_assignments porque
+            // es el valor correcto capturado del producto al momento de la asignación.
+            // productos.unidad_venta puede estar vacío/incorrecto.
             const ventaIds = result.rows.map(row => row.venta_id).filter(id => id != null);
             let itemsByVenta = {};
 
             if (ventaIds.length > 0) {
                 const itemsQuery = `
                     SELECT
-                        vd.id_venta,
-                        vd.id_producto,
-                        vd.descripcion_producto,
-                        vd.cantidad,
-                        vd.precio_unitario,
-                        vd.total_linea,
-                        COALESCE(p.unidad_venta, 'kg') as unit_abbreviation
-                    FROM ventas_detalle vd
-                    LEFT JOIN productos p ON vd.id_producto = p.id_producto
-                    WHERE vd.id_venta = ANY($1)
-                    ORDER BY vd.id_venta, vd.id_venta_detalle
+                        ra.venta_id as id_venta,
+                        ra.product_id as id_producto,
+                        COALESCE(ra.product_name, vd.descripcion_producto, 'Producto') as descripcion_producto,
+                        ra.assigned_quantity as cantidad,
+                        ra.unit_price as precio_unitario,
+                        ra.assigned_amount as total_linea,
+                        COALESCE(ra.unit_abbreviation, 'kg') as unit_abbreviation
+                    FROM repartidor_assignments ra
+                    LEFT JOIN ventas_detalle vd ON ra.venta_id = vd.id_venta AND ra.product_id = vd.id_producto
+                    WHERE ra.venta_id = ANY($1)
+                      AND ra.employee_id = $2
+                      AND ra.tenant_id = $3
+                    ORDER BY ra.venta_id, ra.id
                 `;
-                const itemsResult = await pool.query(itemsQuery, [ventaIds]);
+                const itemsResult = await pool.query(itemsQuery, [ventaIds, parseInt(employeeId), tenantId]);
 
                 // Agrupar items por venta_id
                 itemsResult.rows.forEach(item => {
