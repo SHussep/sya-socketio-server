@@ -202,6 +202,7 @@ module.exports = (pool) => {
     });
 
     // GET /api/repartidores/:employeeId/assignments - Asignaciones de un repartidor específico
+    // 🔧 FIX: AGRUPADO POR venta_id para evitar duplicados (cada venta puede tener múltiples items en repartidor_assignments)
     router.get('/:employeeId/assignments', authenticateToken, async (req, res) => {
         try {
             const { tenantId, branchId: userBranchId, employeeId: jwtEmployeeId } = req.user;
@@ -213,24 +214,35 @@ module.exports = (pool) => {
             console.log(`[Repartidor Assignments] Params: employeeId=${employeeId} (from URL)`);
             console.log(`[Repartidor Assignments] Query: status=${status || 'ALL'}, only_open_shifts=${only_open_shifts}, limit=${limit}, offset=${offset}`);
 
+            // 🔧 QUERY AGRUPADO POR venta_id para evitar duplicados
+            // Cada venta puede tener múltiples registros en repartidor_assignments (uno por producto)
+            // Pero queremos mostrar UNA sola asignación por venta con todos sus items
             let query = `
                 SELECT
-                    ra.id,
+                    MIN(ra.id) as id,
                     ra.venta_id,
                     ra.employee_id,
-                    ra.assigned_quantity,
-                    ra.assigned_amount,
-                    ra.unit_price,
-                    COALESCE(ra.unit_abbreviation, 'kg') as unit_abbreviation,
-                    ra.status,
-                    ra.fecha_asignacion,
-                    ra.fecha_liquidacion,
-                    ra.observaciones,
+                    SUM(ra.assigned_quantity) as assigned_quantity,
+                    SUM(ra.assigned_amount) as assigned_amount,
+                    AVG(ra.unit_price) as unit_price,
+                    MODE() WITHIN GROUP (ORDER BY COALESCE(ra.unit_abbreviation, 'kg')) as unit_abbreviation,
+                    -- Status: si alguno es pending/in_progress, mostrar ese; si todos son liquidated, mostrar liquidated
+                    CASE
+                        WHEN bool_or(ra.status = 'pending') THEN 'pending'
+                        WHEN bool_or(ra.status = 'in_progress') THEN 'in_progress'
+                        WHEN bool_or(ra.status = 'cancelled') THEN 'cancelled'
+                        ELSE 'liquidated'
+                    END as status,
+                    MIN(ra.fecha_asignacion) as fecha_asignacion,
+                    MAX(ra.fecha_liquidacion) as fecha_liquidacion,
+                    STRING_AGG(DISTINCT ra.observaciones, '; ') FILTER (WHERE ra.observaciones IS NOT NULL) as observaciones,
                     ra.repartidor_shift_id,
                     CONCAT(e_created.first_name, ' ', e_created.last_name) as assigned_by_name,
                     v.ticket_number,
                     CONCAT(e_repartidor.first_name, ' ', e_repartidor.last_name) as repartidor_name,
-                    s.is_cash_cut_open as shift_is_open
+                    s.is_cash_cut_open as shift_is_open,
+                    -- IDs de todos los registros de esta venta (para buscar devoluciones)
+                    ARRAY_AGG(ra.id) as assignment_ids
                 FROM repartidor_assignments ra
                 LEFT JOIN employees e_created ON ra.created_by_employee_id = e_created.id
                 LEFT JOIN employees e_repartidor ON ra.employee_id = e_repartidor.id
@@ -255,13 +267,17 @@ module.exports = (pool) => {
                 paramIndex++;
             }
 
-            query += ` ORDER BY ra.fecha_asignacion DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
-            params.push(limit, offset);
+            // Agrupar por venta_id (o por id si no tiene venta_id)
+            query += ` GROUP BY COALESCE(ra.venta_id, ra.id), ra.venta_id, ra.employee_id, ra.repartidor_shift_id,
+                       e_created.first_name, e_created.last_name, v.ticket_number,
+                       e_repartidor.first_name, e_repartidor.last_name, s.is_cash_cut_open`;
+            query += ` ORDER BY MIN(ra.fecha_asignacion) DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+            params.push(parseInt(limit), parseInt(offset));
 
-            console.log(`[Repartidor Assignments] 📊 Executing query with params:`, params);
+            console.log(`[Repartidor Assignments] 📊 Executing GROUPED query with params:`, params);
             const result = await pool.query(query, params);
 
-            console.log(`[Repartidor Assignments] ✅ Found ${result.rows.length} assignments`);
+            console.log(`[Repartidor Assignments] ✅ Found ${result.rows.length} GROUPED assignments (by venta_id)`);
             if (result.rows.length === 0) {
                 console.log(`[Repartidor Assignments] ⚠️ No assignments found for employeeId=${employeeId}, tenantId=${tenantId}`);
                 // Verificar si el empleado existe
@@ -271,23 +287,18 @@ module.exports = (pool) => {
                 } else {
                     console.log(`[Repartidor Assignments] ✅ Employee exists: ${empCheck.rows[0].first_name} ${empCheck.rows[0].last_name} (roleId: ${empCheck.rows[0].role_id})`);
                 }
-                // Verificar si hay asignaciones para este empleado (sin filtros)
-                const allAssignments = await pool.query('SELECT id, status, repartidor_shift_id FROM repartidor_assignments WHERE employee_id = $1 LIMIT 5', [parseInt(employeeId)]);
-                console.log(`[Repartidor Assignments] 📋 Total assignments in DB for this employee (unfiltered): ${allAssignments.rows.length}`);
-                if (allAssignments.rows.length > 0) {
-                    console.log(`[Repartidor Assignments] 📦 Sample assignments:`, allAssignments.rows);
-                }
             } else {
-                console.log(`[Repartidor Assignments] 📦 First assignment:`, {
+                console.log(`[Repartidor Assignments] 📦 First grouped assignment:`, {
                     id: result.rows[0].id,
+                    venta_id: result.rows[0].venta_id,
+                    ticket_number: result.rows[0].ticket_number,
                     status: result.rows[0].status,
                     quantity: result.rows[0].assigned_quantity,
-                    shiftId: result.rows[0].repartidor_shift_id,
-                    shiftIsOpen: result.rows[0].shift_is_open
+                    assignment_ids_count: result.rows[0].assignment_ids?.length || 0
                 });
             }
 
-            // Obtener los items de cada venta
+            // Obtener los items de cada venta (desde ventas_detalle para tener info completa del producto)
             const ventaIds = result.rows.map(row => row.venta_id).filter(id => id != null);
             let itemsByVenta = {};
 
@@ -326,11 +337,11 @@ module.exports = (pool) => {
                 console.log(`[Repartidor Assignments] 📦 Loaded items for ${Object.keys(itemsByVenta).length} ventas`);
             }
 
-            // 🆕 Obtener devoluciones por assignment_id
-            const assignmentIds = result.rows.map(row => row.id);
-            let returnsByAssignment = {};
+            // 🆕 Obtener devoluciones por assignment_ids (todos los IDs de la agrupación)
+            const allAssignmentIds = result.rows.flatMap(row => row.assignment_ids || []);
+            let returnsByAssignmentGroup = {};
 
-            if (assignmentIds.length > 0) {
+            if (allAssignmentIds.length > 0) {
                 const returnsQuery = `
                     SELECT
                         rr.assignment_id,
@@ -341,16 +352,18 @@ module.exports = (pool) => {
                         rr.notes
                     FROM repartidor_returns rr
                     WHERE rr.assignment_id = ANY($1)
+                      AND (rr.status IS NULL OR rr.status != 'deleted')
                     ORDER BY rr.return_date DESC
                 `;
-                const returnsResult = await pool.query(returnsQuery, [assignmentIds]);
+                const returnsResult = await pool.query(returnsQuery, [allAssignmentIds]);
 
-                // Agrupar devoluciones por assignment_id
+                // Primero agrupar por assignment_id
+                const returnsByAssignmentId = {};
                 returnsResult.rows.forEach(ret => {
-                    if (!returnsByAssignment[ret.assignment_id]) {
-                        returnsByAssignment[ret.assignment_id] = [];
+                    if (!returnsByAssignmentId[ret.assignment_id]) {
+                        returnsByAssignmentId[ret.assignment_id] = [];
                     }
-                    returnsByAssignment[ret.assignment_id].push({
+                    returnsByAssignmentId[ret.assignment_id].push({
                         quantity: parseFloat(ret.quantity),
                         amount: parseFloat(ret.amount),
                         return_date: ret.return_date,
@@ -359,13 +372,25 @@ module.exports = (pool) => {
                     });
                 });
 
-                console.log(`[Repartidor Assignments] 🔄 Loaded returns for ${Object.keys(returnsByAssignment).length} assignments`);
+                // Luego agrupar por venta_id (usando el array de assignment_ids de cada grupo)
+                result.rows.forEach(row => {
+                    const ventaKey = row.venta_id || row.id;
+                    returnsByAssignmentGroup[ventaKey] = [];
+                    (row.assignment_ids || []).forEach(assignmentId => {
+                        if (returnsByAssignmentId[assignmentId]) {
+                            returnsByAssignmentGroup[ventaKey].push(...returnsByAssignmentId[assignmentId]);
+                        }
+                    });
+                });
+
+                console.log(`[Repartidor Assignments] 🔄 Loaded returns for ${Object.keys(returnsByAssignmentGroup).length} assignment groups`);
             }
 
             res.json({
                 success: true,
                 data: result.rows.map(row => {
-                    const returns = returnsByAssignment[row.id] || [];
+                    const ventaKey = row.venta_id || row.id;
+                    const returns = returnsByAssignmentGroup[ventaKey] || [];
                     const totalReturnedQuantity = returns.reduce((sum, r) => sum + r.quantity, 0);
                     const totalReturnedAmount = returns.reduce((sum, r) => sum + r.amount, 0);
 
@@ -377,8 +402,8 @@ module.exports = (pool) => {
                         repartidor_name: row.repartidor_name,
                         assigned_quantity: parseFloat(row.assigned_quantity),
                         assigned_amount: parseFloat(row.assigned_amount),
-                        unit_price: parseFloat(row.unit_price),
-                        unit_abbreviation: row.unit_abbreviation || 'kg', // Unidad del producto
+                        unit_price: parseFloat(row.unit_price || 0),
+                        unit_abbreviation: row.unit_abbreviation || 'kg',
                         status: row.status,
                         fecha_asignacion: row.fecha_asignacion,
                         fecha_liquidacion: row.fecha_liquidacion,
