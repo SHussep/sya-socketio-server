@@ -1199,6 +1199,81 @@ const MIGRATIONS = [
                 // Don't throw - continue even if there are issues
             }
         }
+    },
+    {
+        id: '043_add_product_fields_to_repartidor_assignments',
+        name: 'Add product_id, product_name, venta_detalle_id to repartidor_assignments',
+        async execute(client) {
+            console.log('🔄 Ejecutando migración 043: Agregando campos de producto a repartidor_assignments...');
+
+            try {
+                // Check if product_id column exists
+                const checkProductId = await client.query(`
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'repartidor_assignments' AND column_name = 'product_id'
+                `);
+
+                if (checkProductId.rows.length === 0) {
+                    console.log('   📝 Agregando columna product_id...');
+                    await client.query(`
+                        ALTER TABLE repartidor_assignments
+                        ADD COLUMN product_id INTEGER REFERENCES productos(id) ON DELETE SET NULL
+                    `);
+                    console.log('   ✅ Columna product_id agregada');
+                } else {
+                    console.log('   ℹ️  Columna product_id ya existe');
+                }
+
+                // Check if product_name column exists
+                const checkProductName = await client.query(`
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'repartidor_assignments' AND column_name = 'product_name'
+                `);
+
+                if (checkProductName.rows.length === 0) {
+                    console.log('   📝 Agregando columna product_name...');
+                    await client.query(`
+                        ALTER TABLE repartidor_assignments
+                        ADD COLUMN product_name VARCHAR(200)
+                    `);
+                    console.log('   ✅ Columna product_name agregada');
+                } else {
+                    console.log('   ℹ️  Columna product_name ya existe');
+                }
+
+                // Check if venta_detalle_id column exists
+                const checkVentaDetalleId = await client.query(`
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'repartidor_assignments' AND column_name = 'venta_detalle_id'
+                `);
+
+                if (checkVentaDetalleId.rows.length === 0) {
+                    console.log('   📝 Agregando columna venta_detalle_id...');
+                    await client.query(`
+                        ALTER TABLE repartidor_assignments
+                        ADD COLUMN venta_detalle_id INTEGER
+                    `);
+                    console.log('   ✅ Columna venta_detalle_id agregada');
+                } else {
+                    console.log('   ℹ️  Columna venta_detalle_id ya existe');
+                }
+
+                // Create index for product_id
+                console.log('   📝 Creando índice para product_id...');
+                await client.query(`
+                    CREATE INDEX IF NOT EXISTS idx_repartidor_assignments_product_id ON repartidor_assignments(product_id)
+                `);
+                console.log('   ✅ Índice creado');
+
+                console.log('✅ Migración 043 completada: Campos de producto agregados a repartidor_assignments');
+            } catch (error) {
+                console.log('⚠️  Migración 043: ' + error.message);
+                // Don't throw - continue even if there are issues
+            }
+        }
     }
 ];
 

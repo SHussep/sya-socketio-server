@@ -9,16 +9,21 @@ module.exports = (pool) => {
     // ============================================================================
     // POST /api/cancelaciones/sync
     // Sincronizar cancelación desde POS (offline-first idempotente)
+    // Soporta tanto IDs numéricos como GlobalIds para compatibilidad offline
     // ============================================================================
     router.post('/sync', async (req, res) => {
         try {
             const {
                 tenant_id,
                 branch_id,
+                // Soportar tanto IDs numéricos como GlobalIds
                 id_turno,
                 id_empleado,
+                shift_global_id,      // GlobalId del turno (preferido para offline-first)
+                employee_global_id,   // GlobalId del empleado (preferido para offline-first)
                 fecha,
                 id_venta,
+                venta_global_id,      // GlobalId de la venta (preferido para offline-first)
                 id_venta_detalle,
                 id_producto,
                 descripcion,
@@ -35,13 +40,70 @@ module.exports = (pool) => {
             } = req.body;
 
             console.log(`[Sync/Cancelaciones] 🔄 Sincronizando cancelación - Tenant: ${tenant_id}, Branch: ${branch_id}`);
-            console.log(`[Sync/Cancelaciones] 🔐 Offline-First - GlobalId: ${global_id}, TerminalId: ${terminal_id}, LocalOpSeq: ${local_op_seq}`);
+            console.log(`[Sync/Cancelaciones] 🔐 Offline-First - GlobalId: ${global_id}, TerminalId: ${terminal_id}`);
+            console.log(`[Sync/Cancelaciones] 📎 Referencias - ShiftGlobalId: ${shift_global_id}, EmployeeGlobalId: ${employee_global_id}, VentaGlobalId: ${venta_global_id}`);
 
-            // Validate required fields
-            if (!tenant_id || !branch_id || !id_turno || !id_empleado || !global_id || !terminal_id) {
+            // ═══════════════════════════════════════════════════════════════════
+            // RESOLVER GlobalIds a IDs de PostgreSQL (offline-first)
+            // ═══════════════════════════════════════════════════════════════════
+            let resolvedShiftId = id_turno || null;
+            let resolvedEmployeeId = id_empleado || null;
+            let resolvedVentaId = id_venta || null;
+
+            // Resolver shift_global_id -> id
+            if (shift_global_id && !resolvedShiftId) {
+                const shiftResult = await pool.query(
+                    'SELECT id FROM shifts WHERE global_id = $1 AND tenant_id = $2',
+                    [shift_global_id, tenant_id]
+                );
+                if (shiftResult.rows.length > 0) {
+                    resolvedShiftId = shiftResult.rows[0].id;
+                    console.log(`[Sync/Cancelaciones] ✅ Turno resuelto: ${shift_global_id} -> ${resolvedShiftId}`);
+                } else {
+                    console.log(`[Sync/Cancelaciones] ⚠️ Turno no encontrado: ${shift_global_id}`);
+                }
+            }
+
+            // Resolver employee_global_id -> id
+            if (employee_global_id && !resolvedEmployeeId) {
+                const empResult = await pool.query(
+                    'SELECT id FROM employees WHERE global_id = $1 AND tenant_id = $2',
+                    [employee_global_id, tenant_id]
+                );
+                if (empResult.rows.length > 0) {
+                    resolvedEmployeeId = empResult.rows[0].id;
+                    console.log(`[Sync/Cancelaciones] ✅ Empleado resuelto: ${employee_global_id} -> ${resolvedEmployeeId}`);
+                } else {
+                    console.log(`[Sync/Cancelaciones] ⚠️ Empleado no encontrado: ${employee_global_id}`);
+                }
+            }
+
+            // Resolver venta_global_id -> id
+            if (venta_global_id && !resolvedVentaId) {
+                const ventaResult = await pool.query(
+                    'SELECT id FROM sales WHERE global_id = $1 AND tenant_id = $2',
+                    [venta_global_id, tenant_id]
+                );
+                if (ventaResult.rows.length > 0) {
+                    resolvedVentaId = ventaResult.rows[0].id;
+                    console.log(`[Sync/Cancelaciones] ✅ Venta resuelta: ${venta_global_id} -> ${resolvedVentaId}`);
+                }
+            }
+
+            // Validate required fields (después de resolver GlobalIds)
+            if (!tenant_id || !branch_id || !global_id || !terminal_id) {
                 return res.status(400).json({
                     success: false,
-                    message: 'Datos incompletos (tenant_id, branch_id, id_turno, id_empleado, global_id, terminal_id requeridos)'
+                    message: 'Datos incompletos (tenant_id, branch_id, global_id, terminal_id requeridos)'
+                });
+            }
+
+            // Validar que al menos tenemos empleado resuelto
+            if (!resolvedEmployeeId) {
+                console.log(`[Sync/Cancelaciones] ❌ No se pudo resolver empleado`);
+                return res.status(400).json({
+                    success: false,
+                    message: 'No se pudo resolver el empleado (id_empleado o employee_global_id requerido)'
                 });
             }
 
@@ -84,8 +146,8 @@ module.exports = (pool) => {
                     updated_at = CURRENT_TIMESTAMP
                 RETURNING id, global_id`,
                 [
-                    tenant_id, branch_id, id_turno, id_empleado, fecha,
-                    id_venta, id_venta_detalle, id_producto, descripcion,
+                    tenant_id, branch_id, resolvedShiftId, resolvedEmployeeId, fecha,
+                    resolvedVentaId, id_venta_detalle, id_producto, descripcion,
                     numericCantidad, numericPesoKg, motivo, razon_id, otra_razon,
                     global_id, terminal_id, local_op_seq, created_local_utc
                 ]
@@ -117,7 +179,7 @@ module.exports = (pool) => {
 
     // ============================================================================
     // POST /api/cancelaciones/sync-batch
-    // Sincronizar múltiples cancelaciones en batch
+    // Sincronizar múltiples cancelaciones en batch (soporta GlobalIds)
     // ============================================================================
     router.post('/sync-batch', async (req, res) => {
         try {
@@ -140,11 +202,49 @@ module.exports = (pool) => {
 
                 for (const cancelacion of cancelaciones) {
                     const {
-                        tenant_id, branch_id, id_turno, id_empleado, fecha,
-                        id_venta, id_venta_detalle, id_producto, descripcion,
+                        tenant_id, branch_id,
+                        id_turno, id_empleado, id_venta,
+                        shift_global_id, employee_global_id, venta_global_id,
+                        fecha, id_venta_detalle, id_producto, descripcion,
                         cantidad, peso_kg, motivo, razon_id, otra_razon,
                         global_id, terminal_id, local_op_seq, created_local_utc
                     } = cancelacion;
+
+                    // Resolver GlobalIds
+                    let resolvedShiftId = id_turno || null;
+                    let resolvedEmployeeId = id_empleado || null;
+                    let resolvedVentaId = id_venta || null;
+
+                    if (shift_global_id && !resolvedShiftId) {
+                        const shiftResult = await client.query(
+                            'SELECT id FROM shifts WHERE global_id = $1 AND tenant_id = $2',
+                            [shift_global_id, tenant_id]
+                        );
+                        if (shiftResult.rows.length > 0) resolvedShiftId = shiftResult.rows[0].id;
+                    }
+
+                    if (employee_global_id && !resolvedEmployeeId) {
+                        const empResult = await client.query(
+                            'SELECT id FROM employees WHERE global_id = $1 AND tenant_id = $2',
+                            [employee_global_id, tenant_id]
+                        );
+                        if (empResult.rows.length > 0) resolvedEmployeeId = empResult.rows[0].id;
+                    }
+
+                    if (venta_global_id && !resolvedVentaId) {
+                        const ventaResult = await client.query(
+                            'SELECT id FROM sales WHERE global_id = $1 AND tenant_id = $2',
+                            [venta_global_id, tenant_id]
+                        );
+                        if (ventaResult.rows.length > 0) resolvedVentaId = ventaResult.rows[0].id;
+                    }
+
+                    // Skip si no hay empleado resuelto
+                    if (!resolvedEmployeeId) {
+                        console.log(`[Sync/Cancelaciones/Batch] ⚠️ Saltando cancelación sin empleado: ${global_id}`);
+                        results.push({ global_id, success: false, error: 'Empleado no encontrado' });
+                        continue;
+                    }
 
                     const numericCantidad = parseFloat(cantidad) || 0;
                     const numericPesoKg = peso_kg !== null && peso_kg !== undefined ? parseFloat(peso_kg) : null;
@@ -169,8 +269,8 @@ module.exports = (pool) => {
                             updated_at = CURRENT_TIMESTAMP
                         RETURNING id, global_id`,
                         [
-                            tenant_id, branch_id, id_turno, id_empleado, fecha,
-                            id_venta, id_venta_detalle, id_producto, descripcion,
+                            tenant_id, branch_id, resolvedShiftId, resolvedEmployeeId, fecha,
+                            resolvedVentaId, id_venta_detalle, id_producto, descripcion,
                             numericCantidad, numericPesoKg, motivo, razon_id, otra_razon,
                             global_id, terminal_id, local_op_seq, created_local_utc
                         ]

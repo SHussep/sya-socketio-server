@@ -43,6 +43,11 @@ function createRepartidorAssignmentRoutes(io) {
       fecha_asignacion,
       fecha_liquidacion,
       observaciones,
+      // Product tracking (per-product assignments)
+      product_id,                   // DEPRECATED: ID numérico (legacy)
+      product_global_id,            // ✅ UUID del producto (offline-first, preferido)
+      product_name,                 // Nombre del producto (denormalizado)
+      venta_detalle_id,             // ID del detalle de venta
       // Offline-first fields
       global_id,
       terminal_id,
@@ -53,7 +58,8 @@ function createRepartidorAssignmentRoutes(io) {
 
     try {
       console.log('[RepartidorAssignments] 📦 POST /api/repartidor-assignments/sync');
-      console.log(`  GlobalId: ${global_id}, Repartidor: ${employee_id}, VentaGlobalId: ${venta_global_id || venta_id}, Quantity: ${assigned_quantity} kg`);
+      console.log(`  GlobalId: ${global_id}, Repartidor: ${employee_id || employee_global_id}, VentaGlobalId: ${venta_global_id || venta_id}`);
+      console.log(`  Product: ${product_name || 'N/A'}, Quantity: ${assigned_quantity} ${unit_abbreviation || 'kg'}`);
       console.log(`  RepartidorShiftGlobalId: ${repartidor_shift_global_id || 'N/A'}, RepartidorShiftId: ${repartidor_shift_id || 'N/A'}`);
 
       // Validar campos requeridos (ahora permite GlobalIds o IDs numéricos)
@@ -221,6 +227,24 @@ function createRepartidorAssignmentRoutes(io) {
         }
       }
 
+      // ✅ RESOLVER product_id usando global_id (offline-first)
+      let resolvedProductId = product_id || null;
+      if (product_global_id) {
+        console.log(`[RepartidorAssignments] 🔍 Resolviendo producto con global_id: ${product_global_id}`);
+        const productLookup = await pool.query(
+          'SELECT id FROM productos WHERE global_id = $1',
+          [product_global_id]
+        );
+
+        if (productLookup.rows.length > 0) {
+          resolvedProductId = productLookup.rows[0].id;
+          console.log(`[RepartidorAssignments] ✅ Producto resuelto: global_id ${product_global_id} → id ${resolvedProductId}`);
+        } else {
+          console.log(`[RepartidorAssignments] ⚠️ Producto no encontrado con global_id: ${product_global_id}`);
+          // Continuar sin product_id (será NULL)
+        }
+      }
+
       // ✅ IDEMPOTENTE: Insertar con global_id único
       // ON CONFLICT: Solo se permiten updates de status, fecha_liquidacion, observaciones
       // Los datos originales (assigned_quantity, assigned_amount) NO cambian
@@ -231,15 +255,18 @@ function createRepartidorAssignmentRoutes(io) {
           created_by_employee_id, shift_id, repartidor_shift_id,
           assigned_quantity, assigned_amount, unit_price, unit_abbreviation,
           status, fecha_asignacion, fecha_liquidacion, observaciones,
-          global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw
+          global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw,
+          product_id, product_name, venta_detalle_id
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-          $16::uuid, $17::uuid, $18, $19, $20
+          $16::uuid, $17::uuid, $18, $19, $20,
+          $21, $22, $23
         )
         ON CONFLICT (global_id) DO UPDATE
         SET status = EXCLUDED.status,
             fecha_liquidacion = EXCLUDED.fecha_liquidacion,
-            observaciones = EXCLUDED.observaciones
+            observaciones = EXCLUDED.observaciones,
+            product_name = COALESCE(EXCLUDED.product_name, repartidor_assignments.product_name)
         RETURNING *, (xmax = 0) AS inserted
       `;
 
@@ -263,7 +290,10 @@ function createRepartidorAssignmentRoutes(io) {
         terminal_id,
         local_op_seq || null,
         created_local_utc || new Date().toISOString(),
-        device_event_raw || null
+        device_event_raw || null,
+        resolvedProductId,              // ✅ ID del producto resuelto desde global_id
+        product_name || null,           // ✅ Nombre del producto (denormalizado)
+        venta_detalle_id || null        // ✅ ID del detalle de venta
       ]);
 
       const assignment = result.rows[0];
@@ -326,7 +356,7 @@ function createRepartidorAssignmentRoutes(io) {
         console.log(`[RepartidorAssignments] ℹ️ Asignación actualizada (no se envía notificación): GlobalId=${global_id}, Status=${status}`);
       }
 
-      console.log(`[RepartidorAssignments] ✅ Assignment synced: ${assignment.assigned_quantity} kg, GlobalId: ${global_id}`);
+      console.log(`[RepartidorAssignments] ✅ Assignment synced: ${product_name || 'N/A'} - ${assignment.assigned_quantity} ${unit_abbreviation || 'kg'}, GlobalId: ${global_id}`);
 
       res.status(201).json({
         success: true,
@@ -520,11 +550,15 @@ function createRepartidorAssignmentRoutes(io) {
           ra.assigned_quantity,
           ra.assigned_amount,
           ra.unit_price,
-          'kg' as unit_abbreviation,
+          COALESCE(ra.unit_abbreviation, 'kg') as unit_abbreviation,
+          ra.product_id,
+          ra.product_name,
+          ra.venta_detalle_id,
           ra.status,
           ra.fecha_asignacion,
           ra.fecha_liquidacion,
-          ra.observaciones
+          ra.observaciones,
+          ra.global_id
         FROM repartidor_assignments ra
         LEFT JOIN employees e ON e.id = ra.employee_id
         LEFT JOIN branches b ON b.id = ra.branch_id

@@ -598,6 +598,11 @@ CREATE TABLE IF NOT EXISTS repartidor_assignments (
     shift_id INTEGER REFERENCES shifts(id) ON DELETE SET NULL,
     repartidor_shift_id INTEGER REFERENCES shifts(id) ON DELETE SET NULL,
 
+    -- Product tracking (for per-product assignments)
+    product_id INTEGER REFERENCES productos(id) ON DELETE SET NULL,
+    product_name VARCHAR(200),              -- Denormalized for display
+    venta_detalle_id INTEGER,               -- ID of the sale detail line
+
     -- Assignment details (READONLY - original values, never updated)
     assigned_quantity NUMERIC(10, 2) NOT NULL,
     assigned_amount NUMERIC(10, 2) NOT NULL,
@@ -635,6 +640,7 @@ CREATE INDEX IF NOT EXISTS idx_repartidor_assignments_shift ON repartidor_assign
 CREATE INDEX IF NOT EXISTS idx_repartidor_assignments_repartidor_shift ON repartidor_assignments(repartidor_shift_id);
 CREATE INDEX IF NOT EXISTS idx_repartidor_assignments_status ON repartidor_assignments(status);
 CREATE INDEX IF NOT EXISTS idx_repartidor_assignments_terminal_seq ON repartidor_assignments(terminal_id, local_op_seq);
+CREATE INDEX IF NOT EXISTS idx_repartidor_assignments_product_id ON repartidor_assignments(product_id);
 
 -- repartidor_returns (devoluciones de repartidores)
 CREATE TABLE IF NOT EXISTS repartidor_returns (
