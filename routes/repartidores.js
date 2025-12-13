@@ -53,12 +53,19 @@ module.exports = (pool) => {
                         SUM(CASE WHEN ra.status = 'liquidated' THEN ra.assigned_quantity ELSE 0 END) as liquidated_quantity,
                         SUM(CASE WHEN ra.status = 'liquidated' THEN ra.assigned_amount ELSE 0 END) as liquidated_amount,
 
-                        -- Totales
-                        COUNT(*) as total_assignments,
-                        COUNT(CASE WHEN ra.status = 'pending' THEN 1 END) as pending_count,
-                        COUNT(CASE WHEN ra.status = 'in_progress' THEN 1 END) as in_progress_count,
-                        COUNT(CASE WHEN ra.status = 'liquidated' THEN 1 END) as liquidated_count,
-                        COUNT(CASE WHEN ra.status = 'cancelled' THEN 1 END) as cancelled_count,
+                        -- Totales de ITEMS (productos) - cada fila en repartidor_assignments
+                        COUNT(*) as total_items,
+                        COUNT(CASE WHEN ra.status = 'pending' THEN 1 END) as pending_item_count,
+                        COUNT(CASE WHEN ra.status = 'in_progress' THEN 1 END) as in_progress_item_count,
+                        COUNT(CASE WHEN ra.status = 'liquidated' THEN 1 END) as liquidated_item_count,
+                        COUNT(CASE WHEN ra.status = 'cancelled' THEN 1 END) as cancelled_item_count,
+
+                        -- Totales de ASIGNACIONES ÚNICAS (por venta_id) - una asignación puede tener múltiples productos
+                        COUNT(DISTINCT CASE WHEN ra.status IN ('pending', 'in_progress', 'liquidated', 'cancelled') THEN COALESCE(ra.venta_id, ra.id) END) as total_assignments,
+                        COUNT(DISTINCT CASE WHEN ra.status = 'pending' THEN COALESCE(ra.venta_id, ra.id) END) as pending_count,
+                        COUNT(DISTINCT CASE WHEN ra.status = 'in_progress' THEN COALESCE(ra.venta_id, ra.id) END) as in_progress_count,
+                        COUNT(DISTINCT CASE WHEN ra.status = 'liquidated' THEN COALESCE(ra.venta_id, ra.id) END) as liquidated_count,
+                        COUNT(DISTINCT CASE WHEN ra.status = 'cancelled' THEN COALESCE(ra.venta_id, ra.id) END) as cancelled_count,
 
                         MAX(ra.fecha_asignacion) as last_assignment_date
                     FROM repartidor_assignments ra
@@ -186,11 +193,18 @@ module.exports = (pool) => {
                     quantities_by_unit: row.quantities_by_unit || [],
                     total_returned_quantity: parseFloat(row.total_returned_quantity),
                     total_returned_amount: parseFloat(row.total_returned_amount),
+                    // Conteos de ASIGNACIONES ÚNICAS (por venta_id)
                     total_assignments: parseInt(row.total_assignments),
                     pending_count: parseInt(row.pending_count),
                     in_progress_count: parseInt(row.in_progress_count),
                     liquidated_count: parseInt(row.liquidated_count),
                     cancelled_count: parseInt(row.cancelled_count),
+                    // Conteos de ITEMS/PRODUCTOS (filas individuales)
+                    total_items: parseInt(row.total_items),
+                    pending_item_count: parseInt(row.pending_item_count),
+                    in_progress_item_count: parseInt(row.in_progress_item_count),
+                    liquidated_item_count: parseInt(row.liquidated_item_count),
+                    cancelled_item_count: parseInt(row.cancelled_item_count),
                     return_count: parseInt(row.return_count),
                     last_assignment_date: row.last_assignment_date
                 }))
