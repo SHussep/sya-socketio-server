@@ -1150,6 +1150,29 @@ async function runMigrations() {
                     `);
                     console.log('[Schema] ✅ Column repartidor_assignments.unit_abbreviation added successfully');
                 }
+
+                // Patch: Add product tracking columns to repartidor_assignments
+                const checkProductId = await client.query(`
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'repartidor_assignments'
+                    AND column_name = 'product_id'
+                `);
+
+                if (checkProductId.rows.length === 0) {
+                    console.log('[Schema] 📝 Adding product tracking columns to repartidor_assignments...');
+                    await client.query(`
+                        ALTER TABLE repartidor_assignments
+                        ADD COLUMN IF NOT EXISTS product_id INTEGER,
+                        ADD COLUMN IF NOT EXISTS product_name VARCHAR(200),
+                        ADD COLUMN IF NOT EXISTS venta_detalle_id INTEGER
+                    `);
+                    await client.query(`
+                        CREATE INDEX IF NOT EXISTS idx_repartidor_assignments_product_id
+                        ON repartidor_assignments(product_id)
+                    `);
+                    console.log('[Schema] ✅ Product tracking columns added to repartidor_assignments');
+                }
             }
 
             // Patch: Add expense review tracking columns to expenses table
