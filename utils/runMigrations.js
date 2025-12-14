@@ -1274,6 +1274,92 @@ const MIGRATIONS = [
                 // Don't throw - continue even if there are issues
             }
         }
+    },
+    {
+        id: '044_add_payment_fields_to_repartidor_assignments',
+        name: 'Add payment tracking fields to repartidor_assignments for Mixto payments',
+        async execute(client) {
+            console.log('🔄 Ejecutando migración 044: Agregando campos de pago a repartidor_assignments...');
+
+            try {
+                // List of columns to add
+                const columns = [
+                    { name: 'payment_method_id', type: 'INTEGER REFERENCES tipos_pago(id)' },
+                    { name: 'cash_amount', type: 'DECIMAL(12, 2)' },
+                    { name: 'card_amount', type: 'DECIMAL(12, 2)' },
+                    { name: 'credit_amount', type: 'DECIMAL(12, 2)' },
+                    { name: 'amount_received', type: 'DECIMAL(12, 2)' },
+                    { name: 'is_credit', type: 'BOOLEAN DEFAULT FALSE' },
+                    { name: 'payment_reference', type: 'VARCHAR(255)' },
+                    { name: 'liquidated_by_employee_id', type: 'INTEGER REFERENCES employees(id)' },
+                ];
+
+                for (const col of columns) {
+                    const checkColumn = await client.query(`
+                        SELECT column_name
+                        FROM information_schema.columns
+                        WHERE table_name = 'repartidor_assignments' AND column_name = $1
+                    `, [col.name]);
+
+                    if (checkColumn.rows.length > 0) {
+                        console.log(`   ℹ️  Columna ${col.name} ya existe`);
+                    } else {
+                        console.log(`   📝 Agregando columna ${col.name}...`);
+                        await client.query(`
+                            ALTER TABLE repartidor_assignments
+                            ADD COLUMN ${col.name} ${col.type}
+                        `);
+                        console.log(`   ✅ Columna ${col.name} agregada`);
+                    }
+                }
+
+                // Create indexes
+                console.log('   📝 Creando índices...');
+                await client.query(`
+                    CREATE INDEX IF NOT EXISTS idx_repartidor_assignments_payment_method
+                    ON repartidor_assignments(payment_method_id)
+                `);
+                await client.query(`
+                    CREATE INDEX IF NOT EXISTS idx_repartidor_assignments_liquidated_by
+                    ON repartidor_assignments(liquidated_by_employee_id)
+                `);
+                console.log('   ✅ Índices creados');
+
+                // Migrate existing liquidated assignments - assume cash payment
+                console.log('   📝 Migrando asignaciones liquidadas existentes...');
+                const migrateResult = await client.query(`
+                    WITH assignment_net AS (
+                        SELECT
+                            ra.id,
+                            ra.assigned_amount,
+                            COALESCE(SUM(rr.amount), 0) as returned_amount,
+                            (ra.assigned_amount - COALESCE(SUM(rr.amount), 0)) as net_amount
+                        FROM repartidor_assignments ra
+                        LEFT JOIN repartidor_returns rr ON rr.assignment_id = ra.id
+                          AND (rr.status IS NULL OR rr.status != 'deleted')
+                        WHERE ra.status = 'liquidated'
+                          AND ra.payment_method_id IS NULL
+                        GROUP BY ra.id, ra.assigned_amount
+                    )
+                    UPDATE repartidor_assignments ra
+                    SET
+                        payment_method_id = 1,
+                        cash_amount = an.net_amount,
+                        card_amount = 0,
+                        credit_amount = 0,
+                        amount_received = an.net_amount,
+                        is_credit = FALSE
+                    FROM assignment_net an
+                    WHERE ra.id = an.id
+                `);
+                console.log(`   ✅ ${migrateResult.rowCount} asignaciones migradas con pago en efectivo por defecto`);
+
+                console.log('✅ Migración 044 completada: Campos de pago agregados a repartidor_assignments');
+            } catch (error) {
+                console.log('⚠️  Migración 044: ' + error.message);
+                // Don't throw - continue even if there are issues
+            }
+        }
     }
 ];
 

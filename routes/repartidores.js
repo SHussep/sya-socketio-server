@@ -256,7 +256,16 @@ module.exports = (pool) => {
                     CONCAT(e_repartidor.first_name, ' ', e_repartidor.last_name) as repartidor_name,
                     s.is_cash_cut_open as shift_is_open,
                     -- IDs de todos los registros de esta venta (para buscar devoluciones)
-                    ARRAY_AGG(ra.id) as assignment_ids
+                    ARRAY_AGG(ra.id) as assignment_ids,
+                    -- 🆕 Payment info (tomamos del primer registro ya que son iguales para toda la venta)
+                    MAX(ra.payment_method_id) as payment_method_id,
+                    MAX(ra.cash_amount) as cash_amount,
+                    MAX(ra.card_amount) as card_amount,
+                    MAX(ra.credit_amount) as credit_amount,
+                    MAX(ra.amount_received) as amount_received,
+                    bool_or(COALESCE(ra.is_credit, false)) as is_credit,
+                    MAX(ra.payment_reference) as payment_reference,
+                    MAX(ra.liquidated_by_employee_id) as liquidated_by_employee_id
                 FROM repartidor_assignments ra
                 LEFT JOIN employees e_created ON ra.created_by_employee_id = e_created.id
                 LEFT JOIN employees e_repartidor ON ra.employee_id = e_repartidor.id
@@ -450,7 +459,16 @@ module.exports = (pool) => {
                         // 🆕 Información de devoluciones
                         returns: returns,
                         total_returned_quantity: totalReturnedQuantity,
-                        total_returned_amount: totalReturnedAmount
+                        total_returned_amount: totalReturnedAmount,
+                        // 🆕 Payment info para calcular efectivo esperado
+                        payment_method_id: row.payment_method_id ? parseInt(row.payment_method_id) : null,
+                        cash_amount: parseFloat(row.cash_amount || 0),
+                        card_amount: parseFloat(row.card_amount || 0),
+                        credit_amount: parseFloat(row.credit_amount || 0),
+                        amount_received: parseFloat(row.amount_received || 0),
+                        is_credit: row.is_credit || false,
+                        payment_reference: row.payment_reference,
+                        liquidated_by_employee_id: row.liquidated_by_employee_id ? parseInt(row.liquidated_by_employee_id) : null
                     };
                 })
             });
