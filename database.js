@@ -1173,6 +1173,65 @@ async function runMigrations() {
                     `);
                     console.log('[Schema] ✅ Product tracking columns added to repartidor_assignments');
                 }
+
+                // Patch: Add payment tracking columns to repartidor_assignments (for Mixto payments)
+                const checkPaymentMethodId = await client.query(`
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'repartidor_assignments'
+                    AND column_name = 'payment_method_id'
+                `);
+
+                if (checkPaymentMethodId.rows.length === 0) {
+                    console.log('[Schema] 📝 Adding payment tracking columns to repartidor_assignments...');
+                    await client.query(`
+                        ALTER TABLE repartidor_assignments
+                        ADD COLUMN IF NOT EXISTS payment_method_id INTEGER,
+                        ADD COLUMN IF NOT EXISTS cash_amount DECIMAL(12, 2),
+                        ADD COLUMN IF NOT EXISTS card_amount DECIMAL(12, 2),
+                        ADD COLUMN IF NOT EXISTS credit_amount DECIMAL(12, 2),
+                        ADD COLUMN IF NOT EXISTS amount_received DECIMAL(12, 2),
+                        ADD COLUMN IF NOT EXISTS is_credit BOOLEAN DEFAULT FALSE,
+                        ADD COLUMN IF NOT EXISTS payment_reference VARCHAR(255),
+                        ADD COLUMN IF NOT EXISTS liquidated_by_employee_id INTEGER
+                    `);
+                    await client.query(`
+                        CREATE INDEX IF NOT EXISTS idx_repartidor_assignments_payment_method
+                        ON repartidor_assignments(payment_method_id)
+                    `);
+                    await client.query(`
+                        CREATE INDEX IF NOT EXISTS idx_repartidor_assignments_liquidated_by
+                        ON repartidor_assignments(liquidated_by_employee_id)
+                    `);
+                    // Backfill existing liquidated assignments with cash payment
+                    console.log('[Schema] 📝 Backfilling existing liquidated assignments with cash payment...');
+                    await client.query(`
+                        WITH assignment_net AS (
+                            SELECT
+                                ra.id,
+                                ra.assigned_amount,
+                                COALESCE(SUM(rr.amount), 0) as returned_amount,
+                                (ra.assigned_amount - COALESCE(SUM(rr.amount), 0)) as net_amount
+                            FROM repartidor_assignments ra
+                            LEFT JOIN repartidor_returns rr ON rr.assignment_id = ra.id
+                              AND (rr.status IS NULL OR rr.status != 'deleted')
+                            WHERE ra.status = 'liquidated'
+                              AND ra.payment_method_id IS NULL
+                            GROUP BY ra.id, ra.assigned_amount
+                        )
+                        UPDATE repartidor_assignments ra
+                        SET
+                            payment_method_id = 1,
+                            cash_amount = an.net_amount,
+                            card_amount = 0,
+                            credit_amount = 0,
+                            amount_received = an.net_amount,
+                            is_credit = FALSE
+                        FROM assignment_net an
+                        WHERE ra.id = an.id
+                    `);
+                    console.log('[Schema] ✅ Payment tracking columns added to repartidor_assignments');
+                }
             }
 
             // Patch: Add expense review tracking columns to expenses table
