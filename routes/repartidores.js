@@ -265,11 +265,14 @@ module.exports = (pool) => {
                     MAX(ra.amount_received) as amount_received,
                     bool_or(COALESCE(ra.is_credit, false)) as is_credit,
                     MAX(ra.payment_reference) as payment_reference,
-                    MAX(ra.liquidated_by_employee_id) as liquidated_by_employee_id
+                    MAX(ra.liquidated_by_employee_id) as liquidated_by_employee_id,
+                    -- 🆕 Customer name from ventas → customers
+                    MAX(c.nombre) as customer_name
                 FROM repartidor_assignments ra
                 LEFT JOIN employees e_created ON ra.created_by_employee_id = e_created.id
                 LEFT JOIN employees e_repartidor ON ra.employee_id = e_repartidor.id
                 LEFT JOIN ventas v ON ra.venta_id = v.id_venta
+                LEFT JOIN customers c ON v.id_cliente = c.id
                 LEFT JOIN shifts s ON ra.repartidor_shift_id = s.id
                 WHERE ra.tenant_id = $1 AND ra.employee_id = $2
             `;
@@ -468,7 +471,9 @@ module.exports = (pool) => {
                         amount_received: parseFloat(row.amount_received || 0),
                         is_credit: row.is_credit || false,
                         payment_reference: row.payment_reference,
-                        liquidated_by_employee_id: row.liquidated_by_employee_id ? parseInt(row.liquidated_by_employee_id) : null
+                        liquidated_by_employee_id: row.liquidated_by_employee_id ? parseInt(row.liquidated_by_employee_id) : null,
+                        // 🆕 Customer name
+                        customer_name: row.customer_name || null
                     };
                 })
             });
