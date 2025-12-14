@@ -53,14 +53,27 @@ function createRepartidorAssignmentRoutes(io) {
       terminal_id,
       local_op_seq,
       created_local_utc,
-      device_event_raw
+      device_event_raw,
+      // 🆕 Payment tracking fields (para pagos mixtos)
+      payment_method_id,
+      cash_amount,
+      card_amount,
+      credit_amount,
+      amount_received,
+      is_credit,
+      payment_reference,
+      liquidated_by_employee_global_id  // UUID del empleado que liquidó
     } = req.body;
 
     try {
       console.log('[RepartidorAssignments] 📦 POST /api/repartidor-assignments/sync');
       console.log(`  GlobalId: ${global_id}, Repartidor: ${employee_id || employee_global_id}, VentaGlobalId: ${venta_global_id || venta_id}`);
-      console.log(`  Product: ${product_name || 'N/A'}, Quantity: ${assigned_quantity} ${unit_abbreviation || 'kg'}`);
+      console.log(`  Product: ${product_name || 'N/A'}, Quantity: ${assigned_quantity} ${unit_abbreviation || 'kg'}, Status: ${status}`);
       console.log(`  RepartidorShiftGlobalId: ${repartidor_shift_global_id || 'N/A'}, RepartidorShiftId: ${repartidor_shift_id || 'N/A'}`);
+      // 🆕 Log payment info when liquidating
+      if (payment_method_id || cash_amount || card_amount || credit_amount) {
+        console.log(`  💰 Payment: method=${payment_method_id}, cash=$${cash_amount || 0}, card=$${card_amount || 0}, credit=$${credit_amount || 0}`);
+      }
 
       // Validar campos requeridos (ahora permite GlobalIds o IDs numéricos)
       if (!tenant_id || !branch_id || (!venta_id && !venta_global_id) || (!shift_id && !shift_global_id)) {
@@ -245,6 +258,24 @@ function createRepartidorAssignmentRoutes(io) {
         }
       }
 
+      // ✅ RESOLVER liquidated_by_employee_id usando global_id (offline-first)
+      let resolvedLiquidatedByEmployeeId = null;
+      if (liquidated_by_employee_global_id) {
+        console.log(`[RepartidorAssignments] 🔍 Resolviendo empleado liquidador con global_id: ${liquidated_by_employee_global_id}`);
+        const liquidatedByLookup = await pool.query(
+          'SELECT id FROM employees WHERE global_id = $1 AND tenant_id = $2',
+          [liquidated_by_employee_global_id, tenant_id]
+        );
+
+        if (liquidatedByLookup.rows.length > 0) {
+          resolvedLiquidatedByEmployeeId = liquidatedByLookup.rows[0].id;
+          console.log(`[RepartidorAssignments] ✅ Empleado liquidador resuelto: global_id ${liquidated_by_employee_global_id} → id ${resolvedLiquidatedByEmployeeId}`);
+        } else {
+          console.log(`[RepartidorAssignments] ⚠️ Empleado liquidador no encontrado con global_id: ${liquidated_by_employee_global_id}`);
+          // Continuar sin liquidated_by_employee_id (será NULL)
+        }
+      }
+
       // ✅ IDEMPOTENTE: Insertar con global_id único
       // ON CONFLICT: Solo se permiten updates de status, fecha_liquidacion, observaciones
       // Los datos originales (assigned_quantity, assigned_amount) NO cambian
@@ -256,17 +287,28 @@ function createRepartidorAssignmentRoutes(io) {
           assigned_quantity, assigned_amount, unit_price, unit_abbreviation,
           status, fecha_asignacion, fecha_liquidacion, observaciones,
           global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw,
-          product_id, product_name, venta_detalle_id
+          product_id, product_name, venta_detalle_id,
+          payment_method_id, cash_amount, card_amount, credit_amount,
+          amount_received, is_credit, payment_reference, liquidated_by_employee_id
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
           $16::uuid, $17::uuid, $18, $19, $20,
-          $21, $22, $23
+          $21, $22, $23,
+          $24, $25, $26, $27, $28, $29, $30, $31
         )
         ON CONFLICT (global_id) DO UPDATE
         SET status = EXCLUDED.status,
             fecha_liquidacion = EXCLUDED.fecha_liquidacion,
             observaciones = EXCLUDED.observaciones,
-            product_name = COALESCE(EXCLUDED.product_name, repartidor_assignments.product_name)
+            product_name = COALESCE(EXCLUDED.product_name, repartidor_assignments.product_name),
+            payment_method_id = COALESCE(EXCLUDED.payment_method_id, repartidor_assignments.payment_method_id),
+            cash_amount = COALESCE(EXCLUDED.cash_amount, repartidor_assignments.cash_amount),
+            card_amount = COALESCE(EXCLUDED.card_amount, repartidor_assignments.card_amount),
+            credit_amount = COALESCE(EXCLUDED.credit_amount, repartidor_assignments.credit_amount),
+            amount_received = COALESCE(EXCLUDED.amount_received, repartidor_assignments.amount_received),
+            is_credit = COALESCE(EXCLUDED.is_credit, repartidor_assignments.is_credit),
+            payment_reference = COALESCE(EXCLUDED.payment_reference, repartidor_assignments.payment_reference),
+            liquidated_by_employee_id = COALESCE(EXCLUDED.liquidated_by_employee_id, repartidor_assignments.liquidated_by_employee_id)
         RETURNING *, (xmax = 0) AS inserted
       `;
 
@@ -293,7 +335,16 @@ function createRepartidorAssignmentRoutes(io) {
         device_event_raw || null,
         resolvedProductId,              // ✅ ID del producto resuelto desde global_id
         product_name || null,           // ✅ Nombre del producto (denormalizado)
-        venta_detalle_id || null        // ✅ ID del detalle de venta
+        venta_detalle_id || null,       // ✅ ID del detalle de venta
+        // 🆕 Payment tracking fields
+        payment_method_id || null,
+        cash_amount ? parseFloat(cash_amount) : null,
+        card_amount ? parseFloat(card_amount) : null,
+        credit_amount ? parseFloat(credit_amount) : null,
+        amount_received ? parseFloat(amount_received) : null,
+        is_credit || false,
+        payment_reference || null,
+        resolvedLiquidatedByEmployeeId  // ✅ ID del empleado que liquidó resuelto desde global_id
       ]);
 
       const assignment = result.rows[0];
