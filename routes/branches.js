@@ -32,6 +32,7 @@ module.exports = function(pool, authenticateToken) {
                     name: b.name,
                     address: b.address,
                     phone: b.phone_number,
+                    rfc: b.rfc,
                     latitude: b.latitude,
                     longitude: b.longitude,
                     employeeCount: parseInt(b.employee_count),
@@ -94,6 +95,7 @@ module.exports = function(pool, authenticateToken) {
                     name: branch.name,
                     address: branch.address,
                     phone: branch.phone_number,
+                    rfc: branch.rfc,
                     latitude: branch.latitude,
                     longitude: branch.longitude,
                     isActive: branch.is_active,
@@ -225,7 +227,7 @@ module.exports = function(pool, authenticateToken) {
     router.put('/:id', authenticateToken, async (req, res) => {
         const { tenantId, role } = req.user;
         const { id } = req.params;
-        const { name, address, phone, latitude, longitude, isActive } = req.body;
+        const { name, address, phone, latitude, longitude, isActive, rfc } = req.body;
 
         // Solo owners y managers pueden actualizar
         if (role !== 'owner' && role !== 'manager') {
@@ -249,7 +251,7 @@ module.exports = function(pool, authenticateToken) {
                 });
             }
 
-            // Actualizar
+            // Actualizar (incluye RFC)
             const result = await pool.query(`
                 UPDATE branches
                 SET name = COALESCE($1, name),
@@ -258,8 +260,9 @@ module.exports = function(pool, authenticateToken) {
                     latitude = COALESCE($4, latitude),
                     longitude = COALESCE($5, longitude),
                     is_active = COALESCE($6, is_active),
+                    rfc = COALESCE($7, rfc),
                     updated_at = CURRENT_TIMESTAMP
-                WHERE id = $7 AND tenant_id = $8
+                WHERE id = $8 AND tenant_id = $9
                 RETURNING *
             `, [
                 name,
@@ -268,13 +271,14 @@ module.exports = function(pool, authenticateToken) {
                 latitude,
                 longitude,
                 isActive,
+                rfc,
                 id,
                 tenantId
             ]);
 
             const branch = result.rows[0];
 
-            console.log(`[Branch Update] ✅ Sucursal actualizada: ${branch.name}`);
+            console.log(`[Branch Update] ✅ Sucursal actualizada: ${branch.name} (RFC: ${branch.rfc || 'N/A'})`);
 
             res.json({
                 success: true,
@@ -285,6 +289,7 @@ module.exports = function(pool, authenticateToken) {
                     name: branch.name,
                     address: branch.address,
                     phone: branch.phone_number,
+                    rfc: branch.rfc,
                     latitude: branch.latitude,
                     longitude: branch.longitude,
                     isActive: branch.is_active,

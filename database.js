@@ -1076,6 +1076,23 @@ async function runMigrations() {
                 }
             }
 
+            // Patch: Add RFC column to branches table if missing
+            const checkBranchesRfc = await client.query(`
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'branches'
+                AND column_name = 'rfc'
+            `);
+
+            if (checkBranchesRfc.rows.length === 0) {
+                console.log('[Schema] 📝 Adding missing column: branches.rfc');
+                await client.query(`
+                    ALTER TABLE branches
+                    ADD COLUMN IF NOT EXISTS rfc VARCHAR(20)
+                `);
+                console.log('[Schema] ✅ branches.rfc column added successfully');
+            }
+
             // 2.5. Clean user data if requested (for testing)
             console.log(`[Schema] 🔍 CLEAN_DATABASE_ON_START = "${process.env.CLEAN_DATABASE_ON_START}"`);
 
