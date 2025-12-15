@@ -53,18 +53,20 @@ module.exports = (pool) => {
                 device_event_raw
             } = req.body;
 
-            // Auto-generar username del email si no se proporciona
-            const derivedUsername = username || (email ? email.split('@')[0].replace(/[^a-zA-Z0-9]/g, '').toLowerCase() : null);
+            // Auto-generar username: prioridad username > email > fullName
+            const derivedUsername = username
+                || (email ? email.split('@')[0].replace(/[^a-zA-Z0-9]/g, '').toLowerCase() : null)
+                || (fullName ? fullName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() : null);
 
             console.log(`[Employees/Sync] 🔄 Sincronizando empleado: ${fullName} (${derivedUsername}) - Tenant: ${tenantId}, Role: ${roleId}`);
             console.log(`[Employees/Sync] 🔑 GlobalId: ${global_id || 'null'}, TerminalId: ${terminal_id || 'null'}`);
 
-            // Validate required fields (username ya NO es requerido, se deriva del email)
-            if (!tenantId || !fullName || !email || !global_id) {
+            // Validate required fields (email ya NO es requerido - puede ser null)
+            if (!tenantId || !fullName || !global_id) {
                 console.log(`[Employees/Sync] ❌ Datos incompletos`);
                 return res.status(400).json({
                     success: false,
-                    message: 'Faltan campos requeridos: tenantId, fullName, email, global_id'
+                    message: 'Faltan campos requeridos: tenantId, fullName, global_id'
                 });
             }
 
