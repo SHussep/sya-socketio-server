@@ -4,11 +4,19 @@ const jwt = require("jsonwebtoken");
 const JWT_SECRET = process.env.JWT_SECRET;
 
 function authenticateToken(req, res, next) {
+    console.log(`[NotificationHistory/Auth] 🔐 Verificando token para ${req.method} ${req.path}`);
     const authHeader = req.headers["authorization"];
     const token = authHeader && authHeader.split(" ")[1];
-    if (!token) return res.status(401).json({ success: false, message: "Token no proporcionado" });
+    if (!token) {
+        console.log(`[NotificationHistory/Auth] ❌ No hay token`);
+        return res.status(401).json({ success: false, message: "Token no proporcionado" });
+    }
     jwt.verify(token, JWT_SECRET, (err, user) => {
-        if (err) return res.status(403).json({ success: false, message: "Token invalido" });
+        if (err) {
+            console.log(`[NotificationHistory/Auth] ❌ Token inválido:`, err.message);
+            return res.status(403).json({ success: false, message: "Token invalido" });
+        }
+        console.log(`[NotificationHistory/Auth] ✅ Token válido - User:`, JSON.stringify(user));
         req.user = user;
         next();
     });
