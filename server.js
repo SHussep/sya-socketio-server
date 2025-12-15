@@ -506,10 +506,11 @@ app.get('/api/branches', authenticateToken, async (req, res) => {
 });
 
 // PUT /api/branches/:id - Actualizar datos de sucursal (sin auth - usa tenantId del payload)
+// Columnas válidas: name, address, phone, rfc, timezone, is_active
 app.put('/api/branches/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        const { tenantId, name, address, phone, rfc, latitude, longitude, isActive } = req.body;
+        const { tenantId, name, address, phone, rfc } = req.body;
 
         // Validar que tenantId venga en el payload
         if (!tenantId) {
@@ -532,27 +533,21 @@ app.put('/api/branches/:id', async (req, res) => {
             });
         }
 
-        // Actualizar sucursal
+        // Actualizar sucursal (solo columnas que existen en schema)
         const result = await pool.query(`
             UPDATE branches
             SET name = COALESCE($1, name),
                 address = COALESCE($2, address),
                 phone = COALESCE($3, phone),
                 rfc = COALESCE($4, rfc),
-                latitude = COALESCE($5, latitude),
-                longitude = COALESCE($6, longitude),
-                is_active = COALESCE($7, is_active),
                 updated_at = CURRENT_TIMESTAMP
-            WHERE id = $8 AND tenant_id = $9
+            WHERE id = $5 AND tenant_id = $6
             RETURNING *
         `, [
             name,
             address,
             phone,
             rfc,
-            latitude,
-            longitude,
-            isActive,
             id,
             tenantId
         ]);
@@ -571,8 +566,7 @@ app.put('/api/branches/:id', async (req, res) => {
                 address: branch.address,
                 phone: branch.phone,
                 rfc: branch.rfc,
-                latitude: branch.latitude,
-                longitude: branch.longitude,
+                timezone: branch.timezone,
                 isActive: branch.is_active,
                 updatedAt: branch.updated_at
             }
