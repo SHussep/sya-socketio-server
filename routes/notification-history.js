@@ -168,6 +168,37 @@ module.exports = (pool) => {
         }
     });
 
+    // Eliminar permanentemente TODAS las notificaciones (botón "Limpiar todas")
+    router.delete("/delete-all", authenticateToken, async (req, res) => {
+        try {
+            const { tenantId, branchId } = req.user;
+            const { category } = req.body || {};
+
+            console.log(`[NotificationHistory/DeleteAll] 🗑️ Eliminando todas - Tenant: ${tenantId}, Branch: ${branchId}, Category: ${category || 'ALL'}`);
+
+            let query = "DELETE FROM notifications WHERE tenant_id = $1";
+            const params = [tenantId];
+            let idx = 2;
+
+            if (branchId) {
+                query += ` AND (branch_id = $${idx} OR branch_id IS NULL)`;
+                params.push(branchId);
+                idx++;
+            }
+            if (category) {
+                query += ` AND category = $${idx}`;
+                params.push(category);
+            }
+
+            const result = await pool.query(query, params);
+            console.log(`[NotificationHistory/DeleteAll] ✅ Eliminadas ${result.rowCount} notificaciones`);
+            res.json({ success: true, data: { count: result.rowCount, deleted: true } });
+        } catch (error) {
+            console.error(`[NotificationHistory/DeleteAll] ❌ Error:`, error.message);
+            res.status(500).json({ success: false, message: error.message });
+        }
+    });
+
     // Eliminar permanentemente todas las notificaciones (leídas u ocultas)
     router.delete("/delete-read", authenticateToken, async (req, res) => {
         try {
