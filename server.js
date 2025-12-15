@@ -537,7 +537,7 @@ app.put('/api/branches/:id', async (req, res) => {
             UPDATE branches
             SET name = COALESCE($1, name),
                 address = COALESCE($2, address),
-                phone_number = COALESCE($3, phone_number),
+                phone = COALESCE($3, phone),
                 rfc = COALESCE($4, rfc),
                 latitude = COALESCE($5, latitude),
                 longitude = COALESCE($6, longitude),
@@ -569,7 +569,7 @@ app.put('/api/branches/:id', async (req, res) => {
                 code: branch.branch_code,
                 name: branch.name,
                 address: branch.address,
-                phone: branch.phone_number,
+                phone: branch.phone,
                 rfc: branch.rfc,
                 latitude: branch.latitude,
                 longitude: branch.longitude,
