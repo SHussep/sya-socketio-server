@@ -718,8 +718,12 @@ module.exports = (pool, io) => {
 
             // Validar que el gasto existe y pertenece al tenant
             // NOTA: global_id es VARCHAR, no UUID - no usar ::uuid cast
+            // ✅ JOIN con employees para obtener employee_global_id (no existe en expenses)
             const checkResult = await pool.query(
-                'SELECT id, employee_global_id FROM expenses WHERE global_id = $1 AND tenant_id = $2',
+                `SELECT e.id, e.branch_id, emp.global_id as employee_global_id
+                 FROM expenses e
+                 LEFT JOIN employees emp ON e.employee_id = emp.id
+                 WHERE e.global_id = $1 AND e.tenant_id = $2`,
                 [global_id, tenant_id]
             );
 
