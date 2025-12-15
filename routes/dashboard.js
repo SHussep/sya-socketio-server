@@ -31,13 +31,16 @@ module.exports = (pool) => {
     router.get('/summary', authenticateToken, async (req, res) => {
         try {
             const { tenantId, branchId: userBranchId } = req.user;
-            const { branch_id, start_date, end_date, all_branches = 'false', shift_id } = req.query;
+            const { branch_id, start_date, end_date, all_branches = 'false', shift_id, timezone } = req.query;
 
             // Prioridad: 1. branch_id del query, 2. branchId del JWT
             const targetBranchId = branch_id ? parseInt(branch_id) : userBranchId;
             const shouldFilterByBranch = all_branches !== 'true' && targetBranchId;
 
-            // Obtener timezone del branch (cada sucursal puede estar en zona horaria diferente)
+            // ✅ Prioridad de timezone: 1. timezone del cliente, 2. timezone del branch, 3. default
+            let userTimezone = timezone || null;
+
+            // Obtener timezone del branch como fallback
             let branchTimezone = 'America/Mexico_City'; // Default
             if (targetBranchId) {
                 const branchInfo = await pool.query(
@@ -49,37 +52,31 @@ module.exports = (pool) => {
                 }
             }
 
-            console.log(`[Dashboard Summary] Using timezone: ${branchTimezone} for branch ${targetBranchId}`);
+            // Usar timezone del cliente si está disponible, sino del branch
+            const effectiveTimezone = userTimezone || branchTimezone;
+
+            console.log(`[Dashboard Summary] Client timezone: ${timezone}, Branch timezone: ${branchTimezone}, Using: ${effectiveTimezone}`);
             console.log(`[Dashboard Summary] Date filters - start_date: ${start_date}, end_date: ${end_date}`);
 
-            // Construir filtros de fecha timezone-aware usando el timezone del branch
-            // Las columnas ahora son TIMESTAMP WITH TIME ZONE
-            // Cuando el cliente NO envía fechas, usamos CURRENT_DATE en el timezone del branch
-            let dateFilter = `DATE(fecha_venta_utc AT TIME ZONE '${branchTimezone}') = DATE(NOW() AT TIME ZONE '${branchTimezone}')`;
-            let expenseDateFilter = `DATE(expense_date AT TIME ZONE '${branchTimezone}') = DATE(NOW() AT TIME ZONE '${branchTimezone}')`;
-            let assignmentDateFilter = `DATE(fecha_asignacion AT TIME ZONE '${branchTimezone}') = DATE(NOW() AT TIME ZONE '${branchTimezone}')`;
+            // Construir filtros de fecha timezone-aware
+            // Cuando el cliente NO envía fechas, usamos CURRENT_DATE en el timezone efectivo
+            let dateFilter = `DATE(fecha_venta_utc AT TIME ZONE '${effectiveTimezone}') = DATE(NOW() AT TIME ZONE '${effectiveTimezone}')`;
+            let expenseDateFilter = `DATE(expense_date AT TIME ZONE '${effectiveTimezone}') = DATE(NOW() AT TIME ZONE '${effectiveTimezone}')`;
+            let assignmentDateFilter = `DATE(fecha_asignacion AT TIME ZONE '${effectiveTimezone}') = DATE(NOW() AT TIME ZONE '${effectiveTimezone}')`;
 
             if (start_date && end_date) {
-                // El cliente envía timestamps ISO (ej: 2025-10-21T00:00:00.000Z)
-                // Necesitamos asegurar que end_date sea el final del día
-                const startDateTime = new Date(start_date);
-                const endDateTime = new Date(end_date);
+                // ✅ El cliente envía fechas locales (ej: 2025-12-16T00:00:00.000 = medianoche en SU timezone)
+                // Extraemos solo la parte de fecha para comparar en el timezone del cliente
+                const startDateOnly = start_date.split('T')[0]; // "2025-12-16"
+                const endDateOnly = end_date.split('T')[0];     // "2025-12-16"
 
-                // Si end_date viene a las 00:00:00, cambiar a 23:59:59.999Z del mismo día
-                if (endDateTime.getHours() === 0 && endDateTime.getMinutes() === 0) {
-                    endDateTime.setDate(endDateTime.getDate() + 1);
-                    endDateTime.setMilliseconds(-1);
-                }
+                console.log(`[Dashboard Summary] Using date range in ${effectiveTimezone}: ${startDateOnly} to ${endDateOnly}`);
 
-                const startDateISO = startDateTime.toISOString();
-                const endDateISO = endDateTime.toISOString();
-
-                console.log(`[Dashboard Summary] Converted dates - start: ${startDateISO}, end: ${endDateISO}`);
-
-                // PostgreSQL maneja automáticamente la conversión de timezone para timestamptz
-                dateFilter = `fecha_venta_utc >= '${startDateISO}'::timestamptz AND fecha_venta_utc < '${endDateISO}'::timestamptz`;
-                expenseDateFilter = `expense_date >= '${startDateISO}'::timestamptz AND expense_date < '${endDateISO}'::timestamptz`;
-                assignmentDateFilter = `fecha_asignacion >= '${startDateISO}'::timestamptz AND fecha_asignacion < '${endDateISO}'::timestamptz`;
+                // ✅ Comparar las fechas en el timezone del cliente usando AT TIME ZONE
+                // Esto convierte fecha_venta_utc al timezone del cliente antes de extraer la fecha
+                dateFilter = `(fecha_venta_utc AT TIME ZONE '${effectiveTimezone}')::date >= '${startDateOnly}'::date AND (fecha_venta_utc AT TIME ZONE '${effectiveTimezone}')::date <= '${endDateOnly}'::date`;
+                expenseDateFilter = `(expense_date AT TIME ZONE '${effectiveTimezone}')::date >= '${startDateOnly}'::date AND (expense_date AT TIME ZONE '${effectiveTimezone}')::date <= '${endDateOnly}'::date`;
+                assignmentDateFilter = `(fecha_asignacion AT TIME ZONE '${effectiveTimezone}')::date >= '${startDateOnly}'::date AND (fecha_asignacion AT TIME ZONE '${effectiveTimezone}')::date <= '${endDateOnly}'::date`;
             }
 
             // Total de ventas
