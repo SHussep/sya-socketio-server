@@ -116,17 +116,20 @@ module.exports = (pool) => {
             // ═══════════════════════════════════════════════════════════════
             // DESGLOSE DE VENTAS - Por tipo y método de pago
             // ═══════════════════════════════════════════════════════════════
+            // ✅ CORREGIDO: Mostrador puede tener estado 3 O 5 (cuando se liquida desde móvil)
+            // Repartidor siempre tiene estado 5 (liquidado)
             let breakdownQuery = `
                 SELECT
                     -- Por tipo de venta (1=Mostrador, 2=Repartidor)
-                    COALESCE(SUM(CASE WHEN venta_tipo_id = 1 AND estado_venta_id = 3 THEN total ELSE 0 END), 0) as mostrador_total,
+                    -- Mostrador: puede ser estado 3 (completada) o 5 (liquidada desde móvil)
+                    COALESCE(SUM(CASE WHEN venta_tipo_id = 1 AND estado_venta_id IN (3, 5) THEN total ELSE 0 END), 0) as mostrador_total,
                     COALESCE(SUM(CASE WHEN venta_tipo_id = 2 AND estado_venta_id = 5 THEN total ELSE 0 END), 0) as repartidor_liquidado,
                     -- Por método de pago (1=Efectivo, 2=Tarjeta, 3=Crédito)
                     COALESCE(SUM(CASE WHEN tipo_pago_id = 1 AND estado_venta_id IN (3, 5) THEN total ELSE 0 END), 0) as efectivo_total,
                     COALESCE(SUM(CASE WHEN tipo_pago_id = 2 AND estado_venta_id IN (3, 5) THEN total ELSE 0 END), 0) as tarjeta_total,
                     COALESCE(SUM(CASE WHEN tipo_pago_id = 3 AND estado_venta_id IN (3, 5) THEN total ELSE 0 END), 0) as credito_total,
                     -- Conteos
-                    COUNT(CASE WHEN venta_tipo_id = 1 AND estado_venta_id = 3 THEN 1 END) as mostrador_count,
+                    COUNT(CASE WHEN venta_tipo_id = 1 AND estado_venta_id IN (3, 5) THEN 1 END) as mostrador_count,
                     COUNT(CASE WHEN venta_tipo_id = 2 AND estado_venta_id = 5 THEN 1 END) as repartidor_count
                 FROM ventas
                 WHERE tenant_id = $1 AND (
