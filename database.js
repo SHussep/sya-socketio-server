@@ -1093,6 +1093,41 @@ async function runMigrations() {
                 console.log('[Schema] ✅ branches.rfc column added successfully');
             }
 
+            // Patch: Create telemetry_events table if not exists
+            const checkTelemetryTable = await client.query(`
+                SELECT table_name FROM information_schema.tables
+                WHERE table_name = 'telemetry_events'
+            `);
+
+            if (checkTelemetryTable.rows.length === 0) {
+                console.log('[Schema] 📝 Creating telemetry_events table...');
+                await client.query(`
+                    CREATE TABLE IF NOT EXISTS telemetry_events (
+                        id SERIAL PRIMARY KEY,
+                        tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                        branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+                        event_type VARCHAR(50) NOT NULL,
+                        device_id VARCHAR(255),
+                        device_name VARCHAR(255),
+                        app_version VARCHAR(50),
+                        scale_model VARCHAR(100),
+                        scale_port VARCHAR(50),
+                        global_id VARCHAR(255) UNIQUE NOT NULL,
+                        terminal_id VARCHAR(100),
+                        local_op_seq BIGINT,
+                        device_event_raw BIGINT,
+                        created_local_utc TEXT,
+                        event_timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_telemetry_tenant_id ON telemetry_events(tenant_id);
+                    CREATE INDEX IF NOT EXISTS idx_telemetry_branch_id ON telemetry_events(branch_id);
+                    CREATE INDEX IF NOT EXISTS idx_telemetry_event_type ON telemetry_events(event_type);
+                    CREATE INDEX IF NOT EXISTS idx_telemetry_event_timestamp ON telemetry_events(event_timestamp);
+                `);
+                console.log('[Schema] ✅ telemetry_events table created successfully');
+            }
+
             // 2.5. Clean user data if requested (for testing)
             console.log(`[Schema] 🔍 CLEAN_DATABASE_ON_START = "${process.env.CLEAN_DATABASE_ON_START}"`);
 

@@ -582,6 +582,186 @@ app.put('/api/branches/:id', async (req, res) => {
     }
 });
 
+// ═══════════════════════════════════════════════════════════════
+// POST /api/telemetry - Registrar eventos de telemetría (app opens, scale config)
+// Idempotente: usa global_id para evitar duplicados
+// ═══════════════════════════════════════════════════════════════
+app.post('/api/telemetry', async (req, res) => {
+    try {
+        const {
+            tenantId,
+            branchId,
+            eventType,        // 'app_open' | 'scale_configured'
+            deviceId,
+            deviceName,
+            appVersion,
+            scaleModel,       // Solo para scale_configured
+            scalePort,        // Solo para scale_configured
+            global_id,
+            terminal_id,
+            local_op_seq,
+            device_event_raw,
+            created_local_utc,
+            eventTimestamp
+        } = req.body;
+
+        // Validaciones básicas
+        if (!tenantId || !branchId || !eventType || !global_id) {
+            return res.status(400).json({
+                success: false,
+                message: 'Campos requeridos: tenantId, branchId, eventType, global_id'
+            });
+        }
+
+        // Validar eventType
+        const validEventTypes = ['app_open', 'scale_configured'];
+        if (!validEventTypes.includes(eventType)) {
+            return res.status(400).json({
+                success: false,
+                message: `eventType inválido. Valores permitidos: ${validEventTypes.join(', ')}`
+            });
+        }
+
+        // Verificar que tenant y branch existen
+        const tenantCheck = await pool.query(
+            'SELECT id FROM tenants WHERE id = $1',
+            [tenantId]
+        );
+        if (tenantCheck.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Tenant no encontrado'
+            });
+        }
+
+        const branchCheck = await pool.query(
+            'SELECT id FROM branches WHERE id = $1 AND tenant_id = $2',
+            [branchId, tenantId]
+        );
+        if (branchCheck.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Sucursal no encontrada para este tenant'
+            });
+        }
+
+        // Insertar evento (ON CONFLICT para idempotencia)
+        const result = await pool.query(`
+            INSERT INTO telemetry_events (
+                tenant_id, branch_id, event_type,
+                device_id, device_name, app_version,
+                scale_model, scale_port,
+                global_id, terminal_id, local_op_seq, device_event_raw, created_local_utc,
+                event_timestamp
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, COALESCE($14, NOW()))
+            ON CONFLICT (global_id) DO NOTHING
+            RETURNING id
+        `, [
+            tenantId,
+            branchId,
+            eventType,
+            deviceId || null,
+            deviceName || null,
+            appVersion || null,
+            scaleModel || null,
+            scalePort || null,
+            global_id,
+            terminal_id || null,
+            local_op_seq || null,
+            device_event_raw || null,
+            created_local_utc || null,
+            eventTimestamp || null
+        ]);
+
+        const wasInserted = result.rows.length > 0;
+        const eventId = wasInserted ? result.rows[0].id : null;
+
+        console.log(`[Telemetry] ${wasInserted ? '✅ NUEVO' : '⏭️ DUPLICADO'} ${eventType} - Tenant: ${tenantId}, Branch: ${branchId}${scaleModel ? `, Scale: ${scaleModel}` : ''}`);
+
+        res.status(wasInserted ? 201 : 200).json({
+            success: true,
+            message: wasInserted ? 'Evento registrado' : 'Evento ya existía (idempotente)',
+            data: {
+                id: eventId,
+                globalId: global_id,
+                eventType,
+                wasInserted
+            }
+        });
+
+    } catch (error) {
+        console.error('[Telemetry] Error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error al registrar evento de telemetría',
+            error: error.message
+        });
+    }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// GET /api/telemetry/stats - Obtener estadísticas de telemetría (admin)
+// ═══════════════════════════════════════════════════════════════
+app.get('/api/telemetry/stats', async (req, res) => {
+    try {
+        // Total de aperturas de app por tenant/branch
+        const appOpens = await pool.query(`
+            SELECT
+                t.business_name as tenant_name,
+                b.name as branch_name,
+                COUNT(*) as total_opens,
+                MAX(te.event_timestamp) as last_open
+            FROM telemetry_events te
+            JOIN tenants t ON te.tenant_id = t.id
+            JOIN branches b ON te.branch_id = b.id
+            WHERE te.event_type = 'app_open'
+            GROUP BY t.id, t.business_name, b.id, b.name
+            ORDER BY total_opens DESC
+        `);
+
+        // Configuraciones de báscula
+        const scaleConfigs = await pool.query(`
+            SELECT
+                t.business_name as tenant_name,
+                b.name as branch_name,
+                te.scale_model,
+                te.scale_port,
+                te.event_timestamp as configured_at
+            FROM telemetry_events te
+            JOIN tenants t ON te.tenant_id = t.id
+            JOIN branches b ON te.branch_id = b.id
+            WHERE te.event_type = 'scale_configured'
+            ORDER BY te.event_timestamp DESC
+        `);
+
+        // Resumen
+        const summary = await pool.query(`
+            SELECT
+                (SELECT COUNT(DISTINCT branch_id) FROM telemetry_events WHERE event_type = 'app_open') as branches_with_app,
+                (SELECT COUNT(DISTINCT branch_id) FROM telemetry_events WHERE event_type = 'scale_configured') as branches_with_scale,
+                (SELECT COUNT(*) FROM telemetry_events WHERE event_type = 'app_open') as total_app_opens,
+                (SELECT COUNT(DISTINCT scale_model) FROM telemetry_events WHERE event_type = 'scale_configured' AND scale_model IS NOT NULL) as unique_scale_models
+        `);
+
+        res.json({
+            success: true,
+            data: {
+                summary: summary.rows[0],
+                appOpensByBranch: appOpens.rows,
+                scaleConfigurations: scaleConfigs.rows
+            }
+        });
+
+    } catch (error) {
+        console.error('[Telemetry Stats] Error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error al obtener estadísticas',
+            error: error.message
+        });
+    }
+});
+
 io.on('connection', (socket) => {
     console.log(`[${new Date().toISOString()}] Cliente conectado: ${socket.id}`);
 

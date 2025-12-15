@@ -1004,6 +1004,41 @@ CREATE TABLE IF NOT EXISTS backup_metadata (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- telemetry_events (analytics de uso de la aplicación)
+CREATE TABLE IF NOT EXISTS telemetry_events (
+    id SERIAL PRIMARY KEY,
+    tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+
+    -- Event identification
+    event_type VARCHAR(50) NOT NULL,  -- 'app_open', 'scale_configured'
+
+    -- Device info
+    device_id VARCHAR(255),
+    device_name VARCHAR(255),
+    app_version VARCHAR(50),
+
+    -- Scale configuration (only for scale_configured events)
+    scale_model VARCHAR(100),
+    scale_port VARCHAR(50),
+
+    -- Offline-first sync columns (for idempotency)
+    global_id VARCHAR(255) UNIQUE NOT NULL,
+    terminal_id VARCHAR(100),
+    local_op_seq BIGINT,
+    device_event_raw BIGINT,
+    created_local_utc TEXT,
+
+    -- Timestamps
+    event_timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_telemetry_tenant_id ON telemetry_events(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_telemetry_branch_id ON telemetry_events(branch_id);
+CREATE INDEX IF NOT EXISTS idx_telemetry_event_type ON telemetry_events(event_type);
+CREATE INDEX IF NOT EXISTS idx_telemetry_event_timestamp ON telemetry_events(event_timestamp);
+
 -- ========== COMENTARIOS ==========
 COMMENT ON TABLE tenants IS 'Empresas/organizaciones multi-tenant';
 COMMENT ON TABLE branches IS 'Sucursales por tenant';
