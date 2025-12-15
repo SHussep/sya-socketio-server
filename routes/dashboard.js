@@ -113,6 +113,48 @@ module.exports = (pool) => {
             const salesResult = await pool.query(salesQuery, salesParams);
             console.log(`[Dashboard Summary] ✅ Total sales: ${salesResult.rows[0].total}`);
 
+            // ═══════════════════════════════════════════════════════════════
+            // DESGLOSE DE VENTAS - Por tipo y método de pago
+            // ═══════════════════════════════════════════════════════════════
+            let breakdownQuery = `
+                SELECT
+                    -- Por tipo de venta (1=Mostrador, 2=Repartidor)
+                    COALESCE(SUM(CASE WHEN venta_tipo_id = 1 AND estado_venta_id = 3 THEN total ELSE 0 END), 0) as mostrador_total,
+                    COALESCE(SUM(CASE WHEN venta_tipo_id = 2 AND estado_venta_id = 5 THEN total ELSE 0 END), 0) as repartidor_liquidado,
+                    -- Por método de pago (1=Efectivo, 2=Tarjeta, 3=Crédito)
+                    COALESCE(SUM(CASE WHEN tipo_pago_id = 1 AND estado_venta_id IN (3, 5) THEN total ELSE 0 END), 0) as efectivo_total,
+                    COALESCE(SUM(CASE WHEN tipo_pago_id = 2 AND estado_venta_id IN (3, 5) THEN total ELSE 0 END), 0) as tarjeta_total,
+                    COALESCE(SUM(CASE WHEN tipo_pago_id = 3 AND estado_venta_id IN (3, 5) THEN total ELSE 0 END), 0) as credito_total,
+                    -- Conteos
+                    COUNT(CASE WHEN venta_tipo_id = 1 AND estado_venta_id = 3 THEN 1 END) as mostrador_count,
+                    COUNT(CASE WHEN venta_tipo_id = 2 AND estado_venta_id = 5 THEN 1 END) as repartidor_count
+                FROM ventas
+                WHERE tenant_id = $1 AND (
+                    (estado_venta_id = 3 AND ${dateFilter})
+                    OR
+                    (estado_venta_id = 5 AND ${dateFilter.replace(/fecha_venta_utc/g, 'COALESCE(fecha_liquidacion_utc, fecha_venta_utc)')})
+                )`;
+            let breakdownParams = [tenantId];
+            let breakdownParamIndex = 2;
+
+            if (shouldFilterByBranch) {
+                breakdownQuery += ` AND branch_id = $${breakdownParamIndex}`;
+                breakdownParams.push(targetBranchId);
+                breakdownParamIndex++;
+            }
+
+            if (shift_id) {
+                breakdownQuery += ` AND id_turno = $${breakdownParamIndex}`;
+                breakdownParams.push(parseInt(shift_id));
+                breakdownParamIndex++;
+            }
+
+            console.log(`[Dashboard Summary] Breakdown Query: ${breakdownQuery}`);
+            console.log(`[Dashboard Summary] Breakdown Params: ${JSON.stringify(breakdownParams)}`);
+            const breakdownResult = await pool.query(breakdownQuery, breakdownParams);
+            const breakdown = breakdownResult.rows[0];
+            console.log(`[Dashboard Summary] ✅ Breakdown:`, JSON.stringify(breakdown));
+
             // Total de gastos
             let expensesQuery = `SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE tenant_id = $1 AND ${expenseDateFilter}`;
             let expensesParams = [tenantId];
@@ -151,13 +193,15 @@ module.exports = (pool) => {
             console.log(`[Dashboard Summary] ⚠️ Guardian events no implementado (tabla no existe) - retornando 0`);
 
             // Asignaciones de repartidores (activas: pending + in_progress)
+            // ✅ Usar created_at que es más confiable que fecha_asignacion
+            let assignmentDateFilterFixed = assignmentDateFilter.replace(/fecha_asignacion/g, 'created_at');
             let assignmentsQuery = `
                 SELECT
                     COUNT(*) as total_assignments,
                     COUNT(CASE WHEN status IN ('pending', 'in_progress') THEN 1 END) as active_assignments,
                     COALESCE(SUM(CASE WHEN status IN ('pending', 'in_progress') THEN assigned_amount ELSE 0 END), 0) as active_amount
                 FROM repartidor_assignments
-                WHERE tenant_id = $1 AND ${assignmentDateFilter}`;
+                WHERE tenant_id = $1 AND ${assignmentDateFilterFixed}`;
             let assignmentsParams = [tenantId];
             let assignParamIndex = 2;
 
@@ -173,7 +217,10 @@ module.exports = (pool) => {
                 assignParamIndex++;
             }
 
+            console.log(`[Dashboard Summary] Assignments Query: ${assignmentsQuery}`);
+            console.log(`[Dashboard Summary] Assignments Params: ${JSON.stringify(assignmentsParams)}`);
             const assignmentsResult = await pool.query(assignmentsQuery, assignmentsParams);
+            console.log(`[Dashboard Summary] ✅ Assignments result:`, assignmentsResult.rows[0]);
 
             console.log(`[Dashboard Summary] Fetching summary - Tenant: ${tenantId}, Branch: ${targetBranchId}, Shift: ${shift_id || 'ALL'}, all_branches: ${all_branches}`);
 
@@ -186,7 +233,19 @@ module.exports = (pool) => {
                     unreadGuardianEvents: parseInt(guardianEventsResult.rows[0].count),
                     totalAssignments: parseInt(assignmentsResult.rows[0].total_assignments),
                     activeAssignments: parseInt(assignmentsResult.rows[0].active_assignments),
-                    activeAssignmentsAmount: parseFloat(assignmentsResult.rows[0].active_amount)
+                    activeAssignmentsAmount: parseFloat(assignmentsResult.rows[0].active_amount),
+                    // ✅ NUEVO: Desglose de ventas
+                    salesBreakdown: {
+                        // Por tipo de venta
+                        mostradorTotal: parseFloat(breakdown.mostrador_total),
+                        mostradorCount: parseInt(breakdown.mostrador_count),
+                        repartidorLiquidado: parseFloat(breakdown.repartidor_liquidado),
+                        repartidorCount: parseInt(breakdown.repartidor_count),
+                        // Por método de pago
+                        efectivoTotal: parseFloat(breakdown.efectivo_total),
+                        tarjetaTotal: parseFloat(breakdown.tarjeta_total),
+                        creditoTotal: parseFloat(breakdown.credito_total)
+                    }
                 }
             });
         } catch (error) {
