@@ -171,10 +171,19 @@ module.exports = (pool) => {
     // Eliminar permanentemente TODAS las notificaciones (botón "Limpiar todas")
     router.delete("/delete-all", authenticateToken, async (req, res) => {
         try {
-            const { tenantId, branchId } = req.user;
-            const { category } = req.body || {};
+            console.log(`[NotificationHistory/DeleteAll] 📥 req.user:`, JSON.stringify(req.user));
 
-            console.log(`[NotificationHistory/DeleteAll] 🗑️ Eliminando todas - Tenant: ${tenantId}, Branch: ${branchId}, Category: ${category || 'ALL'}`);
+            const { tenantId, branchId } = req.user || {};
+
+            if (!tenantId) {
+                console.error(`[NotificationHistory/DeleteAll] ❌ tenantId no encontrado en token`);
+                return res.status(400).json({ success: false, message: 'tenantId no encontrado en token' });
+            }
+
+            // Aceptar category de body O query params (más compatible con HTTP DELETE)
+            const category = req.body?.category || req.query?.category;
+
+            console.log(`[NotificationHistory/DeleteAll] 🗑️ Eliminando todas - Tenant: ${tenantId}, Branch: ${branchId || 'ALL'}, Category: ${category || 'ALL'}`);
 
             let query = "DELETE FROM notifications WHERE tenant_id = $1";
             const params = [tenantId];
@@ -190,11 +199,15 @@ module.exports = (pool) => {
                 params.push(category);
             }
 
+            console.log(`[NotificationHistory/DeleteAll] 📝 Query: ${query}`);
+            console.log(`[NotificationHistory/DeleteAll] 📝 Params: ${JSON.stringify(params)}`);
+
             const result = await pool.query(query, params);
             console.log(`[NotificationHistory/DeleteAll] ✅ Eliminadas ${result.rowCount} notificaciones`);
             res.json({ success: true, data: { count: result.rowCount, deleted: true } });
         } catch (error) {
             console.error(`[NotificationHistory/DeleteAll] ❌ Error:`, error.message);
+            console.error(`[NotificationHistory/DeleteAll] ❌ Stack:`, error.stack);
             res.status(500).json({ success: false, message: error.message });
         }
     });
