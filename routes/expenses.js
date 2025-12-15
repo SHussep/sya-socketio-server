@@ -507,10 +507,10 @@ module.exports = (pool, io) => {
                 result = await pool.query(
                     `INSERT INTO expenses (
                         tenant_id, branch_id, employee_id, payment_type_id, id_turno, global_category_id, description, amount, quantity, expense_date,
-                        status, reviewed_by_desktop,
+                        status, reviewed_by_desktop, is_active,
                         global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw
                      )
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, true, $13, $14, $15, $16, $17)
                      RETURNING *`,
                     [
                         tenantId,
@@ -525,6 +525,7 @@ module.exports = (pool, io) => {
                         expenseDate,                  // $10
                         finalStatus,                  // $11 - Status (draft/confirmed/deleted)
                         reviewedValue,                // $12 - TRUE para Desktop, FALSE para Mobile
+                        // is_active = true (hardcoded)   // $13 position shifted
                         finalGlobalId,                // $13 - UUID (Desktop) o generado (Mobile)
                         finalTerminalId,              // $14 - UUID (Desktop) o generado (Mobile)
                         finalLocalOpSeq,              // $15 - Sequence (Desktop) o 0 (Mobile)
@@ -705,7 +706,7 @@ module.exports = (pool, io) => {
             // Validar que el gasto existe y pertenece al tenant
             // NOTA: global_id es VARCHAR, no UUID - no usar ::uuid cast
             const checkResult = await pool.query(
-                'SELECT id FROM expenses WHERE global_id = $1 AND tenant_id = $2',
+                'SELECT id, employee_global_id FROM expenses WHERE global_id = $1 AND tenant_id = $2',
                 [global_id, tenant_id]
             );
 
@@ -715,6 +716,8 @@ module.exports = (pool, io) => {
                     message: 'Gasto no encontrado o no pertenece al tenant'
                 });
             }
+
+            const employeeGlobalId = checkResult.rows[0].employee_global_id;
 
             // Soft delete: marcar como inactivo
             const result = await pool.query(
@@ -728,6 +731,34 @@ module.exports = (pool, io) => {
             );
 
             console.log(`[Expenses/Deactivate] ✅ Gasto ${global_id} desactivado exitosamente`);
+
+            // ═══════════════════════════════════════════════════════════════
+            // NOTIFICACIÓN EN TIEMPO REAL: Avisar al móvil que el gasto fue eliminado
+            // ═══════════════════════════════════════════════════════════════
+            const io = req.app.get('io');
+            const expenseData = result.rows[0];
+            if (io && expenseData) {
+                const payload = {
+                    globalId: global_id,
+                    tenantId: tenant_id,
+                    employeeGlobalId: employeeGlobalId,
+                    deletedAt: new Date().toISOString()
+                };
+
+                // Emitir a la room del branch (donde está conectado el móvil)
+                if (expenseData.branch_id) {
+                    const branchRoom = `branch_${expenseData.branch_id}`;
+                    io.to(branchRoom).emit('expense_deleted', payload);
+                    console.log(`[Expenses/Deactivate] 📡 Emitido 'expense_deleted' a ${branchRoom}`);
+                }
+
+                // También emitir a la room del empleado específico (por si está conectado directamente)
+                if (employeeGlobalId) {
+                    const employeeRoom = `employee_${employeeGlobalId}`;
+                    io.to(employeeRoom).emit('expense_deleted', payload);
+                    console.log(`[Expenses/Deactivate] 📡 Emitido 'expense_deleted' a ${employeeRoom}`);
+                }
+            }
 
             res.json({
                 success: true,
