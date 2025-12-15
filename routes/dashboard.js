@@ -155,6 +155,26 @@ module.exports = (pool) => {
             const breakdown = breakdownResult.rows[0];
             console.log(`[Dashboard Summary] ✅ Breakdown:`, JSON.stringify(breakdown));
 
+            // DEBUG: Ver distribución de venta_tipo_id en ventas del período
+            let debugQuery = `
+                SELECT
+                    venta_tipo_id,
+                    estado_venta_id,
+                    COUNT(*) as count,
+                    COALESCE(SUM(total), 0) as total
+                FROM ventas
+                WHERE tenant_id = $1 AND (
+                    (estado_venta_id = 3 AND ${dateFilter})
+                    OR
+                    (estado_venta_id = 5 AND ${dateFilter.replace(/fecha_venta_utc/g, 'COALESCE(fecha_liquidacion_utc, fecha_venta_utc)')})
+                )`;
+            if (shouldFilterByBranch) {
+                debugQuery += ` AND branch_id = $2`;
+            }
+            debugQuery += ` GROUP BY venta_tipo_id, estado_venta_id`;
+            const debugResult = await pool.query(debugQuery, shouldFilterByBranch ? [tenantId, targetBranchId] : [tenantId]);
+            console.log(`[Dashboard Summary] 🔍 DEBUG venta_tipo_id distribution:`, JSON.stringify(debugResult.rows));
+
             // Total de gastos
             let expensesQuery = `SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE tenant_id = $1 AND ${expenseDateFilter}`;
             let expensesParams = [tenantId];
