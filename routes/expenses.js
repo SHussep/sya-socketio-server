@@ -81,17 +81,28 @@ module.exports = (pool, io) => {
             const params = [branchId];
             let paramIndex = 2;
 
-            // Filtro por rango de fechas
-            if (startDate) {
-                query += ` AND e.expense_date >= $${paramIndex}`;
-                params.push(startDate);
-                paramIndex++;
-            }
+            // ✅ Usar timezone del cliente para filtrar fechas correctamente
+            // Si el cliente envía timezone (IANA name como 'Australia/Sydney'),
+            // convertimos expense_date a ese timezone antes de comparar
+            const userTimezone = timezone || 'UTC';
+            console.log(`[Expenses/GET] 🕐 Using timezone: ${userTimezone}`);
 
-            if (endDate) {
-                query += ` AND e.expense_date <= $${paramIndex}`;
-                params.push(endDate);
-                paramIndex++;
+            // Filtro por rango de fechas usando AT TIME ZONE
+            if (startDate && endDate) {
+                // Extraer solo la parte de fecha para comparar en el timezone del cliente
+                const startDateOnly = startDate.split('T')[0];
+                const endDateOnly = endDate.split('T')[0];
+
+                console.log(`[Expenses/GET] 📅 Date range in ${userTimezone}: ${startDateOnly} to ${endDateOnly}`);
+
+                query += ` AND (e.expense_date AT TIME ZONE '${userTimezone}')::date >= '${startDateOnly}'::date`;
+                query += ` AND (e.expense_date AT TIME ZONE '${userTimezone}')::date <= '${endDateOnly}'::date`;
+            } else if (startDate) {
+                const startDateOnly = startDate.split('T')[0];
+                query += ` AND (e.expense_date AT TIME ZONE '${userTimezone}')::date >= '${startDateOnly}'::date`;
+            } else if (endDate) {
+                const endDateOnly = endDate.split('T')[0];
+                query += ` AND (e.expense_date AT TIME ZONE '${userTimezone}')::date <= '${endDateOnly}'::date`;
             }
 
             // Filtro por empleado
