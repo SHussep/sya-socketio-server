@@ -683,6 +683,7 @@ class AuthController {
 
             const employeeData = {
                 id: employee.id,
+                global_id: employee.global_id,  // ✅ Necesario para preferencias de notificaciones
                 username: employee.username,
                 fullName: employee.full_name || `${employee.first_name || ''} ${employee.last_name || ''}`.trim() || employee.username,
                 email: employee.email,
