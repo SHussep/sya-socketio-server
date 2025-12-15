@@ -52,6 +52,7 @@ module.exports = (pool, io) => {
                     e.global_id,
                     e.tenant_id,
                     e.branch_id,
+                    b.name as branch_name,
                     e.employee_id,
                     CONCAT(emp.first_name, ' ', emp.last_name) as employee_name,
                     gcat.name as category,
@@ -72,6 +73,7 @@ module.exports = (pool, io) => {
                     e.updated_at
                 FROM expenses e
                 LEFT JOIN employees emp ON e.employee_id = emp.id
+                LEFT JOIN branches b ON e.branch_id = b.id
                 LEFT JOIN global_expense_categories gcat ON e.global_category_id = gcat.id
                 LEFT JOIN employees reviewer ON e.reviewed_by_employee_id = reviewer.id
                 WHERE e.branch_id = $1
