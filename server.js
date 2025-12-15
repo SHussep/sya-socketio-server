@@ -504,6 +504,90 @@ app.get('/api/branches', authenticateToken, async (req, res) => {
         res.status(500).json({ success: false, message: 'Error al obtener sucursales' });
     }
 });
+
+// PUT /api/branches/:id - Actualizar datos de sucursal (sin auth - usa tenantId del payload)
+app.put('/api/branches/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { tenantId, name, address, phone, rfc, latitude, longitude, isActive } = req.body;
+
+        // Validar que tenantId venga en el payload
+        if (!tenantId) {
+            return res.status(400).json({
+                success: false,
+                message: 'tenantId es requerido en el payload'
+            });
+        }
+
+        // Verificar que la sucursal pertenece al tenant
+        const existing = await pool.query(
+            'SELECT id FROM branches WHERE id = $1 AND tenant_id = $2',
+            [id, tenantId]
+        );
+
+        if (existing.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Sucursal no encontrada'
+            });
+        }
+
+        // Actualizar sucursal
+        const result = await pool.query(`
+            UPDATE branches
+            SET name = COALESCE($1, name),
+                address = COALESCE($2, address),
+                phone_number = COALESCE($3, phone_number),
+                rfc = COALESCE($4, rfc),
+                latitude = COALESCE($5, latitude),
+                longitude = COALESCE($6, longitude),
+                is_active = COALESCE($7, is_active),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = $8 AND tenant_id = $9
+            RETURNING *
+        `, [
+            name,
+            address,
+            phone,
+            rfc,
+            latitude,
+            longitude,
+            isActive,
+            id,
+            tenantId
+        ]);
+
+        const branch = result.rows[0];
+
+        console.log(`[Branch Update] ✅ Sucursal actualizada: ${branch.name} (RFC: ${branch.rfc || 'N/A'})`);
+
+        res.json({
+            success: true,
+            message: 'Sucursal actualizada exitosamente',
+            data: {
+                id: branch.id,
+                code: branch.branch_code,
+                name: branch.name,
+                address: branch.address,
+                phone: branch.phone_number,
+                rfc: branch.rfc,
+                latitude: branch.latitude,
+                longitude: branch.longitude,
+                isActive: branch.is_active,
+                updatedAt: branch.updated_at
+            }
+        });
+
+    } catch (error) {
+        console.error('[Branch Update] Error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error al actualizar sucursal',
+            error: error.message
+        });
+    }
+});
+
 io.on('connection', (socket) => {
     console.log(`[${new Date().toISOString()}] Cliente conectado: ${socket.id}`);
 
