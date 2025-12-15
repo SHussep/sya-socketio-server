@@ -50,6 +50,9 @@ module.exports = (pool) => {
                 ? 'v.estado_venta_id IN (2, 3, 5)'  // Asignada + Completada + Liquidada
                 : 'v.estado_venta_id IN (3, 5)';    // Solo Completada + Liquidada (cobradas)
 
+            // ✅ FIX: Usar subconsulta para assignment_id en lugar de LEFT JOIN
+            // Esto evita duplicados cuando una venta tiene múltiples asignaciones
+            // (asignar, devolver, reasignar). Obtiene la asignación más reciente.
             let query = `
                 SELECT v.id_venta as id, v.ticket_number, v.total as total_amount,
                        v.tipo_pago_id as payment_method, v.fecha_venta_utc as sale_date,
@@ -59,13 +62,14 @@ module.exports = (pool) => {
                        CONCAT(e.first_name, ' ', e.last_name) as employee_name,
                        r.name as employee_role,
                        b.name as branch_name, b.id as "branchId",
-                       ra.id as assignment_id,
+                       (SELECT ra.id FROM repartidor_assignments ra
+                        WHERE ra.venta_id = v.id_venta
+                        ORDER BY ra.created_at DESC LIMIT 1) as assignment_id,
                        (v.fecha_venta_utc AT TIME ZONE '${userTimezone}') as sale_date_display
                 FROM ventas v
                 LEFT JOIN employees e ON v.id_empleado = e.id
                 LEFT JOIN roles r ON e.role_id = r.id
                 LEFT JOIN branches b ON v.branch_id = b.id
-                LEFT JOIN repartidor_assignments ra ON v.id_venta = ra.venta_id
                 WHERE v.tenant_id = $1 AND ${estadoFilter}
             `;
 

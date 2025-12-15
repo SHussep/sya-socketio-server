@@ -144,34 +144,47 @@ module.exports = (pool) => {
 
             // Aggregate cash sales (tipo_pago_id = 1 = Efectivo)
             // ✅ FILTRAR solo ventas COMPLETADAS (estado 3) y LIQUIDADAS (estado 5)
+            // ✅ IMPORTANTE: Para ventas liquidadas (repartidor), usar fecha_liquidacion_utc
+            //    Así cuentan en el turno donde se liquidaron, no donde se asignaron
             const cashSalesResult = await client.query(
                 `SELECT COALESCE(SUM(total), 0) as total
                  FROM ventas
-                 WHERE tenant_id = $1 AND branch_id = $2 AND id_turno = $3 AND tipo_pago_id = 1
-                 AND estado_venta_id IN (3, 5)
-                 AND fecha_venta_utc >= $4 AND fecha_venta_utc <= $5`,
+                 WHERE tenant_id = $1 AND branch_id = $2 AND tipo_pago_id = 1
+                 AND (
+                     (estado_venta_id = 3 AND id_turno = $3 AND fecha_venta_utc >= $4 AND fecha_venta_utc <= $5)
+                     OR
+                     (estado_venta_id = 5 AND COALESCE(fecha_liquidacion_utc, fecha_venta_utc) >= $4 AND COALESCE(fecha_liquidacion_utc, fecha_venta_utc) <= $5)
+                 )`,
                 [tenantId, targetBranchId, shiftId, startTime, endTime]
             );
 
             // Aggregate card sales (tipo_pago_id = 2 = Tarjeta)
             // ✅ FILTRAR solo ventas COMPLETADAS (estado 3) y LIQUIDADAS (estado 5)
+            // ✅ IMPORTANTE: Para ventas liquidadas (repartidor), usar fecha_liquidacion_utc
             const cardSalesResult = await client.query(
                 `SELECT COALESCE(SUM(total), 0) as total
                  FROM ventas
-                 WHERE tenant_id = $1 AND branch_id = $2 AND id_turno = $3 AND tipo_pago_id = 2
-                 AND estado_venta_id IN (3, 5)
-                 AND fecha_venta_utc >= $4 AND fecha_venta_utc <= $5`,
+                 WHERE tenant_id = $1 AND branch_id = $2 AND tipo_pago_id = 2
+                 AND (
+                     (estado_venta_id = 3 AND id_turno = $3 AND fecha_venta_utc >= $4 AND fecha_venta_utc <= $5)
+                     OR
+                     (estado_venta_id = 5 AND COALESCE(fecha_liquidacion_utc, fecha_venta_utc) >= $4 AND COALESCE(fecha_liquidacion_utc, fecha_venta_utc) <= $5)
+                 )`,
                 [tenantId, targetBranchId, shiftId, startTime, endTime]
             );
 
             // Aggregate credit sales (tipo_pago_id = 3 = Crédito)
             // ✅ FILTRAR solo ventas COMPLETADAS (estado 3) y LIQUIDADAS (estado 5)
+            // ✅ IMPORTANTE: Para ventas liquidadas (repartidor), usar fecha_liquidacion_utc
             const creditSalesResult = await client.query(
                 `SELECT COALESCE(SUM(total), 0) as total
                  FROM ventas
-                 WHERE tenant_id = $1 AND branch_id = $2 AND id_turno = $3 AND tipo_pago_id = 3
-                 AND estado_venta_id IN (3, 5)
-                 AND fecha_venta_utc >= $4 AND fecha_venta_utc <= $5`,
+                 WHERE tenant_id = $1 AND branch_id = $2 AND tipo_pago_id = 3
+                 AND (
+                     (estado_venta_id = 3 AND id_turno = $3 AND fecha_venta_utc >= $4 AND fecha_venta_utc <= $5)
+                     OR
+                     (estado_venta_id = 5 AND COALESCE(fecha_liquidacion_utc, fecha_venta_utc) >= $4 AND COALESCE(fecha_liquidacion_utc, fecha_venta_utc) <= $5)
+                 )`,
                 [tenantId, targetBranchId, shiftId, startTime, endTime]
             );
 

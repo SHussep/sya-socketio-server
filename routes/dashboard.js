@@ -86,7 +86,13 @@ module.exports = (pool) => {
             // ✅ FILTRAR solo ventas COMPLETADAS (estado 3) y LIQUIDADAS (estado 5)
             // - Excluye estado 1 = Borrador (sin ticket válido)
             // - Excluye estado 2 = Asignada (repartidor, no es venta final)
-            let salesQuery = `SELECT COALESCE(SUM(total), 0) as total FROM ventas WHERE tenant_id = $1 AND estado_venta_id IN (3, 5) AND ${dateFilter}`;
+            // ✅ IMPORTANTE: Para ventas liquidadas (repartidor), usar fecha_liquidacion_utc
+            //    Así aparecen en el día que se cobró, no el día que se asignó
+            let salesQuery = `SELECT COALESCE(SUM(total), 0) as total FROM ventas WHERE tenant_id = $1 AND (
+                (estado_venta_id = 3 AND ${dateFilter})
+                OR
+                (estado_venta_id = 5 AND ${dateFilter.replace(/fecha_venta_utc/g, 'COALESCE(fecha_liquidacion_utc, fecha_venta_utc)')})
+            )`;
             let salesParams = [tenantId];
             let paramIndex = 2;
 
