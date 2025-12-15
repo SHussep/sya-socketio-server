@@ -7,7 +7,7 @@ const jwt = require('jsonwebtoken');
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
-module.exports = function(pool) {
+module.exports = function(pool, io) {
     const router = require('express').Router();
 
     // ─────────────────────────────────────────────────────────
@@ -196,6 +196,30 @@ module.exports = function(pool) {
             console.log(`  - Business: ${tenant.business_name}`);
             console.log(`  - Subscription: ${plan.name} (ID: ${tenant.subscription_id})`);
             console.log(`  - Trial ends: ${tenant.trial_ends_at}`);
+
+            // 🔔 Emitir evento Socket.IO para Super Admin (nuevo tenant registrado)
+            if (io) {
+                io.emit('superadmin:new-tenant', {
+                    id: tenant.id,
+                    tenantCode: tenant.tenant_code,
+                    businessName: tenant.business_name,
+                    email: tenant.email,
+                    phoneNumber: tenant.phone_number,
+                    subscriptionPlan: plan.name,
+                    trialEndsAt: tenant.trial_ends_at,
+                    branch: {
+                        id: branch.id,
+                        name: branch.name
+                    },
+                    owner: {
+                        id: employee.id,
+                        email: employee.email,
+                        name: employee.first_name
+                    },
+                    registeredAt: new Date().toISOString()
+                });
+                console.log(`[Tenant Register] 📡 Evento 'superadmin:new-tenant' emitido para Super Admin`);
+            }
 
             // Respuesta - Incluir información del trial
             const trialInfo = {

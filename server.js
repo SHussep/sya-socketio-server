@@ -57,7 +57,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 const restoreRoutes = require('./routes/restore');
 const backupRoutes = require('./routes/backup');
 const authRoutes = require('./routes/auth')(pool); // Pasar pool al módulo
-const tenantsRoutes = require('./routes/tenants')(pool); // Rutas de tenants (licencias, info)
+// tenantsRoutes se inicializa después de crear io (necesita Socket.IO)
 const createRepartidorAssignmentRoutes = require('./routes/repartidor_assignments'); // Rutas de asignaciones a repartidores
 const createRepartidorReturnRoutes = require('./routes/repartidor_returns'); // Rutas de devoluciones de repartidores
 const createRepartidorDebtsRoutes = require('./routes/repartidor_debts'); // Rutas de deudas de repartidores
@@ -95,6 +95,7 @@ const syncDiagnosticsRoutes = require('./routes/sync-diagnostics'); // Rutas de 
 const notificationHistoryRoutes = require('./routes/notification-history'); // Rutas de historial de notificaciones (campana)
 const notificationPreferencesRoutes = require('./routes/notificationPreferences'); // Preferencias de notificaciones por empleado
 const desktopUpdatesRoutes = require('./routes/desktopUpdates'); // Actualizaciones de app Desktop
+const superadminRoutes = require('./routes/superadmin'); // Panel de Super Admin (licencias, telemetría)
 
 // Inicializar Firebase para notificaciones push
 initializeFirebase();
@@ -103,7 +104,7 @@ initializeFirebase();
 app.use('/api/restore', restoreRoutes);
 app.use('/api/backup', backupRoutes);
 app.use('/api/auth', authRoutes); // Registrar rutas de autenticación
-app.use('/api/tenants', tenantsRoutes); // Registrar rutas de tenants (licencias, info)
+// tenantsRoutes se registra después de crear io
 app.use('/api/notifications', notificationRoutes); // Registrar rutas de notificaciones FCM
 app.use('/api/notification-history', notificationHistoryRoutes(pool)); // Historial de notificaciones (campana)
 app.use('/api/notification-preferences', notificationPreferencesRoutes); // Preferencias de notificaciones por empleado
@@ -332,6 +333,14 @@ const repartidorAssignmentRoutes = createRepartidorAssignmentRoutes(io);
 const repartidorReturnRoutes = createRepartidorReturnRoutes(io);
 const repartidorDebtsRoutes = createRepartidorDebtsRoutes(io);
 const employeeDebtsRoutes = createEmployeeDebtsRoutes(io);
+
+// Super Admin routes (necesita io para eventos en tiempo real)
+app.use('/api/superadmin', superadminRoutes(pool, io));
+
+// Tenants routes (necesita io para notificar nuevos registros)
+const tenantsRoutes = require('./routes/tenants')(pool, io);
+app.use('/api/tenants', tenantsRoutes);
+
 app.use('/api/repartidor-assignments', repartidorAssignmentRoutes);
 app.use('/api/repartidor-returns', repartidorReturnRoutes);
 app.use('/api/repartidor-liquidations', repartidorAssignmentRoutes);
