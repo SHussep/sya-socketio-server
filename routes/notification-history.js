@@ -171,24 +171,8 @@ module.exports = (pool) => {
     // ==========================================
     // ELIMINACIÓN PERMANENTE DE POSTGRESQL
     // ==========================================
-
-    // Eliminar permanentemente una notificación
-    router.delete("/:id", authenticateToken, async (req, res) => {
-        try {
-            const { id } = req.params;
-            const { tenantId } = req.user;
-            const result = await pool.query(
-                "DELETE FROM notifications WHERE id = $1 AND tenant_id = $2 RETURNING id",
-                [id, tenantId]
-            );
-            if (result.rows.length === 0) {
-                return res.status(404).json({ success: false, message: "Notificación no encontrada" });
-            }
-            res.json({ success: true, data: { id: result.rows[0].id, deleted: true } });
-        } catch (error) {
-            res.status(500).json({ success: false, message: error.message });
-        }
-    });
+    // IMPORTANTE: Las rutas específicas (/delete-all, /delete-read) deben ir
+    // ANTES de la ruta paramétrica (/:id) para evitar que Express las capture como IDs
 
     // Eliminar permanentemente TODAS las notificaciones (botón "Limpiar todas")
     router.delete("/delete-all", authenticateToken, async (req, res) => {
@@ -260,6 +244,25 @@ module.exports = (pool) => {
 
             const result = await pool.query(query, params);
             res.json({ success: true, data: { count: result.rowCount, deleted: true } });
+        } catch (error) {
+            res.status(500).json({ success: false, message: error.message });
+        }
+    });
+
+    // Eliminar permanentemente una notificación por ID
+    // IMPORTANTE: Esta ruta debe ir AL FINAL porque /:id captura todo
+    router.delete("/:id", authenticateToken, async (req, res) => {
+        try {
+            const { id } = req.params;
+            const { tenantId } = req.user;
+            const result = await pool.query(
+                "DELETE FROM notifications WHERE id = $1 AND tenant_id = $2 RETURNING id",
+                [id, tenantId]
+            );
+            if (result.rows.length === 0) {
+                return res.status(404).json({ success: false, message: "Notificación no encontrada" });
+            }
+            res.json({ success: true, data: { id: result.rows[0].id, deleted: true } });
         } catch (error) {
             res.status(500).json({ success: false, message: error.message });
         }
