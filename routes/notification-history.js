@@ -6,20 +6,26 @@ const JWT_SECRET = process.env.JWT_SECRET;
 // Middleware que extrae datos del token SIN verificar expiración
 // (La app móvil maneja refresh tokens por separado)
 function authenticateToken(req, res, next) {
+    console.log(`[NotificationHistory/Auth] 🔑 Procesando autenticación...`);
     const authHeader = req.headers["authorization"];
     const token = authHeader && authHeader.split(" ")[1];
     if (!token) {
+        console.log(`[NotificationHistory/Auth] ❌ No hay token`);
         return res.status(401).json({ success: false, message: "Token no proporcionado" });
     }
     try {
         // Decodificar sin verificar - solo extraemos los datos
         const decoded = jwt.decode(token);
+        console.log(`[NotificationHistory/Auth] 🔍 Token decodificado:`, decoded ? `tenantId=${decoded.tenantId}` : 'NULL');
         if (!decoded || !decoded.tenantId) {
+            console.log(`[NotificationHistory/Auth] ❌ Token sin tenantId`);
             return res.status(403).json({ success: false, message: "Token inválido" });
         }
         req.user = decoded;
+        console.log(`[NotificationHistory/Auth] ✅ Auth OK - tenantId=${decoded.tenantId}`);
         next();
     } catch (err) {
+        console.log(`[NotificationHistory/Auth] ❌ Error:`, err.message);
         return res.status(403).json({ success: false, message: "Token inválido" });
     }
 }
