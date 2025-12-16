@@ -192,8 +192,11 @@ module.exports = (pool) => {
 
     // Eliminar permanentemente TODAS las notificaciones (botón "Limpiar todas")
     router.delete("/delete-all", authenticateToken, async (req, res) => {
+        console.log(`[NotificationHistory/DeleteAll] 🚀 Handler iniciado`);
+
         try {
             console.log(`[NotificationHistory/DeleteAll] 📥 req.user:`, JSON.stringify(req.user));
+            console.log(`[NotificationHistory/DeleteAll] 📥 pool disponible:`, !!pool);
 
             const { tenantId, branchId } = req.user || {};
 
@@ -226,11 +229,11 @@ module.exports = (pool) => {
 
             const result = await pool.query(query, params);
             console.log(`[NotificationHistory/DeleteAll] ✅ Eliminadas ${result.rowCount} notificaciones`);
-            res.json({ success: true, data: { count: result.rowCount, deleted: true } });
+            return res.json({ success: true, data: { count: result.rowCount, deleted: true } });
         } catch (error) {
             console.error(`[NotificationHistory/DeleteAll] ❌ Error:`, error.message);
             console.error(`[NotificationHistory/DeleteAll] ❌ Stack:`, error.stack);
-            res.status(500).json({ success: false, message: error.message });
+            return res.status(500).json({ success: false, message: error.message });
         }
     });
 
