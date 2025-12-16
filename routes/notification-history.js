@@ -27,6 +27,12 @@ function authenticateToken(req, res, next) {
 module.exports = (pool) => {
     const router = express.Router();
 
+    // Log TODAS las requests que llegan a este router
+    router.use((req, res, next) => {
+        console.log(`[NotificationHistory] 📥 ${req.method} ${req.path} - Headers: ${req.headers.authorization ? 'Bearer ***' : 'NO AUTH'}`);
+        next();
+    });
+
     router.get("/", authenticateToken, async (req, res) => {
         try {
             const { tenantId, branchId } = req.user;
