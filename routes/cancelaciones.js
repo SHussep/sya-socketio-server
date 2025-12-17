@@ -78,14 +78,14 @@ module.exports = (pool) => {
                 }
             }
 
-            // Resolver venta_global_id -> id
+            // Resolver venta_global_id -> id_venta
             if (venta_global_id && !resolvedVentaId) {
                 const ventaResult = await pool.query(
-                    'SELECT id FROM ventas WHERE global_id = $1 AND tenant_id = $2',
+                    'SELECT id_venta FROM ventas WHERE global_id = $1 AND tenant_id = $2',
                     [venta_global_id, tenant_id]
                 );
                 if (ventaResult.rows.length > 0) {
-                    resolvedVentaId = ventaResult.rows[0].id;
+                    resolvedVentaId = ventaResult.rows[0].id_venta;
                     console.log(`[Sync/Cancelaciones] ✅ Venta resuelta: ${venta_global_id} -> ${resolvedVentaId}`);
                 }
             }
@@ -233,10 +233,10 @@ module.exports = (pool) => {
 
                     if (venta_global_id && !resolvedVentaId) {
                         const ventaResult = await client.query(
-                            'SELECT id FROM ventas WHERE global_id = $1 AND tenant_id = $2',
+                            'SELECT id_venta FROM ventas WHERE global_id = $1 AND tenant_id = $2',
                             [venta_global_id, tenant_id]
                         );
-                        if (ventaResult.rows.length > 0) resolvedVentaId = ventaResult.rows[0].id;
+                        if (ventaResult.rows.length > 0) resolvedVentaId = ventaResult.rows[0].id_venta;
                     }
 
                     // Skip si no hay empleado resuelto
