@@ -26,12 +26,12 @@ module.exports = (pool) => {
     router.get('/summary', authenticateToken, async (req, res) => {
         try {
             const { tenantId, branchId: userBranchId } = req.user;
-            const { all_branches = 'false', branch_id, shift_id, only_open_shifts = 'false' } = req.query;
+            const { all_branches = 'false', branch_id, shift_id, only_open_shifts = 'false', start_date, end_date } = req.query;
 
             // Prioridad: 1. branch_id del query, 2. branchId del JWT
             const targetBranchId = branch_id ? parseInt(branch_id) : userBranchId;
 
-            console.log(`[Repartidores Summary] Fetching - Tenant: ${tenantId}, Branch: ${targetBranchId}, Shift: ${shift_id || 'ALL'}, all_branches: ${all_branches}, Only Open Shifts: ${only_open_shifts}`);
+            console.log(`[Repartidores Summary] Fetching - Tenant: ${tenantId}, Branch: ${targetBranchId}, Shift: ${shift_id || 'ALL'}, all_branches: ${all_branches}, Only Open Shifts: ${only_open_shifts}, DateRange: ${start_date || 'ALL'} to ${end_date || 'ALL'}`);
 
             let query = `
                 WITH assignment_stats AS (
@@ -97,6 +97,18 @@ module.exports = (pool) => {
                 paramIndex++;
             }
 
+            // ✅ Filtrar por rango de fechas (fecha_asignacion)
+            if (start_date) {
+                query += ` AND DATE(ra.fecha_asignacion) >= $${paramIndex}`;
+                params.push(start_date);
+                paramIndex++;
+            }
+            if (end_date) {
+                query += ` AND DATE(ra.fecha_asignacion) <= $${paramIndex}`;
+                params.push(end_date);
+                paramIndex++;
+            }
+
             query += `
                     GROUP BY ra.employee_id, e.first_name, e.last_name, e.role_id, r.name
                 ),
@@ -111,7 +123,7 @@ module.exports = (pool) => {
                     WHERE rr.tenant_id = $1
             `;
 
-            // Repetir filtros para returns
+            // Repetir filtros para returns (usando los mismos índices de params)
             let returnsParamIndex = 2;
             if (all_branches !== 'true' && targetBranchId) {
                 query += ` AND rr.branch_id = $${returnsParamIndex}`;
@@ -119,6 +131,15 @@ module.exports = (pool) => {
             }
             if (shift_id) {
                 query += ` AND rr.shift_id = $${returnsParamIndex}`;
+                returnsParamIndex++;
+            }
+            // ✅ Filtrar devoluciones por fecha de asignación
+            if (start_date) {
+                query += ` AND DATE(ra.fecha_asignacion) >= $${returnsParamIndex}`;
+                returnsParamIndex++;
+            }
+            if (end_date) {
+                query += ` AND DATE(ra.fecha_asignacion) <= $${returnsParamIndex}`;
                 returnsParamIndex++;
             }
 
@@ -138,12 +159,26 @@ module.exports = (pool) => {
                       AND ra.status IN ('pending', 'in_progress')
             `;
 
-            // Repetir filtros para quantity_by_unit
+            // Repetir filtros para quantity_by_unit (usando los mismos índices de params)
+            let qbuParamIndex = 2;
             if (only_open_shifts === 'true') {
                 query += ` AND (s.id IS NULL OR s.is_cash_cut_open = true)`;
             }
             if (all_branches !== 'true' && targetBranchId) {
-                query += ` AND ra.branch_id = $2`;
+                query += ` AND ra.branch_id = $${qbuParamIndex}`;
+                qbuParamIndex++;
+            }
+            if (shift_id) {
+                qbuParamIndex++; // skip shift_id param index
+            }
+            // ✅ Filtrar por fecha de asignación
+            if (start_date) {
+                query += ` AND DATE(ra.fecha_asignacion) >= $${qbuParamIndex}`;
+                qbuParamIndex++;
+            }
+            if (end_date) {
+                query += ` AND DATE(ra.fecha_asignacion) <= $${qbuParamIndex}`;
+                qbuParamIndex++;
             }
 
             query += `
