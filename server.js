@@ -263,7 +263,7 @@ app.post('/api/database/delete-tenant-by-email', requireAdminCredentials, async 
             tenant: tenant,
             branches: (await pool.query('SELECT COUNT(*) FROM branches WHERE tenant_id = $1', [tenantId])).rows[0].count,
             employees: (await pool.query('SELECT COUNT(*) FROM employees WHERE tenant_id = $1', [tenantId])).rows[0].count,
-            sales: (await pool.query('SELECT COUNT(*) FROM sales WHERE tenant_id = $1', [tenantId])).rows[0].count,
+            sales: (await pool.query('SELECT COUNT(*) FROM ventas WHERE tenant_id = $1', [tenantId])).rows[0].count,
             expenses: (await pool.query('SELECT COUNT(*) FROM expenses WHERE tenant_id = $1', [tenantId])).rows[0].count,
             shifts: (await pool.query('SELECT COUNT(*) FROM shifts WHERE tenant_id = $1', [tenantId])).rows[0].count,
             backups: (await pool.query('SELECT COUNT(*) FROM backup_metadata WHERE tenant_id = $1', [tenantId])).rows[0].count
@@ -276,7 +276,7 @@ app.post('/api/database/delete-tenant-by-email', requireAdminCredentials, async 
         await pool.query('DELETE FROM cash_cuts WHERE tenant_id = $1', [tenantId]);
         await pool.query('DELETE FROM shifts WHERE tenant_id = $1', [tenantId]);
         await pool.query('DELETE FROM purchases WHERE tenant_id = $1', [tenantId]);
-        await pool.query('DELETE FROM sales WHERE tenant_id = $1', [tenantId]);
+        await pool.query('DELETE FROM ventas WHERE tenant_id = $1', [tenantId]);
         await pool.query('DELETE FROM expenses WHERE tenant_id = $1', [tenantId]);
         await pool.query('DELETE FROM backup_metadata WHERE tenant_id = $1', [tenantId]);
         await pool.query('DELETE FROM employee_branches WHERE employee_id IN (SELECT id FROM employees WHERE tenant_id = $1)', [tenantId]);

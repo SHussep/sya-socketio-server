@@ -81,7 +81,7 @@ module.exports = (pool) => {
             // Resolver venta_global_id -> id
             if (venta_global_id && !resolvedVentaId) {
                 const ventaResult = await pool.query(
-                    'SELECT id FROM sales WHERE global_id = $1 AND tenant_id = $2',
+                    'SELECT id FROM ventas WHERE global_id = $1 AND tenant_id = $2',
                     [venta_global_id, tenant_id]
                 );
                 if (ventaResult.rows.length > 0) {
@@ -233,7 +233,7 @@ module.exports = (pool) => {
 
                     if (venta_global_id && !resolvedVentaId) {
                         const ventaResult = await client.query(
-                            'SELECT id FROM sales WHERE global_id = $1 AND tenant_id = $2',
+                            'SELECT id FROM ventas WHERE global_id = $1 AND tenant_id = $2',
                             [venta_global_id, tenant_id]
                         );
                         if (ventaResult.rows.length > 0) resolvedVentaId = ventaResult.rows[0].id;

@@ -299,7 +299,7 @@ module.exports = function(pool, io) {
 
             // Eliminar en orden inverso por las foreign keys
             await pool.query('DELETE FROM employee_branches');
-            await pool.query('DELETE FROM sales');
+            await pool.query('DELETE FROM ventas');
             await pool.query('DELETE FROM expenses');
             await pool.query('DELETE FROM shifts');
             await pool.query('DELETE FROM employees');

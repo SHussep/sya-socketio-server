@@ -1697,7 +1697,7 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
             console.log(`[Branch Full Wipe] OK ${sessionsResult.rowCount} sesiones eliminadas`);
 
             const salesResult = await client.query(
-                'DELETE FROM sales WHERE branch_id = $1',
+                'DELETE FROM ventas WHERE branch_id = $1',
                 [branchId]
             );
             console.log(`[Branch Full Wipe] OK ${salesResult.rowCount} ventas eliminadas`);

@@ -192,9 +192,9 @@ router.get('/database-snapshot', authenticate, async (req, res) => {
         let salesResult = { rows: [] };
         try {
             salesResult = await pool.query(
-                `SELECT * FROM sales
+                `SELECT * FROM ventas
                  WHERE tenant_id = $1 AND branch_id = $2
-                 ORDER BY sale_date DESC
+                 ORDER BY fecha_venta_utc DESC
                  LIMIT 1000`,
                 [tenantId, branchId]
             );

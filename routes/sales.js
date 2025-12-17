@@ -523,7 +523,13 @@ module.exports = (pool) => {
         }
     });
 
-    // POST /api/sync/sales-items - Sincronizar líneas de venta (VentasDetalle)
+    // ============================================================================
+    // DEPRECATED: POST /api/sync/sales-items
+    // Esta ruta usaba tabla 'sales_items' que NO EXISTE en el esquema actual.
+    // Los detalles de venta ahora se sincronizan junto con la venta en POST /sync
+    // usando la tabla 'ventas_detalle'.
+    // ============================================================================
+    /*
     router.post('/sync-items', async (req, res) => {
         try {
             const { tenantId, branchId, saleId, items } = req.body;
@@ -535,30 +541,24 @@ module.exports = (pool) => {
             }
 
             // Borrar líneas existentes (en caso de actualización)
-            await pool.query('DELETE FROM sales_items WHERE sale_id = $1', [saleId]);
+            await pool.query('DELETE FROM ventas_detalle WHERE id_venta = $1', [saleId]);
 
             // Insertar nuevas líneas
             const insertedItems = [];
             for (const item of items) {
                 try {
                     const result = await pool.query(
-                        `INSERT INTO sales_items (
-                            tenant_id, branch_id, sale_id, product_id, product_name,
-                            quantity, unit_price, list_price,
-                            customer_discount, manual_discount, total_discount, subtotal
-                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                        `INSERT INTO ventas_detalle (
+                            id_venta, id_producto, descripcion,
+                            cantidad, precio_unitario, descuento, subtotal
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
                         RETURNING *`,
                         [
-                            tenantId,
-                            branchId,
                             saleId,
                             item.product_id || null,
                             item.product_name || '',
                             parseFloat(item.quantity) || 0,
                             parseFloat(item.unit_price) || 0,
-                            parseFloat(item.list_price) || 0,
-                            parseFloat(item.customer_discount) || 0,
-                            parseFloat(item.manual_discount) || 0,
                             parseFloat(item.total_discount) || 0,
                             parseFloat(item.subtotal) || 0
                         ]
@@ -577,6 +577,7 @@ module.exports = (pool) => {
             res.status(500).json({ success: false, message: 'Error al sincronizar líneas de venta', error: error.message });
         }
     });
+    */
 
     // GET /api/sales/items - Obtener artículos por venta específica
     // Usa tabla ventas_detalle con JOIN a ventas para obtener tenant_id y branch_id
