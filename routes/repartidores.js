@@ -193,17 +193,15 @@ module.exports = (pool) => {
                     WHERE active_qty > 0
                     GROUP BY employee_id
                 ),
-                -- Turno abierto actual de cada repartidor (para poder crear asignaciones desde móvil)
+                -- Turno abierto actual de cada empleado con asignaciones (para poder crear asignaciones desde móvil)
+                -- No filtramos por rol porque cualquier empleado puede tener asignaciones de reparto
                 current_open_shifts AS (
                     SELECT DISTINCT ON (s.employee_id)
                         s.employee_id,
                         s.global_id as current_shift_global_id
                     FROM shifts s
-                    INNER JOIN employees e ON s.employee_id = e.id
-                    INNER JOIN roles r ON e.role_id = r.id
                     WHERE s.tenant_id = $1
                       AND s.is_cash_cut_open = true
-                      AND LOWER(r.name) = 'repartidor'
                     ORDER BY s.employee_id, s.start_time DESC
                 )
                 SELECT
