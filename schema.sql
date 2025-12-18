@@ -454,6 +454,13 @@ CREATE TABLE IF NOT EXISTS productos (
 
     -- Offline-first sync columns (for idempotency)
     global_id VARCHAR(255) UNIQUE NOT NULL,
+    terminal_id VARCHAR(255),           -- Terminal que creó/modificó
+    local_op_seq INTEGER,               -- Secuencia local de operaciones
+    created_local_utc TEXT,             -- Timestamp de creación local
+    device_event_raw BIGINT,            -- Timestamp raw del dispositivo
+    last_modified_local_utc TEXT,       -- Última modificación local
+    needs_update BOOLEAN DEFAULT FALSE, -- Pendiente de sincronizar UPDATE
+    needs_delete BOOLEAN DEFAULT FALSE, -- Pendiente de sincronizar DELETE (soft)
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -467,6 +474,39 @@ CREATE INDEX IF NOT EXISTS idx_productos_activos ON productos(tenant_id, elimina
 CREATE INDEX IF NOT EXISTS idx_productos_pos_shortcuts ON productos(tenant_id, is_pos_shortcut) WHERE is_pos_shortcut = TRUE;
 CREATE INDEX IF NOT EXISTS idx_productos_inventariables ON productos(tenant_id, inventariar) WHERE inventariar = TRUE;
 CREATE INDEX IF NOT EXISTS idx_productos_bajo_stock ON productos(tenant_id, inventario, minimo) WHERE inventariar = TRUE AND notificar = TRUE;
+CREATE INDEX IF NOT EXISTS idx_productos_needs_sync ON productos(tenant_id, needs_update) WHERE needs_update = TRUE OR needs_delete = TRUE;
+
+-- productos_branch_precios (branch-specific pricing)
+-- Permite precios diferentes por sucursal para el mismo producto
+CREATE TABLE IF NOT EXISTS productos_branch_precios (
+    id SERIAL PRIMARY KEY,
+    tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+    producto_id INTEGER NOT NULL REFERENCES productos(id) ON DELETE CASCADE,
+
+    -- Pricing override for this branch
+    precio_venta NUMERIC(10,2) NOT NULL,
+    precio_compra NUMERIC(10,2),
+
+    -- Offline-first sync columns
+    global_id VARCHAR(255) UNIQUE NOT NULL,
+    terminal_id VARCHAR(255),
+    local_op_seq INTEGER,
+    created_local_utc TEXT,
+    last_modified_local_utc TEXT,
+
+    -- Soft delete
+    eliminado BOOLEAN DEFAULT FALSE,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    -- Un producto solo puede tener un precio override por sucursal
+    UNIQUE(tenant_id, branch_id, producto_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_productos_branch_precios_lookup ON productos_branch_precios(tenant_id, branch_id, producto_id) WHERE eliminado = FALSE;
+CREATE INDEX IF NOT EXISTS idx_productos_branch_precios_global_id ON productos_branch_precios(global_id);
 
 -- ========== VENTAS (SALES) ==========
 
