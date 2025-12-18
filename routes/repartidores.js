@@ -37,6 +37,7 @@ module.exports = (pool) => {
                 WITH assignment_stats AS (
                     SELECT
                         ra.employee_id,
+                        e.global_id as employee_global_id,
                         CONCAT(e.first_name, ' ', e.last_name) as repartidor_name,
                         e.role_id,
                         r.name as role_name,
@@ -110,7 +111,7 @@ module.exports = (pool) => {
             }
 
             query += `
-                    GROUP BY ra.employee_id, e.first_name, e.last_name, e.role_id, r.name
+                    GROUP BY ra.employee_id, e.global_id, e.first_name, e.last_name, e.role_id, r.name
                 ),
                 returns_stats AS (
                     SELECT
@@ -191,6 +192,17 @@ module.exports = (pool) => {
                     FROM quantity_by_unit
                     WHERE active_qty > 0
                     GROUP BY employee_id
+                ),
+                -- Turno abierto actual de cada repartidor (para poder crear asignaciones desde móvil)
+                current_open_shifts AS (
+                    SELECT DISTINCT ON (s.employee_id)
+                        s.employee_id,
+                        s.global_id as current_shift_global_id
+                    FROM shifts s
+                    WHERE s.tenant_id = $1
+                      AND s.is_cash_cut_open = true
+                      AND s.employee_type = 'REPARTIDOR'
+                    ORDER BY s.employee_id, s.start_time DESC
                 )
                 SELECT
                     a.*,
@@ -199,10 +211,12 @@ module.exports = (pool) => {
                     COALESCE(rs.return_count, 0) as return_count,
                     (a.pending_quantity + a.in_progress_quantity) as active_quantity,
                     (a.pending_amount + a.in_progress_amount) as active_amount,
-                    COALESCE(qbu.quantities_by_unit, '[]'::json) as quantities_by_unit
+                    COALESCE(qbu.quantities_by_unit, '[]'::json) as quantities_by_unit,
+                    cos.current_shift_global_id
                 FROM assignment_stats a
                 LEFT JOIN returns_stats rs ON a.employee_id = rs.employee_id
                 LEFT JOIN quantity_by_unit_agg qbu ON a.employee_id = qbu.employee_id
+                LEFT JOIN current_open_shifts cos ON a.employee_id = cos.employee_id
                 ORDER BY a.last_assignment_date DESC
             `;
 
@@ -214,8 +228,10 @@ module.exports = (pool) => {
                 success: true,
                 data: result.rows.map(row => ({
                     employee_id: row.employee_id,
+                    employee_global_id: row.employee_global_id,
                     repartidor_name: row.repartidor_name,
                     role_name: row.role_name,
+                    current_shift_global_id: row.current_shift_global_id,
                     pending_quantity: parseFloat(row.pending_quantity),
                     pending_amount: parseFloat(row.pending_amount),
                     in_progress_quantity: parseFloat(row.in_progress_quantity),
