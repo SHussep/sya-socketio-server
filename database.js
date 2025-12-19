@@ -1457,6 +1457,38 @@ async function runMigrations() {
                 console.log('[Schema] ✅ Table notification_preferences created successfully');
             }
 
+            // Patch: Create units_of_measure table if missing
+            console.log('[Schema] 🔍 Checking units_of_measure table...');
+            const checkUnitsTable = await client.query(`
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'units_of_measure'
+                )
+            `);
+
+            if (!checkUnitsTable.rows[0].exists) {
+                console.log('[Schema] 📝 Creating table: units_of_measure');
+                await client.query(`
+                    CREATE TABLE units_of_measure (
+                        id SERIAL PRIMARY KEY,
+                        name VARCHAR(100) NOT NULL,
+                        abbreviation VARCHAR(20) NOT NULL UNIQUE
+                    )
+                `);
+                // Seed with common units
+                await client.query(`
+                    INSERT INTO units_of_measure (name, abbreviation) VALUES
+                    ('Kilogramo', 'kg'),
+                    ('Litro', 'L'),
+                    ('Pieza', 'pz'),
+                    ('Unidad', 'u'),
+                    ('Gramo', 'g'),
+                    ('Mililitro', 'ml')
+                    ON CONFLICT (abbreviation) DO NOTHING
+                `);
+                console.log('[Schema] ✅ Table units_of_measure created with seed data');
+            }
+
             // Patch: Create productos_branch_precios table if missing (branch-specific pricing)
             console.log('[Schema] 🔍 Checking productos_branch_precios table...');
             const checkProductosBranchPreciosTable = await client.query(`
