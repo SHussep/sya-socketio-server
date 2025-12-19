@@ -421,6 +421,13 @@ CREATE INDEX IF NOT EXISTS idx_customers_activo ON customers(tenant_id, activo);
 CREATE INDEX IF NOT EXISTS idx_customers_credito ON customers(tenant_id, tiene_credito) WHERE tiene_credito = TRUE;
 CREATE INDEX IF NOT EXISTS idx_customers_nombre ON customers(tenant_id, nombre);
 
+-- units_of_measure (unidades de medida: kg, L, pz, etc.)
+CREATE TABLE IF NOT EXISTS units_of_measure (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    abbreviation VARCHAR(20) NOT NULL UNIQUE
+);
+
 -- productos (products)
 CREATE TABLE IF NOT EXISTS productos (
     id SERIAL PRIMARY KEY,

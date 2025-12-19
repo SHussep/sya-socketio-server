@@ -34,6 +34,18 @@ VALUES
     (99, 'Otro', 'Rol genérico para roles personalizados desde Desktop', NOW())
 ON CONFLICT (id) DO UPDATE SET updated_at = NOW();
 
+-- ========== UNITS OF MEASURE ==========
+-- Unidades de medida para productos
+INSERT INTO units_of_measure (id, name, abbreviation)
+VALUES
+    (1, 'Kilogramo', 'kg'),
+    (2, 'Litro', 'L'),
+    (3, 'Pieza', 'pz'),
+    (4, 'Unidad', 'u'),
+    (5, 'Gramo', 'g'),
+    (6, 'Mililitro', 'ml')
+ON CONFLICT (abbreviation) DO NOTHING;
+
 -- ========== GLOBAL EXPENSE CATEGORIES ==========
 -- Categorías de gastos GLOBALES con IDs canónicos (1-14 secuenciales)
 -- IMPORTANTE: Estos IDs deben coincidir con Desktop y Mobile
@@ -61,6 +73,7 @@ BEGIN
     RAISE NOTICE '✅ Seeds aplicados:';
     RAISE NOTICE '  - % subscriptions', (SELECT COUNT(*) FROM subscriptions);
     RAISE NOTICE '  - % roles', (SELECT COUNT(*) FROM roles);
+    RAISE NOTICE '  - % units_of_measure', (SELECT COUNT(*) FROM units_of_measure);
     RAISE NOTICE '  - % global_expense_categories', (SELECT COUNT(*) FROM global_expense_categories);
     RAISE NOTICE '';
     RAISE NOTICE '💡 NOTA: No se crearon tenants de prueba';
