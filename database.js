@@ -1457,6 +1457,41 @@ async function runMigrations() {
                 console.log('[Schema] ✅ Table notification_preferences created successfully');
             }
 
+            // Patch: Create productos_branch_precios table if missing (branch-specific pricing)
+            console.log('[Schema] 🔍 Checking productos_branch_precios table...');
+            const checkProductosBranchPreciosTable = await client.query(`
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'productos_branch_precios'
+                )
+            `);
+
+            if (!checkProductosBranchPreciosTable.rows[0].exists) {
+                console.log('[Schema] 📝 Creating table: productos_branch_precios (precios por sucursal)');
+                await client.query(`
+                    CREATE TABLE productos_branch_precios (
+                        id SERIAL PRIMARY KEY,
+                        tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                        branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+                        producto_id INTEGER NOT NULL REFERENCES productos(id) ON DELETE CASCADE,
+                        precio_venta NUMERIC(10,2) NOT NULL,
+                        precio_compra NUMERIC(10,2),
+                        global_id VARCHAR(255) UNIQUE NOT NULL,
+                        terminal_id VARCHAR(255),
+                        local_op_seq INTEGER,
+                        created_local_utc TEXT,
+                        last_modified_local_utc TEXT,
+                        eliminado BOOLEAN DEFAULT FALSE,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        UNIQUE(tenant_id, branch_id, producto_id)
+                    )
+                `);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_productos_branch_precios_lookup ON productos_branch_precios(tenant_id, branch_id, producto_id) WHERE eliminado = FALSE`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_productos_branch_precios_global_id ON productos_branch_precios(global_id)`);
+                console.log('[Schema] ✅ Table productos_branch_precios created successfully');
+            }
+
             // 3. Always run seeds (idempotent - uses ON CONFLICT)
             console.log('[Seeds] 📝 Running seeds.sql...');
             const seedsPath = path.join(__dirname, 'seeds.sql');
