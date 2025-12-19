@@ -1457,6 +1457,26 @@ async function runMigrations() {
                 console.log('[Schema] ✅ Table notification_preferences created successfully');
             }
 
+            // Patch: Add offline-first columns to productos table
+            console.log('[Schema] 🔍 Checking productos offline-first columns...');
+            const checkProductosTerminalId = await client.query(`
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'productos' AND column_name = 'terminal_id'
+            `);
+
+            if (checkProductosTerminalId.rows.length === 0) {
+                console.log('[Schema] 📝 Adding offline-first columns to productos table...');
+                await client.query(`ALTER TABLE productos ADD COLUMN IF NOT EXISTS terminal_id VARCHAR(255)`);
+                await client.query(`ALTER TABLE productos ADD COLUMN IF NOT EXISTS local_op_seq INTEGER`);
+                await client.query(`ALTER TABLE productos ADD COLUMN IF NOT EXISTS created_local_utc TEXT`);
+                await client.query(`ALTER TABLE productos ADD COLUMN IF NOT EXISTS device_event_raw BIGINT`);
+                await client.query(`ALTER TABLE productos ADD COLUMN IF NOT EXISTS last_modified_local_utc TEXT`);
+                await client.query(`ALTER TABLE productos ADD COLUMN IF NOT EXISTS needs_update BOOLEAN DEFAULT FALSE`);
+                await client.query(`ALTER TABLE productos ADD COLUMN IF NOT EXISTS needs_delete BOOLEAN DEFAULT FALSE`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_productos_needs_sync ON productos(tenant_id, needs_update) WHERE needs_update = TRUE OR needs_delete = TRUE`);
+                console.log('[Schema] ✅ Productos offline-first columns added');
+            }
+
             // Patch: Create units_of_measure table if missing
             console.log('[Schema] 🔍 Checking units_of_measure table...');
             const checkUnitsTable = await client.query(`
