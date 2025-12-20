@@ -143,7 +143,7 @@ module.exports = (pool) => {
 
             const query = `
                 SELECT p.id, p.global_id, p.purchase_number, p.total_amount, p.amount_paid,
-                       p.payment_status, p.notes, p.purchase_date, p.invoice_number,
+                       p.payment_status, p.payment_type_id, p.notes, p.purchase_date, p.invoice_number,
                        COALESCE(s.name, p.supplier_name, 'Sin proveedor') as supplier_name,
                        CONCAT(emp.first_name, ' ', emp.last_name) as employee_name,
                        b.name as branch_name,
