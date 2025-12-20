@@ -679,7 +679,8 @@ function createRepartidorAssignmentRoutes(io) {
           e.global_id as employee_global_id,
           cb.global_id as created_by_employee_global_id,
           s.global_id as shift_global_id,
-          rs.global_id as repartidor_shift_global_id
+          rs.global_id as repartidor_shift_global_id,
+          p.global_id as product_global_id
         FROM repartidor_assignments ra
         LEFT JOIN employees e ON e.id = ra.employee_id
         LEFT JOIN employees cb ON cb.id = ra.created_by_employee_id
@@ -687,6 +688,7 @@ function createRepartidorAssignmentRoutes(io) {
         LEFT JOIN ventas v ON v.id_venta = ra.venta_id
         LEFT JOIN shifts s ON s.id = ra.shift_id
         LEFT JOIN shifts rs ON rs.id = ra.repartidor_shift_id
+        LEFT JOIN products p ON p.id = ra.product_id
         WHERE ra.employee_id = $1
       `;
 
