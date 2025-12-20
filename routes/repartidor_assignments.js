@@ -623,39 +623,70 @@ function createRepartidorAssignmentRoutes(io) {
 
   // ═══════════════════════════════════════════════════════════════
   // GET /api/repartidor-assignments/employee/:employeeId
-  // Obtener asignaciones activas de un repartidor
+  // Obtener asignaciones de un repartidor (usado por Desktop para pull)
+  // Soporta filtro por repartidor_shift_id para obtener solo del turno actual
   // ═══════════════════════════════════════════════════════════════
   router.get('/employee/:employeeId', async (req, res) => {
     const { employeeId } = req.params;
-    const { branch_id, tenant_id, estado } = req.query;
+    const { branch_id, tenant_id, estado, repartidor_shift_id, repartidor_shift_global_id } = req.query;
 
     try {
       console.log('[API] 📊 GET /api/repartidor-assignments/employee/:employeeId');
       console.log(`  Query params: employeeId=${employeeId}, branch_id=${branch_id}, tenant_id=${tenant_id}, estado=${estado}`);
+      console.log(`  Shift filter: repartidor_shift_id=${repartidor_shift_id}, repartidor_shift_global_id=${repartidor_shift_global_id}`);
 
+      // ✅ Campos completos para Desktop pull (incluyendo GlobalIds para offline-first)
       let query = `
         SELECT
           ra.id,
+          ra.tenant_id,
+          ra.branch_id,
           ra.venta_id,
           ra.employee_id,
-          CONCAT(e.first_name, ' ', e.last_name) as employee_name,
-          ra.branch_id,
-          b.name as branch_name,
+          ra.created_by_employee_id,
+          ra.shift_id,
+          ra.repartidor_shift_id,
+          ra.product_id,
+          ra.product_name,
+          ra.venta_detalle_id,
           ra.assigned_quantity,
           ra.assigned_amount,
           ra.unit_price,
           COALESCE(ra.unit_abbreviation, 'kg') as unit_abbreviation,
-          ra.product_id,
-          ra.product_name,
-          ra.venta_detalle_id,
           ra.status,
           ra.fecha_asignacion,
           ra.fecha_liquidacion,
           ra.observaciones,
-          ra.global_id
+          ra.global_id,
+          ra.terminal_id,
+          ra.local_op_seq,
+          ra.created_local_utc,
+          ra.device_event_raw,
+          -- Payment fields
+          ra.payment_method_id,
+          ra.cash_amount,
+          ra.card_amount,
+          ra.credit_amount,
+          ra.amount_received,
+          ra.is_credit,
+          ra.payment_reference,
+          ra.liquidated_by_employee_id,
+          -- Joins para display
+          CONCAT(e.first_name, ' ', e.last_name) as employee_name,
+          b.name as branch_name,
+          -- GlobalIds para resolución
+          v.global_id as venta_global_id,
+          e.global_id as employee_global_id,
+          cb.global_id as created_by_employee_global_id,
+          s.global_id as shift_global_id,
+          rs.global_id as repartidor_shift_global_id
         FROM repartidor_assignments ra
         LEFT JOIN employees e ON e.id = ra.employee_id
+        LEFT JOIN employees cb ON cb.id = ra.created_by_employee_id
         LEFT JOIN branches b ON b.id = ra.branch_id
+        LEFT JOIN ventas v ON v.id_venta = ra.venta_id
+        LEFT JOIN shifts s ON s.id = ra.shift_id
+        LEFT JOIN shifts rs ON rs.id = ra.repartidor_shift_id
         WHERE ra.employee_id = $1
       `;
 
@@ -667,7 +698,6 @@ function createRepartidorAssignmentRoutes(io) {
       }
 
       // FIX: Only filter by tenant_id if it's provided and not 0
-      // tenant_id=0 means "use any tenant" (for backwards compatibility with mobile app)
       if (tenant_id && tenant_id !== '0' && Number(tenant_id) !== 0) {
         query += ` AND ra.tenant_id = $${params.length + 1}`;
         params.push(tenant_id);
@@ -676,6 +706,15 @@ function createRepartidorAssignmentRoutes(io) {
       if (estado) {
         query += ` AND ra.status = $${params.length + 1}`;
         params.push(estado);
+      }
+
+      // ✅ Filtro por turno del repartidor (crítico para Desktop)
+      if (repartidor_shift_id) {
+        query += ` AND ra.repartidor_shift_id = $${params.length + 1}`;
+        params.push(repartidor_shift_id);
+      } else if (repartidor_shift_global_id) {
+        query += ` AND rs.global_id = $${params.length + 1}`;
+        params.push(repartidor_shift_global_id);
       }
 
       query += ` ORDER BY ra.fecha_asignacion DESC`;
