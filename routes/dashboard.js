@@ -197,6 +197,37 @@ module.exports = (pool) => {
             const expensesResult = await pool.query(expensesQuery, expensesParams);
             console.log(`[Dashboard Summary] ✅ Total expenses: ${expensesResult.rows[0].total}`);
 
+            // ═══════════════════════════════════════════════════════════════
+            // TOTAL DE COMPRAS - Para el resumen financiero
+            // ═══════════════════════════════════════════════════════════════
+            let purchaseDateFilter = `DATE(purchase_date AT TIME ZONE '${effectiveTimezone}') = DATE(NOW() AT TIME ZONE '${effectiveTimezone}')`;
+            if (start_date && end_date) {
+                const startDateOnly = start_date.split('T')[0];
+                const endDateOnly = end_date.split('T')[0];
+                purchaseDateFilter = `(purchase_date AT TIME ZONE '${effectiveTimezone}')::date >= '${startDateOnly}'::date AND (purchase_date AT TIME ZONE '${effectiveTimezone}')::date <= '${endDateOnly}'::date`;
+            }
+
+            let purchasesQuery = `
+                SELECT
+                    COALESCE(SUM(total_amount), 0) as total,
+                    COUNT(*) as count
+                FROM purchases
+                WHERE tenant_id = $1
+                AND payment_status != 'cancelled'
+                AND ${purchaseDateFilter}`;
+            let purchasesParams = [tenantId];
+            let purchaseParamIndex = 2;
+
+            if (shouldFilterByBranch) {
+                purchasesQuery += ` AND branch_id = $${purchaseParamIndex}`;
+                purchasesParams.push(targetBranchId);
+                purchaseParamIndex++;
+            }
+
+            console.log(`[Dashboard Summary] Purchases Query: ${purchasesQuery}`);
+            const purchasesResult = await pool.query(purchasesQuery, purchasesParams);
+            console.log(`[Dashboard Summary] ✅ Total purchases: ${purchasesResult.rows[0].total}, count: ${purchasesResult.rows[0].count}`);
+
             // Último corte de caja
             let cashCutQuery = `SELECT counted_cash FROM cash_cuts WHERE tenant_id = $1`;
             let cashCutParams = [tenantId];
@@ -249,12 +280,15 @@ module.exports = (pool) => {
                 data: {
                     totalSales: parseFloat(salesResult.rows[0].total),
                     totalExpenses: parseFloat(expensesResult.rows[0].total),
+                    // ✅ NUEVO: Total de compras del período
+                    totalPurchases: parseFloat(purchasesResult.rows[0].total),
+                    purchasesCount: parseInt(purchasesResult.rows[0].count),
                     cashInDrawer: cashCutResult.rows.length > 0 ? parseFloat(cashCutResult.rows[0].counted_cash) : 0,
                     unreadGuardianEvents: parseInt(guardianEventsResult.rows[0].count),
                     totalAssignments: parseInt(assignmentsResult.rows[0].total_assignments),
                     activeAssignments: parseInt(assignmentsResult.rows[0].active_assignments),
                     activeAssignmentsAmount: parseFloat(assignmentsResult.rows[0].active_amount),
-                    // ✅ NUEVO: Desglose de ventas
+                    // ✅ Desglose de ventas
                     salesBreakdown: {
                         // Por tipo de venta
                         mostradorTotal: parseFloat(breakdown.mostrador_total),
