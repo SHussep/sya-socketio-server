@@ -110,7 +110,7 @@ module.exports = (pool) => {
             }
 
             // ═══════════════════════════════════════════════════════════════
-            // UPSERT: Insertar proveedor con ON CONFLICT para máxima idempotencia
+            // INSERT: Ya verificamos duplicados arriba con FOR UPDATE lock
             // ═══════════════════════════════════════════════════════════════
             const supplierResult = await client.query(
                 `INSERT INTO suppliers (
@@ -118,7 +118,6 @@ module.exports = (pool) => {
                     is_active, is_undeletable, is_deleted, deleted_at,
                     global_id, terminal_id, local_op_seq, created_local_utc
                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-                ON CONFLICT (global_id) DO UPDATE SET updated_at = NOW()
                 RETURNING id`,
                 [
                     tenantId,
