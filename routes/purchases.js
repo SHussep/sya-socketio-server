@@ -27,42 +27,144 @@ function authenticateToken(req, res, next) {
 module.exports = (pool) => {
     const router = express.Router();
 
-    // GET /api/purchases - Lista de compras
+    // GET /api/purchases/summary - Resumen de compras con filtros
+    router.get('/summary', authenticateToken, async (req, res) => {
+        try {
+            const { tenantId, branchId } = req.user;
+            const { start_date, end_date, all_branches = 'false' } = req.query;
+
+            let whereClause = 'WHERE p.tenant_id = $1';
+            const params = [tenantId];
+            let paramIndex = 2;
+
+            if (all_branches !== 'true' && branchId) {
+                whereClause += ` AND p.branch_id = $${paramIndex}`;
+                params.push(branchId);
+                paramIndex++;
+            }
+
+            if (start_date) {
+                whereClause += ` AND p.purchase_date >= $${paramIndex}`;
+                params.push(start_date);
+                paramIndex++;
+            }
+
+            if (end_date) {
+                whereClause += ` AND p.purchase_date <= $${paramIndex}`;
+                params.push(end_date);
+                paramIndex++;
+            }
+
+            // Excluir canceladas del resumen
+            whereClause += ` AND p.payment_status != 'cancelled'`;
+
+            const summaryQuery = `
+                SELECT
+                    COUNT(*) as total_purchases,
+                    COALESCE(SUM(p.total_amount), 0) as total_amount,
+                    COALESCE(SUM(p.amount_paid), 0) as total_paid,
+                    COALESCE(SUM(p.total_amount - COALESCE(p.amount_paid, 0)), 0) as total_pending,
+                    COUNT(CASE WHEN p.payment_status = 'paid' THEN 1 END) as paid_count,
+                    COUNT(CASE WHEN p.payment_status = 'pending' THEN 1 END) as pending_count,
+                    COUNT(CASE WHEN p.payment_status = 'partial' THEN 1 END) as partial_count
+                FROM purchases p
+                ${whereClause}
+            `;
+
+            const result = await pool.query(summaryQuery, params);
+            const summary = result.rows[0];
+
+            // Top suppliers
+            const topSuppliersQuery = `
+                SELECT
+                    COALESCE(s.name, p.supplier_name, 'Sin proveedor') as supplier_name,
+                    COUNT(*) as purchase_count,
+                    COALESCE(SUM(p.total_amount), 0) as total_amount
+                FROM purchases p
+                LEFT JOIN suppliers s ON p.supplier_id = s.id
+                ${whereClause}
+                GROUP BY COALESCE(s.name, p.supplier_name, 'Sin proveedor')
+                ORDER BY total_amount DESC
+                LIMIT 5
+            `;
+
+            const topSuppliersResult = await pool.query(topSuppliersQuery, params);
+
+            res.json({
+                success: true,
+                data: {
+                    totalPurchases: parseInt(summary.total_purchases) || 0,
+                    totalAmount: parseFloat(summary.total_amount) || 0,
+                    totalPaid: parseFloat(summary.total_paid) || 0,
+                    totalPending: parseFloat(summary.total_pending) || 0,
+                    paidCount: parseInt(summary.paid_count) || 0,
+                    pendingCount: parseInt(summary.pending_count) || 0,
+                    partialCount: parseInt(summary.partial_count) || 0,
+                    topSuppliers: topSuppliersResult.rows.map(s => ({
+                        name: s.supplier_name,
+                        count: parseInt(s.purchase_count),
+                        amount: parseFloat(s.total_amount)
+                    }))
+                }
+            });
+        } catch (error) {
+            console.error('[Purchases/Summary] Error:', error);
+            res.status(500).json({ success: false, message: 'Error al obtener resumen de compras' });
+        }
+    });
+
+    // GET /api/purchases - Lista de compras con filtros
     router.get('/', authenticateToken, async (req, res) => {
         try {
             const { tenantId, branchId } = req.user;
-            const { limit = 50, offset = 0, all_branches = 'false' } = req.query;
+            const { limit = 50, offset = 0, all_branches = 'false', start_date, end_date } = req.query;
 
-            let query = `
-                SELECT p.id, p.purchase_number, p.total_amount, p.payment_status, p.notes, p.purchase_date,
-                       s.name as supplier_name,
+            let whereClause = 'WHERE p.tenant_id = $1';
+            const params = [tenantId];
+            let paramIndex = 2;
+
+            if (all_branches !== 'true' && branchId) {
+                whereClause += ` AND p.branch_id = $${paramIndex}`;
+                params.push(branchId);
+                paramIndex++;
+            }
+
+            if (start_date) {
+                whereClause += ` AND p.purchase_date >= $${paramIndex}`;
+                params.push(start_date);
+                paramIndex++;
+            }
+
+            if (end_date) {
+                whereClause += ` AND p.purchase_date <= $${paramIndex}`;
+                params.push(end_date);
+                paramIndex++;
+            }
+
+            const query = `
+                SELECT p.id, p.global_id, p.purchase_number, p.total_amount, p.amount_paid,
+                       p.payment_status, p.notes, p.purchase_date, p.invoice_number,
+                       COALESCE(s.name, p.supplier_name, 'Sin proveedor') as supplier_name,
                        CONCAT(emp.first_name, ' ', emp.last_name) as employee_name,
-                       b.name as branch_name
+                       b.name as branch_name,
+                       (SELECT COUNT(*) FROM purchase_details pd WHERE pd.purchase_id = p.id) as items_count
                 FROM purchases p
                 LEFT JOIN suppliers s ON p.supplier_id = s.id
                 LEFT JOIN employees emp ON p.employee_id = emp.id
                 LEFT JOIN branches b ON p.branch_id = b.id
-                WHERE p.tenant_id = $1
+                ${whereClause}
+                ORDER BY p.purchase_date DESC
+                LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
             `;
-
-            const params = [tenantId];
-
-            if (all_branches !== 'true' && branchId) {
-                query += ' AND p.branch_id = $2';
-                params.push(branchId);
-                query += ' ORDER BY p.purchase_date DESC LIMIT $3 OFFSET $4';
-                params.push(limit, offset);
-            } else {
-                query += ' ORDER BY p.purchase_date DESC LIMIT $2 OFFSET $3';
-                params.push(limit, offset);
-            }
+            params.push(limit, offset);
 
             const result = await pool.query(query, params);
 
             // Format timestamps as ISO strings in UTC
             const formattedRows = result.rows.map(row => ({
                 ...row,
-                purchase_date: row.purchase_date ? new Date(row.purchase_date).toISOString() : null
+                purchase_date: row.purchase_date ? new Date(row.purchase_date).toISOString() : null,
+                items_count: parseInt(row.items_count) || 0
             }));
 
             res.json({
@@ -72,6 +174,41 @@ module.exports = (pool) => {
         } catch (error) {
             console.error('[Purchases] Error:', error);
             res.status(500).json({ success: false, message: 'Error al obtener compras' });
+        }
+    });
+
+    // GET /api/purchases/:id/details - Detalles de una compra
+    router.get('/:id/details', authenticateToken, async (req, res) => {
+        try {
+            const { tenantId } = req.user;
+            const { id } = req.params;
+
+            // Verificar que la compra pertenece al tenant
+            const purchaseCheck = await pool.query(
+                'SELECT id FROM purchases WHERE id = $1 AND tenant_id = $2',
+                [id, tenantId]
+            );
+
+            if (purchaseCheck.rows.length === 0) {
+                return res.status(404).json({ success: false, message: 'Compra no encontrada' });
+            }
+
+            const detailsQuery = `
+                SELECT pd.id, pd.product_id, pd.product_name, pd.quantity, pd.unit_price, pd.subtotal
+                FROM purchase_details pd
+                WHERE pd.purchase_id = $1
+                ORDER BY pd.id
+            `;
+
+            const result = await pool.query(detailsQuery, [id]);
+
+            res.json({
+                success: true,
+                data: result.rows
+            });
+        } catch (error) {
+            console.error('[Purchases/Details] Error:', error);
+            res.status(500).json({ success: false, message: 'Error al obtener detalles de compra' });
         }
     });
 
