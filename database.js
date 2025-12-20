@@ -1613,6 +1613,50 @@ async function runMigrations() {
                 console.log('[Schema] ✅ Table productos_branch_precios created successfully');
             }
 
+            // Patch: Add sync_version and has_conflict columns to purchases for conflict detection
+            if (checkPurchasesTable.rows[0].exists) {
+                const checkSyncVersion = await client.query(`
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'purchases'
+                    AND column_name = 'sync_version'
+                `);
+
+                if (checkSyncVersion.rows.length === 0) {
+                    console.log('[Schema] 📝 Adding sync_version and has_conflict columns to purchases...');
+                    await client.query(`
+                        ALTER TABLE purchases
+                        ADD COLUMN IF NOT EXISTS sync_version INTEGER DEFAULT 1,
+                        ADD COLUMN IF NOT EXISTS has_conflict BOOLEAN DEFAULT FALSE
+                    `);
+
+                    // Create trigger to auto-increment sync_version on updates
+                    await client.query(`
+                        CREATE OR REPLACE FUNCTION increment_purchase_sync_version()
+                        RETURNS TRIGGER AS $$
+                        BEGIN
+                            IF OLD.updated_at IS DISTINCT FROM NEW.updated_at THEN
+                                NEW.sync_version := COALESCE(OLD.sync_version, 0) + 1;
+                            END IF;
+                            RETURN NEW;
+                        END;
+                        $$ LANGUAGE plpgsql
+                    `);
+
+                    await client.query(`
+                        DROP TRIGGER IF EXISTS trg_purchases_sync_version ON purchases
+                    `);
+                    await client.query(`
+                        CREATE TRIGGER trg_purchases_sync_version
+                        BEFORE UPDATE ON purchases
+                        FOR EACH ROW
+                        EXECUTE FUNCTION increment_purchase_sync_version()
+                    `);
+
+                    console.log('[Schema] ✅ Purchases sync_version and has_conflict columns added with trigger');
+                }
+            }
+
             // 3. Always run seeds (idempotent - uses ON CONFLICT)
             console.log('[Seeds] 📝 Running seeds.sql...');
             const seedsPath = path.join(__dirname, 'seeds.sql');
