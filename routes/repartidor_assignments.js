@@ -16,23 +16,41 @@ const { notifyAssignmentCreated } = require('../utils/notificationHelper');
 function createRepartidorAssignmentRoutes(io) {
   const router = express.Router();
 
+  // Middleware para extraer datos del JWT (opcional para este endpoint)
+  function extractJwtData(req, res, next) {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+
+    if (token) {
+      const jwt = require('jsonwebtoken');
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+        req.jwtData = decoded;
+      } catch (err) {
+        req.jwtData = null;
+      }
+    }
+    next();
+  }
+
   // ═══════════════════════════════════════════════════════════════
   // POST /api/repartidor-assignments/sync
   // Sincronizar asignación desde Desktop (idempotente con global_id)
+  // También soporta asignaciones directas desde móvil (sin venta)
   // Esquema normalizado 3NF - Sin redundancia
   // ═══════════════════════════════════════════════════════════════
-  router.post('/sync', async (req, res) => {
+  router.post('/sync', extractJwtData, async (req, res) => {
     const {
-      tenant_id,
-      branch_id,
-      venta_id,                         // ID numérico (legacy, puede no venir)
-      venta_global_id,                  // ✅ UUID de la venta (offline-first, preferido)
+      tenant_id: body_tenant_id,
+      branch_id: body_branch_id,
+      venta_id,                         // ID numérico (legacy, puede no venir) - OPCIONAL para asignaciones directas
+      venta_global_id,                  // ✅ UUID de la venta (offline-first) - OPCIONAL para asignaciones directas
       employee_id,                      // DEPRECATED: ID numérico (legacy)
       employee_global_id,               // ✅ UUID del repartidor (offline-first, preferido)
       created_by_employee_id,           // DEPRECATED: ID numérico (legacy)
       created_by_employee_global_id,    // ✅ UUID del empleado que autorizó (offline-first, preferido)
-      shift_id,                         // DEPRECATED: ID numérico (legacy)
-      shift_global_id,                  // ✅ UUID del turno del vendedor (offline-first, preferido)
+      shift_id,                         // DEPRECATED: ID numérico (legacy) - OPCIONAL para asignaciones directas
+      shift_global_id,                  // ✅ UUID del turno del vendedor - OPCIONAL para asignaciones directas
       repartidor_shift_id,              // DEPRECATED: ID numérico (legacy)
       repartidor_shift_global_id,       // ✅ UUID del turno del repartidor (offline-first, preferido)
       assigned_quantity,
@@ -66,20 +84,38 @@ function createRepartidorAssignmentRoutes(io) {
     } = req.body;
 
     try {
+      // ✅ Usar tenant_id/branch_id del JWT si no vienen en el body (para móvil)
+      const tenant_id = body_tenant_id || (req.jwtData && req.jwtData.tenantId);
+      const branch_id = body_branch_id || (req.jwtData && req.jwtData.branchId);
+
+      // ✅ Determinar si es asignación directa (sin venta) o desde venta
+      const isDirectAssignment = !venta_id && !venta_global_id;
+
       console.log('[RepartidorAssignments] 📦 POST /api/repartidor-assignments/sync');
-      console.log(`  GlobalId: ${global_id}, Repartidor: ${employee_id || employee_global_id}, VentaGlobalId: ${venta_global_id || venta_id}`);
+      console.log(`  GlobalId: ${global_id}, Repartidor: ${employee_id || employee_global_id}`);
+      console.log(`  Mode: ${isDirectAssignment ? 'DIRECT (sin venta)' : 'FROM_SALE'}, VentaGlobalId: ${venta_global_id || venta_id || 'N/A'}`);
       console.log(`  Product: ${product_name || 'N/A'}, Quantity: ${assigned_quantity} ${unit_abbreviation || 'kg'}, Status: ${status}`);
       console.log(`  RepartidorShiftGlobalId: ${repartidor_shift_global_id || 'N/A'}, RepartidorShiftId: ${repartidor_shift_id || 'N/A'}`);
+      console.log(`  Tenant: ${tenant_id} (from: ${body_tenant_id ? 'body' : 'jwt'}), Branch: ${branch_id} (from: ${body_branch_id ? 'body' : 'jwt'})`);
       // 🆕 Log payment info when liquidating
       if (payment_method_id || cash_amount || card_amount || credit_amount) {
         console.log(`  💰 Payment: method=${payment_method_id}, cash=$${cash_amount || 0}, card=$${card_amount || 0}, credit=$${credit_amount || 0}`);
       }
 
-      // Validar campos requeridos (ahora permite GlobalIds o IDs numéricos)
-      if (!tenant_id || !branch_id || (!venta_id && !venta_global_id) || (!shift_id && !shift_global_id)) {
+      // Validar campos requeridos
+      if (!tenant_id || !branch_id) {
         return res.status(400).json({
           success: false,
-          message: 'tenant_id, branch_id, venta_id/venta_global_id, shift_id/shift_global_id son requeridos'
+          message: 'tenant_id y branch_id son requeridos (pueden venir del JWT o del body)'
+        });
+      }
+
+      // Para asignaciones desde venta, venta_id y shift_id son requeridos
+      // Para asignaciones directas (móvil), solo se requiere repartidor_shift
+      if (!isDirectAssignment && (!shift_id && !shift_global_id)) {
+        return res.status(400).json({
+          success: false,
+          message: 'shift_id/shift_global_id son requeridos para asignaciones desde venta'
         });
       }
 
@@ -121,8 +157,8 @@ function createRepartidorAssignmentRoutes(io) {
       }
 
       // ✅ RESOLVER venta_id usando global_id (offline-first)
-      // Si Desktop envía venta_global_id (UUID), resolver al ID correcto en PostgreSQL
-      let resolvedVentaId = venta_id;
+      // NOTA: venta_id es OPCIONAL para asignaciones directas (desde móvil)
+      let resolvedVentaId = venta_id || null;
 
       if (venta_global_id) {
         console.log(`[RepartidorAssignments] 🔍 Resolviendo venta con global_id: ${venta_global_id}`);
@@ -141,7 +177,7 @@ function createRepartidorAssignmentRoutes(io) {
             message: `Venta no encontrada con global_id: ${venta_global_id}. Asegúrate de sincronizar la venta primero.`
           });
         }
-      } else {
+      } else if (venta_id) {
         // Verificar que la venta existe usando venta_id numérico
         const saleCheck = await pool.query(
           'SELECT id_venta FROM ventas WHERE id_venta = $1 AND tenant_id = $2',
@@ -154,6 +190,9 @@ function createRepartidorAssignmentRoutes(io) {
             message: `Venta ${venta_id} no encontrada en tenant ${tenant_id}`
           });
         }
+      } else {
+        // ✅ Asignación directa (sin venta) - esto es válido para móvil
+        console.log(`[RepartidorAssignments] ℹ️ Asignación DIRECTA (sin venta asociada)`);
       }
 
       // ✅ RESOLVER repartidor_shift_id usando global_id (offline-first)
@@ -220,7 +259,8 @@ function createRepartidorAssignmentRoutes(io) {
       }
 
       // ✅ RESOLVER shift_id usando global_id (offline-first)
-      let resolvedShiftId = shift_id;
+      // NOTA: shift_id (turno del vendedor) es OPCIONAL para asignaciones directas
+      let resolvedShiftId = shift_id || null;
       if (shift_global_id) {
         console.log(`[RepartidorAssignments] 🔍 Resolviendo turno del vendedor con global_id: ${shift_global_id}`);
         const shiftLookup = await pool.query(
@@ -238,6 +278,9 @@ function createRepartidorAssignmentRoutes(io) {
             message: `Turno del vendedor no encontrado con global_id: ${shift_global_id}`
           });
         }
+      } else if (isDirectAssignment) {
+        // ✅ Para asignaciones directas, usar el repartidor_shift_id como shift_id
+        console.log(`[RepartidorAssignments] ℹ️ Asignación directa: usando repartidor_shift como shift`);
       }
 
       // ✅ RESOLVER product_id usando global_id (offline-first)
