@@ -193,19 +193,88 @@ module.exports = (pool) => {
                     WHERE active_qty > 0
                     GROUP BY employee_id
                 ),
-                -- Turno abierto actual de cada empleado con asignaciones (para poder crear asignaciones desde móvil)
-                -- No filtramos por rol porque cualquier empleado puede tener asignaciones de reparto
+                -- Turno abierto actual de cada empleado (para poder crear asignaciones desde móvil)
                 current_open_shifts AS (
                     SELECT DISTINCT ON (s.employee_id)
                         s.employee_id,
+                        e.global_id as employee_global_id,
+                        CONCAT(e.first_name, ' ', e.last_name) as repartidor_name,
+                        e.role_id,
+                        r.name as role_name,
                         s.global_id as current_shift_global_id
                     FROM shifts s
+                    LEFT JOIN employees e ON s.employee_id = e.id
+                    LEFT JOIN roles r ON e.role_id = r.id
                     WHERE s.tenant_id = $1
                       AND s.is_cash_cut_open = true
                     ORDER BY s.employee_id, s.start_time DESC
                 )
+                -- Query principal: UNION de empleados con turno abierto y empleados con asignaciones
                 SELECT
-                    a.*,
+                    COALESCE(a.employee_id, cos.employee_id) as employee_id,
+                    COALESCE(a.employee_global_id, cos.employee_global_id) as employee_global_id,
+                    COALESCE(a.repartidor_name, cos.repartidor_name) as repartidor_name,
+                    COALESCE(a.role_id, cos.role_id) as role_id,
+                    COALESCE(a.role_name, cos.role_name) as role_name,
+                    COALESCE(a.pending_quantity, 0) as pending_quantity,
+                    COALESCE(a.pending_amount, 0) as pending_amount,
+                    COALESCE(a.in_progress_quantity, 0) as in_progress_quantity,
+                    COALESCE(a.in_progress_amount, 0) as in_progress_amount,
+                    COALESCE(a.liquidated_quantity, 0) as liquidated_quantity,
+                    COALESCE(a.liquidated_amount, 0) as liquidated_amount,
+                    COALESCE(a.total_items, 0) as total_items,
+                    COALESCE(a.pending_item_count, 0) as pending_item_count,
+                    COALESCE(a.in_progress_item_count, 0) as in_progress_item_count,
+                    COALESCE(a.liquidated_item_count, 0) as liquidated_item_count,
+                    COALESCE(a.cancelled_item_count, 0) as cancelled_item_count,
+                    COALESCE(a.total_assignments, 0) as total_assignments,
+                    COALESCE(a.pending_count, 0) as pending_count,
+                    COALESCE(a.in_progress_count, 0) as in_progress_count,
+                    COALESCE(a.liquidated_count, 0) as liquidated_count,
+                    COALESCE(a.cancelled_count, 0) as cancelled_count,
+                    a.last_assignment_date,
+                    COALESCE(rs.total_returned_quantity, 0) as total_returned_quantity,
+                    COALESCE(rs.total_returned_amount, 0) as total_returned_amount,
+                    COALESCE(rs.return_count, 0) as return_count,
+                    COALESCE(a.pending_quantity, 0) + COALESCE(a.in_progress_quantity, 0) as active_quantity,
+                    COALESCE(a.pending_amount, 0) + COALESCE(a.in_progress_amount, 0) as active_amount,
+                    COALESCE(qbu.quantities_by_unit, '[]'::json) as quantities_by_unit,
+                    cos.current_shift_global_id
+                FROM current_open_shifts cos
+                LEFT JOIN assignment_stats a ON cos.employee_id = a.employee_id
+                LEFT JOIN returns_stats rs ON cos.employee_id = rs.employee_id
+                LEFT JOIN quantity_by_unit_agg qbu ON cos.employee_id = qbu.employee_id
+            `;
+
+            // Si only_open_shifts=true, ya estamos partiendo de current_open_shifts (turno abierto)
+            // Si only_open_shifts=false, necesitamos UNION con assignment_stats para ver histórico
+            if (only_open_shifts !== 'true') {
+                // Agregar empleados con asignaciones aunque no tengan turno abierto (histórico)
+                query += `
+                UNION
+                SELECT
+                    a.employee_id,
+                    a.employee_global_id,
+                    a.repartidor_name,
+                    a.role_id,
+                    a.role_name,
+                    a.pending_quantity,
+                    a.pending_amount,
+                    a.in_progress_quantity,
+                    a.in_progress_amount,
+                    a.liquidated_quantity,
+                    a.liquidated_amount,
+                    a.total_items,
+                    a.pending_item_count,
+                    a.in_progress_item_count,
+                    a.liquidated_item_count,
+                    a.cancelled_item_count,
+                    a.total_assignments,
+                    a.pending_count,
+                    a.in_progress_count,
+                    a.liquidated_count,
+                    a.cancelled_count,
+                    a.last_assignment_date,
                     COALESCE(rs.total_returned_quantity, 0) as total_returned_quantity,
                     COALESCE(rs.total_returned_amount, 0) as total_returned_amount,
                     COALESCE(rs.return_count, 0) as return_count,
@@ -217,8 +286,11 @@ module.exports = (pool) => {
                 LEFT JOIN returns_stats rs ON a.employee_id = rs.employee_id
                 LEFT JOIN quantity_by_unit_agg qbu ON a.employee_id = qbu.employee_id
                 LEFT JOIN current_open_shifts cos ON a.employee_id = cos.employee_id
-                ORDER BY a.last_assignment_date DESC
-            `;
+                WHERE NOT EXISTS (SELECT 1 FROM current_open_shifts cos2 WHERE cos2.employee_id = a.employee_id)
+                `;
+            }
+
+            query += ` ORDER BY last_assignment_date DESC NULLS LAST`;
 
             const result = await pool.query(query, params);
 
@@ -328,17 +400,19 @@ module.exports = (pool) => {
                 WHERE ra.tenant_id = $1 AND ra.employee_id = $2
             `;
 
-            // Solo filtrar por turnos abiertos si se especifica explícitamente
+            // ✅ CRÍTICO: Si only_open_shifts, mostrar SOLO asignaciones ACTIVAS (pending o in_progress)
+            // de turnos abiertos. NO mostrar asignaciones liquidadas aunque el turno esté abierto.
             if (only_open_shifts === 'true') {
                 query += ` AND (s.id IS NULL OR s.is_cash_cut_open = true)`;
-                console.log(`[Repartidor Assignments] ✅ Filtrando solo turnos abiertos`);
+                query += ` AND ra.status IN ('pending', 'in_progress')`;  // Solo activas
+                console.log(`[Repartidor Assignments] ✅ Filtrando solo asignaciones ACTIVAS de turnos abiertos`);
             }
 
             const params = [tenantId, parseInt(employeeId)];
             let paramIndex = 3;
 
-            // Filtrar por status si se proporciona
-            if (status) {
+            // Filtrar por status si se proporciona (solo aplica cuando NO es only_open_shifts)
+            if (status && only_open_shifts !== 'true') {
                 query += ` AND ra.status = $${paramIndex}`;
                 params.push(status);
                 paramIndex++;
