@@ -199,22 +199,15 @@ module.exports = (pool) => {
 
             // ═══════════════════════════════════════════════════════════════
             // TOTAL DE COMPRAS - Para el resumen financiero
+            // Nota: purchase_date es DATE simple, no necesita conversión de timezone
             // ═══════════════════════════════════════════════════════════════
-            let purchaseDateFilter = `DATE(purchase_date AT TIME ZONE '${effectiveTimezone}') = DATE(NOW() AT TIME ZONE '${effectiveTimezone}')`;
-            if (start_date && end_date) {
-                const startDateOnly = start_date.split('T')[0];
-                const endDateOnly = end_date.split('T')[0];
-                purchaseDateFilter = `(purchase_date AT TIME ZONE '${effectiveTimezone}')::date >= '${startDateOnly}'::date AND (purchase_date AT TIME ZONE '${effectiveTimezone}')::date <= '${endDateOnly}'::date`;
-            }
-
             let purchasesQuery = `
                 SELECT
                     COALESCE(SUM(total_amount), 0) as total,
                     COUNT(*) as count
                 FROM purchases
                 WHERE tenant_id = $1
-                AND payment_status != 'cancelled'
-                AND ${purchaseDateFilter}`;
+                AND payment_status != 'cancelled'`;
             let purchasesParams = [tenantId];
             let purchaseParamIndex = 2;
 
@@ -224,7 +217,19 @@ module.exports = (pool) => {
                 purchaseParamIndex++;
             }
 
+            if (start_date && end_date) {
+                const startDateOnly = start_date.split('T')[0];
+                const endDateOnly = end_date.split('T')[0];
+                purchasesQuery += ` AND purchase_date >= $${purchaseParamIndex}::date AND purchase_date <= $${purchaseParamIndex + 1}::date`;
+                purchasesParams.push(startDateOnly, endDateOnly);
+                purchaseParamIndex += 2;
+            } else {
+                // Por defecto, hoy en timezone del branch
+                purchasesQuery += ` AND purchase_date = CURRENT_DATE`;
+            }
+
             console.log(`[Dashboard Summary] Purchases Query: ${purchasesQuery}`);
+            console.log(`[Dashboard Summary] Purchases Params: ${JSON.stringify(purchasesParams)}`);
             const purchasesResult = await pool.query(purchasesQuery, purchasesParams);
             console.log(`[Dashboard Summary] ✅ Total purchases: ${purchasesResult.rows[0].total}, count: ${purchasesResult.rows[0].count}`);
 
