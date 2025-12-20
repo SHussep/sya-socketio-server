@@ -1284,6 +1284,75 @@ async function runMigrations() {
                     `);
                     console.log('[Schema] ✅ Payment tracking columns added to repartidor_assignments');
                 }
+
+                // Patch: Make venta_id nullable for direct assignments (without sale)
+                // Also make terminal_id and local_op_seq nullable for mobile-created assignments
+                const checkVentaIdNotNull = await client.query(`
+                    SELECT is_nullable
+                    FROM information_schema.columns
+                    WHERE table_name = 'repartidor_assignments'
+                    AND column_name = 'venta_id'
+                `);
+
+                if (checkVentaIdNotNull.rows.length > 0 && checkVentaIdNotNull.rows[0].is_nullable === 'NO') {
+                    console.log('[Schema] 📝 Making venta_id nullable for direct assignments...');
+                    await client.query(`
+                        ALTER TABLE repartidor_assignments
+                        ALTER COLUMN venta_id DROP NOT NULL
+                    `);
+                    console.log('[Schema] ✅ repartidor_assignments.venta_id is now nullable');
+                }
+
+                // Make terminal_id nullable for mobile assignments
+                const checkTerminalIdNotNull = await client.query(`
+                    SELECT is_nullable
+                    FROM information_schema.columns
+                    WHERE table_name = 'repartidor_assignments'
+                    AND column_name = 'terminal_id'
+                `);
+
+                if (checkTerminalIdNotNull.rows.length > 0 && checkTerminalIdNotNull.rows[0].is_nullable === 'NO') {
+                    console.log('[Schema] 📝 Making terminal_id nullable for mobile assignments...');
+                    await client.query(`
+                        ALTER TABLE repartidor_assignments
+                        ALTER COLUMN terminal_id DROP NOT NULL
+                    `);
+                    console.log('[Schema] ✅ repartidor_assignments.terminal_id is now nullable');
+                }
+
+                // Make local_op_seq nullable for mobile assignments
+                const checkLocalOpSeqNotNull = await client.query(`
+                    SELECT is_nullable
+                    FROM information_schema.columns
+                    WHERE table_name = 'repartidor_assignments'
+                    AND column_name = 'local_op_seq'
+                `);
+
+                if (checkLocalOpSeqNotNull.rows.length > 0 && checkLocalOpSeqNotNull.rows[0].is_nullable === 'NO') {
+                    console.log('[Schema] 📝 Making local_op_seq nullable for mobile assignments...');
+                    await client.query(`
+                        ALTER TABLE repartidor_assignments
+                        ALTER COLUMN local_op_seq DROP NOT NULL
+                    `);
+                    console.log('[Schema] ✅ repartidor_assignments.local_op_seq is now nullable');
+                }
+
+                // Make created_local_utc nullable for mobile assignments
+                const checkCreatedLocalUtcNotNull = await client.query(`
+                    SELECT is_nullable
+                    FROM information_schema.columns
+                    WHERE table_name = 'repartidor_assignments'
+                    AND column_name = 'created_local_utc'
+                `);
+
+                if (checkCreatedLocalUtcNotNull.rows.length > 0 && checkCreatedLocalUtcNotNull.rows[0].is_nullable === 'NO') {
+                    console.log('[Schema] 📝 Making created_local_utc nullable for mobile assignments...');
+                    await client.query(`
+                        ALTER TABLE repartidor_assignments
+                        ALTER COLUMN created_local_utc DROP NOT NULL
+                    `);
+                    console.log('[Schema] ✅ repartidor_assignments.created_local_utc is now nullable');
+                }
             }
 
             // Patch: Add expense review tracking columns to expenses table
