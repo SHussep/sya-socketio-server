@@ -74,6 +74,7 @@ const expensesRoutes = require('./routes/expenses');
 const shiftsRoutes = require('./routes/shifts');
 const cashCutsRoutes = require('./routes/cashCuts');
 const purchasesRoutes = require('./routes/purchases');
+const suppliersRoutes = require('./routes/suppliers');
 const guardianEventsRoutes = require('./routes/guardianEvents');
 const dashboardRoutes = require('./routes/dashboard');
 const adminRoutes = require('./routes/admin');
@@ -357,6 +358,7 @@ app.use('/api/expenses', expensesRoutes(pool, io));
 app.use('/api/shifts', shiftsRoutes(pool, io));
 app.use('/api/cash-cuts', newCashCutsRoutes(pool)); // Using new cash-cuts.js with offline-first sync
 app.use('/api/purchases', purchasesRoutes(pool));
+app.use('/api/suppliers', suppliersRoutes(pool));
 app.use('/api/guardian-events', guardianEventsRoutes(pool, io)); // Requires io for Socket.IO
 app.use('/api/dashboard', dashboardRoutes(pool));
 app.use('/api/admin', adminRoutes(pool)); // Rutas de administración

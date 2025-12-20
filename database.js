@@ -1657,6 +1657,46 @@ async function runMigrations() {
                 }
             }
 
+            // Patch: Add offline-first columns to suppliers table
+            const checkSuppliersTable = await client.query(`
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'suppliers'
+                )
+            `);
+
+            if (checkSuppliersTable.rows[0].exists) {
+                const checkSuppliersGlobalId = await client.query(`
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'suppliers'
+                    AND column_name = 'global_id'
+                `);
+
+                if (checkSuppliersGlobalId.rows.length === 0) {
+                    console.log('[Schema] 📝 Adding offline-first columns to suppliers...');
+                    await client.query(`
+                        ALTER TABLE suppliers
+                        ADD COLUMN IF NOT EXISTS global_id UUID,
+                        ADD COLUMN IF NOT EXISTS terminal_id VARCHAR(50),
+                        ADD COLUMN IF NOT EXISTS local_op_seq INTEGER DEFAULT 0,
+                        ADD COLUMN IF NOT EXISTS created_local_utc TIMESTAMP,
+                        ADD COLUMN IF NOT EXISTS last_modified_local_utc TIMESTAMP,
+                        ADD COLUMN IF NOT EXISTS is_undeletable BOOLEAN DEFAULT FALSE,
+                        ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT FALSE,
+                        ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP,
+                        ADD COLUMN IF NOT EXISTS contact_person VARCHAR(255)
+                    `);
+
+                    // Create unique index on global_id
+                    await client.query(`
+                        CREATE UNIQUE INDEX IF NOT EXISTS idx_suppliers_global_id ON suppliers(global_id) WHERE global_id IS NOT NULL
+                    `);
+
+                    console.log('[Schema] ✅ Suppliers offline-first columns added');
+                }
+            }
+
             // 3. Always run seeds (idempotent - uses ON CONFLICT)
             console.log('[Seeds] 📝 Running seeds.sql...');
             const seedsPath = path.join(__dirname, 'seeds.sql');
