@@ -121,6 +121,7 @@ module.exports = (pool) => {
     // ═══════════════════════════════════════════════════════════════
     // POST /api/purchases/sync - Sincronización Offline-First desde Desktop
     // Soporta: global_id para idempotencia, detalles, campos completos
+    // CORREGIDO: Check de duplicados DENTRO de transacción + UPSERT para detalles
     // ═══════════════════════════════════════════════════════════════
     router.post('/sync', async (req, res) => {
         const client = await pool.connect();
@@ -150,13 +151,19 @@ module.exports = (pool) => {
                 });
             }
 
-            // IDEMPOTENCIA: Verificar si ya existe por global_id
+            // ═══════════════════════════════════════════════════════════════
+            // TRANSACCIÓN: Check de duplicados DENTRO para evitar race condition
+            // ═══════════════════════════════════════════════════════════════
+            await client.query('BEGIN');
+
+            // IDEMPOTENCIA: Verificar si ya existe por global_id CON LOCK
             const existingCheck = await client.query(
-                'SELECT id FROM purchases WHERE global_id = $1',
+                'SELECT id FROM purchases WHERE global_id = $1 FOR UPDATE',
                 [global_id]
             );
 
             if (existingCheck.rows.length > 0) {
+                await client.query('COMMIT');
                 console.log(`[Purchases/Sync] ⚠️ Compra ${global_id} ya existe (ID: ${existingCheck.rows[0].id}) - Ignorando duplicado`);
                 return res.json({
                     success: true,
@@ -164,8 +171,6 @@ module.exports = (pool) => {
                     data: { id: existingCheck.rows[0].id, global_id }
                 });
             }
-
-            await client.query('BEGIN');
 
             // Resolver employee_id desde global_id
             let employeeId = null;
@@ -198,7 +203,9 @@ module.exports = (pool) => {
             // Generar purchase_number si no viene (usando global_id corto o timestamp)
             const purchaseNumber = invoice_number || `PUR-${global_id.substring(0, 8).toUpperCase()}`;
 
-            // Insertar compra
+            // ═══════════════════════════════════════════════════════════════
+            // UPSERT: Insertar compra con ON CONFLICT para máxima idempotencia
+            // ═══════════════════════════════════════════════════════════════
             const purchaseResult = await client.query(
                 `INSERT INTO purchases (
                     tenant_id, branch_id, supplier_id, supplier_name, employee_id, shift_id,
@@ -206,6 +213,7 @@ module.exports = (pool) => {
                     notes, invoice_number, purchase_date,
                     global_id, terminal_id, local_op_seq, created_local_utc
                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+                ON CONFLICT (global_id) DO UPDATE SET updated_at = NOW()
                 RETURNING id`,
                 [
                     tenantId, branchId, proveedor_id, proveedor_name, employeeId, shiftId,
@@ -216,35 +224,71 @@ module.exports = (pool) => {
             );
 
             const purchaseId = purchaseResult.rows[0].id;
-            console.log(`[Purchases/Sync] ✅ Compra insertada con ID: ${purchaseId}`);
+            console.log(`[Purchases/Sync] ✅ Compra insertada/actualizada con ID: ${purchaseId}`);
 
-            // Insertar detalles si vienen
+            // ═══════════════════════════════════════════════════════════════
+            // UPSERT para detalles: Evitar duplicados en reintentos
+            // ═══════════════════════════════════════════════════════════════
             if (details && Array.isArray(details) && details.length > 0) {
+                let insertedCount = 0;
                 for (const detail of details) {
-                    await client.query(
-                        `INSERT INTO purchase_details (
-                            purchase_id, product_id, product_name, quantity, unit_price, subtotal, global_id
-                        ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-                        [
-                            purchaseId,
-                            detail.product_id,
-                            detail.product_name || `Producto ${detail.product_id}`,
-                            detail.quantity || 0,
-                            detail.unit_price || 0,
-                            detail.subtotal || (detail.quantity * detail.unit_price) || 0,
-                            detail.global_id
-                        ]
-                    );
+                    // Si el detalle tiene global_id, usar UPSERT; si no, insertar normal
+                    if (detail.global_id) {
+                        const detailResult = await client.query(
+                            `INSERT INTO purchase_details (
+                                purchase_id, product_id, product_name, quantity, unit_price, subtotal, global_id
+                            ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+                            ON CONFLICT (global_id) DO NOTHING
+                            RETURNING id`,
+                            [
+                                purchaseId,
+                                detail.product_id,
+                                detail.product_name || `Producto ${detail.product_id}`,
+                                detail.quantity || 0,
+                                detail.unit_price || 0,
+                                detail.subtotal || (detail.quantity * detail.unit_price) || 0,
+                                detail.global_id
+                            ]
+                        );
+                        if (detailResult.rows.length > 0) insertedCount++;
+                    } else {
+                        // Sin global_id, insertar normalmente (legacy)
+                        await client.query(
+                            `INSERT INTO purchase_details (
+                                purchase_id, product_id, product_name, quantity, unit_price, subtotal
+                            ) VALUES ($1, $2, $3, $4, $5, $6)`,
+                            [
+                                purchaseId,
+                                detail.product_id,
+                                detail.product_name || `Producto ${detail.product_id}`,
+                                detail.quantity || 0,
+                                detail.unit_price || 0,
+                                detail.subtotal || (detail.quantity * detail.unit_price) || 0
+                            ]
+                        );
+                        insertedCount++;
+                    }
                 }
-                console.log(`[Purchases/Sync] ✅ ${details.length} detalles insertados`);
+                console.log(`[Purchases/Sync] ✅ ${insertedCount}/${details.length} detalles insertados (duplicados ignorados)`);
             }
 
             await client.query('COMMIT');
 
+            // Obtener updated_at para que el cliente pueda guardar LastModifiedRemoteUtc
+            const updatedAtResult = await pool.query(
+                'SELECT updated_at FROM purchases WHERE id = $1',
+                [purchaseId]
+            );
+            const updatedAt = updatedAtResult.rows[0]?.updated_at;
+
             console.log(`[Purchases/Sync] ✅ Compra ${global_id} sincronizada exitosamente`);
             res.json({
                 success: true,
-                data: { id: purchaseId, global_id }
+                data: {
+                    id: purchaseId,
+                    global_id,
+                    updated_at: updatedAt ? new Date(updatedAt).toISOString() : null
+                }
             });
 
         } catch (error) {
