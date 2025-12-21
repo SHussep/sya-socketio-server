@@ -236,8 +236,9 @@ module.exports = (pool) => {
                 purchasesParams.push(startDateOnly, endDateOnly);
                 purchaseParamIndex += 2;
             } else {
-                console.log(`[Dashboard Summary] 🛒 No date range, using CURRENT_DATE`);
-                purchasesQuery += ` AND purchase_date = CURRENT_DATE`;
+                // ✅ Usar fecha actual en el timezone del cliente, NO del servidor (UTC)
+                console.log(`[Dashboard Summary] 🛒 No date range, using CURRENT_DATE in timezone: ${effectiveTimezone}`);
+                purchasesQuery += ` AND purchase_date = (NOW() AT TIME ZONE '${effectiveTimezone}')::date`;
             }
 
             console.log(`[Dashboard Summary] 🛒 Purchases Query: ${purchasesQuery}`);
