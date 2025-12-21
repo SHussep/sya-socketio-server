@@ -199,8 +199,19 @@ module.exports = (pool) => {
 
             // ═══════════════════════════════════════════════════════════════
             // TOTAL DE COMPRAS - Para el resumen financiero
-            // Nota: purchase_date es DATE simple, no necesita conversión de timezone
             // ═══════════════════════════════════════════════════════════════
+            console.log(`[Dashboard Summary] 🛒 PURCHASES DEBUG START`);
+            console.log(`[Dashboard Summary] 🛒 tenantId: ${tenantId}, targetBranchId: ${targetBranchId}, shouldFilterByBranch: ${shouldFilterByBranch}`);
+            console.log(`[Dashboard Summary] 🛒 start_date: ${start_date}, end_date: ${end_date}`);
+
+            // Primero, ver TODAS las compras del tenant para debug
+            const allPurchasesDebug = await pool.query(
+                `SELECT id, tenant_id, branch_id, purchase_date, total_amount, payment_status
+                 FROM purchases WHERE tenant_id = $1 ORDER BY purchase_date DESC LIMIT 10`,
+                [tenantId]
+            );
+            console.log(`[Dashboard Summary] 🛒 Últimas 10 compras del tenant:`, JSON.stringify(allPurchasesDebug.rows));
+
             let purchasesQuery = `
                 SELECT
                     COALESCE(SUM(total_amount), 0) as total,
@@ -220,18 +231,20 @@ module.exports = (pool) => {
             if (start_date && end_date) {
                 const startDateOnly = start_date.split('T')[0];
                 const endDateOnly = end_date.split('T')[0];
+                console.log(`[Dashboard Summary] 🛒 Filtering by date range: ${startDateOnly} to ${endDateOnly}`);
                 purchasesQuery += ` AND purchase_date >= $${purchaseParamIndex}::date AND purchase_date <= $${purchaseParamIndex + 1}::date`;
                 purchasesParams.push(startDateOnly, endDateOnly);
                 purchaseParamIndex += 2;
             } else {
-                // Por defecto, hoy en timezone del branch
+                console.log(`[Dashboard Summary] 🛒 No date range, using CURRENT_DATE`);
                 purchasesQuery += ` AND purchase_date = CURRENT_DATE`;
             }
 
-            console.log(`[Dashboard Summary] Purchases Query: ${purchasesQuery}`);
-            console.log(`[Dashboard Summary] Purchases Params: ${JSON.stringify(purchasesParams)}`);
+            console.log(`[Dashboard Summary] 🛒 Purchases Query: ${purchasesQuery}`);
+            console.log(`[Dashboard Summary] 🛒 Purchases Params: ${JSON.stringify(purchasesParams)}`);
             const purchasesResult = await pool.query(purchasesQuery, purchasesParams);
-            console.log(`[Dashboard Summary] ✅ Total purchases: ${purchasesResult.rows[0].total}, count: ${purchasesResult.rows[0].count}`);
+            console.log(`[Dashboard Summary] 🛒 ✅ Total purchases: ${purchasesResult.rows[0].total}, count: ${purchasesResult.rows[0].count}`);
+            console.log(`[Dashboard Summary] 🛒 PURCHASES DEBUG END`);
 
             // Último corte de caja
             let cashCutQuery = `SELECT counted_cash FROM cash_cuts WHERE tenant_id = $1`;
