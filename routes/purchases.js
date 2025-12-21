@@ -178,20 +178,44 @@ module.exports = (pool) => {
     });
 
     // GET /api/purchases/:id/details - Detalles de una compra
+    // :id puede ser el ID numérico o el global_id (UUID)
     router.get('/:id/details', authenticateToken, async (req, res) => {
         try {
             const { tenantId } = req.user;
             const { id } = req.params;
 
-            // Verificar que la compra pertenece al tenant
-            const purchaseCheck = await pool.query(
-                'SELECT id FROM purchases WHERE id = $1 AND tenant_id = $2',
-                [id, tenantId]
-            );
+            console.log(`[Purchases/Details] Buscando detalles para: ${id}, Tenant: ${tenantId}`);
 
-            if (purchaseCheck.rows.length === 0) {
+            // Determinar si es un ID numérico o un global_id (UUID)
+            const isNumericId = /^\d+$/.test(id);
+            let purchaseId = null;
+
+            if (isNumericId) {
+                // Buscar por ID numérico
+                const purchaseCheck = await pool.query(
+                    'SELECT id FROM purchases WHERE id = $1 AND tenant_id = $2',
+                    [id, tenantId]
+                );
+                if (purchaseCheck.rows.length > 0) {
+                    purchaseId = purchaseCheck.rows[0].id;
+                }
+            } else {
+                // Buscar por global_id
+                const purchaseCheck = await pool.query(
+                    'SELECT id FROM purchases WHERE global_id = $1 AND tenant_id = $2',
+                    [id, tenantId]
+                );
+                if (purchaseCheck.rows.length > 0) {
+                    purchaseId = purchaseCheck.rows[0].id;
+                }
+            }
+
+            if (!purchaseId) {
+                console.log(`[Purchases/Details] ❌ Compra no encontrada: ${id}`);
                 return res.status(404).json({ success: false, message: 'Compra no encontrada' });
             }
+
+            console.log(`[Purchases/Details] ✅ Compra encontrada: ID ${purchaseId}`);
 
             const detailsQuery = `
                 SELECT pd.id, pd.product_id, pd.product_name, pd.quantity, pd.unit_price, pd.subtotal
@@ -200,7 +224,9 @@ module.exports = (pool) => {
                 ORDER BY pd.id
             `;
 
-            const result = await pool.query(detailsQuery, [id]);
+            const result = await pool.query(detailsQuery, [purchaseId]);
+
+            console.log(`[Purchases/Details] ✅ ${result.rows.length} detalles encontrados`);
 
             res.json({
                 success: true,
@@ -259,6 +285,7 @@ module.exports = (pool) => {
     // POST /api/purchases/sync - Sincronización Offline-First desde Desktop
     // Soporta: global_id para idempotencia, detalles, campos completos
     // CORREGIDO: Check de duplicados DENTRO de transacción + UPSERT para detalles
+    // CORREGIDO v2: Resolver supplier_id y product_id usando global_id
     // ═══════════════════════════════════════════════════════════════
     router.post('/sync', async (req, res) => {
         const client = await pool.connect();
@@ -266,7 +293,7 @@ module.exports = (pool) => {
             const {
                 tenantId, branchId,
                 employee_global_id, shift_global_id,
-                proveedor_id, proveedor_name,
+                proveedor_id, proveedor_global_id, proveedor_name,  // ✅ Añadido proveedor_global_id
                 status_id, payment_type_id,
                 subtotal, taxes, total, amount_paid,
                 notes, invoice_number, purchase_date_utc,
@@ -278,6 +305,7 @@ module.exports = (pool) => {
             console.log(`[Purchases/Sync] ════════════════════════════════════════════════════════`);
             console.log(`[Purchases/Sync] 📥 Recibida compra - GlobalId: ${global_id}`);
             console.log(`[Purchases/Sync]    Tenant: ${tenantId}, Branch: ${branchId}, Total: $${total}`);
+            console.log(`[Purchases/Sync]    Proveedor: ID=${proveedor_id}, GlobalId=${proveedor_global_id}, Name=${proveedor_name}`);
 
             // Validación básica
             if (!tenantId || !branchId || !global_id) {
@@ -333,6 +361,35 @@ module.exports = (pool) => {
                 }
             }
 
+            // ✅ Resolver supplier_id desde proveedor_global_id (prioridad) o proveedor_id (legacy)
+            let supplierId = null;
+            if (proveedor_global_id) {
+                const supplierResult = await client.query(
+                    'SELECT id FROM suppliers WHERE global_id = $1 AND tenant_id = $2',
+                    [proveedor_global_id, tenantId]
+                );
+                if (supplierResult.rows.length > 0) {
+                    supplierId = supplierResult.rows[0].id;
+                    console.log(`[Purchases/Sync] ✅ Proveedor resuelto por global_id: ${proveedor_global_id} → ID ${supplierId}`);
+                } else {
+                    console.log(`[Purchases/Sync] ⚠️ Proveedor no encontrado por global_id: ${proveedor_global_id}`);
+                }
+            }
+            // Fallback: si no hay global_id o no se encontró, usar el ID directo (legacy/compatibilidad)
+            if (!supplierId && proveedor_id) {
+                // Verificar que el ID existe en PostgreSQL
+                const checkResult = await client.query(
+                    'SELECT id FROM suppliers WHERE id = $1 AND tenant_id = $2',
+                    [proveedor_id, tenantId]
+                );
+                if (checkResult.rows.length > 0) {
+                    supplierId = proveedor_id;
+                    console.log(`[Purchases/Sync] ⚠️ Usando proveedor_id directo (legacy): ${proveedor_id}`);
+                } else {
+                    console.log(`[Purchases/Sync] ⚠️ proveedor_id ${proveedor_id} no existe en PostgreSQL - solo se guardará nombre`);
+                }
+            }
+
             // Mapear status_id a payment_status
             const statusMap = { 1: 'pending', 2: 'paid', 3: 'partial', 4: 'cancelled' };
             const paymentStatus = statusMap[status_id] || 'pending';
@@ -342,6 +399,7 @@ module.exports = (pool) => {
 
             // ═══════════════════════════════════════════════════════════════
             // UPSERT: Insertar compra con ON CONFLICT para máxima idempotencia
+            // ✅ Usar supplierId resuelto (no proveedor_id directo)
             // ═══════════════════════════════════════════════════════════════
             const purchaseResult = await client.query(
                 `INSERT INTO purchases (
@@ -353,7 +411,7 @@ module.exports = (pool) => {
                 ON CONFLICT (global_id) DO UPDATE SET updated_at = NOW()
                 RETURNING id`,
                 [
-                    tenantId, branchId, proveedor_id, proveedor_name, employeeId, shiftId,
+                    tenantId, branchId, supplierId, proveedor_name, employeeId, shiftId,  // ✅ supplierId resuelto
                     purchaseNumber, subtotal || 0, taxes || 0, total || 0, amount_paid || 0, paymentStatus, payment_type_id,
                     notes || null, invoice_number || null, purchase_date_utc ? new Date(purchase_date_utc) : new Date(),
                     global_id, terminal_id, local_op_seq, created_local_utc
@@ -365,10 +423,27 @@ module.exports = (pool) => {
 
             // ═══════════════════════════════════════════════════════════════
             // UPSERT para detalles: Evitar duplicados en reintentos
+            // ✅ Resolver product_id usando product_global_id
             // ═══════════════════════════════════════════════════════════════
             if (details && Array.isArray(details) && details.length > 0) {
                 let insertedCount = 0;
                 for (const detail of details) {
+                    // ✅ Resolver product_id desde product_global_id
+                    let productId = null;
+                    if (detail.product_global_id) {
+                        const productResult = await client.query(
+                            'SELECT id FROM productos WHERE global_id = $1 AND tenant_id = $2',
+                            [detail.product_global_id, tenantId]
+                        );
+                        if (productResult.rows.length > 0) {
+                            productId = productResult.rows[0].id;
+                        }
+                    }
+                    // Fallback al product_id directo si no se pudo resolver
+                    if (!productId && detail.product_id) {
+                        productId = detail.product_id;
+                    }
+
                     // Si el detalle tiene global_id, usar UPSERT; si no, insertar normal
                     if (detail.global_id) {
                         const detailResult = await client.query(
@@ -379,7 +454,7 @@ module.exports = (pool) => {
                             RETURNING id`,
                             [
                                 purchaseId,
-                                detail.product_id,
+                                productId,
                                 detail.product_name || `Producto ${detail.product_id}`,
                                 detail.quantity || 0,
                                 detail.unit_price || 0,
@@ -396,7 +471,7 @@ module.exports = (pool) => {
                             ) VALUES ($1, $2, $3, $4, $5, $6)`,
                             [
                                 purchaseId,
-                                detail.product_id,
+                                productId,
                                 detail.product_name || `Producto ${detail.product_id}`,
                                 detail.quantity || 0,
                                 detail.unit_price || 0,
