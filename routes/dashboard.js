@@ -155,25 +155,23 @@ module.exports = (pool) => {
             const breakdown = breakdownResult.rows[0];
             console.log(`[Dashboard Summary] ✅ Breakdown:`, JSON.stringify(breakdown));
 
-            // DEBUG: Ver distribución de venta_tipo_id en ventas del período
+            // DEBUG: Ver distribución COMPLETA de ventas (incluyendo todos los estados)
             let debugQuery = `
                 SELECT
-                    venta_tipo_id,
+                    tipo_pago_id,
                     estado_venta_id,
                     COUNT(*) as count,
                     COALESCE(SUM(total), 0) as total
                 FROM ventas
-                WHERE tenant_id = $1 AND (
-                    (estado_venta_id = 3 AND ${dateFilter})
-                    OR
-                    (estado_venta_id = 5 AND ${dateFilter.replace(/fecha_venta_utc/g, 'COALESCE(fecha_liquidacion_utc, fecha_venta_utc)')})
-                )`;
+                WHERE tenant_id = $1 AND ${dateFilter}`;
             if (shouldFilterByBranch) {
                 debugQuery += ` AND branch_id = $2`;
             }
-            debugQuery += ` GROUP BY venta_tipo_id, estado_venta_id`;
+            debugQuery += ` GROUP BY tipo_pago_id, estado_venta_id ORDER BY tipo_pago_id, estado_venta_id`;
             const debugResult = await pool.query(debugQuery, shouldFilterByBranch ? [tenantId, targetBranchId] : [tenantId]);
-            console.log(`[Dashboard Summary] 🔍 DEBUG venta_tipo_id distribution:`, JSON.stringify(debugResult.rows));
+            console.log(`[Dashboard Summary] 🔍 DEBUG ventas por tipo_pago y estado:`, JSON.stringify(debugResult.rows));
+            // tipo_pago_id: 1=Efectivo, 2=Tarjeta, 3=Crédito
+            // estado_venta_id: 1=Borrador, 2=Asignada, 3=Completada, 5=Liquidada
 
             // Total de gastos
             let expensesQuery = `SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE tenant_id = $1 AND ${expenseDateFilter}`;
