@@ -135,6 +135,7 @@ module.exports = (pool) => {
     // ═══════════════════════════════════════════════════════════════
     // POST /api/productos/sync - Sincronizar producto desde Desktop
     // IDEMPOTENTE: Usa global_id para ON CONFLICT
+    // ✅ CORREGIDO: Resolver proveedor_id usando proveedor_global_id
     // ═══════════════════════════════════════════════════════════════
     router.post('/sync', async (req, res) => {
         try {
@@ -151,7 +152,8 @@ module.exports = (pool) => {
                 notificar,
                 minimo,
                 inventario,
-                proveedor_id,
+                proveedor_id,          // ID local (legacy)
+                proveedor_global_id,   // ✅ GlobalId del proveedor
                 unidad_medida_id,
                 eliminado,
                 bascula,
@@ -169,6 +171,7 @@ module.exports = (pool) => {
 
             console.log(`[Productos/Sync] 🔄 Sincronizando producto - GlobalId: ${global_id}`);
             console.log(`[Productos/Sync] 📦 Descripcion: ${descripcion}, Tenant: ${tenant_id}`);
+            console.log(`[Productos/Sync] 🏭 Proveedor: ID=${proveedor_id}, GlobalId=${proveedor_global_id}`);
 
             // Validar campos requeridos
             if (!tenant_id || !descripcion || !global_id) {
@@ -180,6 +183,21 @@ module.exports = (pool) => {
 
             // ✅ Si needs_delete=true, marcar como eliminado (soft delete)
             const isDeleted = needs_delete === true || eliminado === true;
+
+            // ✅ Resolver proveedor_id desde proveedor_global_id
+            let resolvedProveedorId = null;
+            if (proveedor_global_id) {
+                const supplierResult = await pool.query(
+                    'SELECT id FROM suppliers WHERE global_id = $1 AND tenant_id = $2',
+                    [proveedor_global_id, tenant_id]
+                );
+                if (supplierResult.rows.length > 0) {
+                    resolvedProveedorId = supplierResult.rows[0].id;
+                    console.log(`[Productos/Sync] ✅ Proveedor resuelto: GlobalId=${proveedor_global_id} -> PostgresID=${resolvedProveedorId}`);
+                } else {
+                    console.log(`[Productos/Sync] ⚠️ Proveedor no encontrado por GlobalId: ${proveedor_global_id}`);
+                }
+            }
 
             // ✅ IDEMPOTENTE: INSERT con ON CONFLICT (global_id) DO UPDATE
             const result = await pool.query(
@@ -233,7 +251,7 @@ module.exports = (pool) => {
                     notificar || false,
                     minimo || 0,
                     inventario || 0,
-                    proveedor_id || null,
+                    resolvedProveedorId,  // ✅ Usar ID resuelto desde global_id
                     unidad_medida_id || null,
                     isDeleted,
                     bascula || false,
@@ -251,7 +269,7 @@ module.exports = (pool) => {
             const producto = result.rows[0];
             const action = producto.inserted ? 'INSERTADO' : 'ACTUALIZADO';
 
-            console.log(`[Productos/Sync] ✅ Producto ${action}: ${descripcion} (ID: ${producto.id})`);
+            console.log(`[Productos/Sync] ✅ Producto ${action}: ${descripcion} (ID: ${producto.id}, ProveedorID: ${resolvedProveedorId})`);
 
             res.json({
                 success: true,
@@ -307,6 +325,18 @@ module.exports = (pool) => {
                     try {
                         const isDeleted = prod.needs_delete === true || prod.eliminado === true;
 
+                        // ✅ Resolver proveedor_id desde proveedor_global_id
+                        let resolvedProveedorId = null;
+                        if (prod.proveedor_global_id) {
+                            const supplierResult = await client.query(
+                                'SELECT id FROM suppliers WHERE global_id = $1 AND tenant_id = $2',
+                                [prod.proveedor_global_id, tenant_id]
+                            );
+                            if (supplierResult.rows.length > 0) {
+                                resolvedProveedorId = supplierResult.rows[0].id;
+                            }
+                        }
+
                         const result = await client.query(
                             `INSERT INTO productos (
                                 tenant_id, id_producto, descripcion, categoria,
@@ -357,7 +387,7 @@ module.exports = (pool) => {
                                 prod.notificar || false,
                                 prod.minimo || 0,
                                 prod.inventario || 0,
-                                prod.proveedor_id || null,
+                                resolvedProveedorId,  // ✅ Usar ID resuelto desde global_id
                                 prod.unidad_medida_id || null,
                                 isDeleted,
                                 prod.bascula || false,
