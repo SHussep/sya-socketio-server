@@ -217,14 +217,13 @@ module.exports = (pool) => {
             }
 
             if (start_date && end_date) {
-                const startDateOnly = start_date.split('T')[0];
-                const endDateOnly = end_date.split('T')[0];
-                purchasesQuery += ` AND purchase_date >= $${purchaseParamIndex}::date AND purchase_date <= $${purchaseParamIndex + 1}::date`;
-                purchasesParams.push(startDateOnly, endDateOnly);
+                // Usar la misma lógica que /api/purchases - pasar ISO string completo
+                purchasesQuery += ` AND purchase_date >= $${purchaseParamIndex} AND purchase_date <= $${purchaseParamIndex + 1}`;
+                purchasesParams.push(start_date, end_date);
                 purchaseParamIndex += 2;
             } else {
-                // Usar fecha actual en el timezone del cliente, NO del servidor (UTC)
-                purchasesQuery += ` AND purchase_date = (NOW() AT TIME ZONE '${effectiveTimezone}')::date`;
+                // Sin fechas: usar el día actual en el timezone del cliente
+                purchasesQuery += ` AND purchase_date >= (NOW() AT TIME ZONE '${effectiveTimezone}')::date AND purchase_date < ((NOW() AT TIME ZONE '${effectiveTimezone}')::date + INTERVAL '1 day')`;
             }
 
             const purchasesResult = await pool.query(purchasesQuery, purchasesParams);
