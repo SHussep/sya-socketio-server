@@ -302,6 +302,15 @@ module.exports = (pool) => {
                     // ✅ NUEVO: Total de compras del período
                     totalPurchases: parseFloat(purchasesResult.rows[0].total),
                     purchasesCount: parseInt(purchasesResult.rows[0].count),
+                    // ✅ DEBUG: Info temporal para diagnosticar
+                    _debug: {
+                        purchasesQuery: purchasesQuery,
+                        purchasesParams: purchasesParams,
+                        allPurchases: allPurchasesDebug.rows,
+                        effectiveTimezone: effectiveTimezone,
+                        startDateReceived: start_date || null,
+                        endDateReceived: end_date || null
+                    },
                     cashInDrawer: cashCutResult.rows.length > 0 ? parseFloat(cashCutResult.rows[0].counted_cash) : 0,
                     unreadGuardianEvents: parseInt(guardianEventsResult.rows[0].count),
                     totalAssignments: parseInt(assignmentsResult.rows[0].total_assignments),
