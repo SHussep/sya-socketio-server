@@ -750,26 +750,43 @@ async function notifyExpenseCreated(employeeGlobalId, { expenseId, amount, descr
  * @param {number} branchId - ID de la sucursal
  * @param {string} employeeName - Nombre del repartidor
  * @param {string} createdByName - Nombre del empleado que autorizó la asignación
+ * @param {boolean} isConsolidated - Si es notificación consolidada (múltiples items)
+ * @param {number} itemCount - Número de items/productos en la asignación
  */
-async function notifyAssignmentCreated(employeeGlobalId, { assignmentId, quantity, amount, branchName, branchId, employeeName, createdByName }) {
+async function notifyAssignmentCreated(employeeGlobalId, { assignmentId, quantity, amount, branchName, branchId, employeeName, createdByName, isConsolidated, itemCount }) {
+    // ✅ Formatear mensaje según si es consolidado (múltiples items) o individual
+    let repartidorBody, adminBody;
+
+    if (isConsolidated && itemCount > 1) {
+        // Notificación CONSOLIDADA: "Recibiste 4 productos por $207.75"
+        repartidorBody = `Recibiste ${itemCount} producto${itemCount > 1 ? 's' : ''} por $${amount.toFixed(2)} en ${branchName}`;
+        adminBody = `${employeeName} recibió ${itemCount} producto${itemCount > 1 ? 's' : ''} ($${amount.toFixed(2)}) - ${createdByName}`;
+    } else {
+        // Notificación INDIVIDUAL (legacy): "Se te asignó 2.50 kg ($50.00)"
+        repartidorBody = `Se te asignó ${quantity.toFixed(2)} kg ($${amount.toFixed(2)}) en ${branchName}`;
+        adminBody = `${employeeName} recibió ${quantity.toFixed(2)} kg ($${amount.toFixed(2)}) autorizado por ${createdByName}`;
+    }
+
     // Notificar al repartidor (usando GlobalId)
     const employeeResult = await sendNotificationToEmployee(employeeGlobalId, {
-        title: 'Nueva Asignación',
-        body: `Se te asignó ${quantity.toFixed(2)} kg ($${amount.toFixed(2)}) en ${branchName}`,
+        title: isConsolidated ? '📦 Nueva Entrega' : 'Nueva Asignación',
+        body: repartidorBody,
         data: {
             type: 'assignment_created',
             assignmentId: assignmentId.toString(),
             quantity: quantity.toString(),
             amount: amount.toString(),
-            branchName
+            branchName,
+            isConsolidated: isConsolidated ? 'true' : 'false',
+            itemCount: (itemCount || 1).toString()
         }
     });
 
     // Notificar a administradores y encargados
     // EXCLUIR al repartidor que ya recibió su notificación personal (evita duplicados)
     const adminResult = await sendNotificationToAdminsInBranch(branchId, {
-        title: 'Asignación Creada',
-        body: `${employeeName} recibió ${quantity.toFixed(2)} kg ($${amount.toFixed(2)}) autorizado por ${createdByName}`,
+        title: isConsolidated ? '📦 Entrega Asignada' : 'Asignación Creada',
+        body: adminBody,
         data: {
             type: 'assignment_created',
             assignmentId: assignmentId.toString(),
@@ -777,7 +794,9 @@ async function notifyAssignmentCreated(employeeGlobalId, { assignmentId, quantit
             createdByName,
             quantity: quantity.toString(),
             amount: amount.toString(),
-            branchName
+            branchName,
+            isConsolidated: isConsolidated ? 'true' : 'false',
+            itemCount: (itemCount || 1).toString()
         }
     }, { excludeEmployeeGlobalId: employeeGlobalId, notificationType: 'notify_assignment_created' });
 

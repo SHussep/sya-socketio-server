@@ -427,20 +427,39 @@ function createRepartidorAssignmentRoutes(io) {
           );
           const createdByName = createdByResult.rows[0]?.full_name || 'Empleado';
 
-          console.log(`[RepartidorAssignments] 📨 Enviando notificaciones para asignación NUEVA #${assignment.id}`);
+          // ✅ NUEVO: Calcular TOTAL de todas las asignaciones de esta venta (para notificación consolidada)
+          let totalItems = 1;
+          let totalAmount = parseFloat(assigned_amount);
+
+          if (resolvedVentaId) {
+            // Si hay venta asociada, sumar todas las asignaciones de esa venta
+            const totalsResult = await pool.query(
+              `SELECT COUNT(*) as item_count, COALESCE(SUM(assigned_amount), 0) as total_amount
+               FROM repartidor_assignments
+               WHERE venta_id = $1 AND tenant_id = $2`,
+              [resolvedVentaId, tenant_id]
+            );
+            totalItems = parseInt(totalsResult.rows[0]?.item_count) || 1;
+            totalAmount = parseFloat(totalsResult.rows[0]?.total_amount) || parseFloat(assigned_amount);
+          }
+
+          console.log(`[RepartidorAssignments] 📨 Enviando notificación CONSOLIDADA para venta #${resolvedVentaId || 'N/A'}`);
           console.log(`   Repartidor: ${employeeName} (GlobalId: ${employee_global_id})`);
           console.log(`   Autorizado por: ${createdByName} (GlobalId: ${created_by_employee_global_id})`);
-          console.log(`   Cantidad: ${assigned_quantity} kg, Monto: $${assigned_amount}`);
+          console.log(`   📦 Total: ${totalItems} producto(s), Monto total: $${totalAmount.toFixed(2)}`);
 
           // Enviar notificaciones usando GlobalId (UUID) para idempotencia
+          // ✅ Ahora con totales consolidados
           await notifyAssignmentCreated(employee_global_id, {
             assignmentId: assignment.id,
-            quantity: parseFloat(assigned_quantity),
-            amount: parseFloat(assigned_amount),
+            quantity: totalItems,           // Cantidad de productos (items)
+            amount: totalAmount,            // Monto TOTAL de la venta
             branchName,
             branchId: branch_id,
             employeeName,
-            createdByName
+            createdByName,
+            isConsolidated: true,           // Flag para indicar que es notificación consolidada
+            itemCount: totalItems           // Número de items/productos
           });
 
           console.log(`[RepartidorAssignments] ✅ Notificaciones enviadas exitosamente`);
