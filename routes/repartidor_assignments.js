@@ -80,7 +80,8 @@ function createRepartidorAssignmentRoutes(io) {
       amount_received,
       is_credit,
       payment_reference,
-      liquidated_by_employee_global_id  // UUID del empleado que liquidó
+      liquidated_by_employee_global_id,  // UUID del empleado que liquidó
+      suppress_notification              // Si es true, NO enviar notificación FCM (anti-spam para batch)
     } = req.body;
 
     try {
@@ -402,7 +403,8 @@ function createRepartidorAssignmentRoutes(io) {
       }
 
       // 🆕 Enviar notificación push SOLO si es una asignación NUEVA (no actualización)
-      if (wasInserted) {
+      // ✅ Y SOLO si suppress_notification es false/undefined (anti-spam para operaciones batch)
+      if (wasInserted && !suppress_notification) {
         try {
           // Obtener nombre de la sucursal
           const branchResult = await pool.query(
@@ -446,6 +448,8 @@ function createRepartidorAssignmentRoutes(io) {
           console.error('[RepartidorAssignments] ⚠️ Error enviando notificación push:', notifError.message);
           // No fallar la operación si la notificación falla
         }
+      } else if (wasInserted && suppress_notification) {
+        console.log(`[RepartidorAssignments] 🔕 Notificación SUPRIMIDA (batch mode): GlobalId=${global_id}`);
       } else {
         console.log(`[RepartidorAssignments] ℹ️ Asignación actualizada (no se envía notificación): GlobalId=${global_id}, Status=${status}`);
       }
