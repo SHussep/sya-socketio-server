@@ -711,10 +711,33 @@ module.exports = (pool, io) => {
                         const employee = employeeData.rows[0];
                         const branch = branchData.rows[0];
 
-                        // Calcular diferencia de efectivo (si hay final_amount)
-                        const countedCash = final_amount || 0;
-                        const expectedCash = initial_amount || 0; // Simplificado, debería calcularse con ventas
-                        const difference = countedCash - expectedCash;
+                        // ✅ CORREGIDO: Buscar el cash cut del turno para obtener los valores reales
+                        // El cash cut ya tiene expected_cash_in_drawer calculado correctamente
+                        // (incluye fondo + ventas - gastos)
+                        const cashCutData = await pool.query(
+                            `SELECT expected_cash_in_drawer, counted_cash, difference
+                             FROM cash_cuts
+                             WHERE shift_id = $1 AND tenant_id = $2
+                             ORDER BY created_at DESC LIMIT 1`,
+                            [shift.id, tenant_id]
+                        );
+
+                        let countedCash, expectedCash, difference;
+
+                        if (cashCutData.rows.length > 0) {
+                            // Usar valores del cash cut (correctos)
+                            const cashCut = cashCutData.rows[0];
+                            countedCash = parseFloat(cashCut.counted_cash) || 0;
+                            expectedCash = parseFloat(cashCut.expected_cash_in_drawer) || 0;
+                            difference = parseFloat(cashCut.difference) || 0;
+                            console.log(`[Sync/Shifts] 📊 Usando valores de cash_cut: Expected=$${expectedCash}, Counted=$${countedCash}, Diff=$${difference}`);
+                        } else {
+                            // ⏭️ No hay cash_cut aún - la notificación se enviará desde cash-cuts.js
+                            // cuando se sincronice el corte de caja (donde tenemos los valores correctos)
+                            console.log(`[Sync/Shifts] ⏭️ No se encontró cash_cut aún, notificación se enviará desde cash-cuts sync`);
+                            // Saltar el envío de notificación desde aquí
+                            throw new Error('SKIP_NOTIFICATION');
+                        }
 
                         await notifyShiftEnded(
                             branch_id,
@@ -731,7 +754,12 @@ module.exports = (pool, io) => {
                         console.log(`[Sync/Shifts] ✅ Notificaciones de cierre enviadas para ${employee.full_name}`);
                     }
                 } catch (notifError) {
-                    console.error(`[Sync/Shifts] ⚠️ Error enviando notificaciones de cierre: ${notifError.message}`);
+                    if (notifError.message === 'SKIP_NOTIFICATION') {
+                        // Normal: esperando que cash-cuts.js envíe la notificación
+                        console.log(`[Sync/Shifts] ℹ️ Notificación se enviará cuando se sincronice el cash_cut`);
+                    } else {
+                        console.error(`[Sync/Shifts] ⚠️ Error enviando notificaciones de cierre: ${notifError.message}`);
+                    }
                     // No fallar la sincronización si falla el envío de notificaciones
                 }
 

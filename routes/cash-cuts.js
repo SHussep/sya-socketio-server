@@ -5,6 +5,7 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const JWT_SECRET = process.env.JWT_SECRET;
+const { notifyShiftEnded } = require('../utils/notificationHelper');
 
 // Middleware: Autenticación JWT
 function authenticateToken(req, res, next) {
@@ -438,6 +439,52 @@ module.exports = (pool) => {
 
                     results.push({ success: true, data: insertResult.rows[0] });
                     console.log(`[CashCuts/Sync] ✅ Cash cut synced for shift ${shiftId}`);
+
+                    // 🔔 ENVIAR NOTIFICACIÓN FCM SI ES CIERRE DE TURNO
+                    if (isClosed) {
+                        try {
+                            // Obtener datos del empleado
+                            const employeeData = await pool.query(
+                                `SELECT CONCAT(first_name, ' ', last_name) as full_name, global_id
+                                 FROM employees WHERE id = $1`,
+                                [shiftEmployeeId]
+                            );
+
+                            // Obtener nombre de la sucursal
+                            const branchData = await pool.query(
+                                `SELECT name FROM branches WHERE id = $1`,
+                                [branchId]
+                            );
+
+                            if (employeeData.rows.length > 0 && branchData.rows.length > 0) {
+                                const employee = employeeData.rows[0];
+                                const branch = branchData.rows[0];
+
+                                const notifCountedCash = parseFloat(countedCash) || 0;
+                                const notifExpectedCash = parseFloat(expectedCashInDrawer) || 0;
+                                const notifDifference = parseFloat(difference) || 0;
+
+                                console.log(`[CashCuts/Sync] 📊 Enviando notificación: Expected=$${notifExpectedCash}, Counted=$${notifCountedCash}, Diff=$${notifDifference}`);
+
+                                await notifyShiftEnded(
+                                    branchId,
+                                    employee.global_id,
+                                    {
+                                        employeeName: employee.full_name,
+                                        branchName: branch.name,
+                                        difference: notifDifference,
+                                        countedCash: notifCountedCash,
+                                        expectedCash: notifExpectedCash
+                                    }
+                                );
+
+                                console.log(`[CashCuts/Sync] ✅ Notificaciones de cierre enviadas para ${employee.full_name}`);
+                            }
+                        } catch (notifError) {
+                            console.error(`[CashCuts/Sync] ⚠️ Error enviando notificaciones: ${notifError.message}`);
+                            // No fallar la sincronización si falla el envío de notificaciones
+                        }
+                    }
                 } catch (error) {
                     await client.query('ROLLBACK');
                     results.push({ success: false, error: error.message });
