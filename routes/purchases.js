@@ -31,7 +31,11 @@ module.exports = (pool) => {
     router.get('/summary', authenticateToken, async (req, res) => {
         try {
             const { tenantId, branchId } = req.user;
-            const { start_date, end_date, all_branches = 'false' } = req.query;
+            const { start_date, end_date, all_branches = 'false', timezone } = req.query;
+
+            // ✅ Usar timezone del cliente para filtrar fechas correctamente
+            const userTimezone = timezone || 'UTC';
+            console.log(`[Purchases/Summary] 🕐 Using timezone: ${userTimezone}`);
 
             let whereClause = 'WHERE p.tenant_id = $1';
             const params = [tenantId];
@@ -43,14 +47,17 @@ module.exports = (pool) => {
                 paramIndex++;
             }
 
+            // ✅ Filtrar por fechas usando AT TIME ZONE para conversión correcta
+            // NOTA: purchase_date es 'timestamp without time zone' almacenado en UTC
+            // Primero lo marcamos como UTC, luego lo convertimos al timezone del usuario
             if (start_date) {
-                whereClause += ` AND p.purchase_date >= $${paramIndex}`;
+                whereClause += ` AND (p.purchase_date AT TIME ZONE 'UTC' AT TIME ZONE '${userTimezone}')::date >= $${paramIndex}::date`;
                 params.push(start_date);
                 paramIndex++;
             }
 
             if (end_date) {
-                whereClause += ` AND p.purchase_date <= $${paramIndex}`;
+                whereClause += ` AND (p.purchase_date AT TIME ZONE 'UTC' AT TIME ZONE '${userTimezone}')::date <= $${paramIndex}::date`;
                 params.push(end_date);
                 paramIndex++;
             }
@@ -117,7 +124,11 @@ module.exports = (pool) => {
     router.get('/', authenticateToken, async (req, res) => {
         try {
             const { tenantId, branchId } = req.user;
-            const { limit = 50, offset = 0, all_branches = 'false', start_date, end_date } = req.query;
+            const { limit = 50, offset = 0, all_branches = 'false', start_date, end_date, timezone } = req.query;
+
+            // ✅ Usar timezone del cliente para filtrar fechas correctamente
+            const userTimezone = timezone || 'UTC';
+            console.log(`[Purchases/GET] 🕐 Using timezone: ${userTimezone}`);
 
             let whereClause = 'WHERE p.tenant_id = $1';
             const params = [tenantId];
@@ -129,14 +140,17 @@ module.exports = (pool) => {
                 paramIndex++;
             }
 
+            // ✅ Filtrar por fechas usando AT TIME ZONE para conversión correcta
+            // NOTA: purchase_date es 'timestamp without time zone' almacenado en UTC
+            // Primero lo marcamos como UTC, luego lo convertimos al timezone del usuario
             if (start_date) {
-                whereClause += ` AND p.purchase_date >= $${paramIndex}`;
+                whereClause += ` AND (p.purchase_date AT TIME ZONE 'UTC' AT TIME ZONE '${userTimezone}')::date >= $${paramIndex}::date`;
                 params.push(start_date);
                 paramIndex++;
             }
 
             if (end_date) {
-                whereClause += ` AND p.purchase_date <= $${paramIndex}`;
+                whereClause += ` AND (p.purchase_date AT TIME ZONE 'UTC' AT TIME ZONE '${userTimezone}')::date <= $${paramIndex}::date`;
                 params.push(end_date);
                 paramIndex++;
             }
