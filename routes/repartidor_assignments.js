@@ -81,7 +81,8 @@ function createRepartidorAssignmentRoutes(io) {
       is_credit,
       payment_reference,
       liquidated_by_employee_global_id,  // UUID del empleado que liquidó
-      suppress_notification              // Si es true, NO enviar notificación FCM (anti-spam para batch)
+      suppress_notification,             // Si es true, NO enviar notificación FCM (anti-spam para batch)
+      source                             // Origen: 'desktop' o 'mobile'
     } = req.body;
 
     try {
@@ -333,12 +334,13 @@ function createRepartidorAssignmentRoutes(io) {
           global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw,
           product_id, product_name, venta_detalle_id,
           payment_method_id, cash_amount, card_amount, credit_amount,
-          amount_received, is_credit, payment_reference, liquidated_by_employee_id
+          amount_received, is_credit, payment_reference, liquidated_by_employee_id,
+          source
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
           $16::uuid, $17::uuid, $18, $19, $20,
           $21, $22, $23,
-          $24, $25, $26, $27, $28, $29, $30, $31
+          $24, $25, $26, $27, $28, $29, $30, $31, $32
         )
         ON CONFLICT (global_id) DO UPDATE
         SET status = EXCLUDED.status,
@@ -388,7 +390,8 @@ function createRepartidorAssignmentRoutes(io) {
         amount_received ? parseFloat(amount_received) : null,
         is_credit || false,
         payment_reference || null,
-        resolvedLiquidatedByEmployeeId  // ✅ ID del empleado que liquidó resuelto desde global_id
+        resolvedLiquidatedByEmployeeId,  // ✅ ID del empleado que liquidó resuelto desde global_id
+        source || 'desktop'              // ✅ Origen de la asignación: 'desktop' o 'mobile'
       ]);
 
       const assignment = result.rows[0];
@@ -713,6 +716,7 @@ function createRepartidorAssignmentRoutes(io) {
           ra.is_credit,
           ra.payment_reference,
           ra.liquidated_by_employee_id,
+          ra.source,
           -- Joins para display
           CONCAT(e.first_name, ' ', e.last_name) as employee_name,
           b.name as branch_name,
