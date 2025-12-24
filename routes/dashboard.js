@@ -60,25 +60,22 @@ module.exports = (pool) => {
 
             // Construir filtros de fecha timezone-aware
             // Cuando el cliente NO envía fechas, usamos CURRENT_DATE en el timezone efectivo
-            // ✅ fecha_venta_utc es 'timestamp with time zone' - solo necesita una conversión
-            // ✅ expense_date es 'timestamp without time zone' almacenado en UTC - necesita doble conversión
+            // Todas las columnas de fecha son ahora 'timestamp with time zone' (timestamptz)
             let dateFilter = `DATE(fecha_venta_utc AT TIME ZONE '${effectiveTimezone}') = DATE(NOW() AT TIME ZONE '${effectiveTimezone}')`;
-            let expenseDateFilter = `DATE(expense_date AT TIME ZONE 'UTC' AT TIME ZONE '${effectiveTimezone}') = DATE(NOW() AT TIME ZONE '${effectiveTimezone}')`;
+            let expenseDateFilter = `DATE(expense_date AT TIME ZONE '${effectiveTimezone}') = DATE(NOW() AT TIME ZONE '${effectiveTimezone}')`;
             let assignmentDateFilter = `DATE(fecha_asignacion AT TIME ZONE '${effectiveTimezone}') = DATE(NOW() AT TIME ZONE '${effectiveTimezone}')`;
 
             if (start_date && end_date) {
-                // ✅ El cliente envía fechas locales (ej: 2025-12-16T00:00:00.000 = medianoche en SU timezone)
+                // El cliente envía fechas locales (ej: 2025-12-16T00:00:00.000 = medianoche en SU timezone)
                 // Extraemos solo la parte de fecha para comparar en el timezone del cliente
                 const startDateOnly = start_date.split('T')[0]; // "2025-12-16"
                 const endDateOnly = end_date.split('T')[0];     // "2025-12-16"
 
                 console.log(`[Dashboard Summary] Using date range in ${effectiveTimezone}: ${startDateOnly} to ${endDateOnly}`);
 
-                // ✅ Comparar las fechas en el timezone del cliente usando AT TIME ZONE
-                // fecha_venta_utc es 'timestamp with time zone' - solo una conversión
+                // Comparar las fechas en el timezone del cliente usando AT TIME ZONE
                 dateFilter = `(fecha_venta_utc AT TIME ZONE '${effectiveTimezone}')::date >= '${startDateOnly}'::date AND (fecha_venta_utc AT TIME ZONE '${effectiveTimezone}')::date <= '${endDateOnly}'::date`;
-                // expense_date es 'timestamp without time zone' en UTC - doble conversión
-                expenseDateFilter = `(expense_date AT TIME ZONE 'UTC' AT TIME ZONE '${effectiveTimezone}')::date >= '${startDateOnly}'::date AND (expense_date AT TIME ZONE 'UTC' AT TIME ZONE '${effectiveTimezone}')::date <= '${endDateOnly}'::date`;
+                expenseDateFilter = `(expense_date AT TIME ZONE '${effectiveTimezone}')::date >= '${startDateOnly}'::date AND (expense_date AT TIME ZONE '${effectiveTimezone}')::date <= '${endDateOnly}'::date`;
                 assignmentDateFilter = `(fecha_asignacion AT TIME ZONE '${effectiveTimezone}')::date >= '${startDateOnly}'::date AND (fecha_asignacion AT TIME ZONE '${effectiveTimezone}')::date <= '${endDateOnly}'::date`;
             }
 
@@ -218,16 +215,14 @@ module.exports = (pool) => {
             }
 
             if (start_date && end_date) {
-                // ✅ purchase_date es 'timestamp without time zone' almacenado en UTC
-                // Primero lo marcamos como UTC, luego lo convertimos al timezone del usuario
-                purchasesQuery += ` AND (purchase_date AT TIME ZONE 'UTC' AT TIME ZONE '${effectiveTimezone}')::date >= $${purchaseParamIndex}::date`;
-                purchasesQuery += ` AND (purchase_date AT TIME ZONE 'UTC' AT TIME ZONE '${effectiveTimezone}')::date <= $${purchaseParamIndex + 1}::date`;
+                // purchase_date es ahora 'timestamp with time zone' (timestamptz)
+                purchasesQuery += ` AND (purchase_date AT TIME ZONE '${effectiveTimezone}')::date >= $${purchaseParamIndex}::date`;
+                purchasesQuery += ` AND (purchase_date AT TIME ZONE '${effectiveTimezone}')::date <= $${purchaseParamIndex + 1}::date`;
                 purchasesParams.push(start_date, end_date);
                 purchaseParamIndex += 2;
             } else {
                 // Sin fechas: usar el día actual en el timezone del cliente
-                // ✅ Convertir purchase_date de UTC al timezone del usuario antes de comparar
-                purchasesQuery += ` AND (purchase_date AT TIME ZONE 'UTC' AT TIME ZONE '${effectiveTimezone}')::date = (NOW() AT TIME ZONE '${effectiveTimezone}')::date`;
+                purchasesQuery += ` AND (purchase_date AT TIME ZONE '${effectiveTimezone}')::date = (NOW() AT TIME ZONE '${effectiveTimezone}')::date`;
             }
 
             const purchasesResult = await pool.query(purchasesQuery, purchasesParams);

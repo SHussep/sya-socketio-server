@@ -47,17 +47,16 @@ module.exports = (pool) => {
                 paramIndex++;
             }
 
-            // ✅ Filtrar por fechas usando AT TIME ZONE para conversión correcta
-            // NOTA: purchase_date es 'timestamp without time zone' almacenado en UTC
-            // Primero lo marcamos como UTC, luego lo convertimos al timezone del usuario
+            // ✅ Filtrar por fechas usando AT TIME ZONE
+            // purchase_date es ahora 'timestamp with time zone' (timestamptz)
             if (start_date) {
-                whereClause += ` AND (p.purchase_date AT TIME ZONE 'UTC' AT TIME ZONE '${userTimezone}')::date >= $${paramIndex}::date`;
+                whereClause += ` AND (p.purchase_date AT TIME ZONE '${userTimezone}')::date >= $${paramIndex}::date`;
                 params.push(start_date);
                 paramIndex++;
             }
 
             if (end_date) {
-                whereClause += ` AND (p.purchase_date AT TIME ZONE 'UTC' AT TIME ZONE '${userTimezone}')::date <= $${paramIndex}::date`;
+                whereClause += ` AND (p.purchase_date AT TIME ZONE '${userTimezone}')::date <= $${paramIndex}::date`;
                 params.push(end_date);
                 paramIndex++;
             }
@@ -140,17 +139,16 @@ module.exports = (pool) => {
                 paramIndex++;
             }
 
-            // ✅ Filtrar por fechas usando AT TIME ZONE para conversión correcta
-            // NOTA: purchase_date es 'timestamp without time zone' almacenado en UTC
-            // Primero lo marcamos como UTC, luego lo convertimos al timezone del usuario
+            // ✅ Filtrar por fechas usando AT TIME ZONE
+            // purchase_date es ahora 'timestamp with time zone' (timestamptz)
             if (start_date) {
-                whereClause += ` AND (p.purchase_date AT TIME ZONE 'UTC' AT TIME ZONE '${userTimezone}')::date >= $${paramIndex}::date`;
+                whereClause += ` AND (p.purchase_date AT TIME ZONE '${userTimezone}')::date >= $${paramIndex}::date`;
                 params.push(start_date);
                 paramIndex++;
             }
 
             if (end_date) {
-                whereClause += ` AND (p.purchase_date AT TIME ZONE 'UTC' AT TIME ZONE '${userTimezone}')::date <= $${paramIndex}::date`;
+                whereClause += ` AND (p.purchase_date AT TIME ZONE '${userTimezone}')::date <= $${paramIndex}::date`;
                 params.push(end_date);
                 paramIndex++;
             }

@@ -90,8 +90,7 @@ module.exports = (pool, io) => {
             console.log(`[Expenses/GET] 🕐 Using timezone: ${userTimezone}`);
 
             // Filtro por rango de fechas usando AT TIME ZONE
-            // ✅ expense_date es 'timestamp without time zone' almacenado en UTC
-            // Primero lo marcamos como UTC, luego lo convertimos al timezone del usuario
+            // expense_date es ahora 'timestamp with time zone' (timestamptz)
             if (startDate && endDate) {
                 // Extraer solo la parte de fecha para comparar en el timezone del cliente
                 const startDateOnly = startDate.split('T')[0];
@@ -99,14 +98,14 @@ module.exports = (pool, io) => {
 
                 console.log(`[Expenses/GET] 📅 Date range in ${userTimezone}: ${startDateOnly} to ${endDateOnly}`);
 
-                query += ` AND (e.expense_date AT TIME ZONE 'UTC' AT TIME ZONE '${userTimezone}')::date >= '${startDateOnly}'::date`;
-                query += ` AND (e.expense_date AT TIME ZONE 'UTC' AT TIME ZONE '${userTimezone}')::date <= '${endDateOnly}'::date`;
+                query += ` AND (e.expense_date AT TIME ZONE '${userTimezone}')::date >= '${startDateOnly}'::date`;
+                query += ` AND (e.expense_date AT TIME ZONE '${userTimezone}')::date <= '${endDateOnly}'::date`;
             } else if (startDate) {
                 const startDateOnly = startDate.split('T')[0];
-                query += ` AND (e.expense_date AT TIME ZONE 'UTC' AT TIME ZONE '${userTimezone}')::date >= '${startDateOnly}'::date`;
+                query += ` AND (e.expense_date AT TIME ZONE '${userTimezone}')::date >= '${startDateOnly}'::date`;
             } else if (endDate) {
                 const endDateOnly = endDate.split('T')[0];
-                query += ` AND (e.expense_date AT TIME ZONE 'UTC' AT TIME ZONE '${userTimezone}')::date <= '${endDateOnly}'::date`;
+                query += ` AND (e.expense_date AT TIME ZONE '${userTimezone}')::date <= '${endDateOnly}'::date`;
             }
 
             // Filtro por empleado
