@@ -747,24 +747,22 @@ async function notifyExpenseCreated(employeeGlobalId, { expenseId, amount, descr
  * 1. El repartidor que recibe la asignación
  * 2. Los administradores y encargados de la sucursal
  * @param {string} employeeGlobalId - GlobalId (UUID) del repartidor
- * @param {number} branchId - ID de la sucursal
- * @param {string} employeeName - Nombre del repartidor
- * @param {string} createdByName - Nombre del empleado que autorizó la asignación
- * @param {boolean} isConsolidated - Si es notificación consolidada (múltiples items)
- * @param {number} itemCount - Número de items/productos en la asignación
+ * @param {object} params - Datos de la asignación
  */
-async function notifyAssignmentCreated(employeeGlobalId, { assignmentId, quantity, amount, branchName, branchId, employeeName, createdByName, isConsolidated, itemCount }) {
+async function notifyAssignmentCreated(employeeGlobalId, { assignmentId, quantity, amount, unitAbbreviation, productName, branchName, branchId, employeeName, createdByName, isConsolidated, itemCount }) {
     // ✅ Formatear mensaje según si es consolidado (múltiples items) o individual
     let repartidorBody, adminBody;
+    const unit = unitAbbreviation || 'kg';
 
     if (isConsolidated && itemCount > 1) {
         // Notificación CONSOLIDADA: "Recibiste 4 productos por $207.75"
         repartidorBody = `Recibiste ${itemCount} producto${itemCount > 1 ? 's' : ''} por $${amount.toFixed(2)} en ${branchName}`;
         adminBody = `${employeeName} recibió ${itemCount} producto${itemCount > 1 ? 's' : ''} ($${amount.toFixed(2)}) - ${createdByName}`;
     } else {
-        // Notificación INDIVIDUAL (legacy): "Se te asignó 2.50 kg ($50.00)"
-        repartidorBody = `Se te asignó ${quantity.toFixed(2)} kg ($${amount.toFixed(2)}) en ${branchName}`;
-        adminBody = `${employeeName} recibió ${quantity.toFixed(2)} kg ($${amount.toFixed(2)}) autorizado por ${createdByName}`;
+        // Notificación INDIVIDUAL: "Se te asignó 25.00 pz ($750.00) - Salsa Roja"
+        const productInfo = productName ? ` - ${productName}` : '';
+        repartidorBody = `Se te asignó ${quantity.toFixed(2)} ${unit} ($${amount.toFixed(2)})${productInfo}`;
+        adminBody = `${employeeName} recibió ${quantity.toFixed(2)} ${unit} ($${amount.toFixed(2)}) autorizado por ${createdByName}`;
     }
 
     // Notificar al repartidor (usando GlobalId)
@@ -776,6 +774,8 @@ async function notifyAssignmentCreated(employeeGlobalId, { assignmentId, quantit
             assignmentId: assignmentId.toString(),
             quantity: quantity.toString(),
             amount: amount.toString(),
+            unitAbbreviation: unit,
+            productName: productName || '',
             branchName,
             isConsolidated: isConsolidated ? 'true' : 'false',
             itemCount: (itemCount || 1).toString()
@@ -794,6 +794,8 @@ async function notifyAssignmentCreated(employeeGlobalId, { assignmentId, quantit
             createdByName,
             quantity: quantity.toString(),
             amount: amount.toString(),
+            unitAbbreviation: unit,
+            productName: productName || '',
             branchName,
             isConsolidated: isConsolidated ? 'true' : 'false',
             itemCount: (itemCount || 1).toString()
