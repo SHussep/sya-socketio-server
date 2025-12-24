@@ -60,8 +60,10 @@ module.exports = (pool) => {
 
             // Construir filtros de fecha timezone-aware
             // Cuando el cliente NO envía fechas, usamos CURRENT_DATE en el timezone efectivo
+            // ✅ fecha_venta_utc es 'timestamp with time zone' - solo necesita una conversión
+            // ✅ expense_date es 'timestamp without time zone' almacenado en UTC - necesita doble conversión
             let dateFilter = `DATE(fecha_venta_utc AT TIME ZONE '${effectiveTimezone}') = DATE(NOW() AT TIME ZONE '${effectiveTimezone}')`;
-            let expenseDateFilter = `DATE(expense_date AT TIME ZONE '${effectiveTimezone}') = DATE(NOW() AT TIME ZONE '${effectiveTimezone}')`;
+            let expenseDateFilter = `DATE(expense_date AT TIME ZONE 'UTC' AT TIME ZONE '${effectiveTimezone}') = DATE(NOW() AT TIME ZONE '${effectiveTimezone}')`;
             let assignmentDateFilter = `DATE(fecha_asignacion AT TIME ZONE '${effectiveTimezone}') = DATE(NOW() AT TIME ZONE '${effectiveTimezone}')`;
 
             if (start_date && end_date) {
@@ -73,9 +75,10 @@ module.exports = (pool) => {
                 console.log(`[Dashboard Summary] Using date range in ${effectiveTimezone}: ${startDateOnly} to ${endDateOnly}`);
 
                 // ✅ Comparar las fechas en el timezone del cliente usando AT TIME ZONE
-                // Esto convierte fecha_venta_utc al timezone del cliente antes de extraer la fecha
+                // fecha_venta_utc es 'timestamp with time zone' - solo una conversión
                 dateFilter = `(fecha_venta_utc AT TIME ZONE '${effectiveTimezone}')::date >= '${startDateOnly}'::date AND (fecha_venta_utc AT TIME ZONE '${effectiveTimezone}')::date <= '${endDateOnly}'::date`;
-                expenseDateFilter = `(expense_date AT TIME ZONE '${effectiveTimezone}')::date >= '${startDateOnly}'::date AND (expense_date AT TIME ZONE '${effectiveTimezone}')::date <= '${endDateOnly}'::date`;
+                // expense_date es 'timestamp without time zone' en UTC - doble conversión
+                expenseDateFilter = `(expense_date AT TIME ZONE 'UTC' AT TIME ZONE '${effectiveTimezone}')::date >= '${startDateOnly}'::date AND (expense_date AT TIME ZONE 'UTC' AT TIME ZONE '${effectiveTimezone}')::date <= '${endDateOnly}'::date`;
                 assignmentDateFilter = `(fecha_asignacion AT TIME ZONE '${effectiveTimezone}')::date >= '${startDateOnly}'::date AND (fecha_asignacion AT TIME ZONE '${effectiveTimezone}')::date <= '${endDateOnly}'::date`;
             }
 
