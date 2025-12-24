@@ -215,13 +215,16 @@ module.exports = (pool) => {
             }
 
             if (start_date && end_date) {
-                // Usar la misma lógica que /api/purchases - pasar ISO string completo
-                purchasesQuery += ` AND purchase_date >= $${purchaseParamIndex} AND purchase_date <= $${purchaseParamIndex + 1}`;
+                // ✅ purchase_date es 'timestamp without time zone' almacenado en UTC
+                // Primero lo marcamos como UTC, luego lo convertimos al timezone del usuario
+                purchasesQuery += ` AND (purchase_date AT TIME ZONE 'UTC' AT TIME ZONE '${effectiveTimezone}')::date >= $${purchaseParamIndex}::date`;
+                purchasesQuery += ` AND (purchase_date AT TIME ZONE 'UTC' AT TIME ZONE '${effectiveTimezone}')::date <= $${purchaseParamIndex + 1}::date`;
                 purchasesParams.push(start_date, end_date);
                 purchaseParamIndex += 2;
             } else {
                 // Sin fechas: usar el día actual en el timezone del cliente
-                purchasesQuery += ` AND purchase_date >= (NOW() AT TIME ZONE '${effectiveTimezone}')::date AND purchase_date < ((NOW() AT TIME ZONE '${effectiveTimezone}')::date + INTERVAL '1 day')`;
+                // ✅ Convertir purchase_date de UTC al timezone del usuario antes de comparar
+                purchasesQuery += ` AND (purchase_date AT TIME ZONE 'UTC' AT TIME ZONE '${effectiveTimezone}')::date = (NOW() AT TIME ZONE '${effectiveTimezone}')::date`;
             }
 
             const purchasesResult = await pool.query(purchasesQuery, purchasesParams);
