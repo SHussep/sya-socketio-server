@@ -1,9 +1,16 @@
 // Test del refresh token de la app vieja de Dropbox
 const fetch = require('node-fetch');
 
-const OLD_APP_KEY = 'zf6rn0c3dyq5ji0';
-const OLD_APP_SECRET = 'sindb8xm948blvo';
-const OLD_REFRESH_TOKEN = 'gcdjgrGh7twAAAAAAAAAAeA1mIfsFNXPB47yzoRVL-zZuSsDw8QUTdsYoATNMu_F';
+// ⚠️ SEGURIDAD: Las credenciales deben venir de variables de entorno
+const OLD_APP_KEY = process.env.DROPBOX_OLD_APP_KEY;
+const OLD_APP_SECRET = process.env.DROPBOX_OLD_APP_SECRET;
+const OLD_REFRESH_TOKEN = process.env.DROPBOX_OLD_REFRESH_TOKEN;
+
+if (!OLD_APP_KEY || !OLD_APP_SECRET || !OLD_REFRESH_TOKEN) {
+    console.error('❌ Error: Las credenciales de Dropbox deben estar configuradas');
+    console.error('   Ejecuta: export DROPBOX_OLD_APP_KEY=xxx DROPBOX_OLD_APP_SECRET=yyy DROPBOX_OLD_REFRESH_TOKEN=zzz');
+    process.exit(1);
+}
 
 async function testOldRefreshToken() {
     try {

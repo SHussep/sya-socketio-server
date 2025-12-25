@@ -12,6 +12,13 @@
 const express = require('express');
 const { pool } = require('../database');
 const { notifyAssignmentCreated } = require('../utils/notificationHelper');
+const jwt = require('jsonwebtoken');
+
+// ⚠️ SEGURIDAD: JWT_SECRET debe estar configurado en el entorno
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  console.error('[SECURITY] ❌ JWT_SECRET no está configurado en el entorno');
+}
 
 function createRepartidorAssignmentRoutes(io) {
   const router = express.Router();
@@ -21,10 +28,9 @@ function createRepartidorAssignmentRoutes(io) {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
 
-    if (token) {
-      const jwt = require('jsonwebtoken');
+    if (token && JWT_SECRET) {
       try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+        const decoded = jwt.verify(token, JWT_SECRET);
         req.jwtData = decoded;
       } catch (err) {
         req.jwtData = null;

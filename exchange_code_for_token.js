@@ -1,8 +1,15 @@
 // Script para intercambiar el código de autorización por tokens
 // Uso: node exchange_code_for_token.js TU_CODIGO_AQUI
 
-const APP_KEY = 'tgmvr7snr4vbxb9';
-const APP_SECRET = 'vrsgbq7tt44awpw';
+// ⚠️ SEGURIDAD: Las credenciales deben venir de variables de entorno
+const APP_KEY = process.env.DROPBOX_APP_KEY;
+const APP_SECRET = process.env.DROPBOX_APP_SECRET;
+
+if (!APP_KEY || !APP_SECRET) {
+    console.error('❌ Error: DROPBOX_APP_KEY y DROPBOX_APP_SECRET deben estar configurados');
+    console.error('   Ejecuta: export DROPBOX_APP_KEY=xxx DROPBOX_APP_SECRET=yyy');
+    process.exit(1);
+}
 
 const authCode = process.argv[2];
 

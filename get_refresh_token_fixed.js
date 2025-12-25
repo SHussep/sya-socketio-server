@@ -1,8 +1,15 @@
 // Script CORREGIDO para obtener refresh token de Dropbox
 // El problema anterior: faltaba incluir "token_access_type=offline"
 
-const APP_KEY = 'tgmvr7snr4vbxb9';
-const APP_SECRET = 'vrsgbq7tt44awpw';
+// ⚠️ SEGURIDAD: Las credenciales deben venir de variables de entorno
+const APP_KEY = process.env.DROPBOX_APP_KEY;
+const APP_SECRET = process.env.DROPBOX_APP_SECRET;
+
+if (!APP_KEY || !APP_SECRET) {
+    console.error('❌ Error: DROPBOX_APP_KEY y DROPBOX_APP_SECRET deben estar configurados');
+    console.error('   Ejecuta: export DROPBOX_APP_KEY=xxx DROPBOX_APP_SECRET=yyy');
+    process.exit(1);
+}
 
 console.log('\n═══════════════════════════════════════════════════════════');
 console.log('  OBTENER REFRESH TOKEN DE DROPBOX (PERMANENTE)');

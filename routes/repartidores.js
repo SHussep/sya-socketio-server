@@ -1,9 +1,20 @@
 // routes/repartidores.js
 const express = require('express');
 const router = express.Router();
+const jwt = require('jsonwebtoken');
+
+// ⚠️ SEGURIDAD: JWT_SECRET debe estar configurado en el entorno
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+    console.error('[SECURITY] ❌ JWT_SECRET no está configurado en el entorno');
+}
 
 // Middleware para validar JWT token
 function authenticateToken(req, res, next) {
+    if (!JWT_SECRET) {
+        return res.status(500).json({ success: false, message: 'Configuración de seguridad faltante' });
+    }
+
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
 
@@ -11,8 +22,7 @@ function authenticateToken(req, res, next) {
         return res.status(401).json({ success: false, message: 'Token no proporcionado' });
     }
 
-    const jwt = require('jsonwebtoken');
-    jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key', (err, user) => {
+    jwt.verify(token, JWT_SECRET, (err, user) => {
         if (err) {
             return res.status(403).json({ success: false, message: 'Token inválido' });
         }

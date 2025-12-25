@@ -1,5 +1,12 @@
 const { Pool } = require('pg');
-const pool = new Pool({ connectionString: process.env.DATABASE_URL || 'postgresql://sya_system_user:Hussep.1@localhost:5432/sya_pos' });
+
+// ⚠️ SEGURIDAD: DATABASE_URL debe estar configurado en el entorno
+if (!process.env.DATABASE_URL) {
+  console.error('❌ DATABASE_URL no está configurado. Ejecuta: export DATABASE_URL=postgresql://...');
+  process.exit(1);
+}
+
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 async function check() {
   const result = await pool.query(`

@@ -5,8 +5,15 @@ require('dotenv').config();
 const crypto = require('crypto');
 
 async function testDropboxPKCE() {
-    const APP_KEY = 'tgmvr7snr4vbxb9';
-    const APP_SECRET = 'vrsgbq7tt44awpw';
+    // ⚠️ SEGURIDAD: Las credenciales deben venir de variables de entorno
+    const APP_KEY = process.env.DROPBOX_APP_KEY;
+    const APP_SECRET = process.env.DROPBOX_APP_SECRET;
+
+    if (!APP_KEY || !APP_SECRET) {
+        console.error('❌ Error: DROPBOX_APP_KEY y DROPBOX_APP_SECRET deben estar configurados');
+        console.error('   Ejecuta: export DROPBOX_APP_KEY=xxx DROPBOX_APP_SECRET=yyy');
+        process.exit(1);
+    }
 
     console.log('\n═══════════════════════════════════════════════════════════');
     console.log('  DIAGNÓSTICO: Problema con tokens de Dropbox');
@@ -14,7 +21,7 @@ async function testDropboxPKCE() {
 
     console.log('📋 Información de tu app:');
     console.log(`   App Key: ${APP_KEY}`);
-    console.log(`   App Secret: ${APP_SECRET}\n`);
+    console.log(`   App Secret: ****** (oculto)\n`);
 
     console.log('⚠️  PROBLEMA IDENTIFICADO:');
     console.log('   Los tokens generados con OAuth están fallando con 401.\n');
