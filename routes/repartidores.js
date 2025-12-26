@@ -364,6 +364,7 @@ module.exports = (pool) => {
             // 🔧 QUERY AGRUPADO POR venta_id para evitar duplicados
             // Cada venta puede tener múltiples registros en repartidor_assignments (uno por producto)
             // Pero queremos mostrar UNA sola asignación por venta con todos sus items
+            // IMPORTANTE: Si la venta fue cancelada (v.status = 'cancelled'), mostrar como 'cancelled'
             let query = `
                 SELECT
                     MIN(ra.id) as id,
@@ -373,8 +374,9 @@ module.exports = (pool) => {
                     SUM(ra.assigned_amount) as assigned_amount,
                     AVG(ra.unit_price) as unit_price,
                     MODE() WITHIN GROUP (ORDER BY COALESCE(ra.unit_abbreviation, 'kg')) as unit_abbreviation,
-                    -- Status: si alguno es pending/in_progress, mostrar ese; si todos son liquidated, mostrar liquidated
+                    -- Status: PRIMERO verificar si la venta fue cancelada
                     CASE
+                        WHEN v.status = 'cancelled' THEN 'cancelled'
                         WHEN bool_or(ra.status = 'pending') THEN 'pending'
                         WHEN bool_or(ra.status = 'in_progress') THEN 'in_progress'
                         WHEN bool_or(ra.status = 'cancelled') THEN 'cancelled'
@@ -400,7 +402,9 @@ module.exports = (pool) => {
                     MAX(ra.payment_reference) as payment_reference,
                     MAX(ra.liquidated_by_employee_id) as liquidated_by_employee_id,
                     -- 🆕 Customer name from ventas → customers
-                    MAX(c.nombre) as customer_name
+                    MAX(c.nombre) as customer_name,
+                    -- 🆕 Indicador de si la venta original fue cancelada
+                    v.status as venta_status
                 FROM repartidor_assignments ra
                 LEFT JOIN employees e_created ON ra.created_by_employee_id = e_created.id
                 LEFT JOIN employees e_repartidor ON ra.employee_id = e_repartidor.id
@@ -412,10 +416,12 @@ module.exports = (pool) => {
 
             // ✅ CRÍTICO: Si only_open_shifts, mostrar SOLO asignaciones ACTIVAS (pending o in_progress)
             // de turnos abiertos. NO mostrar asignaciones liquidadas aunque el turno esté abierto.
+            // También excluir ventas canceladas (v.status = 'cancelled')
             if (only_open_shifts === 'true') {
                 query += ` AND (s.id IS NULL OR s.is_cash_cut_open = true)`;
                 query += ` AND ra.status IN ('pending', 'in_progress')`;  // Solo activas
-                console.log(`[Repartidor Assignments] ✅ Filtrando solo asignaciones ACTIVAS de turnos abiertos`);
+                query += ` AND (v.status IS NULL OR v.status != 'cancelled')`;  // Excluir ventas canceladas
+                console.log(`[Repartidor Assignments] ✅ Filtrando solo asignaciones ACTIVAS de turnos abiertos (excluyendo ventas canceladas)`);
             }
 
             const params = [tenantId, parseInt(employeeId)];
@@ -429,8 +435,9 @@ module.exports = (pool) => {
             }
 
             // Agrupar por venta_id (o por id si no tiene venta_id)
+            // Incluir v.status para poder detectar ventas canceladas
             query += ` GROUP BY COALESCE(ra.venta_id, ra.id), ra.venta_id, ra.employee_id, ra.repartidor_shift_id,
-                       e_created.first_name, e_created.last_name, v.ticket_number,
+                       e_created.first_name, e_created.last_name, v.ticket_number, v.status,
                        e_repartidor.first_name, e_repartidor.last_name, s.is_cash_cut_open`;
             query += ` ORDER BY MIN(ra.fecha_asignacion) DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
             params.push(parseInt(limit), parseInt(offset));
@@ -1059,6 +1066,7 @@ module.exports = (pool) => {
             console.log(`[Repartidor Shifts] GET - Employee: ${employeeId}, Tenant: ${tenantId}, Status: ${status}`);
 
             // Query para obtener turnos con resumen de asignaciones, devoluciones y faltantes
+            // IMPORTANTE: Excluimos asignaciones canceladas Y ventas canceladas de los totales
             let query = `
                 WITH shift_assignments AS (
                     SELECT
@@ -1068,10 +1076,14 @@ module.exports = (pool) => {
                         COUNT(*) as assignment_count,
                         COUNT(CASE WHEN ra.status = 'liquidated' THEN 1 END) as liquidated_count
                     FROM repartidor_assignments ra
+                    LEFT JOIN ventas v ON ra.venta_id = v.id_venta
                     WHERE ra.employee_id = $1 AND ra.tenant_id = $2
+                      AND ra.status != 'cancelled'
+                      AND (v.status IS NULL OR v.status != 'cancelled')
                     GROUP BY ra.repartidor_shift_id
                 ),
                 -- Cantidades agrupadas por unidad de medida (para mostrar "60 kg · 2 pz")
+                -- IMPORTANTE: Excluimos asignaciones canceladas Y ventas canceladas
                 shift_assigned_by_unit AS (
                     SELECT
                         ra.repartidor_shift_id,
@@ -1082,16 +1094,20 @@ module.exports = (pool) => {
                         )) as assigned_by_unit
                     FROM (
                         SELECT
-                            repartidor_shift_id,
-                            COALESCE(unit_abbreviation, 'kg') as unit_abbreviation,
-                            SUM(assigned_quantity) as sum_qty,
-                            SUM(assigned_amount) as sum_amt
-                        FROM repartidor_assignments
-                        WHERE employee_id = $1 AND tenant_id = $2
-                        GROUP BY repartidor_shift_id, COALESCE(unit_abbreviation, 'kg')
+                            ra2.repartidor_shift_id,
+                            COALESCE(ra2.unit_abbreviation, 'kg') as unit_abbreviation,
+                            SUM(ra2.assigned_quantity) as sum_qty,
+                            SUM(ra2.assigned_amount) as sum_amt
+                        FROM repartidor_assignments ra2
+                        LEFT JOIN ventas v ON ra2.venta_id = v.id_venta
+                        WHERE ra2.employee_id = $1 AND ra2.tenant_id = $2
+                          AND ra2.status != 'cancelled'
+                          AND (v.status IS NULL OR v.status != 'cancelled')
+                        GROUP BY ra2.repartidor_shift_id, COALESCE(ra2.unit_abbreviation, 'kg')
                     ) ra
                     GROUP BY ra.repartidor_shift_id
                 ),
+                -- IMPORTANTE: Solo contar devoluciones de asignaciones NO canceladas Y ventas NO canceladas
                 shift_returned_by_unit AS (
                     SELECT
                         ra.repartidor_shift_id,
@@ -1108,8 +1124,11 @@ module.exports = (pool) => {
                             SUM(rr.amount) as sum_amt
                         FROM repartidor_returns rr
                         INNER JOIN repartidor_assignments a ON rr.assignment_id = a.id
+                        LEFT JOIN ventas v ON a.venta_id = v.id_venta
                         WHERE rr.employee_id = $1 AND rr.tenant_id = $2
                           AND (rr.status IS NULL OR rr.status != 'deleted')
+                          AND a.status != 'cancelled'
+                          AND (v.status IS NULL OR v.status != 'cancelled')
                         GROUP BY a.repartidor_shift_id, COALESCE(a.unit_abbreviation, 'kg')
                     ) ra
                     GROUP BY ra.repartidor_shift_id
@@ -1122,8 +1141,11 @@ module.exports = (pool) => {
                         COUNT(rr.id) as return_count
                     FROM repartidor_returns rr
                     INNER JOIN repartidor_assignments ra ON rr.assignment_id = ra.id
+                    LEFT JOIN ventas v ON ra.venta_id = v.id_venta
                     WHERE rr.employee_id = $1 AND rr.tenant_id = $2
                       AND (rr.status IS NULL OR rr.status != 'deleted')
+                      AND ra.status != 'cancelled'
+                      AND (v.status IS NULL OR v.status != 'cancelled')
                     GROUP BY ra.repartidor_shift_id
                 ),
                 shift_expenses AS (
