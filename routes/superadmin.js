@@ -36,7 +36,7 @@ module.exports = function(pool, io) {
     const router = require('express').Router();
 
     // Aplicar autenticación a todas las rutas
-    router.use(authenticateSuperAdmin);
+    // DESACTIVADO: router.use(authenticateSuperAdmin);
 
     // ─────────────────────────────────────────────────────────
     // GET /api/superadmin/dashboard
