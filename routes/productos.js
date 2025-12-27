@@ -33,10 +33,33 @@ module.exports = (pool) => {
     // ═══════════════════════════════════════════════════════════════
     // GET /api/productos - Lista de productos del tenant
     // Incluye precio específico de sucursal si existe
+    // Acepta tenantId/branchId del JWT o como query params (para importación)
     // ═══════════════════════════════════════════════════════════════
-    router.get('/', authenticateToken, async (req, res) => {
+    router.get('/', async (req, res) => {
         try {
-            const { tenantId, branchId } = req.user;
+            // Intentar obtener tenantId/branchId del JWT primero, luego del query param
+            let tenantId = req.query.tenantId;
+            let branchId = req.query.branchId;
+
+            // Si hay token JWT, intentar extraer datos de ahí
+            const authHeader = req.headers['authorization'];
+            const token = authHeader && authHeader.split(' ')[1];
+            if (token) {
+                try {
+                    const jwt = require('jsonwebtoken');
+                    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+                    if (decoded.tenantId) tenantId = decoded.tenantId;
+                    if (decoded.branchId) branchId = decoded.branchId;
+                } catch (jwtErr) {
+                    // Token inválido o de Google - usar query params
+                    console.log('[Productos] Token no es JWT del backend, usando query params');
+                }
+            }
+
+            if (!tenantId) {
+                return res.status(400).json({ success: false, message: 'Se requiere tenantId' });
+            }
+
             const {
                 include_deleted = 'false',
                 only_active = 'true',
@@ -44,7 +67,7 @@ module.exports = (pool) => {
                 search
             } = req.query;
 
-            console.log(`[Productos] 📦 GET productos - Tenant: ${tenantId}, Branch: ${branchId}`);
+            console.log(`[Productos] 📦 GET productos - Tenant: ${tenantId}, Branch: ${branchId || 'N/A'}`);
 
             // Query con LEFT JOIN para obtener precio de sucursal si existe
             let query = `

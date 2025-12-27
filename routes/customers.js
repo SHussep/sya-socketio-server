@@ -28,9 +28,32 @@ module.exports = (pool) => {
     const router = express.Router();
 
     // GET /api/customers - Lista de clientes del tenant
-    router.get('/', authenticateToken, async (req, res) => {
+    // Acepta tenantId del JWT o como query param (para importación desde Desktop)
+    router.get('/', async (req, res) => {
         try {
-            const { tenantId } = req.user;
+            // Intentar obtener tenantId del JWT primero, luego del query param
+            let tenantId = req.query.tenantId;
+
+            // Si hay token JWT, intentar extraer tenantId de ahí
+            const authHeader = req.headers['authorization'];
+            const token = authHeader && authHeader.split(' ')[1];
+            if (token) {
+                try {
+                    const jwt = require('jsonwebtoken');
+                    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+                    if (decoded.tenantId) {
+                        tenantId = decoded.tenantId;
+                    }
+                } catch (jwtErr) {
+                    // Token inválido o de Google - usar query param
+                    console.log('[Customers] Token no es JWT del backend, usando query param');
+                }
+            }
+
+            if (!tenantId) {
+                return res.status(400).json({ success: false, message: 'Se requiere tenantId' });
+            }
+
             const { include_generic = 'false' } = req.query;
 
             let query = `
