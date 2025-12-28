@@ -51,6 +51,8 @@ module.exports = (pool) => {
                         CONCAT(e.first_name, ' ', e.last_name) as repartidor_name,
                         e.role_id,
                         r.name as role_name,
+                        e.branch_id,
+                        b.name as branch_name,
 
                         -- Asignaciones pendientes
                         SUM(CASE WHEN ra.status = 'pending' THEN ra.assigned_quantity ELSE 0 END) as pending_quantity,
@@ -82,6 +84,7 @@ module.exports = (pool) => {
                     FROM repartidor_assignments ra
                     LEFT JOIN employees e ON ra.employee_id = e.id
                     LEFT JOIN roles r ON e.role_id = r.id
+                    LEFT JOIN branches b ON e.branch_id = b.id
                     LEFT JOIN shifts s ON ra.repartidor_shift_id = s.id
                     WHERE ra.tenant_id = $1
             `;
@@ -121,7 +124,7 @@ module.exports = (pool) => {
             }
 
             query += `
-                    GROUP BY ra.employee_id, e.global_id, e.first_name, e.last_name, e.role_id, r.name
+                    GROUP BY ra.employee_id, e.global_id, e.first_name, e.last_name, e.role_id, r.name, e.branch_id, b.name
                 ),
                 returns_stats AS (
                     SELECT
@@ -211,10 +214,13 @@ module.exports = (pool) => {
                         CONCAT(e.first_name, ' ', e.last_name) as repartidor_name,
                         e.role_id,
                         r.name as role_name,
+                        e.branch_id,
+                        b.name as branch_name,
                         s.global_id as current_shift_global_id
                     FROM shifts s
                     LEFT JOIN employees e ON s.employee_id = e.id
                     LEFT JOIN roles r ON e.role_id = r.id
+                    LEFT JOIN branches b ON e.branch_id = b.id
                     WHERE s.tenant_id = $1
                       AND s.is_cash_cut_open = true
                     ORDER BY s.employee_id, s.start_time DESC
@@ -226,6 +232,8 @@ module.exports = (pool) => {
                     COALESCE(a.repartidor_name, cos.repartidor_name) as repartidor_name,
                     COALESCE(a.role_id, cos.role_id) as role_id,
                     COALESCE(a.role_name, cos.role_name) as role_name,
+                    COALESCE(a.branch_id, cos.branch_id) as branch_id,
+                    COALESCE(a.branch_name, cos.branch_name, 'Sin sucursal') as branch_name,
                     COALESCE(a.pending_quantity, 0) as pending_quantity,
                     COALESCE(a.pending_amount, 0) as pending_amount,
                     COALESCE(a.in_progress_quantity, 0) as in_progress_quantity,
@@ -268,6 +276,8 @@ module.exports = (pool) => {
                     a.repartidor_name,
                     a.role_id,
                     a.role_name,
+                    a.branch_id,
+                    COALESCE(a.branch_name, 'Sin sucursal') as branch_name,
                     a.pending_quantity,
                     a.pending_amount,
                     a.in_progress_quantity,
@@ -313,6 +323,8 @@ module.exports = (pool) => {
                     employee_global_id: row.employee_global_id,
                     repartidor_name: row.repartidor_name,
                     role_name: row.role_name,
+                    branch_id: row.branch_id,
+                    branch_name: row.branch_name,
                     current_shift_global_id: row.current_shift_global_id,
                     pending_quantity: parseFloat(row.pending_quantity),
                     pending_amount: parseFloat(row.pending_amount),
