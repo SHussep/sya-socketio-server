@@ -1058,7 +1058,7 @@ CREATE TABLE IF NOT EXISTS telemetry_events (
     branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
 
     -- Event identification
-    event_type VARCHAR(50) NOT NULL,  -- 'app_open', 'scale_configured'
+    event_type VARCHAR(50) NOT NULL,  -- 'app_open', 'scale_configured', 'theme_changed'
 
     -- Device info
     device_id VARCHAR(255),
@@ -1068,6 +1068,9 @@ CREATE TABLE IF NOT EXISTS telemetry_events (
     -- Scale configuration (only for scale_configured events)
     scale_model VARCHAR(100),
     scale_port VARCHAR(50),
+
+    -- Theme configuration (only for theme_changed events)
+    theme_name VARCHAR(50),
 
     -- Offline-first sync columns (for idempotency)
     global_id VARCHAR(255) UNIQUE NOT NULL,

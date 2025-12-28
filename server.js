@@ -604,12 +604,13 @@ app.post('/api/telemetry', async (req, res) => {
         const {
             tenantId,
             branchId,
-            eventType,        // 'app_open' | 'scale_configured'
+            eventType,        // 'app_open' | 'scale_configured' | 'theme_changed'
             deviceId,
             deviceName,
             appVersion,
             scaleModel,       // Solo para scale_configured
             scalePort,        // Solo para scale_configured
+            themeName,        // Solo para theme_changed
             global_id,
             terminal_id,
             local_op_seq,
@@ -627,7 +628,7 @@ app.post('/api/telemetry', async (req, res) => {
         }
 
         // Validar eventType
-        const validEventTypes = ['app_open', 'scale_configured'];
+        const validEventTypes = ['app_open', 'scale_configured', 'theme_changed'];
         if (!validEventTypes.includes(eventType)) {
             return res.status(400).json({
                 success: false,
@@ -663,10 +664,10 @@ app.post('/api/telemetry', async (req, res) => {
             INSERT INTO telemetry_events (
                 tenant_id, branch_id, event_type,
                 device_id, device_name, app_version,
-                scale_model, scale_port,
+                scale_model, scale_port, theme_name,
                 global_id, terminal_id, local_op_seq, device_event_raw, created_local_utc,
                 event_timestamp
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, COALESCE($14, NOW()))
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, COALESCE($15, NOW()))
             ON CONFLICT (global_id) DO NOTHING
             RETURNING id
         `, [
@@ -678,6 +679,7 @@ app.post('/api/telemetry', async (req, res) => {
             appVersion || null,
             scaleModel || null,
             scalePort || null,
+            themeName || null,
             global_id,
             terminal_id || null,
             local_op_seq || null,
@@ -689,7 +691,7 @@ app.post('/api/telemetry', async (req, res) => {
         const wasInserted = result.rows.length > 0;
         const eventId = wasInserted ? result.rows[0].id : null;
 
-        console.log(`[Telemetry] ${wasInserted ? '✅ NUEVO' : '⏭️ DUPLICADO'} ${eventType} - Tenant: ${tenantId}, Branch: ${branchId}${scaleModel ? `, Scale: ${scaleModel}` : ''}`);
+        console.log(`[Telemetry] ${wasInserted ? '✅ NUEVO' : '⏭️ DUPLICADO'} ${eventType} - Tenant: ${tenantId}, Branch: ${branchId}${scaleModel ? `, Scale: ${scaleModel}` : ''}${themeName ? `, Theme: ${themeName}` : ''}`);
 
         res.status(wasInserted ? 201 : 200).json({
             success: true,
