@@ -36,14 +36,34 @@ module.exports = (pool, io) => {
             const branchId = req.query.branchId || req.query.branch_id;
             const startDate = req.query.startDate || req.query.start_date;
             const endDate = req.query.endDate || req.query.end_date;
-            const { timezone, employee_id, tenant_id, shift_id, shiftId } = req.query;
+            const { timezone, employee_id, tenant_id, shift_id, shiftId, all_branches = 'false' } = req.query;
             const shiftIdFilter = shift_id || shiftId;
 
-            if (!branchId) {
-                return res.status(400).json({ success: false, message: 'branchId es requerido' });
+            // Obtener tenant_id del JWT si no viene en query
+            const targetTenantId = tenant_id || (req.user ? req.user.tenantId : null);
+
+            if (!targetTenantId && !branchId) {
+                return res.status(400).json({ success: false, message: 'tenant_id o branchId es requerido' });
             }
 
-            console.log(`[Expenses/GET] 📋 Obteniendo gastos - Branch: ${branchId}, Desde: ${startDate}, Hasta: ${endDate}, Shift: ${shiftIdFilter || 'ALL'}`);
+            const shouldFilterByBranch = all_branches !== 'true' && branchId;
+            console.log(`[Expenses/GET] 📋 Obteniendo gastos - All branches: ${all_branches}, Branch: ${branchId || 'ALL'}, Desde: ${startDate}, Hasta: ${endDate}, Shift: ${shiftIdFilter || 'ALL'}`);
+
+            // Construir WHERE clause dinámico
+            let whereConditions = ['e.is_active = true'];
+            let params = [];
+            let paramIndex = 1;
+
+            // Filtrar por tenant o branch
+            if (shouldFilterByBranch) {
+                whereConditions.push(`e.branch_id = $${paramIndex}`);
+                params.push(branchId);
+                paramIndex++;
+            } else if (targetTenantId) {
+                whereConditions.push(`e.tenant_id = $${paramIndex}`);
+                params.push(targetTenantId);
+                paramIndex++;
+            }
 
             // Construir query con filtros opcionales
             let query = `
@@ -76,12 +96,8 @@ module.exports = (pool, io) => {
                 LEFT JOIN branches b ON e.branch_id = b.id
                 LEFT JOIN global_expense_categories gcat ON e.global_category_id = gcat.id
                 LEFT JOIN employees reviewer ON e.reviewed_by_employee_id = reviewer.id
-                WHERE e.branch_id = $1
-                  AND e.is_active = true
+                WHERE ${whereConditions.join(' AND ')}
             `;
-
-            const params = [branchId];
-            let paramIndex = 2;
 
             // ✅ Usar timezone del cliente para filtrar fechas correctamente
             // Si el cliente envía timezone (IANA name como 'Australia/Sydney'),
@@ -112,13 +128,6 @@ module.exports = (pool, io) => {
             if (employee_id) {
                 query += ` AND e.employee_id = $${paramIndex}`;
                 params.push(employee_id);
-                paramIndex++;
-            }
-
-            // Filtro por tenant
-            if (tenant_id) {
-                query += ` AND e.tenant_id = $${paramIndex}`;
-                params.push(tenant_id);
                 paramIndex++;
             }
 
