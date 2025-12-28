@@ -173,8 +173,8 @@ module.exports = (pool) => {
             // tipo_pago_id: 1=Efectivo, 2=Tarjeta, 3=Crédito
             // estado_venta_id: 1=Borrador, 2=Asignada, 3=Completada, 5=Liquidada
 
-            // Total de gastos
-            let expensesQuery = `SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE tenant_id = $1 AND ${expenseDateFilter}`;
+            // Total de gastos (solo activos, excluir eliminados)
+            let expensesQuery = `SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE tenant_id = $1 AND is_active = true AND ${expenseDateFilter}`;
             let expensesParams = [tenantId];
             let expParamIndex = 2;
 
