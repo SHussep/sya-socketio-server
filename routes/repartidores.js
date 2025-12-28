@@ -51,7 +51,7 @@ module.exports = (pool) => {
                         CONCAT(e.first_name, ' ', e.last_name) as repartidor_name,
                         e.role_id,
                         r.name as role_name,
-                        e.branch_id,
+                        e.main_branch_id as branch_id,
                         b.name as branch_name,
 
                         -- Asignaciones pendientes
@@ -84,7 +84,7 @@ module.exports = (pool) => {
                     FROM repartidor_assignments ra
                     LEFT JOIN employees e ON ra.employee_id = e.id
                     LEFT JOIN roles r ON e.role_id = r.id
-                    LEFT JOIN branches b ON e.branch_id = b.id
+                    LEFT JOIN branches b ON e.main_branch_id = b.id
                     LEFT JOIN shifts s ON ra.repartidor_shift_id = s.id
                     WHERE ra.tenant_id = $1
             `;
@@ -124,7 +124,7 @@ module.exports = (pool) => {
             }
 
             query += `
-                    GROUP BY ra.employee_id, e.global_id, e.first_name, e.last_name, e.role_id, r.name, e.branch_id, b.name
+                    GROUP BY ra.employee_id, e.global_id, e.first_name, e.last_name, e.role_id, r.name, e.main_branch_id, b.name
                 ),
                 returns_stats AS (
                     SELECT
@@ -214,13 +214,13 @@ module.exports = (pool) => {
                         CONCAT(e.first_name, ' ', e.last_name) as repartidor_name,
                         e.role_id,
                         r.name as role_name,
-                        e.branch_id,
+                        e.main_branch_id as branch_id,
                         b.name as branch_name,
                         s.global_id as current_shift_global_id
                     FROM shifts s
                     LEFT JOIN employees e ON s.employee_id = e.id
                     LEFT JOIN roles r ON e.role_id = r.id
-                    LEFT JOIN branches b ON e.branch_id = b.id
+                    LEFT JOIN branches b ON e.main_branch_id = b.id
                     WHERE s.tenant_id = $1
                       AND s.is_cash_cut_open = true
                     ORDER BY s.employee_id, s.start_time DESC
