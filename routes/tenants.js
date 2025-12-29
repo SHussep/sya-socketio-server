@@ -429,15 +429,17 @@ module.exports = function(pool, io) {
 
             const result = await pool.query(
                 `SELECT
-                    id,
-                    tenant_code,
-                    business_name,
-                    trial_ends_at,
-                    subscription_status,
-                    subscription_id,
-                    is_active
-                FROM tenants
-                WHERE tenant_code = $1`,
+                    t.id,
+                    t.tenant_code,
+                    t.business_name,
+                    t.trial_ends_at,
+                    t.subscription_status,
+                    t.subscription_id,
+                    t.is_active,
+                    s.name as subscription_name
+                FROM tenants t
+                LEFT JOIN subscriptions s ON t.subscription_id = s.id
+                WHERE t.tenant_code = $1`,
                 [tenantCode]
             );
 
@@ -466,6 +468,7 @@ module.exports = function(pool, io) {
                     businessName: tenant.business_name,
                     trialEndsAt: trialEndsAt,
                     subscriptionStatus: tenant.subscription_status || 'trial',
+                    subscriptionName: tenant.subscription_name || 'Trial', // Nombre del plan
                     isActive: tenant.is_active,
                     isExpired: isExpired,
                     daysRemaining: daysRemaining
