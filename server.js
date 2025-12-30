@@ -98,6 +98,7 @@ const notificationHistoryRoutes = require('./routes/notification-history'); // R
 const notificationPreferencesRoutes = require('./routes/notificationPreferences'); // Preferencias de notificaciones por empleado
 const desktopUpdatesRoutes = require('./routes/desktopUpdates'); // Actualizaciones de app Desktop
 const superadminRoutes = require('./routes/superadmin'); // Panel de Super Admin (licencias, telemetría)
+const passwordResetRoutes = require('./routes/passwordReset'); // Recuperación de contraseña por email
 
 // Inicializar Firebase para notificaciones push
 initializeFirebase();
@@ -106,6 +107,7 @@ initializeFirebase();
 app.use('/api/restore', restoreRoutes);
 app.use('/api/backup', backupRoutes);
 app.use('/api/auth', authRoutes); // Registrar rutas de autenticación
+app.use('/api/password-reset', passwordResetRoutes); // Recuperación de contraseña por email
 // tenantsRoutes se registra después de crear io
 app.use('/api/notifications', notificationRoutes); // Registrar rutas de notificaciones FCM
 app.use('/api/notification-history', notificationHistoryRoutes(pool)); // Historial de notificaciones (campana)
