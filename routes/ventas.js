@@ -262,14 +262,17 @@ module.exports = function(pool) {
         try {
             const { tenantId, branchId, since, limit = 500 } = req.query;
 
-            if (!tenantId || !branchId) {
+            const tenantIdNum = parseInt(tenantId);
+            const branchIdNum = parseInt(branchId);
+
+            if (!tenantId || !branchId || isNaN(tenantIdNum) || isNaN(branchIdNum)) {
                 return res.status(400).json({
                     success: false,
-                    message: 'tenantId y branchId son requeridos'
+                    message: 'tenantId y branchId son requeridos y deben ser números válidos'
                 });
             }
 
-            console.log(`[Ventas/Pull] 📥 Descargando ventas - Tenant: ${tenantId}, Branch: ${branchId}, Since: ${since || 'ALL'}`);
+            console.log(`[Ventas/Pull] 📥 Descargando ventas - Tenant: ${tenantIdNum}, Branch: ${branchIdNum}, Since: ${since || 'ALL'}`);
 
             // Construir query base con JOINs para obtener GlobalIds
             let query = `
@@ -313,7 +316,7 @@ module.exports = function(pool) {
                 WHERE v.tenant_id = $1 AND v.branch_id = $2
             `;
 
-            const params = [parseInt(tenantId), parseInt(branchId)];
+            const params = [tenantIdNum, branchIdNum];
             let paramIndex = 3;
 
             // Filtrar por fecha de modificación si se proporciona 'since'
@@ -323,8 +326,9 @@ module.exports = function(pool) {
                 paramIndex++;
             }
 
+            const limitNum = parseInt(limit) || 500;
             query += ` ORDER BY v.updated_at ASC LIMIT $${paramIndex}`;
-            params.push(parseInt(limit));
+            params.push(limitNum);
 
             const ventasResult = await pool.query(query, params);
             console.log(`[Ventas/Pull] 📦 Encontradas ${ventasResult.rows.length} ventas`);
