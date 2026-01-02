@@ -98,6 +98,96 @@ module.exports = function(pool) {
         }
     });
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // GET /api/ventas/pull - Descargar ventas para sincronización bidireccional
+    // ═══════════════════════════════════════════════════════════════════════════
+    // IMPORTANTE: Esta ruta debe estar ANTES de /:id para que Express la matchee
+    router.get('/pull', async (req, res) => {
+        try {
+            const { tenantId, branchId, since, limit = 500 } = req.query;
+
+            const tenantIdNum = parseInt(tenantId);
+            const branchIdNum = parseInt(branchId);
+
+            if (!tenantId || !branchId || isNaN(tenantIdNum) || isNaN(branchIdNum)) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'tenantId y branchId son requeridos y deben ser números válidos'
+                });
+            }
+
+            console.log(`[Ventas/Pull] 📥 Descargando ventas - Tenant: ${tenantIdNum}, Branch: ${branchIdNum}, Since: ${since || 'ALL'}`);
+
+            let query = `
+                SELECT
+                    v.id_venta, v.global_id, v.tenant_id, v.branch_id, v.ticket_number,
+                    v.subtotal, v.total_descuentos, v.total, v.monto_pagado, v.credito_original,
+                    v.estado_venta_id, v.venta_tipo_id, v.tipo_pago_id, v.fecha_venta_utc,
+                    v.fecha_liquidacion_utc, v.notas, v.terminal_id, v.local_op_seq,
+                    v.created_local_utc, v.created_at, v.updated_at,
+                    e.global_id as empleado_global_id,
+                    CONCAT(e.first_name, ' ', e.last_name) as empleado_nombre,
+                    c.global_id as cliente_global_id, c.nombre as cliente_nombre,
+                    s.global_id as turno_global_id,
+                    r.global_id as repartidor_global_id,
+                    CONCAT(r.first_name, ' ', r.last_name) as repartidor_nombre,
+                    sr.global_id as turno_repartidor_global_id
+                FROM ventas v
+                LEFT JOIN employees e ON v.id_empleado = e.id
+                LEFT JOIN customers c ON v.id_cliente = c.id
+                LEFT JOIN shifts s ON v.id_turno = s.id
+                LEFT JOIN employees r ON v.id_repartidor_asignado = r.id
+                LEFT JOIN shifts sr ON v.id_turno_repartidor = sr.id
+                WHERE v.tenant_id = $1 AND v.branch_id = $2
+            `;
+
+            const params = [tenantIdNum, branchIdNum];
+            let paramIndex = 3;
+
+            if (since) {
+                query += ` AND v.updated_at > $${paramIndex}`;
+                params.push(since);
+                paramIndex++;
+            }
+
+            const limitNum = parseInt(limit) || 500;
+            query += ` ORDER BY v.updated_at ASC LIMIT $${paramIndex}`;
+            params.push(limitNum);
+
+            const ventasResult = await pool.query(query, params);
+            console.log(`[Ventas/Pull] 📦 Encontradas ${ventasResult.rows.length} ventas`);
+
+            let detalles = [];
+            if (ventasResult.rows.length > 0) {
+                const ventaIds = ventasResult.rows.map(v => v.id_venta);
+                const detallesResult = await pool.query(`
+                    SELECT vd.id_venta_detalle, vd.id_venta, vd.id_producto,
+                        vd.descripcion_producto, vd.cantidad, vd.precio_unitario,
+                        vd.precio_lista, vd.total_linea, vd.monto_cliente_descuento,
+                        vd.monto_manual_descuento, vd.global_id, vd.created_at,
+                        p.global_id as producto_global_id
+                    FROM ventas_detalle vd
+                    LEFT JOIN productos p ON vd.id_producto = p.id
+                    WHERE vd.id_venta = ANY($1)
+                    ORDER BY vd.id_venta, vd.created_at ASC
+                `, [ventaIds]);
+                detalles = detallesResult.rows;
+                console.log(`[Ventas/Pull] 📦 Encontrados ${detalles.length} detalles`);
+            }
+
+            res.json({
+                success: true,
+                data: { ventas: ventasResult.rows, detalles, last_sync: new Date().toISOString() },
+                count: ventasResult.rows.length,
+                detalles_count: detalles.length
+            });
+
+        } catch (error) {
+            console.error('[Ventas/Pull] ❌ Error:', error);
+            res.status(500).json({ success: false, message: 'Error al descargar ventas', error: error.message });
+        }
+    });
+
     // ─────────────────────────────────────────────────────────
     // GET /api/ventas/:id - Obtener detalle de una venta específica
     // ─────────────────────────────────────────────────────────
@@ -241,154 +331,6 @@ module.exports = function(pool) {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener ventas del turno',
-                error: error.message
-            });
-        }
-    });
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // GET /api/ventas/pull - Descargar ventas para sincronización bidireccional
-    // ═══════════════════════════════════════════════════════════════════════════
-    // Este endpoint permite a Desktop descargar ventas creadas desde Flutter/Móvil.
-    // Retorna ventas modificadas desde una fecha dada, con GlobalIds para resolver
-    // relaciones localmente (empleados, clientes, turnos).
-    //
-    // Query params:
-    //   - tenantId (requerido)
-    //   - branchId (requerido)
-    //   - since (opcional): ISO timestamp - solo ventas modificadas después de esta fecha
-    //   - limit (opcional): máximo de registros (default 500)
-    //
-    // Respuesta incluye:
-    //   - ventas: array con todas las ventas y sus GlobalIds
-    //   - detalles: array con todos los detalles de venta
-    //   - last_sync: timestamp del servidor para próximo pull
-    // ═══════════════════════════════════════════════════════════════════════════
-    router.get('/pull', async (req, res) => {
-        try {
-            const { tenantId, branchId, since, limit = 500 } = req.query;
-
-            const tenantIdNum = parseInt(tenantId);
-            const branchIdNum = parseInt(branchId);
-
-            if (!tenantId || !branchId || isNaN(tenantIdNum) || isNaN(branchIdNum)) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'tenantId y branchId son requeridos y deben ser números válidos'
-                });
-            }
-
-            console.log(`[Ventas/Pull] 📥 Descargando ventas - Tenant: ${tenantIdNum}, Branch: ${branchIdNum}, Since: ${since || 'ALL'}`);
-
-            // Construir query base con JOINs para obtener GlobalIds
-            let query = `
-                SELECT
-                    v.id_venta,
-                    v.global_id,
-                    v.tenant_id,
-                    v.branch_id,
-                    v.ticket_number,
-                    v.subtotal,
-                    v.total_descuentos,
-                    v.total,
-                    v.monto_pagado,
-                    v.credito_original,
-                    v.estado_venta_id,
-                    v.venta_tipo_id,
-                    v.tipo_pago_id,
-                    v.fecha_venta_utc,
-                    v.fecha_liquidacion_utc,
-                    v.notas,
-                    v.terminal_id,
-                    v.local_op_seq,
-                    v.created_local_utc,
-                    v.created_at,
-                    v.updated_at,
-                    -- GlobalIds para resolver relaciones en Desktop
-                    e.global_id as empleado_global_id,
-                    CONCAT(e.first_name, ' ', e.last_name) as empleado_nombre,
-                    c.global_id as cliente_global_id,
-                    c.nombre as cliente_nombre,
-                    s.global_id as turno_global_id,
-                    r.global_id as repartidor_global_id,
-                    CONCAT(r.first_name, ' ', r.last_name) as repartidor_nombre,
-                    sr.global_id as turno_repartidor_global_id
-                FROM ventas v
-                LEFT JOIN employees e ON v.id_empleado = e.id
-                LEFT JOIN customers c ON v.id_cliente = c.id
-                LEFT JOIN shifts s ON v.id_turno = s.id
-                LEFT JOIN employees r ON v.id_repartidor_asignado = r.id
-                LEFT JOIN shifts sr ON v.id_turno_repartidor = sr.id
-                WHERE v.tenant_id = $1 AND v.branch_id = $2
-            `;
-
-            const params = [tenantIdNum, branchIdNum];
-            let paramIndex = 3;
-
-            // Filtrar por fecha de modificación si se proporciona 'since'
-            if (since) {
-                query += ` AND v.updated_at > $${paramIndex}`;
-                params.push(since);
-                paramIndex++;
-            }
-
-            const limitNum = parseInt(limit) || 500;
-            query += ` ORDER BY v.updated_at ASC LIMIT $${paramIndex}`;
-            params.push(limitNum);
-
-            const ventasResult = await pool.query(query, params);
-            console.log(`[Ventas/Pull] 📦 Encontradas ${ventasResult.rows.length} ventas`);
-
-            // Si hay ventas, obtener sus detalles
-            let detalles = [];
-            if (ventasResult.rows.length > 0) {
-                const ventaIds = ventasResult.rows.map(v => v.id_venta);
-
-                const detallesResult = await pool.query(`
-                    SELECT
-                        vd.id_venta_detalle,
-                        vd.id_venta,
-                        vd.id_producto,
-                        vd.descripcion_producto,
-                        vd.cantidad,
-                        vd.precio_unitario,
-                        vd.precio_lista,
-                        vd.total_linea,
-                        vd.monto_cliente_descuento,
-                        vd.monto_manual_descuento,
-                        vd.global_id,
-                        vd.created_at,
-                        -- GlobalId del producto para resolver en Desktop
-                        p.global_id as producto_global_id
-                    FROM ventas_detalle vd
-                    LEFT JOIN productos p ON vd.id_producto = p.id
-                    WHERE vd.id_venta = ANY($1)
-                    ORDER BY vd.id_venta, vd.created_at ASC
-                `, [ventaIds]);
-
-                detalles = detallesResult.rows;
-                console.log(`[Ventas/Pull] 📦 Encontrados ${detalles.length} detalles de venta`);
-            }
-
-            // Timestamp del servidor para próximo pull
-            const serverTimestamp = new Date().toISOString();
-
-            res.json({
-                success: true,
-                data: {
-                    ventas: ventasResult.rows,
-                    detalles: detalles,
-                    last_sync: serverTimestamp
-                },
-                count: ventasResult.rows.length,
-                detalles_count: detalles.length
-            });
-
-        } catch (error) {
-            console.error('[Ventas/Pull] ❌ Error:', error);
-            res.status(500).json({
-                success: false,
-                message: 'Error al descargar ventas',
                 error: error.message
             });
         }
