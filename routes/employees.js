@@ -413,6 +413,93 @@ module.exports = (pool) => {
         }
     });
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // GET /api/employees/pull - Descargar empleados para sincronización (Caja Auxiliar)
+    // Soporta sincronización incremental con parámetro 'since'
+    // ═══════════════════════════════════════════════════════════════════════════
+    router.get('/pull', async (req, res) => {
+        try {
+            const { tenantId, branchId, since } = req.query;
+
+            if (!tenantId) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Se requiere tenantId'
+                });
+            }
+
+            console.log(`[Employees/Pull] 📥 Descargando empleados - Tenant: ${tenantId}, Branch: ${branchId || 'ALL'}, Since: ${since || 'ALL'}`);
+
+            let query = `
+                SELECT
+                    e.id,
+                    e.global_id,
+                    e.tenant_id,
+                    e.first_name,
+                    e.last_name,
+                    e.username,
+                    e.email,
+                    e.is_active,
+                    e.role_id,
+                    e.main_branch_id,
+                    e.can_use_mobile_app,
+                    e.is_owner,
+                    e.created_at,
+                    e.updated_at
+                FROM employees e
+            `;
+
+            const params = [tenantId];
+            let paramIndex = 2;
+
+            // Si hay branchId, filtrar por empleados de esa sucursal
+            if (branchId) {
+                query += `
+                    INNER JOIN employee_branches eb ON e.id = eb.employee_id AND eb.branch_id = $${paramIndex}
+                `;
+                params.push(branchId);
+                paramIndex++;
+            }
+
+            query += ` WHERE e.tenant_id = $1`;
+
+            // Filtrar por fecha si se proporciona 'since'
+            if (since) {
+                query += ` AND e.updated_at > $${paramIndex}`;
+                params.push(since);
+                paramIndex++;
+            }
+
+            query += ` ORDER BY e.updated_at ASC`;
+
+            const result = await pool.query(query, params);
+
+            // Obtener timestamp más reciente para próximo pull
+            let lastSync = null;
+            if (result.rows.length > 0) {
+                const lastRow = result.rows[result.rows.length - 1];
+                lastSync = lastRow.updated_at;
+            }
+
+            console.log(`[Employees/Pull] ✅ ${result.rows.length} empleados encontrados`);
+
+            res.json({
+                success: true,
+                data: result.rows,
+                count: result.rows.length,
+                last_sync: lastSync
+            });
+
+        } catch (error) {
+            console.error('[Employees/Pull] ❌ Error:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Error al descargar empleados',
+                error: error.message
+            });
+        }
+    });
+
     // POST /api/employees/:id/password - Sync password change from Desktop
     router.post('/:id/password', async (req, res) => {
         const client = await pool.connect();

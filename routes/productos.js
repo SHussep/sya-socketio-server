@@ -155,6 +155,98 @@ module.exports = (pool) => {
         }
     });
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // GET /api/productos/pull - Descargar productos para sincronización (Caja Auxiliar)
+    // Soporta sincronización incremental con parámetro 'since'
+    // Incluye precios específicos de sucursal si branchId está presente
+    // ═══════════════════════════════════════════════════════════════════════════
+    router.get('/pull', authenticateToken, async (req, res) => {
+        try {
+            const tenantId = req.user.tenantId || req.query.tenantId;
+            const branchId = req.user.branchId || req.query.branchId;
+            const since = req.query.since; // ISO timestamp para sync incremental
+
+            if (!tenantId) {
+                return res.status(400).json({ success: false, message: 'Se requiere tenantId' });
+            }
+
+            console.log(`[Productos/Pull] 📥 Descargando productos - Tenant: ${tenantId}, Branch: ${branchId || 'N/A'}, Since: ${since || 'ALL'}`);
+
+            // Query con LEFT JOIN a precios de sucursal si hay branchId
+            let query = `
+                SELECT
+                    p.id,
+                    p.global_id,
+                    p.tenant_id,
+                    p.descripcion,
+                    p.categoria,
+                    p.precio_compra,
+                    COALESCE(pbp.precio_venta, p.precio_venta) as precio_venta,
+                    p.produccion,
+                    p.inventariar,
+                    p.tipos_de_salida_id,
+                    p.notificar,
+                    p.minimo,
+                    p.inventario,
+                    p.proveedor_id,
+                    p.codigo_barras,
+                    p.unidad_medida,
+                    p.is_active,
+                    p.created_at,
+                    p.updated_at,
+                    prov.global_id as proveedor_global_id
+                FROM productos p
+                LEFT JOIN proveedores prov ON p.proveedor_id = prov.id
+            `;
+
+            const params = [tenantId];
+            let paramIndex = 2;
+
+            // LEFT JOIN a precios específicos de sucursal
+            if (branchId) {
+                query = query.replace(
+                    'FROM productos p',
+                    `FROM productos p
+                     LEFT JOIN productos_branch_precios pbp ON p.id = pbp.producto_id AND pbp.branch_id = $${paramIndex}`
+                );
+                params.push(branchId);
+                paramIndex++;
+            }
+
+            query += ` WHERE p.tenant_id = $1`;
+
+            // Filtrar por fecha si se proporciona 'since'
+            if (since) {
+                query += ` AND p.updated_at > $${paramIndex}`;
+                params.push(since);
+                paramIndex++;
+            }
+
+            query += ` ORDER BY p.updated_at ASC`;
+
+            const result = await pool.query(query, params);
+
+            // Obtener timestamp más reciente para próximo pull
+            let lastSync = null;
+            if (result.rows.length > 0) {
+                const lastRow = result.rows[result.rows.length - 1];
+                lastSync = lastRow.updated_at;
+            }
+
+            console.log(`[Productos/Pull] ✅ ${result.rows.length} productos encontrados`);
+
+            res.json({
+                success: true,
+                data: result.rows,
+                count: result.rows.length,
+                last_sync: lastSync
+            });
+        } catch (error) {
+            console.error('[Productos/Pull] ❌ Error:', error.message);
+            res.status(500).json({ success: false, message: 'Error al descargar productos', error: error.message });
+        }
+    });
+
     // ═══════════════════════════════════════════════════════════════
     // POST /api/productos/sync - Sincronizar producto desde Desktop
     // IDEMPOTENTE: Usa global_id para ON CONFLICT
