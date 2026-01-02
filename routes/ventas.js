@@ -101,9 +101,15 @@ module.exports = function(pool) {
     // ─────────────────────────────────────────────────────────
     // GET /api/ventas/:id - Obtener detalle de una venta específica
     // ─────────────────────────────────────────────────────────
-    router.get('/:id', async (req, res) => {
+    router.get('/:id', async (req, res, next) => {
         try {
             const { id } = req.params;
+
+            // Si el id no es un número, pasar al siguiente handler (ej: /pull, /turno)
+            if (isNaN(parseInt(id))) {
+                return next('route');
+            }
+
             const { tenantId, branchId } = req.query;
 
             if (!tenantId || !branchId) {
