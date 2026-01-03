@@ -99,6 +99,7 @@ const notificationPreferencesRoutes = require('./routes/notificationPreferences'
 const desktopUpdatesRoutes = require('./routes/desktopUpdates'); // Actualizaciones de app Desktop
 const superadminRoutes = require('./routes/superadmin'); // Panel de Super Admin (licencias, telemetría)
 const passwordResetRoutes = require('./routes/passwordReset'); // Recuperación de contraseña por email
+const devicesRoutes = require('./routes/devices'); // Gestión de dispositivos (Primary/Auxiliar)
 
 // Inicializar Firebase para notificaciones push
 initializeFirebase();
@@ -108,6 +109,7 @@ app.use('/api/restore', restoreRoutes);
 app.use('/api/backup', backupRoutes);
 app.use('/api/auth', authRoutes); // Registrar rutas de autenticación
 app.use('/api/password-reset', passwordResetRoutes); // Recuperación de contraseña por email
+app.use('/api/devices', devicesRoutes(pool)); // Gestión de dispositivos (Primary/Auxiliar)
 // tenantsRoutes se registra después de crear io
 app.use('/api/notifications', notificationRoutes); // Registrar rutas de notificaciones FCM
 app.use('/api/notification-history', notificationHistoryRoutes(pool)); // Historial de notificaciones (campana)
@@ -783,6 +785,15 @@ io.on('connection', (socket) => {
     console.log(`[${new Date().toISOString()}] Cliente conectado: ${socket.id}`);
 
     socket.on('join_branch', (branchId) => {
+        // Dejar todos los rooms de branch anteriores antes de unirse al nuevo
+        // Esto es necesario cuando un cliente cambia de sucursal después del login
+        socket.rooms.forEach(room => {
+            if (room.startsWith('branch_') && room !== `branch_${branchId}`) {
+                socket.leave(room);
+                console.log(`[LEAVE] Cliente ${socket.id} dejó ${room}`);
+            }
+        });
+
         const roomName = `branch_${branchId}`;
         socket.join(roomName);
         socket.branchId = branchId;
