@@ -524,24 +524,29 @@ module.exports = (pool, io) => {
                 });
             }
 
-            // Buscar turno activo para este empleado en esta sucursal
+            // Buscar turno activo para este empleado en CUALQUIER sucursal
+            // Un empleado no puede tener turnos abiertos en múltiples sucursales
             const existingShift = await pool.query(
                 `SELECT s.id, s.global_id, s.start_time, s.initial_amount, s.terminal_id,
+                        s.branch_id as shift_branch_id,
+                        b.name as branch_name,
                         CONCAT(e.first_name, ' ', e.last_name) as employee_name
                  FROM shifts s
                  LEFT JOIN employees e ON s.employee_id = e.id
+                 LEFT JOIN branches b ON s.branch_id = b.id
                  WHERE s.tenant_id = $1
-                   AND s.branch_id = $2
-                   AND s.employee_id = $3
+                   AND s.employee_id = $2
                    AND s.is_cash_cut_open = true
                  ORDER BY s.start_time DESC
                  LIMIT 1`,
-                [tenant_id, branch_id, resolvedEmployeeId]
+                [tenant_id, resolvedEmployeeId]
             );
 
             if (existingShift.rows.length > 0) {
                 const shift = existingShift.rows[0];
-                console.log(`[Shifts/CheckActive] ⚠️ Turno activo encontrado: ID ${shift.id} (GlobalId: ${shift.global_id})`);
+                const isOtherBranch = shift.shift_branch_id !== parseInt(branch_id);
+
+                console.log(`[Shifts/CheckActive] ⚠️ Turno activo encontrado: ID ${shift.id} (GlobalId: ${shift.global_id}) - Sucursal: ${shift.branch_name} ${isOtherBranch ? '(OTRA SUCURSAL)' : ''}`);
 
                 return res.json({
                     success: true,
@@ -552,9 +557,14 @@ module.exports = (pool, io) => {
                         start_time: shift.start_time,
                         initial_amount: parseFloat(shift.initial_amount),
                         terminal_id: shift.terminal_id,
-                        employee_name: shift.employee_name
+                        employee_name: shift.employee_name,
+                        branch_id: shift.shift_branch_id,
+                        branch_name: shift.branch_name,
+                        is_other_branch: isOtherBranch
                     },
-                    message: 'El empleado ya tiene un turno abierto'
+                    message: isOtherBranch
+                        ? `El empleado tiene un turno abierto en ${shift.branch_name}`
+                        : 'El empleado ya tiene un turno abierto'
                 });
             }
 
