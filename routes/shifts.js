@@ -591,15 +591,15 @@ module.exports = (pool, io) => {
             }
 
             // ⚠️ VALIDACIÓN: Verificar que no haya un turno activo para este empleado
-            const existingShift = await pool.query(
+            const activeShiftCheck = await pool.query(
                 `SELECT id, global_id, terminal_id, start_time FROM shifts
                  WHERE tenant_id = $1 AND branch_id = $2 AND employee_id = $3 AND is_cash_cut_open = true
                  AND local_shift_id != $4`,
                 [tenantId, branchId, employeeId, localShiftId || 0]
             );
 
-            if (existingShift.rows.length > 0) {
-                const existing = existingShift.rows[0];
+            if (activeShiftCheck.rows.length > 0) {
+                const existing = activeShiftCheck.rows[0];
                 console.log(`[Sync/Shifts] ⚠️ Turno activo encontrado en otro dispositivo: ID ${existing.id} (Terminal: ${existing.terminal_id})`);
 
                 return res.status(409).json({
