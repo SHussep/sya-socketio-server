@@ -793,6 +793,112 @@ function createRepartidorAssignmentRoutes(io) {
   });
 
   // ═══════════════════════════════════════════════════════════════
+  // GET /api/repartidor-assignments/by-employee-global
+  // Obtener asignaciones usando employee_global_id (UUID) en lugar de ID numérico
+  // IMPORTANTE: NO filtra por turno, permite sync entre múltiples PCs
+  // ═══════════════════════════════════════════════════════════════
+  router.get('/by-employee-global', async (req, res) => {
+    const { employee_global_id, branch_id, status } = req.query;
+
+    if (!employee_global_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'employee_global_id is required'
+      });
+    }
+
+    try {
+      console.log('[API] 📊 GET /api/repartidor-assignments/by-employee-global');
+      console.log(`  Query params: employee_global_id=${employee_global_id}, branch_id=${branch_id}, status=${status}`);
+
+      // Primero obtener el employee_id desde el global_id
+      const empResult = await pool.query(
+        'SELECT id FROM employees WHERE global_id = $1',
+        [employee_global_id]
+      );
+
+      if (empResult.rows.length === 0) {
+        console.log(`[API] ⚠️ Employee not found with global_id: ${employee_global_id}`);
+        return res.json({
+          success: true,
+          data: [],
+          count: 0
+        });
+      }
+
+      const employeeId = empResult.rows[0].id;
+      console.log(`[API] 🔗 Resolved employee_global_id ${employee_global_id} -> employee_id ${employeeId}`);
+
+      // Construir query sin filtro de turno
+      let query = `
+        SELECT
+          ra.id,
+          ra.tenant_id,
+          ra.branch_id,
+          ra.venta_id,
+          ra.employee_id,
+          ra.created_by_employee_id,
+          ra.shift_id,
+          ra.repartidor_shift_id,
+          ra.product_id,
+          ra.product_name,
+          ra.venta_detalle_id,
+          ra.assigned_quantity,
+          ra.assigned_amount,
+          ra.unit_price,
+          COALESCE(ra.unit_abbreviation, 'kg') as unit_abbreviation,
+          ra.status,
+          ra.fecha_asignacion,
+          ra.fecha_liquidacion,
+          ra.observaciones,
+          ra.global_id,
+          ra.terminal_id,
+          ra.source,
+          -- GlobalIds para resolución
+          e.global_id as employee_global_id,
+          cb.global_id as created_by_employee_global_id,
+          pr.global_id as product_global_id
+        FROM repartidor_assignments ra
+        LEFT JOIN employees e ON e.id = ra.employee_id
+        LEFT JOIN employees cb ON cb.id = ra.created_by_employee_id
+        LEFT JOIN productos pr ON pr.id = ra.product_id
+        WHERE ra.employee_id = $1
+      `;
+
+      const params = [employeeId];
+
+      if (branch_id) {
+        query += ` AND ra.branch_id = $${params.length + 1}`;
+        params.push(branch_id);
+      }
+
+      if (status) {
+        query += ` AND ra.status = $${params.length + 1}`;
+        params.push(status);
+      }
+
+      query += ` ORDER BY ra.fecha_asignacion DESC`;
+
+      console.log('[API] 🔍 Executing query with params:', params);
+      const result = await pool.query(query, params);
+
+      console.log(`[API] ✅ Query returned ${result.rows.length} assignments`);
+      res.json({
+        success: true,
+        data: result.rows,
+        count: result.rows.length
+      });
+
+    } catch (error) {
+      console.error('❌ Error obteniendo asignaciones por global_id:', error.message);
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════
   // GET /api/repartidor-liquidations/employee/:employeeId
   // Obtener historial de liquidaciones de un repartidor
   // ═══════════════════════════════════════════════════════════════
