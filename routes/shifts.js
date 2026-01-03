@@ -666,13 +666,35 @@ module.exports = (pool, io) => {
                 console.log(`[Sync/Shifts] 🔄 Detectado cierre offline - Auto-cerrando shift ${oldShift.id} (localShiftId: ${oldShift.local_shift_id})`);
 
                 // Auto-cerrar el turno anterior (fue cerrado en Desktop offline)
-                await pool.query(
-                    `UPDATE shifts SET end_time = CURRENT_TIMESTAMP, is_cash_cut_open = false
-                     WHERE id = $1`,
+                const autoCloseResult = await pool.query(
+                    `UPDATE shifts SET end_time = CURRENT_TIMESTAMP, is_cash_cut_open = false, updated_at = NOW()
+                     WHERE id = $1
+                     RETURNING id, global_id, employee_id, branch_id, start_time, end_time`,
                     [oldShift.id]
                 );
 
                 console.log(`[Sync/Shifts] ✅ Shift ${oldShift.id} auto-cerrado por sincronización offline`);
+
+                // 📢 NOTIFICAR VIA SOCKET.IO: Turno auto-cerrado
+                if (io && autoCloseResult.rows.length > 0) {
+                    const closedShift = autoCloseResult.rows[0];
+                    const roomName = `branch_${branchId}`;
+                    console.log(`[Sync/Shifts] 📡 Emitiendo 'shift_auto_closed' a ${roomName}`);
+                    io.to(roomName).emit('shift_auto_closed', {
+                        shiftId: closedShift.id,
+                        globalId: closedShift.global_id,
+                        employeeId: closedShift.employee_id,
+                        employeeName: employeeName,
+                        branchId: branchId,
+                        branchName: branchName,
+                        startTime: closedShift.start_time,
+                        endTime: closedShift.end_time,
+                        reason: 'new_shift_opened_offline',
+                        newShiftLocalId: localShiftId,
+                        closedBy: 'system',
+                        message: `Turno de ${employeeName} cerrado automáticamente porque se abrió un nuevo turno desde otro dispositivo`
+                    });
+                }
             }
 
             // PASO 2: Crear nuevo turno con el local_shift_id
@@ -933,7 +955,277 @@ module.exports = (pool, io) => {
     });
 
     // ============================================================================
-    // PUT /api/shifts/:id/close - Cerrar turno (llamado por Desktop)
+    // POST /api/shifts/sync/close - Cierre de turno OFFLINE-FIRST (sin JWT)
+    // Usa global_id para identificar el turno (idempotente)
+    // ============================================================================
+    router.post('/sync/close', async (req, res) => {
+        try {
+            const {
+                tenant_id,
+                global_id,
+                end_time,
+                final_amount,
+                is_cash_cut_open,
+                transaction_counter,
+                // Datos para notificaciones
+                employee_name,
+                branch_name,
+                counted_cash,
+                expected_cash,
+                difference
+            } = req.body;
+
+            console.log(`[Shifts/SyncClose] 🔒 POST /api/shifts/sync/close`);
+            console.log(`  - tenant_id: ${tenant_id}, global_id: ${global_id}`);
+            console.log(`  - end_time: ${end_time}, final_amount: ${final_amount}`);
+            console.log(`  - is_cash_cut_open: ${is_cash_cut_open}`);
+
+            // Validar campos requeridos
+            if (!tenant_id || !global_id) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'tenant_id y global_id son requeridos'
+                });
+            }
+
+            // Buscar el turno por global_id
+            const shiftCheck = await pool.query(
+                `SELECT id, employee_id, branch_id, is_cash_cut_open, global_id
+                 FROM shifts
+                 WHERE global_id = $1::uuid AND tenant_id = $2`,
+                [global_id, tenant_id]
+            );
+
+            if (shiftCheck.rows.length === 0) {
+                console.log(`[Shifts/SyncClose] ⚠️ Turno no encontrado: ${global_id}`);
+                return res.status(404).json({
+                    success: false,
+                    message: 'Turno no encontrado con ese global_id'
+                });
+            }
+
+            const existingShift = shiftCheck.rows[0];
+
+            // Si ya está cerrado, retornar éxito (idempotente)
+            if (!existingShift.is_cash_cut_open) {
+                console.log(`[Shifts/SyncClose] ℹ️ Turno ${global_id} ya estaba cerrado - operación idempotente`);
+                return res.json({
+                    success: true,
+                    data: existingShift,
+                    message: 'Turno ya estaba cerrado (idempotente)'
+                });
+            }
+
+            // Cerrar el turno
+            const result = await pool.query(`
+                UPDATE shifts
+                SET
+                    end_time = $1,
+                    final_amount = $2,
+                    is_cash_cut_open = $3,
+                    transaction_counter = COALESCE($4, transaction_counter),
+                    updated_at = NOW()
+                WHERE global_id = $5::uuid AND tenant_id = $6
+                RETURNING id, global_id, employee_id, branch_id, end_time, final_amount,
+                          is_cash_cut_open, transaction_counter
+            `, [
+                end_time || new Date().toISOString(),
+                final_amount || 0,
+                is_cash_cut_open ?? false,
+                transaction_counter,
+                global_id,
+                tenant_id
+            ]);
+
+            if (result.rows.length === 0) {
+                return res.status(500).json({
+                    success: false,
+                    message: 'Error al actualizar turno'
+                });
+            }
+
+            const closedShift = result.rows[0];
+            console.log(`[Shifts/SyncClose] ✅ Turno ${global_id} cerrado exitosamente (PostgreSQL ID: ${closedShift.id})`);
+
+            // 📢 EMITIR EVENTO SOCKET.IO: shift_ended
+            if (io) {
+                const roomName = `branch_${closedShift.branch_id}`;
+                console.log(`[Shifts/SyncClose] 📡 Emitiendo 'shift_ended' a ${roomName}`);
+                io.to(roomName).emit('shift_ended', {
+                    shiftId: closedShift.id,
+                    globalId: closedShift.global_id,
+                    employeeId: closedShift.employee_id,
+                    employeeName: employee_name || 'Empleado',
+                    branchId: closedShift.branch_id,
+                    branchName: branch_name || 'Sucursal',
+                    endTime: closedShift.end_time,
+                    finalAmount: parseFloat(closedShift.final_amount || 0),
+                    countedCash: parseFloat(counted_cash || 0),
+                    expectedCash: parseFloat(expected_cash || 0),
+                    difference: parseFloat(difference || 0),
+                    source: 'desktop_sync_close'
+                });
+            }
+
+            res.json({
+                success: true,
+                data: closedShift,
+                message: 'Turno cerrado exitosamente'
+            });
+
+        } catch (error) {
+            console.error('[Shifts/SyncClose] ❌ Error:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Error al cerrar turno',
+                error: error.message
+            });
+        }
+    });
+
+    // ============================================================================
+    // GET /api/shifts/sync/status - Verificar estado de un turno por global_id
+    // Para verificación post-reconexión (offline-first)
+    // ============================================================================
+    router.get('/sync/status', async (req, res) => {
+        try {
+            const { tenant_id, global_id, employee_global_id } = req.query;
+
+            console.log(`[Shifts/SyncStatus] 🔍 GET /api/shifts/sync/status`);
+            console.log(`  - tenant_id: ${tenant_id}, global_id: ${global_id || 'N/A'}`);
+            console.log(`  - employee_global_id: ${employee_global_id || 'N/A'}`);
+
+            if (!tenant_id) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'tenant_id es requerido'
+                });
+            }
+
+            let result;
+
+            // Si se proporciona global_id, buscar turno específico
+            if (global_id) {
+                result = await pool.query(`
+                    SELECT
+                        s.id, s.global_id, s.employee_id, s.branch_id,
+                        s.start_time, s.end_time, s.is_cash_cut_open,
+                        s.initial_amount, s.final_amount, s.updated_at,
+                        CONCAT(e.first_name, ' ', e.last_name) as employee_name
+                    FROM shifts s
+                    LEFT JOIN employees e ON s.employee_id = e.id
+                    WHERE s.global_id = $1::uuid AND s.tenant_id = $2
+                `, [global_id, tenant_id]);
+
+                if (result.rows.length === 0) {
+                    console.log(`[Shifts/SyncStatus] ⚠️ Turno no encontrado: ${global_id}`);
+                    return res.json({
+                        success: true,
+                        found: false,
+                        message: 'Turno no encontrado en servidor'
+                    });
+                }
+
+                const shift = result.rows[0];
+                console.log(`[Shifts/SyncStatus] ✅ Turno encontrado: ${global_id} - is_cash_cut_open: ${shift.is_cash_cut_open}`);
+
+                return res.json({
+                    success: true,
+                    found: true,
+                    data: {
+                        id: shift.id,
+                        global_id: shift.global_id,
+                        employee_id: shift.employee_id,
+                        employee_name: shift.employee_name,
+                        branch_id: shift.branch_id,
+                        start_time: shift.start_time,
+                        end_time: shift.end_time,
+                        is_cash_cut_open: shift.is_cash_cut_open,
+                        initial_amount: parseFloat(shift.initial_amount || 0),
+                        final_amount: shift.final_amount ? parseFloat(shift.final_amount) : null,
+                        updated_at: shift.updated_at
+                    }
+                });
+            }
+
+            // Si se proporciona employee_global_id, buscar turno activo del empleado
+            if (employee_global_id) {
+                // Primero resolver employee_global_id a employee_id
+                const empResult = await pool.query(
+                    `SELECT id FROM employees WHERE global_id = $1 AND tenant_id = $2`,
+                    [employee_global_id, tenant_id]
+                );
+
+                if (empResult.rows.length === 0) {
+                    return res.json({
+                        success: true,
+                        found: false,
+                        message: 'Empleado no encontrado'
+                    });
+                }
+
+                const employeeId = empResult.rows[0].id;
+
+                result = await pool.query(`
+                    SELECT
+                        s.id, s.global_id, s.employee_id, s.branch_id,
+                        s.start_time, s.end_time, s.is_cash_cut_open,
+                        s.initial_amount, s.final_amount, s.updated_at,
+                        CONCAT(e.first_name, ' ', e.last_name) as employee_name
+                    FROM shifts s
+                    LEFT JOIN employees e ON s.employee_id = e.id
+                    WHERE s.employee_id = $1 AND s.tenant_id = $2 AND s.is_cash_cut_open = true
+                    ORDER BY s.start_time DESC
+                    LIMIT 1
+                `, [employeeId, tenant_id]);
+
+                if (result.rows.length === 0) {
+                    return res.json({
+                        success: true,
+                        found: false,
+                        has_active_shift: false,
+                        message: 'No hay turno activo para este empleado'
+                    });
+                }
+
+                const shift = result.rows[0];
+                return res.json({
+                    success: true,
+                    found: true,
+                    has_active_shift: true,
+                    data: {
+                        id: shift.id,
+                        global_id: shift.global_id,
+                        employee_id: shift.employee_id,
+                        employee_name: shift.employee_name,
+                        branch_id: shift.branch_id,
+                        start_time: shift.start_time,
+                        end_time: shift.end_time,
+                        is_cash_cut_open: shift.is_cash_cut_open,
+                        initial_amount: parseFloat(shift.initial_amount || 0),
+                        final_amount: shift.final_amount ? parseFloat(shift.final_amount) : null,
+                        updated_at: shift.updated_at
+                    }
+                });
+            }
+
+            return res.status(400).json({
+                success: false,
+                message: 'Se requiere global_id o employee_global_id'
+            });
+
+        } catch (error) {
+            console.error('[Shifts/SyncStatus] ❌ Error:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Error al verificar estado del turno',
+                error: error.message
+            });
+        }
+    });
+
+    // ============================================================================
+    // PUT /api/shifts/:id/close - Cerrar turno (llamado por Desktop) - LEGACY
     // ============================================================================
     router.put('/:id/close', authenticateToken, async (req, res) => {
         try {
