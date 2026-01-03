@@ -435,15 +435,15 @@ module.exports = (pool) => {
                     e.id,
                     e.global_id,
                     e.tenant_id,
-                    e.first_name,
-                    e.last_name,
+                    TRIM(CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, ''))) as name,
                     e.username,
                     e.email,
                     e.is_active,
                     e.role_id,
                     e.main_branch_id,
-                    e.can_use_mobile_app,
+                    e.can_use_mobile_app as has_mobile_access,
                     e.is_owner,
+                    e.password_hash,
                     e.created_at,
                     e.updated_at
                 FROM employees e
@@ -485,9 +485,11 @@ module.exports = (pool) => {
 
             res.json({
                 success: true,
-                data: result.rows,
-                count: result.rows.length,
-                last_sync: lastSync
+                data: {
+                    employees: result.rows,
+                    last_sync: lastSync
+                },
+                count: result.rows.length
             });
 
         } catch (error) {
