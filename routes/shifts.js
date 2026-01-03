@@ -484,6 +484,97 @@ module.exports = (pool, io) => {
         }
     });
 
+    // GET /api/shifts/check-active - Verificar si el empleado tiene un turno activo en PostgreSQL
+    // Usado por Desktop para validar antes de abrir turno local
+    router.get('/check-active', async (req, res) => {
+        try {
+            const { tenant_id, branch_id, employee_id, employee_global_id } = req.query;
+
+            console.log(`[Shifts/CheckActive] 🔍 Verificando turno activo - Tenant: ${tenant_id}, Branch: ${branch_id}, Employee: ${employee_id || employee_global_id}`);
+
+            if (!tenant_id || !branch_id) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'tenant_id y branch_id son requeridos'
+                });
+            }
+
+            // Resolver employee_id si se envió global_id
+            let resolvedEmployeeId = employee_id;
+            if (employee_global_id && !employee_id) {
+                const empResult = await pool.query(
+                    'SELECT id FROM employees WHERE global_id = $1 AND tenant_id = $2',
+                    [employee_global_id, tenant_id]
+                );
+                if (empResult.rows.length > 0) {
+                    resolvedEmployeeId = empResult.rows[0].id;
+                } else {
+                    return res.json({
+                        success: true,
+                        hasActiveShift: false,
+                        message: 'Empleado no encontrado'
+                    });
+                }
+            }
+
+            if (!resolvedEmployeeId) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'employee_id o employee_global_id requerido'
+                });
+            }
+
+            // Buscar turno activo para este empleado en esta sucursal
+            const existingShift = await pool.query(
+                `SELECT s.id, s.global_id, s.start_time, s.initial_amount, s.terminal_id,
+                        CONCAT(e.first_name, ' ', e.last_name) as employee_name
+                 FROM shifts s
+                 LEFT JOIN employees e ON s.employee_id = e.id
+                 WHERE s.tenant_id = $1
+                   AND s.branch_id = $2
+                   AND s.employee_id = $3
+                   AND s.is_cash_cut_open = true
+                 ORDER BY s.start_time DESC
+                 LIMIT 1`,
+                [tenant_id, branch_id, resolvedEmployeeId]
+            );
+
+            if (existingShift.rows.length > 0) {
+                const shift = existingShift.rows[0];
+                console.log(`[Shifts/CheckActive] ⚠️ Turno activo encontrado: ID ${shift.id} (GlobalId: ${shift.global_id})`);
+
+                return res.json({
+                    success: true,
+                    hasActiveShift: true,
+                    shift: {
+                        id: shift.id,
+                        global_id: shift.global_id,
+                        start_time: shift.start_time,
+                        initial_amount: parseFloat(shift.initial_amount),
+                        terminal_id: shift.terminal_id,
+                        employee_name: shift.employee_name
+                    },
+                    message: 'El empleado ya tiene un turno abierto'
+                });
+            }
+
+            console.log(`[Shifts/CheckActive] ✅ No hay turno activo para empleado ${resolvedEmployeeId}`);
+            return res.json({
+                success: true,
+                hasActiveShift: false,
+                message: 'No hay turno activo'
+            });
+
+        } catch (error) {
+            console.error('[Shifts/CheckActive] ❌ Error:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Error al verificar turno activo',
+                error: error.message
+            });
+        }
+    });
+
     // POST /api/sync/shifts/open - Abrir turno desde Desktop (sin JWT)
     // Implementa smart UPSERT con auto-close para offline-first sync
     router.post('/sync/open', async (req, res) => {
@@ -496,6 +587,30 @@ module.exports = (pool, io) => {
                 return res.status(400).json({
                     success: false,
                     message: 'Datos incompletos (tenantId, branchId, employeeId requeridos)'
+                });
+            }
+
+            // ⚠️ VALIDACIÓN: Verificar que no haya un turno activo para este empleado
+            const existingShift = await pool.query(
+                `SELECT id, global_id, terminal_id, start_time FROM shifts
+                 WHERE tenant_id = $1 AND branch_id = $2 AND employee_id = $3 AND is_cash_cut_open = true
+                 AND local_shift_id != $4`,
+                [tenantId, branchId, employeeId, localShiftId || 0]
+            );
+
+            if (existingShift.rows.length > 0) {
+                const existing = existingShift.rows[0];
+                console.log(`[Sync/Shifts] ⚠️ Turno activo encontrado en otro dispositivo: ID ${existing.id} (Terminal: ${existing.terminal_id})`);
+
+                return res.status(409).json({
+                    success: false,
+                    message: 'El empleado ya tiene un turno abierto en otro dispositivo. Ciérrelo primero.',
+                    existingShift: {
+                        id: existing.id,
+                        global_id: existing.global_id,
+                        terminal_id: existing.terminal_id,
+                        start_time: existing.start_time
+                    }
                 });
             }
 
