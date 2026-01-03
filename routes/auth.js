@@ -47,6 +47,9 @@ module.exports = function (pool) {
     // Employee
     router.get('/tenant/:tenantId/main-employee', bind(authController.getMainEmployee));
 
+    // Verify Admin Password (para reclamar rol de Equipo Principal)
+    router.post('/verify-admin-password', bind(authController.verifyAdminPassword));
+
     // Middleware: Verificar JWT Token
     // Se adjunta al router para mantener compatibilidad con el código existente
     router.authenticateToken = bind(authController.authenticateToken);

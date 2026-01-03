@@ -2400,6 +2400,86 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
         }
     }
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // VERIFY ADMIN PASSWORD - Para reclamar rol de Equipo Principal
+    // Verifica la contraseña del owner/admin del tenant
+    // ═══════════════════════════════════════════════════════════════════════════
+    async verifyAdminPassword(req, res) {
+        console.log('[Verify Admin Password] Nueva solicitud de verificación');
+
+        const { tenantId, password } = req.body;
+
+        if (!tenantId || !password) {
+            return res.status(400).json({
+                success: false,
+                message: 'tenantId y password son requeridos'
+            });
+        }
+
+        try {
+            // Buscar al owner del tenant O cualquier administrador (role_id = 1)
+            const employeeResult = await this.pool.query(
+                `SELECT id, password_hash, first_name, last_name, is_owner, role_id
+                 FROM employees
+                 WHERE tenant_id = $1
+                   AND is_active = TRUE
+                   AND (is_owner = TRUE OR role_id = 1)
+                 ORDER BY is_owner DESC, id ASC
+                 LIMIT 1`,
+                [tenantId]
+            );
+
+            if (employeeResult.rows.length === 0) {
+                console.log(`[Verify Admin Password] ❌ No se encontró owner/admin para tenant ${tenantId}`);
+                return res.status(404).json({
+                    success: false,
+                    message: 'No se encontró administrador para este negocio'
+                });
+            }
+
+            const employee = employeeResult.rows[0];
+
+            // Verificar que tenga contraseña configurada
+            if (!employee.password_hash) {
+                console.log(`[Verify Admin Password] ❌ El administrador no tiene contraseña configurada`);
+                return res.status(400).json({
+                    success: false,
+                    message: 'El administrador no tiene contraseña configurada. Por favor, configura una contraseña primero.'
+                });
+            }
+
+            // Comparar contraseña con bcrypt
+            const isValid = await bcrypt.compare(password, employee.password_hash);
+
+            if (isValid) {
+                console.log(`[Verify Admin Password] ✅ Contraseña verificada para tenant ${tenantId}`);
+                res.json({
+                    success: true,
+                    message: 'Contraseña verificada correctamente',
+                    admin: {
+                        id: employee.id,
+                        name: `${employee.first_name || ''} ${employee.last_name || ''}`.trim(),
+                        isOwner: employee.is_owner
+                    }
+                });
+            } else {
+                console.log(`[Verify Admin Password] ❌ Contraseña incorrecta para tenant ${tenantId}`);
+                res.status(401).json({
+                    success: false,
+                    message: 'Contraseña incorrecta'
+                });
+            }
+
+        } catch (error) {
+            console.error('[Verify Admin Password] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al verificar contraseña',
+                error: error.message
+            });
+        }
+    }
+
     authenticateToken(req, res, next) {
         const authHeader = req.headers['authorization'];
         const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
