@@ -1697,6 +1697,68 @@ async function runMigrations() {
                 }
             }
 
+            // Patch: Create branch_devices table for Primary/Auxiliar device management
+            console.log('[Schema] 🔍 Checking branch_devices table...');
+            const checkBranchDevicesTable = await client.query(`
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'branch_devices'
+                )
+            `);
+
+            if (!checkBranchDevicesTable.rows[0].exists) {
+                console.log('[Schema] 📝 Creating table: branch_devices (Primary/Auxiliar device management)');
+                await client.query(`
+                    CREATE TABLE branch_devices (
+                        id SERIAL PRIMARY KEY,
+                        tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                        branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+                        device_id VARCHAR(255) NOT NULL,
+                        device_name VARCHAR(255),
+                        device_type VARCHAR(50),
+                        is_primary BOOLEAN DEFAULT FALSE,
+                        claimed_at TIMESTAMPTZ,
+                        last_seen_at TIMESTAMPTZ,
+                        employee_id INTEGER REFERENCES employees(id),
+                        created_at TIMESTAMPTZ DEFAULT NOW(),
+                        updated_at TIMESTAMPTZ DEFAULT NOW()
+                    )
+                `);
+                // Create indexes
+                await client.query(`
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_branch_devices_unique
+                    ON branch_devices(device_id, branch_id, tenant_id)
+                `);
+                await client.query(`
+                    CREATE INDEX IF NOT EXISTS idx_branch_devices_branch
+                    ON branch_devices(branch_id, tenant_id)
+                `);
+                await client.query(`
+                    CREATE INDEX IF NOT EXISTS idx_branch_devices_primary
+                    ON branch_devices(branch_id, tenant_id) WHERE is_primary = TRUE
+                `);
+                // Create trigger for updated_at
+                await client.query(`
+                    CREATE OR REPLACE FUNCTION update_branch_devices_updated_at()
+                    RETURNS TRIGGER AS $$
+                    BEGIN
+                        NEW.updated_at = NOW();
+                        RETURN NEW;
+                    END;
+                    $$ LANGUAGE plpgsql
+                `);
+                await client.query(`
+                    DROP TRIGGER IF EXISTS trigger_branch_devices_updated_at ON branch_devices
+                `);
+                await client.query(`
+                    CREATE TRIGGER trigger_branch_devices_updated_at
+                    BEFORE UPDATE ON branch_devices
+                    FOR EACH ROW
+                    EXECUTE FUNCTION update_branch_devices_updated_at()
+                `);
+                console.log('[Schema] ✅ Table branch_devices created successfully');
+            }
+
             // 3. Always run seeds (idempotent - uses ON CONFLICT)
             console.log('[Seeds] 📝 Running seeds.sql...');
             const seedsPath = path.join(__dirname, 'seeds.sql');
