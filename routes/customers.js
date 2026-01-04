@@ -6,7 +6,7 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const JWT_SECRET = process.env.JWT_SECRET;
 
-// Middleware: Autenticación JWT
+// Middleware: Autenticación JWT (requerida)
 function authenticateToken(req, res, next) {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
@@ -20,6 +20,27 @@ function authenticateToken(req, res, next) {
             return res.status(403).json({ success: false, message: 'Token inválido o expirado' });
         }
         req.user = user;
+        next();
+    });
+}
+
+// Middleware: Autenticación JWT opcional (para Desktop sin login)
+// Si hay token válido, lo usa. Si no, continúa sin autenticación.
+function optionalAuthenticateToken(req, res, next) {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+
+    if (!token) {
+        req.user = null;
+        return next();
+    }
+
+    jwt.verify(token, JWT_SECRET, (err, user) => {
+        if (err) {
+            req.user = null; // Token inválido, pero continuar
+        } else {
+            req.user = user;
+        }
         next();
     });
 }
@@ -86,12 +107,13 @@ module.exports = (pool) => {
     });
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // GET /api/customers/pull - Descargar clientes para sincronización (Caja Auxiliar)
+    // GET /api/customers/pull - Descargar clientes para sincronización (Desktop/Caja Auxiliar)
     // Soporta sincronización incremental con parámetro 'since'
+    // NO requiere JWT - acepta tenantId como query param (igual que /sync)
     // ═══════════════════════════════════════════════════════════════════════════
-    router.get('/pull', authenticateToken, async (req, res) => {
+    router.get('/pull', optionalAuthenticateToken, async (req, res) => {
         try {
-            const tenantId = req.user.tenantId || req.query.tenantId;
+            const tenantId = req.user?.tenantId || req.query.tenantId;
             const since = req.query.since; // ISO timestamp para sync incremental
 
             if (!tenantId) {
@@ -112,7 +134,8 @@ module.exports = (pool) => {
                     direccion as address,
                     tiene_credito as has_credit,
                     credito_limite as credit_limit,
-                    saldo_deudor as current_balance,
+                    saldo_deudor as balance,
+                    descuento as discount,
                     nota as notes,
                     is_active,
                     is_system_generic,
@@ -145,9 +168,11 @@ module.exports = (pool) => {
 
             res.json({
                 success: true,
-                data: result.rows,
-                count: result.rows.length,
-                last_sync: lastSync
+                data: {
+                    customers: result.rows,
+                    last_sync: lastSync
+                },
+                count: result.rows.length
             });
         } catch (error) {
             console.error('[Customers/Pull] ❌ Error:', error.message);
