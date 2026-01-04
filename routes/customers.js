@@ -135,9 +135,9 @@ module.exports = (pool) => {
                     tiene_credito as has_credit,
                     credito_limite as credit_limit,
                     saldo_deudor as balance,
-                    descuento as discount,
+                    porcentaje_descuento as discount_percentage,
                     nota as notes,
-                    is_active,
+                    activo as is_active,
                     is_system_generic,
                     created_at,
                     updated_at
