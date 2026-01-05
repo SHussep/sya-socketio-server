@@ -1759,6 +1759,163 @@ async function runMigrations() {
                 console.log('[Schema] ✅ Table branch_devices created successfully');
             }
 
+            // Patch: Migrate to tenant-specific roles (Migration 014)
+            // Check if roles table has tenant_id column (new structure)
+            const checkRolesTenantId = await client.query(`
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'roles'
+                AND column_name = 'tenant_id'
+            `);
+
+            if (checkRolesTenantId.rows.length === 0) {
+                console.log('[Schema] 📝 Migrating roles to tenant-specific structure (Migration 014)...');
+
+                // Step 1: Drop FK constraints
+                await client.query(`ALTER TABLE employees DROP CONSTRAINT IF EXISTS fk_employees_role_id`);
+                await client.query(`ALTER TABLE role_permissions DROP CONSTRAINT IF EXISTS role_permissions_role_id_fkey`);
+
+                // Step 2: Backup current employees role_id mapping (old global role_id → role name)
+                await client.query(`
+                    CREATE TEMP TABLE employee_role_backup AS
+                    SELECT e.id as employee_id, e.tenant_id, e.role_id as old_role_id,
+                           CASE
+                               WHEN e.role_id = 1 THEN 'Administrador'
+                               WHEN e.role_id = 2 THEN 'Encargado'
+                               WHEN e.role_id = 3 THEN 'Repartidor'
+                               WHEN e.role_id = 4 THEN 'Ayudante'
+                               ELSE 'Ayudante'
+                           END as role_name
+                    FROM employees e
+                `);
+
+                // Step 3: Drop and recreate roles table with tenant structure
+                await client.query(`DROP TABLE IF EXISTS roles CASCADE`);
+                await client.query(`
+                    CREATE TABLE roles (
+                        id SERIAL PRIMARY KEY,
+                        tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
+                        name VARCHAR(255) NOT NULL,
+                        description TEXT,
+                        is_system BOOLEAN DEFAULT false,
+                        mobile_access_type VARCHAR(50) DEFAULT 'none',
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(tenant_id, name)
+                    )
+                `);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_roles_tenant ON roles(tenant_id)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_roles_is_system ON roles(is_system)`);
+
+                // Step 4: Insert default roles for each existing tenant
+                await client.query(`
+                    INSERT INTO roles (tenant_id, name, description, is_system, mobile_access_type)
+                    SELECT
+                        t.id,
+                        r.name,
+                        r.description,
+                        true,
+                        CASE
+                            WHEN r.name IN ('Administrador', 'Encargado') THEN 'admin'
+                            WHEN r.name = 'Repartidor' THEN 'distributor'
+                            ELSE 'none'
+                        END
+                    FROM tenants t
+                    CROSS JOIN (
+                        VALUES
+                            ('Administrador', 'Acceso total al sistema'),
+                            ('Encargado', 'Gerente de turno - permisos extensos'),
+                            ('Repartidor', 'Acceso limitado como repartidor'),
+                            ('Ayudante', 'Soporte - acceso limitado')
+                    ) AS r(name, description)
+                `);
+
+                // Step 5: Update employees with new tenant-specific role_id
+                await client.query(`
+                    UPDATE employees e
+                    SET role_id = r.id
+                    FROM employee_role_backup erb
+                    JOIN roles r ON r.tenant_id = erb.tenant_id AND r.name = erb.role_name
+                    WHERE e.id = erb.employee_id
+                `);
+
+                // Step 6: Re-add FK constraint
+                await client.query(`
+                    ALTER TABLE employees ADD CONSTRAINT fk_employees_role_id
+                    FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE SET NULL
+                `);
+
+                // Step 7: Recreate role_permissions with new FK and seed permissions
+                await client.query(`
+                    INSERT INTO role_permissions (role_id, permission_id)
+                    SELECT r.id, p.id
+                    FROM roles r
+                    JOIN permissions p ON
+                        (r.mobile_access_type = 'admin' AND p.code = 'AccessMobileAppAsAdmin')
+                        OR (r.mobile_access_type = 'distributor' AND p.code = 'AccessMobileAppAsDistributor')
+                    WHERE r.mobile_access_type != 'none'
+                    ON CONFLICT DO NOTHING
+                `);
+
+                // Step 8: Create trigger to seed roles for new tenants
+                await client.query(`
+                    CREATE OR REPLACE FUNCTION seed_default_roles_for_tenant()
+                    RETURNS TRIGGER AS $$
+                    BEGIN
+                        INSERT INTO roles (tenant_id, name, description, is_system, mobile_access_type)
+                        VALUES
+                            (NEW.id, 'Administrador', 'Acceso total al sistema', true, 'admin'),
+                            (NEW.id, 'Encargado', 'Gerente de turno - permisos extensos', true, 'admin'),
+                            (NEW.id, 'Repartidor', 'Acceso limitado como repartidor', true, 'distributor'),
+                            (NEW.id, 'Ayudante', 'Soporte - acceso limitado', true, 'none');
+
+                        INSERT INTO role_permissions (role_id, permission_id)
+                        SELECT r.id, p.id
+                        FROM roles r
+                        JOIN permissions p ON
+                            (r.mobile_access_type = 'admin' AND p.code = 'AccessMobileAppAsAdmin')
+                            OR (r.mobile_access_type = 'distributor' AND p.code = 'AccessMobileAppAsDistributor')
+                        WHERE r.tenant_id = NEW.id AND r.mobile_access_type != 'none';
+
+                        RETURN NEW;
+                    END;
+                    $$ LANGUAGE plpgsql
+                `);
+
+                await client.query(`DROP TRIGGER IF EXISTS trigger_seed_tenant_roles ON tenants`);
+                await client.query(`
+                    CREATE TRIGGER trigger_seed_tenant_roles
+                    AFTER INSERT ON tenants
+                    FOR EACH ROW
+                    EXECUTE FUNCTION seed_default_roles_for_tenant()
+                `);
+
+                // Step 9: Create updated_at trigger for roles
+                await client.query(`
+                    CREATE OR REPLACE FUNCTION update_roles_updated_at()
+                    RETURNS TRIGGER AS $$
+                    BEGIN
+                        NEW.updated_at = CURRENT_TIMESTAMP;
+                        RETURN NEW;
+                    END;
+                    $$ LANGUAGE plpgsql
+                `);
+
+                await client.query(`DROP TRIGGER IF EXISTS trigger_roles_updated_at ON roles`);
+                await client.query(`
+                    CREATE TRIGGER trigger_roles_updated_at
+                    BEFORE UPDATE ON roles
+                    FOR EACH ROW
+                    EXECUTE FUNCTION update_roles_updated_at()
+                `);
+
+                // Step 10: Cleanup
+                await client.query(`DROP TABLE IF EXISTS employee_role_backup`);
+
+                console.log('[Schema] ✅ Roles migrated to tenant-specific structure successfully');
+                console.log('[Schema] ℹ️  Each tenant now has their own Administrador, Encargado, Repartidor, Ayudante roles');
+            }
+
             // 3. Always run seeds (idempotent - uses ON CONFLICT)
             console.log('[Seeds] 📝 Running seeds.sql...');
             const seedsPath = path.join(__dirname, 'seeds.sql');

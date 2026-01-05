@@ -178,9 +178,9 @@ module.exports = (pool) => {
                     p.id,
                     p.global_id,
                     p.tenant_id,
-                    p.descripcion,
-                    p.categoria,
-                    p.precio_compra,
+                    p.descripcion as name,
+                    p.categoria as categoria_id,
+                    p.precio_compra as precio_costo,
                     COALESCE(pbp.precio_venta, p.precio_venta) as precio_venta,
                     p.produccion,
                     p.inventariar,
@@ -190,7 +190,8 @@ module.exports = (pool) => {
                     p.inventario,
                     p.proveedor_id,
                     p.codigo_barras,
-                    p.unidad_medida,
+                    p.unidad_medida as unidad_medida_id,
+                    p.bascula as pesable,
                     p.is_active,
                     p.created_at,
                     p.updated_at,
@@ -237,9 +238,11 @@ module.exports = (pool) => {
 
             res.json({
                 success: true,
-                data: result.rows,
-                count: result.rows.length,
-                last_sync: lastSync
+                data: {
+                    products: result.rows,
+                    last_sync: lastSync
+                },
+                count: result.rows.length
             });
         } catch (error) {
             console.error('[Productos/Pull] ❌ Error:', error.message);

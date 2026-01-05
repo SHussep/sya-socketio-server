@@ -660,16 +660,16 @@ module.exports = (pool) => {
 
             console.log(`[Roles] 🔄 Obteniendo roles para tenant ${tenantId}`);
 
-            // Get all roles with their permissions
+            // Get all roles with their permissions (tenant-specific roles)
             const result = await pool.query(
-                `SELECT r.id, r.name, r.description, r.is_system,
+                `SELECT r.id, r.name, r.description, r.is_system, r.mobile_access_type,
                         ARRAY_AGG(p.code) as permission_codes,
                         ARRAY_AGG(json_build_object('code', p.code, 'name', p.name, 'description', p.description)) as permissions
                  FROM roles r
                  LEFT JOIN role_permissions rp ON rp.role_id = r.id
                  LEFT JOIN permissions p ON p.id = rp.permission_id
                  WHERE r.tenant_id = $1
-                 GROUP BY r.id, r.name, r.description, r.is_system
+                 GROUP BY r.id, r.name, r.description, r.is_system, r.mobile_access_type
                  ORDER BY r.is_system DESC, r.name ASC`,
                 [tenantId]
             );
@@ -680,6 +680,8 @@ module.exports = (pool) => {
                 name: role.name,
                 description: role.description,
                 isSystem: role.is_system,
+                mobileAccessType: role.mobile_access_type,  // 'admin', 'distributor', 'none'
+                canAccessMobile: role.mobile_access_type !== 'none',
                 permissionCodes: role.permission_codes.filter(code => code != null),
                 permissions: role.permissions
                     .filter(p => p && p.code != null)
@@ -705,6 +707,154 @@ module.exports = (pool) => {
                 message: 'Error al obtener roles',
                 error: error.message
             });
+        }
+    });
+
+    // POST /api/roles - Create or sync a role from Desktop
+    router.post('/roles', async (req, res) => {
+        const client = await pool.connect();
+        try {
+            const {
+                tenantId,
+                name,
+                description,
+                isSystem,
+                mobileAccessType,
+                global_id,
+                terminal_id,
+                local_op_seq,
+                created_local_utc
+            } = req.body;
+
+            console.log(`[Roles/Sync] 📥 Sincronizando rol: ${name} (tenant: ${tenantId})`);
+
+            // Validaciones básicas
+            if (!tenantId || !name) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Se requiere tenantId y name'
+                });
+            }
+
+            if (!global_id) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Se requiere global_id para sincronización'
+                });
+            }
+
+            await client.query('BEGIN');
+
+            // Verificar si ya existe por global_id
+            const existingByGlobalId = await client.query(
+                `SELECT id, name FROM roles WHERE global_id = $1`,
+                [global_id]
+            );
+
+            let roleId;
+            let isNew = false;
+
+            if (existingByGlobalId.rows.length > 0) {
+                // Actualizar rol existente
+                roleId = existingByGlobalId.rows[0].id;
+                console.log(`[Roles/Sync] 🔄 Actualizando rol existente ID: ${roleId}`);
+
+                await client.query(
+                    `UPDATE roles SET
+                        name = $1,
+                        description = $2,
+                        mobile_access_type = $3,
+                        updated_at = NOW()
+                     WHERE id = $4`,
+                    [name, description || null, mobileAccessType || 'none', roleId]
+                );
+            } else {
+                // Verificar si ya existe un rol con el mismo nombre para este tenant
+                const existingByName = await client.query(
+                    `SELECT id FROM roles WHERE tenant_id = $1 AND name = $2`,
+                    [tenantId, name]
+                );
+
+                if (existingByName.rows.length > 0) {
+                    // Ya existe con ese nombre, actualizar global_id
+                    roleId = existingByName.rows[0].id;
+                    console.log(`[Roles/Sync] 🔗 Vinculando rol existente "${name}" (ID: ${roleId}) con global_id`);
+
+                    await client.query(
+                        `UPDATE roles SET
+                            global_id = $1,
+                            description = COALESCE($2, description),
+                            mobile_access_type = COALESCE($3, mobile_access_type),
+                            terminal_id = $4,
+                            local_op_seq = $5,
+                            created_local_utc = $6,
+                            updated_at = NOW()
+                         WHERE id = $7`,
+                        [global_id, description, mobileAccessType, terminal_id, local_op_seq, created_local_utc, roleId]
+                    );
+                } else {
+                    // Crear nuevo rol
+                    isNew = true;
+                    console.log(`[Roles/Sync] ➕ Creando nuevo rol: ${name}`);
+
+                    const insertResult = await client.query(
+                        `INSERT INTO roles
+                            (tenant_id, name, description, is_system, mobile_access_type,
+                             global_id, terminal_id, local_op_seq, created_local_utc, created_at, updated_at)
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
+                         RETURNING id`,
+                        [
+                            tenantId,
+                            name,
+                            description || null,
+                            isSystem || false,
+                            mobileAccessType || 'none',
+                            global_id,
+                            terminal_id,
+                            local_op_seq || 0,
+                            created_local_utc
+                        ]
+                    );
+
+                    roleId = insertResult.rows[0].id;
+                }
+            }
+
+            await client.query('COMMIT');
+
+            console.log(`[Roles/Sync] ✅ Rol ${isNew ? 'creado' : 'actualizado'}: ${name} (ID: ${roleId})`);
+
+            res.json({
+                success: true,
+                message: isNew ? 'Rol creado exitosamente' : 'Rol actualizado exitosamente',
+                data: {
+                    id: roleId,
+                    name,
+                    global_id,
+                    isNew
+                }
+            });
+
+        } catch (error) {
+            await client.query('ROLLBACK');
+            console.error('[Roles/Sync] ❌ Error:', error.message);
+
+            // Verificar si es error de unicidad
+            if (error.code === '23505') {
+                return res.status(409).json({
+                    success: false,
+                    message: 'Ya existe un rol con ese nombre para este tenant',
+                    error: error.detail
+                });
+            }
+
+            res.status(500).json({
+                success: false,
+                message: 'Error al sincronizar rol',
+                error: error.message
+            });
+        } finally {
+            client.release();
         }
     });
 
