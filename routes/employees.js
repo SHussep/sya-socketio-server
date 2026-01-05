@@ -3,9 +3,29 @@
 // ═══════════════════════════════════════════════════════════════
 
 const express = require('express');
+const bcrypt = require('bcryptjs');
 
 module.exports = (pool) => {
     const router = express.Router();
+
+    // ═════════════════════════════════════════════════════════════
+    // HELPER: Detect if a string is already a BCrypt hash
+    // ═════════════════════════════════════════════════════════════
+    const isBcryptHash = (str) => {
+        if (!str || typeof str !== 'string') return false;
+        // BCrypt hashes start with $2a$, $2b$, or $2y$ and are 60 chars
+        return /^\$2[aby]\$\d{2}\$.{53}$/.test(str);
+    };
+
+    // ═════════════════════════════════════════════════════════════
+    // HELPER: Hash password if not already hashed
+    // ═════════════════════════════════════════════════════════════
+    const ensurePasswordHashed = async (password) => {
+        if (!password) return null;
+        if (isBcryptHash(password)) return password; // Already hashed
+        // Hash plain text password
+        return await bcrypt.hash(password, 10);
+    };
 
     // ═════════════════════════════════════════════════════════════
     // HELPER: Derive mobile access type from role_id and boolean
@@ -133,6 +153,9 @@ module.exports = (pool) => {
                 const existingId = existingResult.rows[0].id;
                 console.log(`[Employees/Sync] ⚠️ Empleado ya existe (ID: ${existingId}), actualizando...`);
 
+                // ✅ Hash password if provided (handles plain text from mobile)
+                const hashedPasswordForUpdate = await ensurePasswordHashed(password);
+
                 try {
                     await client.query('BEGIN');
 
@@ -155,7 +178,7 @@ module.exports = (pool) => {
                             branchId || mainBranchId,
                             isActive !== false,
                             mappedRoleId || null,
-                            password || null,
+                            hashedPasswordForUpdate,  // ✅ Always BCrypt hashed
                             existingId,
                             tenantId,
                             canUseMobileApp
@@ -243,6 +266,12 @@ module.exports = (pool) => {
             // Ensures employee_branches is created atomically
             console.log(`[Employees/Sync] 📝 Creando nuevo empleado: ${fullName}`);
 
+            // ✅ Ensure password is hashed (handles both plain text from mobile and hashed from desktop)
+            const hashedPassword = await ensurePasswordHashed(password);
+            if (password && hashedPassword) {
+                console.log(`[Employees/Sync] 🔐 Password ${isBcryptHash(password) ? 'already hashed' : 'hashed from plain text'}`);
+            }
+
             try {
                 await client.query('BEGIN');
 
@@ -268,7 +297,7 @@ module.exports = (pool) => {
                         lastName,
                         derivedUsername,  // ✅ Username auto-generado del email
                         email,
-                        password || null,  // Can be null if not provided
+                        hashedPassword,  // ✅ Always BCrypt hashed
                         branchId || mainBranchId,
                         mappedRoleId || null,
                         canUseMobileApp,
