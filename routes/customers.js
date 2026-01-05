@@ -235,7 +235,7 @@ module.exports = (pool) => {
                     global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw,
                     is_system_generic, created_at, updated_at
                  )
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::uuid, $12, $13, $14, $15, FALSE, NOW(), NOW())
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::uuid, $12::uuid, $13, $14, $15, FALSE, NOW(), NOW())
                  ON CONFLICT (global_id) DO UPDATE
                  SET nombre = EXCLUDED.nombre,
                      telefono = EXCLUDED.telefono,
