@@ -662,14 +662,14 @@ module.exports = (pool) => {
 
             // Get all roles with their permissions (tenant-specific roles)
             const result = await pool.query(
-                `SELECT r.id, r.name, r.description, r.is_system, r.mobile_access_type,
+                `SELECT r.id, r.name, r.description, r.is_system, r.mobile_access_type, r.global_id,
                         ARRAY_AGG(p.code) as permission_codes,
                         ARRAY_AGG(json_build_object('code', p.code, 'name', p.name, 'description', p.description)) as permissions
                  FROM roles r
                  LEFT JOIN role_permissions rp ON rp.role_id = r.id
                  LEFT JOIN permissions p ON p.id = rp.permission_id
                  WHERE r.tenant_id = $1
-                 GROUP BY r.id, r.name, r.description, r.is_system, r.mobile_access_type
+                 GROUP BY r.id, r.name, r.description, r.is_system, r.mobile_access_type, r.global_id
                  ORDER BY r.is_system DESC, r.name ASC`,
                 [tenantId]
             );
@@ -682,6 +682,7 @@ module.exports = (pool) => {
                 isSystem: role.is_system,
                 mobileAccessType: role.mobile_access_type,  // 'admin', 'distributor', 'none'
                 canAccessMobile: role.mobile_access_type !== 'none',
+                globalId: role.global_id,
                 permissionCodes: role.permission_codes.filter(code => code != null),
                 permissions: role.permissions
                     .filter(p => p && p.code != null)
