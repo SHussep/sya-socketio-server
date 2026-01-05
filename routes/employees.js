@@ -114,27 +114,28 @@ module.exports = (pool) => {
             const firstName = nameParts[0] || fullName;
             const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
 
-            // Map role_id: if not 1-4, use "Otro" (99) for custom roles from Desktop
+            // Validar que el rol exista en la base de datos para este tenant
             let mappedRoleId = roleId;
             if (roleId) {
-                if (![1, 2, 3, 4, 99].includes(roleId)) {
-                    // Custom role from Desktop → map to "Otro"
-                    console.log(`[Employees/Sync] ℹ️  Rol custom detectado: ${roleId} → mapeando a "Otro" (99)`);
-                    mappedRoleId = 99;
-                }
-
                 const roleCheck = await client.query(
-                    `SELECT id, name FROM roles WHERE id = $1`,
-                    [mappedRoleId]
+                    `SELECT id, name FROM roles WHERE id = $1 AND tenant_id = $2`,
+                    [roleId, tenantId]
                 );
 
                 if (roleCheck.rows.length === 0) {
-                    console.log(`[Employees/Sync] ❌ Rol no válido: ${mappedRoleId}`);
+                    // Buscar roles válidos para mostrar en el mensaje de error
+                    const validRoles = await client.query(
+                        `SELECT id, name FROM roles WHERE tenant_id = $1 ORDER BY id`,
+                        [tenantId]
+                    );
+                    const validRolesList = validRoles.rows.map(r => `${r.id} (${r.name})`).join(', ');
+                    console.log(`[Employees/Sync] ❌ Rol no válido: ${roleId}. Roles válidos para tenant ${tenantId}: ${validRolesList}`);
                     return res.status(400).json({
                         success: false,
-                        message: `Rol no válido. Roles válidos: 1 (Admin), 2 (Encargado), 3 (Repartidor), 4 (Ayudante), o cualquier custom (mapeará a Otro)`
+                        message: `Rol no válido. Roles disponibles para este tenant: ${validRolesList}`
                     });
                 }
+                mappedRoleId = roleId;
             }
 
             // Determine if employee can use mobile app
@@ -1206,12 +1207,7 @@ module.exports = (pool) => {
                 });
             }
 
-            if (roleId !== undefined && ![1, 2, 3, 4, 99].includes(roleId)) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'roleId inválido. Roles válidos: 1, 2, 3, 4, 99'
-                });
-            }
+            // La validación del roleId se hace más adelante contra la BD
 
             // Split fullName if provided
             let firstName, lastName;
@@ -1251,17 +1247,23 @@ module.exports = (pool) => {
                 });
             }
 
-            // If roleId is being updated, verify it exists
+            // If roleId is being updated, verify it exists for this tenant
             if (roleId !== undefined && roleId !== employee.role_id) {
                 const roleCheck = await client.query(
-                    `SELECT id FROM roles WHERE id = $1`,
-                    [roleId]
+                    `SELECT id, name FROM roles WHERE id = $1 AND tenant_id = $2`,
+                    [roleId, tenantId]
                 );
 
                 if (roleCheck.rows.length === 0) {
+                    // Buscar roles válidos para mostrar en el mensaje de error
+                    const validRoles = await client.query(
+                        `SELECT id, name FROM roles WHERE tenant_id = $1 ORDER BY id`,
+                        [tenantId]
+                    );
+                    const validRolesList = validRoles.rows.map(r => `${r.id} (${r.name})`).join(', ');
                     return res.status(400).json({
                         success: false,
-                        message: `Rol ${roleId} no encontrado`
+                        message: `Rol ${roleId} no válido. Roles disponibles: ${validRolesList}`
                     });
                 }
             }
