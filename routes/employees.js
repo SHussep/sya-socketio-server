@@ -48,8 +48,8 @@ module.exports = (pool) => {
         }
     };
 
-    // POST /api/employees - Sync employee from Desktop app with roles and passwords
-    // Accepts the payload from WinUI and saves to PostgreSQL
+    // POST /api/employees - Sync employee from Desktop or Mobile app
+    // Handles password hashing and mobile-specific logic
     router.post('/', async (req, res) => {
         const client = await pool.connect();
         try {
@@ -59,7 +59,7 @@ module.exports = (pool) => {
                 fullName,
                 username,
                 email,
-                password,  // BCrypt hashed password from Desktop
+                password,  // Plain text from mobile, BCrypt hash from Desktop
                 roleId,
                 isActive,
                 isOwner,
@@ -73,13 +73,32 @@ module.exports = (pool) => {
                 device_event_raw
             } = req.body;
 
+            // Detectar origen: móvil vs desktop
+            const isFromMobile = terminal_id === 'MOBILE-APP';
+
+            // ═════════════════════════════════════════════════════════════
+            // VALIDACIÓN ESPECIAL PARA CREACIÓN DESDE MÓVIL
+            // ═════════════════════════════════════════════════════════════
+            // Si se crea desde móvil Y quiere acceso a app móvil, DEBE tener contraseña
+            const requestedMobileAccess = req.body.canUseMobileApp === true ||
+                (req.body.canUseMobileApp === undefined && [1, 2, 3].includes(roleId));
+
+            if (isFromMobile && requestedMobileAccess && !password) {
+                console.log(`[Employees/Sync] ❌ Empleado creado desde móvil sin contraseña: ${fullName}`);
+                return res.status(400).json({
+                    success: false,
+                    message: 'Para crear un empleado con acceso móvil desde la app, debe proporcionar una contraseña',
+                    errorCode: 'MOBILE_PASSWORD_REQUIRED'
+                });
+            }
+
             // Auto-generar username: prioridad username > email > fullName
             const derivedUsername = username
                 || (email ? email.split('@')[0].replace(/[^a-zA-Z0-9]/g, '').toLowerCase() : null)
                 || (fullName ? fullName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() : null);
 
             console.log(`[Employees/Sync] 🔄 Sincronizando empleado: ${fullName} (${derivedUsername}) - Tenant: ${tenantId}, Role: ${roleId}`);
-            console.log(`[Employees/Sync] 🔑 GlobalId: ${global_id || 'null'}, TerminalId: ${terminal_id || 'null'}`);
+            console.log(`[Employees/Sync] 🔑 GlobalId: ${global_id || 'null'}, TerminalId: ${terminal_id || 'null'}, Origen: ${isFromMobile ? 'MOBILE' : 'DESKTOP'}`);
 
             // Validate required fields (email ya NO es requerido - puede ser null)
             if (!tenantId || !fullName || !global_id) {
@@ -275,10 +294,16 @@ module.exports = (pool) => {
             try {
                 await client.query('BEGIN');
 
+                // ✅ Empleados creados desde móvil: auto-verificar email (no tienen acceso a Gmail)
+                const emailVerified = isFromMobile ? true : false;
+                if (isFromMobile) {
+                    console.log(`[Employees/Sync] 📧 Email auto-verificado para empleado creado desde móvil`);
+                }
+
                 const insertResult = await client.query(
                     `INSERT INTO employees
-                     (tenant_id, first_name, last_name, username, email, password_hash, main_branch_id, role_id, can_use_mobile_app, is_active, global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw, updated_at, created_at)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())
+                     (tenant_id, first_name, last_name, username, email, password_hash, main_branch_id, role_id, can_use_mobile_app, is_active, email_verified, global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw, updated_at, created_at)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW(), NOW())
                      ON CONFLICT (global_id) DO UPDATE
                      SET first_name = EXCLUDED.first_name,
                          last_name = EXCLUDED.last_name,
@@ -289,19 +314,21 @@ module.exports = (pool) => {
                          role_id = COALESCE(EXCLUDED.role_id, employees.role_id),
                          can_use_mobile_app = COALESCE(EXCLUDED.can_use_mobile_app, employees.can_use_mobile_app),
                          is_active = COALESCE(EXCLUDED.is_active, employees.is_active),
+                         email_verified = CASE WHEN EXCLUDED.email_verified = true THEN true ELSE employees.email_verified END,
                          updated_at = NOW()
-                     RETURNING id, tenant_id, first_name, last_name, username, email, main_branch_id, role_id, can_use_mobile_app, is_active, created_at, updated_at`,
+                     RETURNING id, tenant_id, first_name, last_name, username, email, main_branch_id, role_id, can_use_mobile_app, is_active, email_verified, created_at, updated_at`,
                     [
                         tenantId,
                         firstName,
                         lastName,
                         derivedUsername,  // ✅ Username auto-generado del email
                         email,
-                        hashedPassword,  // ✅ Always BCrypt hashed
+                        hashedPassword,   // ✅ Always BCrypt hashed
                         branchId || mainBranchId,
                         mappedRoleId || null,
                         canUseMobileApp,
                         isActive !== false,
+                        emailVerified,    // ✅ Auto-verificado si es de móvil
                         global_id,            // ✅ OFFLINE-FIRST
                         terminal_id,          // ✅ OFFLINE-FIRST
                         local_op_seq,         // ✅ OFFLINE-FIRST
@@ -404,10 +431,11 @@ module.exports = (pool) => {
         }
     });
 
-    // GET /api/employees - Get all employees for a tenant
+    // GET /api/employees - Get all ACTIVE employees for a tenant
+    // Parámetro opcional: includeInactive=true para admins que necesitan ver todos
     router.get('/', async (req, res) => {
         try {
-            const { tenantId } = req.query;
+            const { tenantId, includeInactive } = req.query;
 
             if (!tenantId) {
                 return res.status(400).json({
@@ -416,6 +444,9 @@ module.exports = (pool) => {
                 });
             }
 
+            // Por defecto solo retornar empleados activos (soft delete)
+            const activeFilter = includeInactive === 'true' ? '' : 'AND is_active = true';
+
             const result = await pool.query(
                 `SELECT id, tenant_id, first_name, last_name, username, email, is_active,
                         role_id, main_branch_id, can_use_mobile_app, google_user_identifier,
@@ -423,7 +454,7 @@ module.exports = (pool) => {
                         email_verified, is_owner,
                         created_at, updated_at
                  FROM employees
-                 WHERE tenant_id = $1
+                 WHERE tenant_id = $1 ${activeFilter}
                  ORDER BY first_name ASC, last_name ASC`,
                 [tenantId]
             );
@@ -882,7 +913,7 @@ module.exports = (pool) => {
 
             // Verify employee exists and belongs to tenant
             const employeeCheck = await client.query(
-                `SELECT id, email, first_name, last_name, role_id, can_use_mobile_app FROM employees
+                `SELECT id, email, first_name, last_name, role_id, can_use_mobile_app, is_active FROM employees
                  WHERE id = $1 AND tenant_id = $2`,
                 [employeeId, tenantId]
             );
@@ -895,6 +926,20 @@ module.exports = (pool) => {
             }
 
             const employee = employeeCheck.rows[0];
+
+            // ═════════════════════════════════════════════════════════════
+            // PREVENIR REACTIVACIÓN DE EMPLEADOS ELIMINADOS (SOFT DELETE)
+            // ═════════════════════════════════════════════════════════════
+            // Un empleado marcado como is_active = false NO puede ser reactivado
+            if (isActive === true && employee.is_active === false) {
+                const employeeFullName = `${employee.first_name || ''} ${employee.last_name || ''}`.trim();
+                console.log(`[Employees/Update] ❌ Intento de reactivar empleado eliminado: ${employeeFullName} (ID: ${employeeId})`);
+                return res.status(400).json({
+                    success: false,
+                    message: 'No se puede reactivar un empleado eliminado. Si necesita este empleado, créelo nuevamente.',
+                    errorCode: 'CANNOT_REACTIVATE_DELETED'
+                });
+            }
 
             // If roleId is being updated, verify it exists
             if (roleId !== undefined && roleId !== employee.role_id) {
