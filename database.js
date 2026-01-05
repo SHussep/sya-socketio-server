@@ -1916,6 +1916,30 @@ async function runMigrations() {
                 console.log('[Schema] ℹ️  Each tenant now has their own Administrador, Encargado, Repartidor, Ayudante roles');
             }
 
+            // Patch: Add offline-first columns to roles table (Migration 015)
+            const checkRolesGlobalId = await client.query(`
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'roles'
+                AND column_name = 'global_id'
+            `);
+
+            if (checkRolesGlobalId.rows.length === 0) {
+                console.log('[Schema] 📝 Adding offline-first columns to roles table (Migration 015)...');
+
+                await client.query(`
+                    ALTER TABLE roles
+                    ADD COLUMN IF NOT EXISTS global_id VARCHAR(36) UNIQUE,
+                    ADD COLUMN IF NOT EXISTS terminal_id VARCHAR(64),
+                    ADD COLUMN IF NOT EXISTS local_op_seq BIGINT DEFAULT 0,
+                    ADD COLUMN IF NOT EXISTS created_local_utc TEXT
+                `);
+
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_roles_global_id ON roles(global_id)`);
+
+                console.log('[Schema] ✅ Offline-first columns added to roles table');
+            }
+
             // 3. Always run seeds (idempotent - uses ON CONFLICT)
             console.log('[Seeds] 📝 Running seeds.sql...');
             const seedsPath = path.join(__dirname, 'seeds.sql');
