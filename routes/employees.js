@@ -449,14 +449,16 @@ module.exports = (pool) => {
             const activeFilter = includeInactive === 'true' ? '' : 'AND is_active = true';
 
             const result = await pool.query(
-                `SELECT id, tenant_id, first_name, last_name, username, email, is_active,
-                        role_id, main_branch_id, can_use_mobile_app, google_user_identifier,
-                        global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw,
-                        email_verified, is_owner,
-                        created_at, updated_at
-                 FROM employees
-                 WHERE tenant_id = $1 ${activeFilter}
-                 ORDER BY first_name ASC, last_name ASC`,
+                `SELECT e.id, e.tenant_id, e.first_name, e.last_name, e.username, e.email, e.is_active,
+                        e.role_id, r.name as role_name,
+                        e.main_branch_id, e.can_use_mobile_app, e.google_user_identifier,
+                        e.global_id, e.terminal_id, e.local_op_seq, e.created_local_utc, e.device_event_raw,
+                        e.email_verified, e.is_owner,
+                        e.created_at, e.updated_at
+                 FROM employees e
+                 LEFT JOIN roles r ON e.role_id = r.id
+                 WHERE e.tenant_id = $1 ${activeFilter}
+                 ORDER BY e.first_name ASC, e.last_name ASC`,
                 [tenantId]
             );
 
