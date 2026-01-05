@@ -806,7 +806,7 @@ module.exports = (pool, io) => {
                     initial_amount, final_amount, transaction_counter, is_cash_cut_open,
                     global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw
                  )
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::uuid, $11::uuid, $12, $13, $14)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
                  ON CONFLICT (global_id) DO UPDATE
                  SET end_time = EXCLUDED.end_time,
                      final_amount = EXCLUDED.final_amount,
@@ -992,7 +992,7 @@ module.exports = (pool, io) => {
             const shiftCheck = await pool.query(
                 `SELECT id, employee_id, branch_id, is_cash_cut_open, global_id
                  FROM shifts
-                 WHERE global_id = $1::uuid AND tenant_id = $2`,
+                 WHERE global_id = $1 AND tenant_id = $2`,
                 [global_id, tenant_id]
             );
 
@@ -1025,7 +1025,7 @@ module.exports = (pool, io) => {
                     is_cash_cut_open = $3,
                     transaction_counter = COALESCE($4, transaction_counter),
                     updated_at = NOW()
-                WHERE global_id = $5::uuid AND tenant_id = $6
+                WHERE global_id = $5 AND tenant_id = $6
                 RETURNING id, global_id, employee_id, branch_id, end_time, final_amount,
                           is_cash_cut_open, transaction_counter
             `, [
@@ -1114,7 +1114,7 @@ module.exports = (pool, io) => {
                         CONCAT(e.first_name, ' ', e.last_name) as employee_name
                     FROM shifts s
                     LEFT JOIN employees e ON s.employee_id = e.id
-                    WHERE s.global_id = $1::uuid AND s.tenant_id = $2
+                    WHERE s.global_id = $1 AND s.tenant_id = $2
                 `, [global_id, tenant_id]);
 
                 if (result.rows.length === 0) {
