@@ -859,6 +859,165 @@ module.exports = (pool) => {
         }
     });
 
+    // PUT /api/roles/:roleId - Update a role (only non-system roles)
+    router.put('/roles/:roleId', async (req, res) => {
+        const client = await pool.connect();
+        try {
+            const roleId = parseInt(req.params.roleId);
+            const { tenantId, name, description, mobileAccessType } = req.body;
+
+            console.log(`[Roles/Update] 🔄 Actualizando rol ID: ${roleId}`);
+
+            if (!roleId || !tenantId) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Se requiere roleId y tenantId'
+                });
+            }
+
+            // Verificar que el rol existe y pertenece al tenant
+            const roleCheck = await client.query(
+                `SELECT id, name, is_system FROM roles WHERE id = $1 AND tenant_id = $2`,
+                [roleId, tenantId]
+            );
+
+            if (roleCheck.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Rol no encontrado'
+                });
+            }
+
+            // No permitir editar roles del sistema
+            if (roleCheck.rows[0].is_system) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'No se pueden editar los roles del sistema'
+                });
+            }
+
+            await client.query('BEGIN');
+
+            await client.query(
+                `UPDATE roles SET
+                    name = COALESCE($1, name),
+                    description = COALESCE($2, description),
+                    mobile_access_type = COALESCE($3, mobile_access_type),
+                    updated_at = NOW()
+                 WHERE id = $4`,
+                [name, description, mobileAccessType, roleId]
+            );
+
+            await client.query('COMMIT');
+
+            console.log(`[Roles/Update] ✅ Rol actualizado: ${name || roleCheck.rows[0].name}`);
+
+            res.json({
+                success: true,
+                message: 'Rol actualizado exitosamente'
+            });
+
+        } catch (error) {
+            await client.query('ROLLBACK');
+            console.error('[Roles/Update] ❌ Error:', error.message);
+
+            if (error.code === '23505') {
+                return res.status(409).json({
+                    success: false,
+                    message: 'Ya existe un rol con ese nombre'
+                });
+            }
+
+            res.status(500).json({
+                success: false,
+                message: 'Error al actualizar rol',
+                error: error.message
+            });
+        } finally {
+            client.release();
+        }
+    });
+
+    // DELETE /api/roles/:roleId - Delete a role (only non-system roles)
+    router.delete('/roles/:roleId', async (req, res) => {
+        const client = await pool.connect();
+        try {
+            const roleId = parseInt(req.params.roleId);
+            const { tenantId } = req.body;
+
+            console.log(`[Roles/Delete] 🗑️ Eliminando rol ID: ${roleId}`);
+
+            if (!roleId || !tenantId) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Se requiere roleId y tenantId'
+                });
+            }
+
+            // Verificar que el rol existe y pertenece al tenant
+            const roleCheck = await client.query(
+                `SELECT id, name, is_system FROM roles WHERE id = $1 AND tenant_id = $2`,
+                [roleId, tenantId]
+            );
+
+            if (roleCheck.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Rol no encontrado'
+                });
+            }
+
+            // No permitir eliminar roles del sistema
+            if (roleCheck.rows[0].is_system) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'No se pueden eliminar los roles del sistema (Administrador, Encargado, Repartidor, Ayudante)'
+                });
+            }
+
+            // Verificar que no haya empleados asignados a este rol
+            const employeesWithRole = await client.query(
+                `SELECT COUNT(*) as count FROM employees WHERE role_id = $1`,
+                [roleId]
+            );
+
+            if (parseInt(employeesWithRole.rows[0].count) > 0) {
+                return res.status(409).json({
+                    success: false,
+                    message: `No se puede eliminar el rol porque hay ${employeesWithRole.rows[0].count} empleado(s) asignado(s)`
+                });
+            }
+
+            await client.query('BEGIN');
+
+            // Eliminar permisos del rol primero
+            await client.query(`DELETE FROM role_permissions WHERE role_id = $1`, [roleId]);
+
+            // Eliminar el rol
+            await client.query(`DELETE FROM roles WHERE id = $1`, [roleId]);
+
+            await client.query('COMMIT');
+
+            console.log(`[Roles/Delete] ✅ Rol eliminado: ${roleCheck.rows[0].name}`);
+
+            res.json({
+                success: true,
+                message: 'Rol eliminado exitosamente'
+            });
+
+        } catch (error) {
+            await client.query('ROLLBACK');
+            console.error('[Roles/Delete] ❌ Error:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Error al eliminar rol',
+                error: error.message
+            });
+        } finally {
+            client.release();
+        }
+    });
+
     // DELETE /api/employees/:id - Delete employee and all related data
     // Deletes employee from employees table and cascades to employee_branches
     router.delete('/:id', async (req, res) => {
