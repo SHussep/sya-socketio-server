@@ -271,7 +271,7 @@ async function initializeDatabase() {
                 tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
                 name VARCHAR(255) NOT NULL,
                 contact_name VARCHAR(255),
-                phone_number VARCHAR(20),
+                phone_number VARCHAR(50),
                 email VARCHAR(255),
                 address TEXT,
                 is_active BOOLEAN DEFAULT true,
@@ -1938,6 +1938,30 @@ async function runMigrations() {
                 await client.query(`CREATE INDEX IF NOT EXISTS idx_roles_global_id ON roles(global_id)`);
 
                 console.log('[Schema] ✅ Offline-first columns added to roles table');
+            }
+
+            // Patch: Increase phone_number column size (was VARCHAR(20), now VARCHAR(50))
+            // Fix for: "value too long for type character varying(50)" error in suppliers sync
+            if (checkSuppliersTable.rows[0].exists) {
+                console.log('[Schema] 🔍 Checking phone_number column size in suppliers...');
+                const checkPhoneColumnType = await client.query(`
+                    SELECT character_maximum_length
+                    FROM information_schema.columns
+                    WHERE table_name = 'suppliers'
+                    AND column_name = 'phone_number'
+                `);
+
+                if (checkPhoneColumnType.rows.length > 0) {
+                    const currentLength = checkPhoneColumnType.rows[0].character_maximum_length;
+                    if (currentLength && currentLength < 50) {
+                        console.log(`[Schema] 📝 Increasing suppliers.phone_number from VARCHAR(${currentLength}) to VARCHAR(50)...`);
+                        await client.query(`
+                            ALTER TABLE suppliers
+                            ALTER COLUMN phone_number TYPE VARCHAR(50)
+                        `);
+                        console.log('[Schema] ✅ suppliers.phone_number column size increased');
+                    }
+                }
             }
 
             // 3. Always run seeds (idempotent - uses ON CONFLICT)

@@ -503,6 +503,8 @@ module.exports = (pool) => {
                     e.email,
                     e.is_active,
                     e.role_id,
+                    r.global_id as role_global_id,
+                    r.name as role_name,
                     e.main_branch_id,
                     e.can_use_mobile_app as has_mobile_access,
                     e.is_owner,
@@ -510,6 +512,7 @@ module.exports = (pool) => {
                     e.created_at,
                     e.updated_at
                 FROM employees e
+                LEFT JOIN roles r ON e.role_id = r.id
             `;
 
             const params = [tenantId];
