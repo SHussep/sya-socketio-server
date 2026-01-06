@@ -1186,6 +1186,7 @@ module.exports = (pool) => {
             const {
                 tenantId,
                 roleId,
+                roleName,  // Fallback si roleId es null (Desktop envía nombre del rol)
                 canUseMobileApp,
                 fullName,
                 isActive,
@@ -1193,7 +1194,7 @@ module.exports = (pool) => {
             } = req.body;
 
             console.log(`[Employees/Update] 🔄 [UPDATE RECIBIDO] Actualizando empleado ID: ${employeeId}`);
-            console.log(`[Employees/Update] 📝 Payload: ${JSON.stringify({ tenantId, roleId, canUseMobileApp, fullName, isActive, email })}`);
+            console.log(`[Employees/Update] 📝 Payload: ${JSON.stringify({ tenantId, roleId, roleName, canUseMobileApp, fullName, isActive, email })}`);
 
             // Validate parameters
             if (!employeeId || !tenantId) {
@@ -1253,10 +1254,27 @@ module.exports = (pool) => {
             }
 
             // If roleId is being updated, verify it exists for this tenant
-            if (roleId !== undefined && roleId !== employee.role_id) {
+            // Desktop puede enviar roleId (PostgreSQL ID) o roleName (para mapeo)
+            let resolvedRoleId = roleId;
+
+            // Si roleId es null pero tenemos roleName, buscar el rol por nombre
+            if ((resolvedRoleId === undefined || resolvedRoleId === null) && roleName) {
+                const roleByName = await client.query(
+                    `SELECT id, name FROM roles WHERE name = $1 AND tenant_id = $2`,
+                    [roleName, tenantId]
+                );
+                if (roleByName.rows.length > 0) {
+                    resolvedRoleId = roleByName.rows[0].id;
+                    console.log(`[Employees/Update] 🔗 Rol resuelto por nombre: "${roleName}" → ID ${resolvedRoleId}`);
+                } else {
+                    console.log(`[Employees/Update] ⚠️ Rol "${roleName}" no encontrado para tenant ${tenantId}`);
+                }
+            }
+
+            if (resolvedRoleId !== undefined && resolvedRoleId !== null && resolvedRoleId !== employee.role_id) {
                 const roleCheck = await client.query(
                     `SELECT id, name FROM roles WHERE id = $1 AND tenant_id = $2`,
-                    [roleId, tenantId]
+                    [resolvedRoleId, tenantId]
                 );
 
                 if (roleCheck.rows.length === 0) {
@@ -1268,7 +1286,7 @@ module.exports = (pool) => {
                     const validRolesList = validRoles.rows.map(r => `${r.id} (${r.name})`).join(', ');
                     return res.status(400).json({
                         success: false,
-                        message: `Rol ${roleId} no válido. Roles disponibles: ${validRolesList}`
+                        message: `Rol ${resolvedRoleId} no válido. Roles disponibles: ${validRolesList}`
                     });
                 }
             }
@@ -1287,9 +1305,9 @@ module.exports = (pool) => {
                 paramIndex++;
             }
 
-            if (roleId !== undefined) {
+            if (resolvedRoleId !== undefined && resolvedRoleId !== null) {
                 updates.push(`role_id = $${paramIndex}`);
-                params.push(roleId);
+                params.push(resolvedRoleId);
                 paramIndex++;
             }
 
