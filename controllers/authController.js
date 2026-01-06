@@ -540,8 +540,13 @@ class AuthController {
         }
 
         try {
-            // Buscar empleado SOLO por email
-            const query = 'SELECT * FROM employees WHERE LOWER(email) = LOWER($1) AND is_active = true';
+            // Buscar empleado SOLO por email, con JOIN a roles para obtener mobile_access_type
+            const query = `
+                SELECT e.*, r.name as role_name, r.mobile_access_type
+                FROM employees e
+                LEFT JOIN roles r ON e.role_id = r.id AND e.tenant_id = r.tenant_id
+                WHERE LOWER(e.email) = LOWER($1) AND e.is_active = true
+            `;
             const params = [email];
 
             const employeeResult = await this.pool.query(query, params);
@@ -691,8 +696,11 @@ class AuthController {
                 roleId: employee.role_id,
                 isActive: employee.is_active,
                 canUseMobileApp: employee.can_use_mobile_app,
+                mobileAccessType: employee.mobile_access_type || 'none',  // 'admin', 'distributor', 'none'
                 createdAt: employee.created_at
             };
+
+            console.log(`[Mobile Login] 📱 Tipo de acceso móvil: ${employee.mobile_access_type || 'none'} para ${employee.email}`);
 
             const branchesData = branches.map(branch => ({
                 id: branch.id,
