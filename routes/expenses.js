@@ -386,6 +386,24 @@ module.exports = (pool, io) => {
                 );
                 if (consumerResult.rows.length > 0) {
                     finalConsumerEmployeeId = consumerResult.rows[0].id;
+
+                    // ✅ IMPORTANTE: Si hay consumer, usar el turno ABIERTO del consumidor (repartidor)
+                    // No el turno del cajero que registra el gasto
+                    const consumerShiftResult = await pool.query(
+                        `SELECT id FROM shifts
+                         WHERE employee_id = $1
+                           AND tenant_id = $2
+                           AND is_cash_cut_open = true
+                         ORDER BY start_time DESC
+                         LIMIT 1`,
+                        [finalConsumerEmployeeId, tenantId]
+                    );
+                    if (consumerShiftResult.rows.length > 0) {
+                        finalShiftId = consumerShiftResult.rows[0].id;
+                        console.log(`[Sync/Expenses] ✅ Usando turno ABIERTO del repartidor: ${finalShiftId}`);
+                    } else {
+                        console.log(`[Sync/Expenses] ⚠️ Repartidor ${finalConsumerEmployeeId} no tiene turno abierto, usando turno original: ${finalShiftId}`);
+                    }
                 }
             }
 
