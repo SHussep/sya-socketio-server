@@ -126,7 +126,7 @@ module.exports = (pool, io) => {
 
             // Filtro por empleado
             if (employee_id) {
-                query += ` AND e.employee_id = $${paramIndex}`;
+                query += ` AND (e.employee_id = $${paramIndex} OR e.consumer_employee_id = $${paramIndex})`;
                 params.push(employee_id);
                 paramIndex++;
             }
@@ -527,19 +527,23 @@ module.exports = (pool, io) => {
             } else {
                 // No existe, INSERT nuevo
                 console.log(`[Sync/Expenses] ➕ Insertando nuevo gasto: ${finalGlobalId} (status: ${finalStatus}, globalCategoryId: ${globalCategoryId})`);
+                if (finalConsumerEmployeeId) {
+                    console.log(`[Sync/Expenses] 👤 Gasto asignado a consumer_employee_id: ${finalConsumerEmployeeId}`);
+                }
                 result = await pool.query(
                     `INSERT INTO expenses (
-                        tenant_id, branch_id, employee_id, payment_type_id, id_turno, global_category_id, description, amount, quantity, expense_date,
+                        tenant_id, branch_id, employee_id, consumer_employee_id, payment_type_id, id_turno, global_category_id, description, amount, quantity, expense_date,
                         status, reviewed_by_desktop, is_active,
                         global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw
                      )
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, true, $13, $14, $15, $16, $17)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, true, $14, $15, $16, $17, $18)
                      RETURNING *`,
                     [
                         tenantId,
                         branchId,
                         finalEmployeeId,
-                        payment_type_id,              // $4
+                        finalConsumerEmployeeId,      // $4 - Empleado consumidor (repartidor)
+                        payment_type_id,              // $5
                         finalShiftId,                 // $5 - Turno (resuelto por GlobalId)
                         globalCategoryId,             // $6 - CANÓNICO: global category ID (1-14)
                         description || '',            // $7
@@ -1212,7 +1216,7 @@ module.exports = (pool, io) => {
 
             // Filtro por empleado
             if (resolvedEmployeeId) {
-                query += ` AND e.employee_id = $${paramIndex}`;
+                query += ` AND (e.employee_id = $${paramIndex} OR e.consumer_employee_id = $${paramIndex})`;
                 params.push(resolvedEmployeeId);
                 paramIndex++;
             }
