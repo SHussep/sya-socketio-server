@@ -33,14 +33,15 @@ async function initializeDatabase() {
         console.log('[DB] Initializing database schema...');
 
         // Tabla: subscriptions (planes de subscripción)
+        // NOTE: Schema matches schema.sql - no 'price' column
         await client.query(`
             CREATE TABLE IF NOT EXISTS subscriptions (
                 id SERIAL PRIMARY KEY,
-                name VARCHAR(50) UNIQUE NOT NULL,
-                price DECIMAL(10, 2) NOT NULL,
-                max_branches INTEGER DEFAULT 1,
-                max_devices INTEGER DEFAULT 3,
-                max_employees INTEGER DEFAULT 5,
+                name VARCHAR(100) UNIQUE NOT NULL,
+                max_branches INTEGER NOT NULL DEFAULT 1,
+                max_devices INTEGER NOT NULL DEFAULT 1,
+                max_devices_per_branch INTEGER NOT NULL DEFAULT 3,
+                max_employees INTEGER,
                 features JSONB,
                 is_active BOOLEAN DEFAULT true,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -70,18 +71,19 @@ async function initializeDatabase() {
             console.log('[DB] ⚠️ subscriptions.is_active:', error.message);
         }
 
-        // Insertar planes por defecto si no existen (solo con columnas que seguro existen)
+        // Insertar planes por defecto si no existen
+        // NOTE: Schema doesn't have 'price' column - matches schema.sql
         try {
             await client.query(`
-                INSERT INTO subscriptions (name, price, max_branches, max_devices, max_employees, features)
+                INSERT INTO subscriptions (name, max_branches, max_devices, max_devices_per_branch, max_employees, features)
                 VALUES
-                    ('Basic', 0.00, 1, 3, 5, '{"guardian": true, "reports": true}'),
-                    ('Pro', 499.00, 3, 10, 20, '{"guardian": true, "reports": true, "advanced_analytics": true}'),
-                    ('Enterprise', 999.00, 10, 50, 100, '{"guardian": true, "reports": true, "advanced_analytics": true, "custom_features": true}')
+                    ('Basic', 1, 1, 3, 5, '{"guardian": true, "reports": true}'),
+                    ('Pro', 3, 10, 5, 20, '{"guardian": true, "reports": true, "advanced_analytics": true}'),
+                    ('Enterprise', 10, 50, 10, 100, '{"guardian": true, "reports": true, "advanced_analytics": true, "custom_features": true}')
                 ON CONFLICT (name) DO NOTHING
             `);
         } catch (error) {
-            console.log('[DB] ⚠️ subscriptions insert error (expected if table structure differs):', error.message);
+            console.log('[DB] ⚠️ subscriptions insert error:', error.message);
             // Don't throw - continue initialization
         }
 
