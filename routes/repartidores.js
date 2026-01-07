@@ -361,61 +361,56 @@ module.exports = (pool) => {
     });
 
     // GET /api/repartidores/:employeeId/assignments - Asignaciones de un repartidor específico
-    // 🔧 FIX: AGRUPADO POR venta_id para evitar duplicados (cada venta puede tener múltiples items en repartidor_assignments)
+    // 🔧 FIX: Ahora devuelve CADA PRODUCTO INDIVIDUAL (no agrupado por venta)
+    // para que las devoluciones se asocien correctamente a cada producto
     router.get('/:employeeId/assignments', authenticateToken, async (req, res) => {
         try {
             const { tenantId, branchId: userBranchId, employeeId: jwtEmployeeId } = req.user;
             const { employeeId } = req.params;
-            const { status, limit = 50, offset = 0, only_open_shifts = 'false' } = req.query;
+            const { status, limit = 100, offset = 0, only_open_shifts = 'false' } = req.query;
 
             console.log(`[Repartidor Assignments] 🔍 === REQUEST INFO ===`);
             console.log(`[Repartidor Assignments] JWT User: tenantId=${tenantId}, branchId=${userBranchId}, employeeId=${jwtEmployeeId}`);
             console.log(`[Repartidor Assignments] Params: employeeId=${employeeId} (from URL)`);
             console.log(`[Repartidor Assignments] Query: status=${status || 'ALL'}, only_open_shifts=${only_open_shifts}, limit=${limit}, offset=${offset}`);
 
-            // 🔧 QUERY AGRUPADO POR venta_id para evitar duplicados
-            // Cada venta puede tener múltiples registros en repartidor_assignments (uno por producto)
-            // Pero queremos mostrar UNA sola asignación por venta con todos sus items
-            // IMPORTANTE: Si la venta fue cancelada (v.status = 'cancelled'), mostrar como 'cancelled'
+            // 🔧 QUERY SIN AGRUPACIÓN - Cada producto es una asignación individual
+            // Esto permite asociar devoluciones correctamente a cada producto
             let query = `
                 SELECT
-                    MIN(ra.id) as id,
+                    ra.id,
                     ra.venta_id,
                     ra.employee_id,
-                    SUM(ra.assigned_quantity) as assigned_quantity,
-                    SUM(ra.assigned_amount) as assigned_amount,
-                    AVG(ra.unit_price) as unit_price,
-                    MODE() WITHIN GROUP (ORDER BY COALESCE(ra.unit_abbreviation, 'kg')) as unit_abbreviation,
-                    -- Status: PRIMERO verificar si la venta fue cancelada
+                    ra.product_id,
+                    ra.product_name,
+                    ra.assigned_quantity,
+                    ra.assigned_amount,
+                    ra.unit_price,
+                    COALESCE(ra.unit_abbreviation, 'kg') as unit_abbreviation,
+                    -- Status: verificar si la venta fue cancelada
                     CASE
                         WHEN v.status = 'cancelled' THEN 'cancelled'
-                        WHEN bool_or(ra.status = 'pending') THEN 'pending'
-                        WHEN bool_or(ra.status = 'in_progress') THEN 'in_progress'
-                        WHEN bool_or(ra.status = 'cancelled') THEN 'cancelled'
-                        ELSE 'liquidated'
+                        ELSE COALESCE(ra.status, 'pending')
                     END as status,
-                    MIN(ra.fecha_asignacion) as fecha_asignacion,
-                    MAX(ra.fecha_liquidacion) as fecha_liquidacion,
-                    STRING_AGG(DISTINCT ra.observaciones, '; ') FILTER (WHERE ra.observaciones IS NOT NULL) as observaciones,
+                    ra.fecha_asignacion,
+                    ra.fecha_liquidacion,
+                    ra.observaciones,
                     ra.repartidor_shift_id,
                     CONCAT(e_created.first_name, ' ', e_created.last_name) as assigned_by_name,
                     v.ticket_number,
                     CONCAT(e_repartidor.first_name, ' ', e_repartidor.last_name) as repartidor_name,
                     s.is_cash_cut_open as shift_is_open,
-                    -- IDs de todos los registros de esta venta (para buscar devoluciones)
-                    ARRAY_AGG(ra.id) as assignment_ids,
-                    -- 🆕 Payment info (tomamos del primer registro ya que son iguales para toda la venta)
-                    MAX(ra.payment_method_id) as payment_method_id,
-                    MAX(ra.cash_amount) as cash_amount,
-                    MAX(ra.card_amount) as card_amount,
-                    MAX(ra.credit_amount) as credit_amount,
-                    MAX(ra.amount_received) as amount_received,
-                    bool_or(COALESCE(ra.is_credit, false)) as is_credit,
-                    MAX(ra.payment_reference) as payment_reference,
-                    MAX(ra.liquidated_by_employee_id) as liquidated_by_employee_id,
-                    -- 🆕 Customer name from ventas → customers
-                    MAX(c.nombre) as customer_name,
-                    -- 🆕 Indicador de si la venta original fue cancelada
+                    -- Payment info
+                    ra.payment_method_id,
+                    ra.cash_amount,
+                    ra.card_amount,
+                    ra.credit_amount,
+                    ra.amount_received,
+                    COALESCE(ra.is_credit, false) as is_credit,
+                    ra.payment_reference,
+                    ra.liquidated_by_employee_id,
+                    -- Customer name
+                    c.nombre as customer_name,
                     v.status as venta_status
                 FROM repartidor_assignments ra
                 LEFT JOIN employees e_created ON ra.created_by_employee_id = e_created.id
@@ -426,125 +421,42 @@ module.exports = (pool) => {
                 WHERE ra.tenant_id = $1 AND ra.employee_id = $2
             `;
 
-            // ✅ CRÍTICO: Si only_open_shifts, mostrar SOLO asignaciones ACTIVAS (pending o in_progress)
-            // de turnos abiertos. NO mostrar asignaciones liquidadas aunque el turno esté abierto.
-            // También excluir ventas canceladas (v.status = 'cancelled')
-            // FIX: Lógica corregida para excluir asignaciones huérfanas (venta eliminada)
+            // Filtrar turnos abiertos si se solicita
             if (only_open_shifts === 'true') {
                 query += ` AND (s.id IS NULL OR s.is_cash_cut_open = true)`;
-                query += ` AND ra.status IN ('pending', 'in_progress')`;  // Solo activas
-                query += ` AND (ra.venta_id IS NULL OR v.status NOT IN ('cancelled', 'voided'))`;  // Excluir ventas canceladas y huérfanas
-                console.log(`[Repartidor Assignments] ✅ Filtrando solo asignaciones ACTIVAS de turnos abiertos (excluyendo ventas canceladas)`);
+                query += ` AND ra.status IN ('pending', 'in_progress')`;
+                query += ` AND (ra.venta_id IS NULL OR v.status NOT IN ('cancelled', 'voided'))`;
+                console.log(`[Repartidor Assignments] ✅ Filtrando solo asignaciones ACTIVAS de turnos abiertos`);
             }
 
             const params = [tenantId, parseInt(employeeId)];
             let paramIndex = 3;
 
-            // Filtrar por status si se proporciona (solo aplica cuando NO es only_open_shifts)
+            // Filtrar por status si se proporciona
             if (status && only_open_shifts !== 'true') {
                 query += ` AND ra.status = $${paramIndex}`;
                 params.push(status);
                 paramIndex++;
             }
 
-            // Agrupar por venta_id (o por id si no tiene venta_id)
-            // Incluir v.status para poder detectar ventas canceladas
-            query += ` GROUP BY COALESCE(ra.venta_id, ra.id), ra.venta_id, ra.employee_id, ra.repartidor_shift_id,
-                       e_created.first_name, e_created.last_name, v.ticket_number, v.status,
-                       e_repartidor.first_name, e_repartidor.last_name, s.is_cash_cut_open`;
-            query += ` ORDER BY MIN(ra.fecha_asignacion) DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+            query += ` ORDER BY ra.fecha_asignacion DESC, ra.id DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
             params.push(parseInt(limit), parseInt(offset));
 
-            // DEBUG: Query RAW sin agrupación para ver valores reales en la DB
-            const rawDebug = await pool.query(`
-                SELECT id, venta_id, status, repartidor_shift_id, product_name
-                FROM repartidor_assignments
-                WHERE tenant_id = $1 AND employee_id = $2
-                ORDER BY id DESC LIMIT 15
-            `, [tenantId, parseInt(employeeId)]);
-            console.log(`[Repartidor Assignments] 🔍 RAW DB VALUES (sin agrupación):`);
-            rawDebug.rows.forEach(r => {
-                console.log(`[Repartidor Assignments]   RAW: id=${r.id}, venta_id=${r.venta_id}, status="${r.status}", shift=${r.repartidor_shift_id}, product=${r.product_name}`);
-            });
-
-            console.log(`[Repartidor Assignments] 📊 Executing GROUPED query with params:`, params);
+            console.log(`[Repartidor Assignments] 📊 Executing query with params:`, params);
             const result = await pool.query(query, params);
 
-            console.log(`[Repartidor Assignments] ✅ Found ${result.rows.length} GROUPED assignments (by venta_id)`);
+            console.log(`[Repartidor Assignments] ✅ Found ${result.rows.length} individual assignments`);
 
-            // DEBUG: Mostrar status de cada asignación
+            // Mostrar debug de cada asignación
             result.rows.forEach((row, idx) => {
-                console.log(`[Repartidor Assignments] 📦 Row ${idx}: id=${row.id}, venta_id=${row.venta_id}, status="${row.status}", repartidor_shift_id=${row.repartidor_shift_id}`);
+                console.log(`[Repartidor Assignments] 📦 Row ${idx}: id=${row.id}, venta_id=${row.venta_id}, product="${row.product_name}", status="${row.status}"`);
             });
-            if (result.rows.length === 0) {
-                console.log(`[Repartidor Assignments] ⚠️ No assignments found for employeeId=${employeeId}, tenantId=${tenantId}`);
-                // Verificar si el empleado existe
-                const empCheck = await pool.query('SELECT id, first_name, last_name, role_id FROM employees WHERE id = $1', [parseInt(employeeId)]);
-                if (empCheck.rows.length === 0) {
-                    console.log(`[Repartidor Assignments] ❌ Employee ID ${employeeId} does NOT exist in database`);
-                } else {
-                    console.log(`[Repartidor Assignments] ✅ Employee exists: ${empCheck.rows[0].first_name} ${empCheck.rows[0].last_name} (roleId: ${empCheck.rows[0].role_id})`);
-                }
-            } else {
-                console.log(`[Repartidor Assignments] 📦 First grouped assignment:`, {
-                    id: result.rows[0].id,
-                    venta_id: result.rows[0].venta_id,
-                    ticket_number: result.rows[0].ticket_number,
-                    status: result.rows[0].status,
-                    quantity: result.rows[0].assigned_quantity,
-                    assignment_ids_count: result.rows[0].assignment_ids?.length || 0
-                });
-            }
 
-            // Obtener los items de cada venta desde repartidor_assignments
-            // IMPORTANTE: Usamos unit_abbreviation de repartidor_assignments porque
-            // es el valor correcto capturado del producto al momento de la asignación.
-            // productos.unidad_venta puede estar vacío/incorrecto.
-            const ventaIds = result.rows.map(row => row.venta_id).filter(id => id != null);
-            let itemsByVenta = {};
+            // Obtener devoluciones para cada assignment
+            const assignmentIds = result.rows.map(row => row.id);
+            let returnsByAssignment = {};
 
-            if (ventaIds.length > 0) {
-                const itemsQuery = `
-                    SELECT
-                        ra.venta_id as id_venta,
-                        ra.product_id as id_producto,
-                        COALESCE(ra.product_name, vd.descripcion_producto, 'Producto') as descripcion_producto,
-                        ra.assigned_quantity as cantidad,
-                        ra.unit_price as precio_unitario,
-                        ra.assigned_amount as total_linea,
-                        COALESCE(ra.unit_abbreviation, 'kg') as unit_abbreviation
-                    FROM repartidor_assignments ra
-                    LEFT JOIN ventas_detalle vd ON ra.venta_id = vd.id_venta AND ra.product_id = vd.id_producto
-                    WHERE ra.venta_id = ANY($1)
-                      AND ra.employee_id = $2
-                      AND ra.tenant_id = $3
-                    ORDER BY ra.venta_id, ra.id
-                `;
-                const itemsResult = await pool.query(itemsQuery, [ventaIds, parseInt(employeeId), tenantId]);
-
-                // Agrupar items por venta_id
-                itemsResult.rows.forEach(item => {
-                    if (!itemsByVenta[item.id_venta]) {
-                        itemsByVenta[item.id_venta] = [];
-                    }
-                    itemsByVenta[item.id_venta].push({
-                        product_id: item.id_producto,
-                        product_name: item.descripcion_producto,
-                        quantity: parseFloat(item.cantidad),
-                        unit_price: parseFloat(item.precio_unitario),
-                        line_total: parseFloat(item.total_linea),
-                        unit_abbreviation: item.unit_abbreviation || 'kg'
-                    });
-                });
-
-                console.log(`[Repartidor Assignments] 📦 Loaded items for ${Object.keys(itemsByVenta).length} ventas`);
-            }
-
-            // 🆕 Obtener devoluciones por assignment_ids (todos los IDs de la agrupación)
-            const allAssignmentIds = result.rows.flatMap(row => row.assignment_ids || []);
-            let returnsByAssignmentGroup = {};
-
-            if (allAssignmentIds.length > 0) {
+            if (assignmentIds.length > 0) {
                 const returnsQuery = `
                     SELECT
                         rr.assignment_id,
@@ -552,48 +464,39 @@ module.exports = (pool) => {
                         rr.amount,
                         rr.return_date,
                         rr.source,
-                        rr.notes
+                        rr.notes,
+                        rr.product_id,
+                        rr.product_name
                     FROM repartidor_returns rr
                     WHERE rr.assignment_id = ANY($1)
                       AND (rr.status IS NULL OR rr.status != 'deleted')
                     ORDER BY rr.return_date DESC
                 `;
-                const returnsResult = await pool.query(returnsQuery, [allAssignmentIds]);
+                const returnsResult = await pool.query(returnsQuery, [assignmentIds]);
 
-                // Primero agrupar por assignment_id
-                const returnsByAssignmentId = {};
+                // Agrupar por assignment_id
                 returnsResult.rows.forEach(ret => {
-                    if (!returnsByAssignmentId[ret.assignment_id]) {
-                        returnsByAssignmentId[ret.assignment_id] = [];
+                    if (!returnsByAssignment[ret.assignment_id]) {
+                        returnsByAssignment[ret.assignment_id] = [];
                     }
-                    returnsByAssignmentId[ret.assignment_id].push({
+                    returnsByAssignment[ret.assignment_id].push({
                         quantity: parseFloat(ret.quantity),
                         amount: parseFloat(ret.amount),
                         return_date: ret.return_date,
                         source: ret.source,
-                        notes: ret.notes
+                        notes: ret.notes,
+                        product_id: ret.product_id,
+                        product_name: ret.product_name
                     });
                 });
 
-                // Luego agrupar por venta_id (usando el array de assignment_ids de cada grupo)
-                result.rows.forEach(row => {
-                    const ventaKey = row.venta_id || row.id;
-                    returnsByAssignmentGroup[ventaKey] = [];
-                    (row.assignment_ids || []).forEach(assignmentId => {
-                        if (returnsByAssignmentId[assignmentId]) {
-                            returnsByAssignmentGroup[ventaKey].push(...returnsByAssignmentId[assignmentId]);
-                        }
-                    });
-                });
-
-                console.log(`[Repartidor Assignments] 🔄 Loaded returns for ${Object.keys(returnsByAssignmentGroup).length} assignment groups`);
+                console.log(`[Repartidor Assignments] 🔄 Loaded returns for ${Object.keys(returnsByAssignment).length} assignments`);
             }
 
             res.json({
                 success: true,
                 data: result.rows.map(row => {
-                    const ventaKey = row.venta_id || row.id;
-                    const returns = returnsByAssignmentGroup[ventaKey] || [];
+                    const returns = returnsByAssignment[row.id] || [];
                     const totalReturnedQuantity = returns.reduce((sum, r) => sum + r.quantity, 0);
                     const totalReturnedAmount = returns.reduce((sum, r) => sum + r.amount, 0);
 
@@ -603,6 +506,9 @@ module.exports = (pool) => {
                         ticket_number: row.ticket_number,
                         employee_id: row.employee_id,
                         repartidor_name: row.repartidor_name,
+                        // Producto individual
+                        product_id: row.product_id,
+                        product_name: row.product_name,
                         assigned_quantity: parseFloat(row.assigned_quantity),
                         assigned_amount: parseFloat(row.assigned_amount),
                         unit_price: parseFloat(row.unit_price || 0),
@@ -613,12 +519,20 @@ module.exports = (pool) => {
                         assigned_by_name: row.assigned_by_name,
                         observaciones: row.observaciones,
                         repartidor_shift_id: row.repartidor_shift_id,
-                        items: row.venta_id ? (itemsByVenta[row.venta_id] || []) : [],
-                        // 🆕 Información de devoluciones
+                        // Items vacío - ahora cada asignación ES un producto
+                        items: [{
+                            product_id: row.product_id,
+                            product_name: row.product_name,
+                            quantity: parseFloat(row.assigned_quantity),
+                            unit_price: parseFloat(row.unit_price || 0),
+                            line_total: parseFloat(row.assigned_amount),
+                            unit_abbreviation: row.unit_abbreviation || 'kg'
+                        }],
+                        // Devoluciones de ESTE assignment específico
                         returns: returns,
                         total_returned_quantity: totalReturnedQuantity,
                         total_returned_amount: totalReturnedAmount,
-                        // 🆕 Payment info para calcular efectivo esperado
+                        // Payment info
                         payment_method_id: row.payment_method_id ? parseInt(row.payment_method_id) : null,
                         cash_amount: parseFloat(row.cash_amount || 0),
                         card_amount: parseFloat(row.card_amount || 0),
@@ -627,7 +541,6 @@ module.exports = (pool) => {
                         is_credit: row.is_credit || false,
                         payment_reference: row.payment_reference,
                         liquidated_by_employee_id: row.liquidated_by_employee_id ? parseInt(row.liquidated_by_employee_id) : null,
-                        // 🆕 Customer name
                         customer_name: row.customer_name || null
                     };
                 })
