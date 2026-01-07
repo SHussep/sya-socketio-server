@@ -210,6 +210,16 @@ module.exports = (pool) => {
             allExpensesDebug.rows.forEach(e => {
                 console.log(`  - ID: ${e.id}, Amount: ${e.amount}, Date UTC: ${e.expense_date}, Local (${effectiveTimezone}): ${e.expense_date_local}, DateOnly: ${e.expense_date_only}, Branch: ${e.branch_id}, Shift: ${e.id_turno}`);
             });
+            // Guardar para incluir en respuesta
+            const expensesDebugInfo = allExpensesDebug.rows.map(e => ({
+                id: e.id,
+                amount: parseFloat(e.amount),
+                dateUTC: e.expense_date,
+                dateLocal: e.expense_date_local,
+                dateOnly: e.expense_date_only,
+                branch: e.branch_id,
+                shift: e.id_turno
+            }));
 
             // ═══════════════════════════════════════════════════════════════
             // TOTAL DE COMPRAS - Para el resumen financiero
@@ -313,7 +323,11 @@ module.exports = (pool) => {
                         efectivoTotal: parseFloat(breakdown.efectivo_total),
                         tarjetaTotal: parseFloat(breakdown.tarjeta_total),
                         creditoTotal: parseFloat(breakdown.credito_total)
-                    }
+                    },
+                    // 🔍 DEBUG: Gastos del tenant (TEMPORAL - remover después de debug)
+                    _debug_expenses: expensesDebugInfo,
+                    _debug_filter: expenseDateFilter,
+                    _debug_timezone: effectiveTimezone
                 }
             });
         } catch (error) {
