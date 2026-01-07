@@ -150,6 +150,24 @@ module.exports = (pool, io) => {
 
             console.log(`[Expenses/GET] ✅ Encontrados ${result.rows.length} gastos`);
 
+            // 🔍 DEBUG: Ver todos los gastos activos del tenant para entender por qué no coinciden
+            if (result.rows.length === 0 || result.rows.length < 3) {
+                const debugAll = await pool.query(`
+                    SELECT id, amount, expense_date,
+                           expense_date AT TIME ZONE '${userTimezone}' as expense_date_local,
+                           (expense_date AT TIME ZONE '${userTimezone}')::date as expense_date_only,
+                           branch_id, id_turno, is_active
+                    FROM expenses
+                    WHERE tenant_id = $1 AND is_active = true
+                    ORDER BY expense_date DESC
+                    LIMIT 10
+                `, [targetTenantId]);
+                console.log(`[Expenses/GET] 🔍 DEBUG - Todos los gastos activos del tenant:`);
+                debugAll.rows.forEach(e => {
+                    console.log(`  - ID: ${e.id}, Amount: ${e.amount}, Date UTC: ${e.expense_date}, Local: ${e.expense_date_local}, DateOnly: ${e.expense_date_only}, Branch: ${e.branch_id}, Shift: ${e.id_turno}`);
+                });
+            }
+
             // Debug: Si no hay gastos con shift, verificar cuántos hay sin filtro de shift
             if (result.rows.length === 0 && shiftIdFilter) {
                 const debugResult = await pool.query(

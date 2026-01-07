@@ -195,6 +195,22 @@ module.exports = (pool) => {
             const expensesResult = await pool.query(expensesQuery, expensesParams);
             console.log(`[Dashboard Summary] ✅ Total expenses: ${expensesResult.rows[0].total}`);
 
+            // 🔍 DEBUG: Ver todos los gastos activos del tenant para entender por qué no coinciden
+            const allExpensesDebug = await pool.query(`
+                SELECT id, amount, expense_date,
+                       expense_date AT TIME ZONE '${effectiveTimezone}' as expense_date_local,
+                       (expense_date AT TIME ZONE '${effectiveTimezone}')::date as expense_date_only,
+                       branch_id, id_turno, is_active
+                FROM expenses
+                WHERE tenant_id = $1 AND is_active = true
+                ORDER BY expense_date DESC
+                LIMIT 10
+            `, [tenantId]);
+            console.log(`[Dashboard Summary] 🔍 DEBUG - Todos los gastos activos del tenant:`);
+            allExpensesDebug.rows.forEach(e => {
+                console.log(`  - ID: ${e.id}, Amount: ${e.amount}, Date UTC: ${e.expense_date}, Local (${effectiveTimezone}): ${e.expense_date_local}, DateOnly: ${e.expense_date_only}, Branch: ${e.branch_id}, Shift: ${e.id_turno}`);
+            });
+
             // ═══════════════════════════════════════════════════════════════
             // TOTAL DE COMPRAS - Para el resumen financiero
             // ═══════════════════════════════════════════════════════════════
