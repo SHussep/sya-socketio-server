@@ -422,11 +422,14 @@ module.exports = (pool) => {
             `;
 
             // Filtrar turnos abiertos si se solicita
+            // 🔧 FIX: Devolver TODAS las asignaciones del turno (pending, in_progress Y liquidated)
+            // El filtro de status se aplica en el cliente, no aquí
             if (only_open_shifts === 'true') {
                 query += ` AND (s.id IS NULL OR s.is_cash_cut_open = true)`;
-                query += ` AND ra.status IN ('pending', 'in_progress')`;
+                // 🔧 Ya NO filtrar por status - incluir pending, in_progress Y liquidated
+                // query += ` AND ra.status IN ('pending', 'in_progress')`;  // REMOVED
                 query += ` AND (ra.venta_id IS NULL OR v.status NOT IN ('cancelled', 'voided'))`;
-                console.log(`[Repartidor Assignments] ✅ Filtrando solo asignaciones ACTIVAS de turnos abiertos`);
+                console.log(`[Repartidor Assignments] ✅ Filtrando asignaciones de turnos abiertos (todos los status)`);
             }
 
             const params = [tenantId, parseInt(employeeId)];
