@@ -403,12 +403,23 @@ function createRepartidorAssignmentRoutes(io) {
       const assignment = result.rows[0];
       const wasInserted = assignment.inserted; // true = nueva asignación, false = actualización
 
-      // Emitir evento en tiempo real solo si es nueva asignación
+      // Emitir evento en tiempo real
       if (wasInserted) {
+        // Nueva asignación
         io.to(`branch_${branch_id}`).emit('assignment_created', {
           assignment,
           timestamp: new Date().toISOString()
         });
+      } else {
+        // Asignación actualizada (ej: liquidada)
+        // ✅ CRÍTICO: Notificar a la app móvil cuando se liquida desde desktop
+        io.to(`branch_${branch_id}`).emit('assignment_updated', {
+          assignment,
+          previousStatus: status !== 'liquidated' ? 'pending' : null,
+          isLiquidation: status === 'liquidated',
+          timestamp: new Date().toISOString()
+        });
+        console.log(`[RepartidorAssignments] 📡 assignment_updated emitido: ${assignment.id} -> ${status}`);
       }
 
       // 🆕 Enviar notificación push SOLO si es una asignación NUEVA (no actualización)
