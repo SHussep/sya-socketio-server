@@ -1190,7 +1190,9 @@ module.exports = (pool) => {
                 canUseMobileApp,
                 fullName,
                 isActive,
-                email
+                email,
+                password_hash,        // ✅ Nuevo: para sincronizar cambios de contraseña
+                passwordUpdatedAt     // ✅ Nuevo: timestamp del cambio de contraseña
             } = req.body;
 
             console.log(`[Employees/Update] 🔄 [UPDATE RECIBIDO] Actualizando empleado ID: ${employeeId}`);
@@ -1327,6 +1329,16 @@ module.exports = (pool) => {
                 updates.push(`email = $${paramIndex}`);
                 params.push(email);
                 paramIndex++;
+            }
+
+            // ✅ Nuevo: Sincronizar cambios de contraseña desde Desktop
+            if (password_hash !== undefined && password_hash !== null && password_hash.length > 0) {
+                updates.push(`password_hash = $${paramIndex}`);
+                params.push(password_hash);
+                paramIndex++;
+                // También actualizar password_updated_at
+                updates.push(`password_updated_at = NOW()`);
+                console.log(`[Employees/Update] 🔐 Actualizando password_hash para empleado ${employeeId}`);
             }
 
             // Always update timestamp

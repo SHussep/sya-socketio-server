@@ -88,7 +88,18 @@ function createRepartidorAssignmentRoutes(io) {
       payment_reference,
       liquidated_by_employee_global_id,  // UUID del empleado que liquidó
       suppress_notification,             // Si es true, NO enviar notificación FCM (anti-spam para batch)
-      source                             // Origen: 'desktop' o 'mobile'
+      source,                            // Origen: 'desktop' o 'mobile'
+      // Edit tracking fields (auditoría de ediciones)
+      was_edited,
+      edit_reason,
+      last_edited_at,
+      last_edited_by_employee_global_id,
+      original_quantity_before_edit,
+      original_amount_before_edit,
+      // Cancellation tracking fields
+      cancel_reason,
+      cancelled_at,
+      cancelled_by_employee_global_id
     } = req.body;
 
     try {
@@ -327,9 +338,33 @@ function createRepartidorAssignmentRoutes(io) {
         }
       }
 
+      // ✅ RESOLVER last_edited_by_employee_id usando global_id (para auditoría de ediciones)
+      let resolvedLastEditedByEmployeeId = null;
+      if (last_edited_by_employee_global_id) {
+        const editedByLookup = await pool.query(
+          'SELECT id FROM employees WHERE global_id = $1 AND tenant_id = $2',
+          [last_edited_by_employee_global_id, tenant_id]
+        );
+        if (editedByLookup.rows.length > 0) {
+          resolvedLastEditedByEmployeeId = editedByLookup.rows[0].id;
+        }
+      }
+
+      // ✅ RESOLVER cancelled_by_employee_id usando global_id (para auditoría de cancelaciones)
+      let resolvedCancelledByEmployeeId = null;
+      if (cancelled_by_employee_global_id) {
+        const cancelledByLookup = await pool.query(
+          'SELECT id FROM employees WHERE global_id = $1 AND tenant_id = $2',
+          [cancelled_by_employee_global_id, tenant_id]
+        );
+        if (cancelledByLookup.rows.length > 0) {
+          resolvedCancelledByEmployeeId = cancelledByLookup.rows[0].id;
+        }
+      }
+
       // ✅ IDEMPOTENTE: Insertar con global_id único
-      // ON CONFLICT: Solo se permiten updates de status, fecha_liquidacion, observaciones
-      // Los datos originales (assigned_quantity, assigned_amount) NO cambian
+      // ON CONFLICT: Permite updates de datos si el registro NO está liquidado
+      // Si ya está liquidado, solo se actualizan campos de pago (para correcciones post-liquidación)
       // RETURNING xmax=0 indica INSERT nuevo, xmax>0 indica UPDATE de registro existente
       const query = `
         INSERT INTO repartidor_assignments (
@@ -341,18 +376,37 @@ function createRepartidorAssignmentRoutes(io) {
           product_id, product_name, venta_detalle_id,
           payment_method_id, cash_amount, card_amount, credit_amount,
           amount_received, is_credit, payment_reference, liquidated_by_employee_id,
-          source
+          source,
+          was_edited, edit_reason, last_edited_at, last_edited_by_employee_id,
+          original_quantity_before_edit, original_amount_before_edit,
+          cancel_reason, cancelled_at, cancelled_by_employee_id
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
           $16::uuid, $17::uuid, $18, $19, $20,
           $21, $22, $23,
-          $24, $25, $26, $27, $28, $29, $30, $31, $32
+          $24, $25, $26, $27, $28, $29, $30, $31, $32,
+          $33, $34, $35, $36, $37, $38,
+          $39, $40, $41
         )
         ON CONFLICT (global_id) DO UPDATE
         SET status = EXCLUDED.status,
             fecha_liquidacion = EXCLUDED.fecha_liquidacion,
             observaciones = EXCLUDED.observaciones,
             product_name = COALESCE(EXCLUDED.product_name, repartidor_assignments.product_name),
+            -- ✅ EDICIÓN: Permitir cambio de cantidad/monto SOLO si NO está liquidado
+            assigned_quantity = CASE
+              WHEN repartidor_assignments.status != 'liquidated' THEN EXCLUDED.assigned_quantity
+              ELSE repartidor_assignments.assigned_quantity
+            END,
+            assigned_amount = CASE
+              WHEN repartidor_assignments.status != 'liquidated' THEN EXCLUDED.assigned_amount
+              ELSE repartidor_assignments.assigned_amount
+            END,
+            unit_price = CASE
+              WHEN repartidor_assignments.status != 'liquidated' THEN EXCLUDED.unit_price
+              ELSE repartidor_assignments.unit_price
+            END,
+            -- Campos de pago (siempre actualizables para correcciones)
             payment_method_id = COALESCE(EXCLUDED.payment_method_id, repartidor_assignments.payment_method_id),
             cash_amount = COALESCE(EXCLUDED.cash_amount, repartidor_assignments.cash_amount),
             card_amount = COALESCE(EXCLUDED.card_amount, repartidor_assignments.card_amount),
@@ -360,7 +414,18 @@ function createRepartidorAssignmentRoutes(io) {
             amount_received = COALESCE(EXCLUDED.amount_received, repartidor_assignments.amount_received),
             is_credit = COALESCE(EXCLUDED.is_credit, repartidor_assignments.is_credit),
             payment_reference = COALESCE(EXCLUDED.payment_reference, repartidor_assignments.payment_reference),
-            liquidated_by_employee_id = COALESCE(EXCLUDED.liquidated_by_employee_id, repartidor_assignments.liquidated_by_employee_id)
+            liquidated_by_employee_id = COALESCE(EXCLUDED.liquidated_by_employee_id, repartidor_assignments.liquidated_by_employee_id),
+            -- ✅ Campos de auditoría de ediciones (siempre actualizables)
+            was_edited = COALESCE(EXCLUDED.was_edited, repartidor_assignments.was_edited),
+            edit_reason = COALESCE(EXCLUDED.edit_reason, repartidor_assignments.edit_reason),
+            last_edited_at = COALESCE(EXCLUDED.last_edited_at, repartidor_assignments.last_edited_at),
+            last_edited_by_employee_id = COALESCE(EXCLUDED.last_edited_by_employee_id, repartidor_assignments.last_edited_by_employee_id),
+            original_quantity_before_edit = COALESCE(EXCLUDED.original_quantity_before_edit, repartidor_assignments.original_quantity_before_edit),
+            original_amount_before_edit = COALESCE(EXCLUDED.original_amount_before_edit, repartidor_assignments.original_amount_before_edit),
+            -- ✅ Campos de auditoría de cancelaciones (siempre actualizables)
+            cancel_reason = COALESCE(EXCLUDED.cancel_reason, repartidor_assignments.cancel_reason),
+            cancelled_at = COALESCE(EXCLUDED.cancelled_at, repartidor_assignments.cancelled_at),
+            cancelled_by_employee_id = COALESCE(EXCLUDED.cancelled_by_employee_id, repartidor_assignments.cancelled_by_employee_id)
         RETURNING *, (xmax = 0) AS inserted
       `;
 
@@ -397,7 +462,18 @@ function createRepartidorAssignmentRoutes(io) {
         is_credit || false,
         payment_reference || null,
         resolvedLiquidatedByEmployeeId,  // ✅ ID del empleado que liquidó resuelto desde global_id
-        source || 'desktop'              // ✅ Origen de la asignación: 'desktop' o 'mobile'
+        source || 'desktop',             // ✅ Origen de la asignación: 'desktop' o 'mobile'
+        // Edit tracking fields
+        was_edited || false,
+        edit_reason || null,
+        last_edited_at || null,
+        resolvedLastEditedByEmployeeId,
+        original_quantity_before_edit ? parseFloat(original_quantity_before_edit) : null,
+        original_amount_before_edit ? parseFloat(original_amount_before_edit) : null,
+        // Cancel tracking fields
+        cancel_reason || null,
+        cancelled_at || null,
+        resolvedCancelledByEmployeeId
       ]);
 
       const assignment = result.rows[0];
