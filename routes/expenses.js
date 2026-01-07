@@ -30,7 +30,8 @@ module.exports = (pool, io) => {
     const router = express.Router();
 
     // GET /api/expenses - Obtener gastos por sucursal y rango de fechas
-    router.get('/', async (req, res) => {
+    // 🔧 FIX: Agregar authenticateToken para que req.user tenga tenantId
+    router.get('/', authenticateToken, async (req, res) => {
         try {
             // Aceptar tanto branchId como branch_id para compatibilidad
             const branchId = req.query.branchId || req.query.branch_id;
