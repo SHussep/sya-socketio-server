@@ -43,6 +43,7 @@ module.exports = function(pool) {
                     v.id_empleado,
                     v.id_cliente,
                     v.id_repartidor_asignado,
+                    v.has_nota_credito,
                     CONCAT(e.first_name, ' ', e.last_name) as empleado_nombre,
                     c.nombre as cliente_nombre,
                     CONCAT(r.first_name, ' ', r.last_name) as repartidor_nombre,
@@ -124,7 +125,7 @@ module.exports = function(pool) {
                     v.subtotal, v.total_descuentos, v.total, v.monto_pagado, v.credito_original,
                     v.estado_venta_id, v.venta_tipo_id, v.tipo_pago_id, v.fecha_venta_utc,
                     v.fecha_liquidacion_utc, v.notas, v.terminal_id, v.local_op_seq,
-                    v.created_local_utc, v.created_at, v.updated_at,
+                    v.created_local_utc, v.created_at, v.updated_at, v.has_nota_credito,
                     e.global_id as empleado_global_id,
                     CONCAT(e.first_name, ' ', e.last_name) as empleado_nombre,
                     c.global_id as cliente_global_id, c.nombre as cliente_nombre,
@@ -228,6 +229,7 @@ module.exports = function(pool) {
                     v.id_empleado,
                     v.id_cliente,
                     v.id_repartidor_asignado,
+                    v.has_nota_credito,
                     CONCAT(e.first_name, ' ', e.last_name) as empleado_nombre,
                     c.nombre as cliente_nombre,
                     c.direccion as cliente_direccion,
@@ -311,6 +313,7 @@ module.exports = function(pool) {
                     v.tipo_pago_id,
                     v.fecha_venta_utc,
                     v.notas,
+                    v.has_nota_credito,
                     CONCAT(e.first_name, ' ', e.last_name) as empleado_nombre,
                     c.nombre as cliente_nombre
                 FROM ventas v
