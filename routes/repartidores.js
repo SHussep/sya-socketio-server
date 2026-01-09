@@ -1004,7 +1004,11 @@ module.exports = (pool) => {
                         SUM(ra.assigned_quantity) as total_assigned_kg,
                         SUM(ra.assigned_amount) as total_assigned_amount,
                         COUNT(*) as assignment_count,
-                        COUNT(CASE WHEN ra.status = 'liquidated' THEN 1 END) as liquidated_count
+                        COUNT(CASE WHEN ra.status = 'liquidated' THEN 1 END) as liquidated_count,
+                        -- Desglose por tipo de pago (solo asignaciones liquidadas)
+                        COALESCE(SUM(CASE WHEN ra.status = 'liquidated' THEN ra.cash_amount ELSE 0 END), 0) as total_cash_amount,
+                        COALESCE(SUM(CASE WHEN ra.status = 'liquidated' THEN ra.card_amount ELSE 0 END), 0) as total_card_amount,
+                        COALESCE(SUM(CASE WHEN ra.status = 'liquidated' THEN ra.credit_amount ELSE 0 END), 0) as total_credit_amount
                     FROM repartidor_assignments ra
                     LEFT JOIN ventas v ON ra.venta_id = v.id_venta
                     WHERE ra.employee_id = $1 AND ra.tenant_id = $2
@@ -1125,6 +1129,10 @@ module.exports = (pool) => {
                     COALESCE(sa.total_assigned_amount, 0) as total_assigned_amount,
                     COALESCE(sa.assignment_count, 0) as assignment_count,
                     COALESCE(sa.liquidated_count, 0) as liquidated_count,
+                    -- Desglose por tipo de pago (liquidadas)
+                    COALESCE(sa.total_cash_amount, 0) as total_cash_amount,
+                    COALESCE(sa.total_card_amount, 0) as total_card_amount,
+                    COALESCE(sa.total_credit_amount, 0) as total_credit_amount,
                     COALESCE(sr.total_returned_kg, 0) as total_returned_kg,
                     COALESCE(sr.total_returned_amount, 0) as total_returned_amount,
                     COALESCE(sr.return_count, 0) as return_count,
@@ -1134,8 +1142,11 @@ module.exports = (pool) => {
                     COALESCE(sd.total_debt, 0) as total_debt,
                     COALESCE(sd.pending_debt, 0) as pending_debt,
                     COALESCE(sd.debt_count, 0) as debt_count,
-                    -- Neto a entregar (Fondo Inicial + Asignado - Devuelto - Gastos)
+                    -- Neto TOTAL a entregar (Fondo Inicial + Asignado - Devuelto - Gastos) - para compatibilidad
                     (COALESCE(s.initial_amount, 0) + COALESCE(sa.total_assigned_amount, 0) - COALESCE(sr.total_returned_amount, 0) - COALESCE(se.total_expenses, 0)) as net_to_deliver,
+                    -- Efectivo esperado = Fondo Inicial + SOLO efectivo liquidado - Gastos
+                    -- (devueltas ya se descuentan del assigned_amount antes de aplicar pagos)
+                    (COALESCE(s.initial_amount, 0) + COALESCE(sa.total_cash_amount, 0) - COALESCE(se.total_expenses, 0)) as expected_cash,
                     (COALESCE(sa.total_assigned_kg, 0) - COALESCE(sr.total_returned_kg, 0)) as net_delivered_kg,
                     -- Cantidades agrupadas por unidad
                     sabu.assigned_by_unit,
@@ -1184,6 +1195,10 @@ module.exports = (pool) => {
                     total_assigned_amount: parseFloat(row.total_assigned_amount),
                     assignment_count: parseInt(row.assignment_count),
                     liquidated_count: parseInt(row.liquidated_count),
+                    // Desglose por tipo de pago (liquidadas)
+                    total_cash_amount: parseFloat(row.total_cash_amount),
+                    total_card_amount: parseFloat(row.total_card_amount),
+                    total_credit_amount: parseFloat(row.total_credit_amount),
                     // Devoluciones
                     total_returned_kg: parseFloat(row.total_returned_kg),
                     total_returned_amount: parseFloat(row.total_returned_amount),
@@ -1197,6 +1212,7 @@ module.exports = (pool) => {
                     debt_count: parseInt(row.debt_count),
                     // Netos
                     net_to_deliver: parseFloat(row.net_to_deliver),
+                    expected_cash: parseFloat(row.expected_cash),  // Efectivo esperado (solo cash liquidado)
                     net_delivered_kg: parseFloat(row.net_delivered_kg),
                     // Cantidades agrupadas por unidad (para mostrar "60 kg · 2 pz")
                     assigned_by_unit: row.assigned_by_unit || [],
