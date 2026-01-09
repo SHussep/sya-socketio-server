@@ -393,17 +393,25 @@ function createRepartidorAssignmentRoutes(io) {
             fecha_liquidacion = EXCLUDED.fecha_liquidacion,
             observaciones = EXCLUDED.observaciones,
             product_name = COALESCE(EXCLUDED.product_name, repartidor_assignments.product_name),
-            -- ✅ EDICIÓN: Permitir cambio de cantidad/monto SOLO si NO está liquidado
+            -- ✅ EDICIÓN: Permitir cambio de cantidad/monto si:
+            --    1. NO está liquidado, O
+            --    2. was_edited = true (edición explícita desde UI, incluso post-liquidación)
             assigned_quantity = CASE
-              WHEN repartidor_assignments.status != 'liquidated' THEN EXCLUDED.assigned_quantity
+              WHEN repartidor_assignments.status != 'liquidated'
+                   OR EXCLUDED.was_edited = true
+              THEN EXCLUDED.assigned_quantity
               ELSE repartidor_assignments.assigned_quantity
             END,
             assigned_amount = CASE
-              WHEN repartidor_assignments.status != 'liquidated' THEN EXCLUDED.assigned_amount
+              WHEN repartidor_assignments.status != 'liquidated'
+                   OR EXCLUDED.was_edited = true
+              THEN EXCLUDED.assigned_amount
               ELSE repartidor_assignments.assigned_amount
             END,
             unit_price = CASE
-              WHEN repartidor_assignments.status != 'liquidated' THEN EXCLUDED.unit_price
+              WHEN repartidor_assignments.status != 'liquidated'
+                   OR EXCLUDED.was_edited = true
+              THEN EXCLUDED.unit_price
               ELSE repartidor_assignments.unit_price
             END,
             -- Campos de pago (siempre actualizables para correcciones)
