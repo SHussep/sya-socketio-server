@@ -479,6 +479,74 @@ function createRepartidorAssignmentRoutes(io) {
       const assignment = result.rows[0];
       const wasInserted = assignment.inserted; // true = nueva asignación, false = actualización
 
+      // ═══════════════════════════════════════════════════════════════════════════════
+      // 🆕 ACTUALIZAR VENTA: tipo_pago_id cuando se liquida con método de pago específico
+      // Esto es CRÍTICO para que el corte de caja calcule correctamente efectivo/tarjeta/crédito
+      // ═══════════════════════════════════════════════════════════════════════════════
+      // Determinar si hay info de pago (payment_method_id O montos de pago)
+      const hasPaymentInfo = payment_method_id || cash_amount || card_amount || credit_amount;
+
+      if (status === 'liquidated' && resolvedVentaId && hasPaymentInfo) {
+        try {
+          // Recalcular totales de TODAS las asignaciones liquidadas de esta venta
+          const assignmentTotals = await pool.query(
+            `SELECT
+               COALESCE(SUM(cash_amount), 0) as total_cash,
+               COALESCE(SUM(card_amount), 0) as total_card,
+               COALESCE(SUM(credit_amount), 0) as total_credit,
+               COALESCE(SUM(assigned_amount), 0) as total_amount
+             FROM repartidor_assignments
+             WHERE venta_id = $1 AND tenant_id = $2 AND status = 'liquidated'`,
+            [resolvedVentaId, tenant_id]
+          );
+
+          const totals = assignmentTotals.rows[0];
+          const totalPagado = parseFloat(totals.total_cash) + parseFloat(totals.total_card);
+          const totalCredito = parseFloat(totals.total_credit);
+          const totalVenta = parseFloat(totals.total_amount);
+
+          // Redeterminar tipo_pago_id basado en totales de TODAS las asignaciones
+          const ventaHasCash = parseFloat(totals.total_cash) > 0;
+          const ventaHasCard = parseFloat(totals.total_card) > 0;
+          const ventaHasCredit = parseFloat(totals.total_credit) > 0;
+          const ventaPaymentTypes = [ventaHasCash, ventaHasCard, ventaHasCredit].filter(Boolean).length;
+
+          let finalTipoPagoId;
+          if (ventaPaymentTypes > 1) {
+            finalTipoPagoId = 4; // Mixto
+          } else if (ventaHasCredit && !ventaHasCash && !ventaHasCard) {
+            finalTipoPagoId = 3; // Crédito
+          } else if (ventaHasCard && !ventaHasCash && !ventaHasCredit) {
+            finalTipoPagoId = 2; // Tarjeta
+          } else {
+            finalTipoPagoId = 1; // Efectivo (default)
+          }
+
+          // Actualizar la venta con totales recalculados
+          const updateVentaResult = await pool.query(
+            `UPDATE ventas
+             SET tipo_pago_id = $1,
+                 monto_pagado = $2,
+                 total = CASE WHEN $5 > 0 THEN $5 ELSE total END,
+                 estado_venta_id = 5,
+                 fecha_liquidacion_utc = COALESCE(fecha_liquidacion_utc, NOW()),
+                 updated_at = NOW()
+             WHERE id_venta = $3 AND tenant_id = $4
+             RETURNING id_venta, tipo_pago_id, monto_pagado, total`,
+            [finalTipoPagoId, totalPagado, resolvedVentaId, tenant_id, totalVenta]
+          );
+
+          if (updateVentaResult.rows.length > 0) {
+            const v = updateVentaResult.rows[0];
+            console.log(`[RepartidorAssignments] 💰 Venta #${resolvedVentaId} actualizada:`);
+            console.log(`   tipo_pago_id=${finalTipoPagoId} | monto_pagado=$${totalPagado.toFixed(2)} | credito=$${totalCredito.toFixed(2)}`);
+          }
+        } catch (ventaUpdateError) {
+          // No fallar la liquidación si la actualización de venta falla
+          console.error(`[RepartidorAssignments] ⚠️ Error actualizando venta ${resolvedVentaId}:`, ventaUpdateError.message);
+        }
+      }
+
       // Emitir evento en tiempo real
       if (wasInserted) {
         // Nueva asignación
