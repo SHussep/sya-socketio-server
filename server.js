@@ -101,6 +101,7 @@ const superadminRoutes = require('./routes/superadmin'); // Panel de Super Admin
 const passwordResetRoutes = require('./routes/passwordReset'); // Recuperación de contraseña por email
 const devicesRoutes = require('./routes/devices'); // Gestión de dispositivos (Primary/Auxiliar)
 const notasCreditoRoutes = require('./routes/notas_credito'); // Notas de crédito (devoluciones)
+const preparationModeRoutes = require('./routes/preparation_mode'); // Logs de Modo Preparación (auditoría Guardian)
 
 // Inicializar Firebase para notificaciones push
 initializeFirebase();
@@ -379,6 +380,7 @@ app.use('/api/guardian', guardianRoutes(pool)); // API unificada de Guardian par
 app.use('/api/employee-metrics', employeeMetricsRoutes(pool)); // Rutas de métricas diarias de empleados
 app.use('/api/repartidores', repartidoresRoutes(pool)); // Rutas de resumen y detalles de repartidores
 app.use('/api/notas-credito', notasCreditoRoutes(pool)); // Notas de crédito (devoluciones)
+app.use('/api/preparation-mode', preparationModeRoutes(pool, io)); // Logs de Modo Preparación (auditoría Guardian)
 
 // FASE 1: Cash Management Routes (Deposits, Withdrawals)
 app.use('/api/deposits', depositsRoutes(pool));
