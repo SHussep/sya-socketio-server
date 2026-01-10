@@ -151,8 +151,8 @@ module.exports = function(pool, io) {
                     if (upsertResult.rows[0].inserted) {
                         results.inserted++;
 
-                        // Preparar evento para Socket.IO (solo nuevas activaciones)
                         if (status === 'active') {
+                            // Nueva activación
                             newEvents.push({
                                 type: 'preparation_mode_activated',
                                 branchId: log.branch_id,
@@ -167,6 +167,26 @@ module.exports = function(pool, io) {
                                     authorizer_name,
                                     activated_at: log.activated_at,
                                     reason: log.reason,
+                                    branch_name: branchName
+                                }
+                            });
+                        } else if (status === 'completed' && log.deactivated_at) {
+                            // Log insertado ya completado (fue offline durante activación)
+                            // Enviar notificación de desactivación
+                            console.log(`[PrepMode/Sync] 📝 Log insertado ya completado, enviando notificación de desactivación`);
+                            newEvents.push({
+                                type: 'preparation_mode_deactivated',
+                                branchId: log.branch_id,
+                                tenantId: log.tenant_id,
+                                branchName,
+                                data: {
+                                    id: upsertResult.rows[0].id,
+                                    global_id: log.global_id,
+                                    operator_employee_id,
+                                    operator_name,
+                                    deactivated_at: log.deactivated_at,
+                                    duration_seconds: log.duration_seconds,
+                                    severity: upsertResult.rows[0].severity,
                                     branch_name: branchName
                                 }
                             });
@@ -213,9 +233,10 @@ module.exports = function(pool, io) {
                 }
 
                 // Notificaciones Push FCM
+                console.log(`[PrepMode/Sync] 🔔 Enviando notificación push: ${event.type} para tenant ${event.tenantId}`);
                 try {
                     if (event.type === 'preparation_mode_activated') {
-                        await notifyPreparationModeActivated(
+                        const notifResult = await notifyPreparationModeActivated(
                             event.tenantId,
                             event.branchId,
                             {
@@ -226,6 +247,7 @@ module.exports = function(pool, io) {
                                 activatedAt: event.data.activated_at
                             }
                         );
+                        console.log(`[PrepMode/Sync] 📲 Resultado notificación activación: sent=${notifResult.sent}, failed=${notifResult.failed}, total=${notifResult.total || 0}`);
                     } else if (event.type === 'preparation_mode_deactivated') {
                         // Formatear duración
                         const durationSecs = parseFloat(event.data.duration_seconds) || 0;
@@ -242,7 +264,7 @@ module.exports = function(pool, io) {
                             durationFormatted = `${Math.floor(durationSecs)}s`;
                         }
 
-                        await notifyPreparationModeDeactivated(
+                        const notifResult = await notifyPreparationModeDeactivated(
                             event.tenantId,
                             event.branchId,
                             {
@@ -253,6 +275,7 @@ module.exports = function(pool, io) {
                                 deactivatedAt: event.data.deactivated_at
                             }
                         );
+                        console.log(`[PrepMode/Sync] 📲 Resultado notificación desactivación: sent=${notifResult.sent}, failed=${notifResult.failed}, total=${notifResult.total || 0}`);
                     }
                 } catch (notifError) {
                     console.error(`[PrepMode/Sync] ⚠️ Error enviando notificación push:`, notifError.message);
