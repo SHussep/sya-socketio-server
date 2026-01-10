@@ -115,37 +115,67 @@ module.exports = (pool) => {
             // ═══════════════════════════════════════════════════════════════
             // ✅ CORREGIDO: Mostrador puede tener estado 3 O 5 (cuando se liquida desde móvil)
             // Repartidor siempre tiene estado 5 (liquidado)
+            // 🔧 FIX: Para pagos MIXTOS (tipo_pago_id=4), obtener desglose de repartidor_assignments
             let breakdownQuery = `
+                WITH venta_payment_breakdown AS (
+                    -- Para pagos MIXTOS, obtener el desglose de repartidor_assignments (agrupado por venta)
+                    SELECT
+                        ra.venta_id,
+                        -- 🔧 FIX: Si liquidada sin desglose, asumir efectivo
+                        COALESCE(MAX(CASE
+                            WHEN COALESCE(ra.cash_amount, 0) + COALESCE(ra.card_amount, 0) + COALESCE(ra.credit_amount, 0) = 0
+                            THEN ra.assigned_amount
+                            ELSE ra.cash_amount
+                        END), 0) as cash_from_assignments,
+                        COALESCE(MAX(ra.card_amount), 0) as card_from_assignments,
+                        COALESCE(MAX(ra.credit_amount), 0) as credit_from_assignments
+                    FROM repartidor_assignments ra
+                    WHERE ra.status = 'liquidated'
+                    GROUP BY ra.venta_id
+                )
                 SELECT
                     -- Por tipo de venta (1=Mostrador, 2=Repartidor)
                     -- Mostrador: puede ser estado 3 (completada) o 5 (liquidada desde móvil)
-                    COALESCE(SUM(CASE WHEN venta_tipo_id = 1 AND estado_venta_id IN (3, 5) THEN total ELSE 0 END), 0) as mostrador_total,
-                    COALESCE(SUM(CASE WHEN venta_tipo_id = 2 AND estado_venta_id = 5 THEN total ELSE 0 END), 0) as repartidor_liquidado,
+                    COALESCE(SUM(CASE WHEN v.venta_tipo_id = 1 AND v.estado_venta_id IN (3, 5) THEN v.total ELSE 0 END), 0) as mostrador_total,
+                    COALESCE(SUM(CASE WHEN v.venta_tipo_id = 2 AND v.estado_venta_id = 5 THEN v.total ELSE 0 END), 0) as repartidor_liquidado,
                     -- Por método de pago (1=Efectivo, 2=Tarjeta, 3=Crédito, 4=Mixto)
-                    -- 🔧 FIX: Tratar tipo_pago_id NULL como efectivo (default para mostrador)
-                    COALESCE(SUM(CASE WHEN (tipo_pago_id = 1 OR tipo_pago_id IS NULL) AND estado_venta_id IN (3, 5) THEN total ELSE 0 END), 0) as efectivo_total,
-                    COALESCE(SUM(CASE WHEN tipo_pago_id = 2 AND estado_venta_id IN (3, 5) THEN total ELSE 0 END), 0) as tarjeta_total,
-                    COALESCE(SUM(CASE WHEN tipo_pago_id = 3 AND estado_venta_id IN (3, 5) THEN total ELSE 0 END), 0) as credito_total,
+                    -- 🔧 FIX: Para MIXTO usar desglose de assignments, para otros usar total
+                    COALESCE(SUM(CASE
+                        WHEN v.tipo_pago_id = 4 AND v.estado_venta_id IN (3, 5) THEN COALESCE(vpb.cash_from_assignments, 0)
+                        WHEN (v.tipo_pago_id = 1 OR v.tipo_pago_id IS NULL) AND v.estado_venta_id IN (3, 5) THEN v.total
+                        ELSE 0
+                    END), 0) as efectivo_total,
+                    COALESCE(SUM(CASE
+                        WHEN v.tipo_pago_id = 4 AND v.estado_venta_id IN (3, 5) THEN COALESCE(vpb.card_from_assignments, 0)
+                        WHEN v.tipo_pago_id = 2 AND v.estado_venta_id IN (3, 5) THEN v.total
+                        ELSE 0
+                    END), 0) as tarjeta_total,
+                    COALESCE(SUM(CASE
+                        WHEN v.tipo_pago_id = 4 AND v.estado_venta_id IN (3, 5) THEN COALESCE(vpb.credit_from_assignments, 0)
+                        WHEN v.tipo_pago_id = 3 AND v.estado_venta_id IN (3, 5) THEN v.total
+                        ELSE 0
+                    END), 0) as credito_total,
                     -- Conteos
-                    COUNT(CASE WHEN venta_tipo_id = 1 AND estado_venta_id IN (3, 5) THEN 1 END) as mostrador_count,
-                    COUNT(CASE WHEN venta_tipo_id = 2 AND estado_venta_id = 5 THEN 1 END) as repartidor_count
-                FROM ventas
-                WHERE tenant_id = $1 AND (
-                    (estado_venta_id = 3 AND ${dateFilter})
+                    COUNT(CASE WHEN v.venta_tipo_id = 1 AND v.estado_venta_id IN (3, 5) THEN 1 END) as mostrador_count,
+                    COUNT(CASE WHEN v.venta_tipo_id = 2 AND v.estado_venta_id = 5 THEN 1 END) as repartidor_count
+                FROM ventas v
+                LEFT JOIN venta_payment_breakdown vpb ON v.id_venta = vpb.venta_id
+                WHERE v.tenant_id = $1 AND (
+                    (v.estado_venta_id = 3 AND ${dateFilter.replace(/fecha_venta_utc/g, 'v.fecha_venta_utc')})
                     OR
-                    (estado_venta_id = 5 AND ${dateFilter.replace(/fecha_venta_utc/g, 'COALESCE(fecha_liquidacion_utc, fecha_venta_utc)')})
+                    (v.estado_venta_id = 5 AND ${dateFilter.replace(/fecha_venta_utc/g, 'COALESCE(v.fecha_liquidacion_utc, v.fecha_venta_utc)')})
                 )`;
             let breakdownParams = [tenantId];
             let breakdownParamIndex = 2;
 
             if (shouldFilterByBranch) {
-                breakdownQuery += ` AND branch_id = $${breakdownParamIndex}`;
+                breakdownQuery += ` AND v.branch_id = $${breakdownParamIndex}`;
                 breakdownParams.push(targetBranchId);
                 breakdownParamIndex++;
             }
 
             if (shift_id) {
-                breakdownQuery += ` AND id_turno = $${breakdownParamIndex}`;
+                breakdownQuery += ` AND v.id_turno = $${breakdownParamIndex}`;
                 breakdownParams.push(parseInt(shift_id));
                 breakdownParamIndex++;
             }
