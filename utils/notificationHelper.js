@@ -249,6 +249,108 @@ async function sendNotificationToAdminsInBranch(branchId, { title, body, data = 
 }
 
 /**
+ * Envía notificación a TODOS los administradores y encargados de un TENANT (todas las sucursales)
+ * Útil para eventos críticos que deben notificar a todos los supervisores del negocio
+ * @param {number} tenantId - ID del tenant
+ * @param {object} notification - { title, body, data }
+ * @param {object} options - { excludeEmployeeGlobalId: string, notificationType: string }
+ */
+async function sendNotificationToAdminsInTenant(tenantId, { title, body, data = {} }, options = {}) {
+    try {
+        const { excludeEmployeeGlobalId, notificationType } = options;
+
+        // Obtener ID numérico del empleado a excluir (si se especificó)
+        let excludeEmployeeId = null;
+        if (excludeEmployeeGlobalId) {
+            const excludeResult = await pool.query(
+                `SELECT id FROM employees WHERE global_id = $1 LIMIT 1`,
+                [excludeEmployeeGlobalId]
+            );
+            if (excludeResult.rows.length > 0) {
+                excludeEmployeeId = excludeResult.rows[0].id;
+                console.log(`[NotificationHelper] 🚫 Excluyendo employee_id ${excludeEmployeeId} de notificación a admins del tenant`);
+            }
+        }
+
+        // Obtener dispositivos de empleados con role_id 1 (Administrador) o 2 (Encargado)
+        // Filtrar por TENANT (todas las sucursales del negocio)
+        const query = excludeEmployeeId
+            ? `SELECT DISTINCT dt.device_token, dt.employee_id, b.branch_name
+               FROM device_tokens dt
+               JOIN employees e ON dt.employee_id = e.id
+               JOIN branches b ON dt.branch_id = b.id
+               WHERE b.tenant_id = $1
+                 AND dt.is_active = true
+                 AND e.role_id IN (1, 2)
+                 AND e.id != $2`
+            : `SELECT DISTINCT dt.device_token, dt.employee_id, b.branch_name
+               FROM device_tokens dt
+               JOIN employees e ON dt.employee_id = e.id
+               JOIN branches b ON dt.branch_id = b.id
+               WHERE b.tenant_id = $1
+                 AND dt.is_active = true
+                 AND e.role_id IN (1, 2)`;
+
+        const result = excludeEmployeeId
+            ? await pool.query(query, [tenantId, excludeEmployeeId])
+            : await pool.query(query, [tenantId]);
+
+        // Filtrar según preferencias de notificación (si se especificó tipo)
+        let deviceTokens;
+        if (notificationType) {
+            deviceTokens = await filterDevicesByPreferences(result.rows, notificationType);
+        } else {
+            deviceTokens = result.rows.map(row => row.device_token);
+        }
+
+        // 🔍 DEBUG: Log cantidad de admins encontrados
+        console.log(`[NotificationHelper] 👥 Admins/Encargados en tenant ${tenantId}: ${deviceTokens.length} dispositivo(s)${excludeEmployeeId ? ` (excluyendo employee ${excludeEmployeeId})` : ''}`);
+
+        if (deviceTokens.length === 0) {
+            console.log(`[NotificationHelper] ℹ️ No hay administradores/encargados con dispositivos activos en tenant ${tenantId}`);
+            return { sent: 0, failed: 0, total: 0 };
+        }
+
+        const results = await sendNotificationToMultipleDevices(deviceTokens, {
+            title,
+            body,
+            data
+        });
+
+        const successCount = results.filter(r => r.success).length;
+        const invalidTokens = results
+            .filter(r => r.result === 'INVALID_TOKEN')
+            .map(r => r.deviceToken);
+
+        console.log(`[NotificationHelper] ✅ Notificaciones enviadas a admins/encargados del tenant ${tenantId}: ${successCount}/${deviceTokens.length}`);
+
+        // Desactivar tokens inválidos
+        if (invalidTokens.length > 0) {
+            try {
+                await pool.query(
+                    `UPDATE device_tokens SET is_active = false
+                     WHERE device_token = ANY($1)`,
+                    [invalidTokens]
+                );
+                console.log(`[NotificationHelper] 🧹 Deactivated ${invalidTokens.length} invalid tokens from tenant ${tenantId}`);
+            } catch (updateError) {
+                console.error(`[NotificationHelper] ⚠️ Error updating invalid tokens:`, updateError.message);
+            }
+        }
+
+        return {
+            sent: successCount,
+            failed: deviceTokens.length - successCount,
+            total: deviceTokens.length,
+            invalidTokensRemoved: invalidTokens.length
+        };
+    } catch (error) {
+        console.error('[NotificationHelper] ❌ Error enviando notificaciones a admins del tenant:', error.message);
+        return { sent: 0, failed: 0, error: error.message };
+    }
+}
+
+/**
  * Envía notificación a un empleado específico
  * @param {string} employeeId - GlobalId (UUID) del empleado para idempotencia
  */
@@ -811,47 +913,45 @@ async function notifyAssignmentCreated(employeeGlobalId, { assignmentId, quantit
 
 /**
  * Envía notificación cuando se activa el Modo Preparación (Guardian deshabilitado temporalmente)
- * Solo notifica a administradores y encargados (role_id 1, 2)
- * @param {number} branchId - ID de la sucursal
+ * Notifica a TODOS los administradores y encargados del TENANT (todas las sucursales)
+ * @param {number} tenantId - ID del tenant
+ * @param {number} branchId - ID de la sucursal (para guardar en historial)
  * @param {object} params - Datos de la activación
  */
-async function notifyPreparationModeActivated(branchId, { operatorName, authorizerName, branchName, reason, activatedAt }) {
+async function notifyPreparationModeActivated(tenantId, branchId, { operatorName, authorizerName, branchName, reason, activatedAt }) {
     try {
-        const reasonText = reason ? ` - Razón: ${reason}` : '';
+        const reasonText = reason ? ` - ${reason}` : '';
 
-        // Obtener tenant_id para guardar en historial
-        const tenantResult = await pool.query('SELECT tenant_id FROM branches WHERE id = $1', [branchId]);
-        const tenantId = tenantResult.rows[0]?.tenant_id;
-
-        // Enviar notificación a administradores/encargados
-        const result = await sendNotificationToAdminsInBranch(branchId, {
-            title: '⚠️ Modo Preparación Activado',
+        // Enviar notificación a TODOS los administradores/encargados del TENANT
+        const result = await sendNotificationToAdminsInTenant(tenantId, {
+            title: `⚠️ Modo Preparación [${branchName}]`,
             body: `${operatorName} activó el Modo Preparación${authorizerName !== operatorName ? ` (autorizado por ${authorizerName})` : ''}${reasonText}`,
             data: {
                 type: 'preparation_mode_activated',
                 operatorName,
                 authorizerName,
                 branchName,
+                branchId: branchId.toString(),
+                tenantId: tenantId.toString(),
                 reason: reason || '',
                 activatedAt: activatedAt || new Date().toISOString()
             }
         });
 
-        console.log(`[NotificationHelper] ⚠️ Notificación de Modo Preparación enviada a admins de sucursal ${branchId}: ${result.sent}/${result.total || 0}`);
+        console.log(`[NotificationHelper] ⚠️ Notificación de Modo Preparación enviada a admins del tenant ${tenantId}: ${result.sent}/${result.total || 0}`);
 
-        // Guardar en historial de notificaciones (campana)
-        if (tenantId) {
-            await saveToNotificationHistory({
-                tenant_id: tenantId,
-                branch_id: branchId,
-                employee_id: null, // No hay un empleado específico, es para todos los admins
-                category: 'guardian',
-                event_type: 'preparation_mode_activated',
-                title: '⚠️ Modo Preparación Activado',
-                body: `${operatorName} activó el Modo Preparación${reasonText}`,
-                data: { operatorName, authorizerName, branchName, reason, activatedAt }
-            });
-        }
+        // Guardar en historial de notificaciones (campana) - Usar category 'security' en lugar de 'guardian'
+        // para que aparezca en la campana (guardian tiene su propia página)
+        await saveToNotificationHistory({
+            tenant_id: tenantId,
+            branch_id: branchId,
+            employee_id: null, // No hay un empleado específico, es para todos los admins
+            category: 'security',
+            event_type: 'preparation_mode_activated',
+            title: `⚠️ Modo Preparación [${branchName}]`,
+            body: `${operatorName} activó el Modo Preparación${reasonText}`,
+            data: { operatorName, authorizerName, branchName, branchId, tenantId, reason, activatedAt }
+        });
 
         return result;
     } catch (error) {
@@ -863,6 +963,7 @@ async function notifyPreparationModeActivated(branchId, { operatorName, authoriz
 module.exports = {
     sendNotificationToBranch,
     sendNotificationToAdminsInBranch,
+    sendNotificationToAdminsInTenant,
     sendNotificationToEmployee,
     notifyUserLogin,
     notifyScaleAlert,

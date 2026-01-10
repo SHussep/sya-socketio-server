@@ -980,7 +980,8 @@ io.on('connection', (socket) => {
         stats.totalEvents++;
         const roomName = `branch_${data.branchId}`;
 
-        console.log(`[PREPMODE] ⚠️ Modo Preparación ACTIVADO en sucursal ${data.branchId}`);
+        console.log(`[PREPMODE] ⚠️ Modo Preparación ACTIVADO en sucursal ${data.branchId} (tenant ${data.tenantId})`);
+        console.log(`[PREPMODE]   Sucursal: ${data.branchName}`);
         console.log(`[PREPMODE]   Operador: ${data.operatorName} (ID: ${data.operatorEmployeeId})`);
         console.log(`[PREPMODE]   Autorizado por: ${data.authorizerName} (ID: ${data.authorizedByEmployeeId})`);
         console.log(`[PREPMODE]   Razón: ${data.reason || 'No especificada'}`);
@@ -991,16 +992,16 @@ io.on('connection', (socket) => {
             receivedAt: new Date().toISOString()
         });
 
-        // Enviar notificación FCM a administradores/encargados
+        // Enviar notificación FCM a TODOS los administradores/encargados del TENANT
         try {
-            await notificationHelper.notifyPreparationModeActivated(data.branchId, {
+            await notificationHelper.notifyPreparationModeActivated(data.tenantId, data.branchId, {
                 operatorName: data.operatorName,
                 authorizerName: data.authorizerName,
                 branchName: data.branchName,
                 reason: data.reason,
                 activatedAt: data.activatedAt
             });
-            console.log(`[PREPMODE] 📨 Notificación FCM enviada a administradores de sucursal ${data.branchId}`);
+            console.log(`[PREPMODE] 📨 Notificación FCM enviada a administradores del tenant ${data.tenantId}`);
         } catch (error) {
             console.error(`[PREPMODE] ⚠️ Error enviando notificación FCM:`, error.message);
         }
