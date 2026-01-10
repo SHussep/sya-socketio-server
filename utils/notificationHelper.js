@@ -275,7 +275,7 @@ async function sendNotificationToAdminsInTenant(tenantId, { title, body, data = 
         // Obtener dispositivos de empleados con role_id 1 (Administrador) o 2 (Encargado)
         // Filtrar por TENANT (todas las sucursales del negocio)
         const query = excludeEmployeeId
-            ? `SELECT DISTINCT dt.device_token, dt.employee_id, b.branch_name
+            ? `SELECT DISTINCT dt.device_token, dt.employee_id, b.name as branch_name
                FROM device_tokens dt
                JOIN employees e ON dt.employee_id = e.id
                JOIN branches b ON dt.branch_id = b.id
@@ -283,7 +283,7 @@ async function sendNotificationToAdminsInTenant(tenantId, { title, body, data = 
                  AND dt.is_active = true
                  AND e.role_id IN (1, 2)
                  AND e.id != $2`
-            : `SELECT DISTINCT dt.device_token, dt.employee_id, b.branch_name
+            : `SELECT DISTINCT dt.device_token, dt.employee_id, b.name as branch_name
                FROM device_tokens dt
                JOIN employees e ON dt.employee_id = e.id
                JOIN branches b ON dt.branch_id = b.id
