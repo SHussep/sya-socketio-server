@@ -47,11 +47,16 @@ module.exports = function(pool) {
                     CONCAT(e.first_name, ' ', e.last_name) as empleado_nombre,
                     c.nombre as cliente_nombre,
                     CONCAT(r.first_name, ' ', r.last_name) as repartidor_nombre,
-                    v.created_at
+                    v.created_at,
+                    -- Payment breakdown from repartidor_assignments (for mixed payments)
+                    ra.cash_amount,
+                    ra.card_amount,
+                    ra.credit_amount
                 FROM ventas v
                 LEFT JOIN employees e ON v.id_empleado = e.id
                 LEFT JOIN customers c ON v.id_cliente = c.id
                 LEFT JOIN employees r ON v.id_repartidor_asignado = r.id
+                LEFT JOIN repartidor_assignments ra ON ra.venta_id = v.id_venta
                 WHERE v.tenant_id = $1 AND v.branch_id = $2
             `;
 
