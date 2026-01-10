@@ -280,6 +280,26 @@ module.exports = function(pool, authenticateToken) {
 
             console.log(`[Branch Update] ✅ Sucursal actualizada: ${branch.name} (RFC: ${branch.rfc || 'N/A'})`);
 
+            // Si es la sucursal principal (primera creada), también actualizar el nombre del tenant
+            if (name) {
+                const primaryBranch = await pool.query(
+                    `SELECT id FROM branches
+                     WHERE tenant_id = $1
+                     ORDER BY created_at ASC
+                     LIMIT 1`,
+                    [tenantId]
+                );
+
+                if (primaryBranch.rows.length > 0 && primaryBranch.rows[0].id === parseInt(id)) {
+                    // Es la sucursal principal, actualizar también el tenant
+                    await pool.query(
+                        `UPDATE tenants SET name = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+                        [name, tenantId]
+                    );
+                    console.log(`[Branch Update] ✅ Tenant también actualizado con nombre: ${name}`);
+                }
+            }
+
             res.json({
                 success: true,
                 message: 'Sucursal actualizada exitosamente',
