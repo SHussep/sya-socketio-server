@@ -354,6 +354,7 @@ module.exports = function(pool, io) {
             }
 
             const tenant = result.rows[0];
+            console.log(`[Tenant Get] ID=${tenant.id}, business_name="${tenant.business_name}"`);
 
             // Contar sucursales, empleados
             const branchCount = await pool.query(
