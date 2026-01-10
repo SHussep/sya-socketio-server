@@ -1575,6 +1575,14 @@ async function runMigrations() {
                 console.log('[Schema] ✅ Productos offline-first columns added');
             }
 
+            // Patch: Add image_url column to productos table
+            try {
+                await client.query(`ALTER TABLE productos ADD COLUMN IF NOT EXISTS image_url TEXT`);
+                console.log('[Schema] ✅ Productos image_url column added');
+            } catch (error) {
+                console.log('[Schema] ⚠️ productos.image_url:', error.message);
+            }
+
             // Patch: Create units_of_measure table if missing
             console.log('[Schema] 🔍 Checking units_of_measure table...');
             const checkUnitsTable = await client.query(`
@@ -1723,6 +1731,26 @@ async function runMigrations() {
                     `);
 
                     console.log('[Schema] ✅ Suppliers offline-first columns added');
+                }
+
+                // Patch: Increase terminal_id column size in suppliers (was VARCHAR(50), now VARCHAR(100))
+                const checkSupplierTerminalIdType = await client.query(`
+                    SELECT character_maximum_length
+                    FROM information_schema.columns
+                    WHERE table_name = 'suppliers'
+                    AND column_name = 'terminal_id'
+                `);
+
+                if (checkSupplierTerminalIdType.rows.length > 0) {
+                    const currentLength = checkSupplierTerminalIdType.rows[0].character_maximum_length;
+                    if (currentLength && currentLength < 100) {
+                        console.log(`[Schema] 📝 Increasing suppliers.terminal_id from VARCHAR(${currentLength}) to VARCHAR(100)...`);
+                        await client.query(`
+                            ALTER TABLE suppliers
+                            ALTER COLUMN terminal_id TYPE VARCHAR(100)
+                        `);
+                        console.log('[Schema] ✅ suppliers.terminal_id column size increased');
+                    }
                 }
             }
 

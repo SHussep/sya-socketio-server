@@ -93,6 +93,7 @@ module.exports = (pool) => {
                     p.eliminado,
                     p.bascula,
                     p.is_pos_shortcut,
+                    p.image_url,
                     p.global_id,
                     p.created_at,
                     p.updated_at,
@@ -276,6 +277,7 @@ module.exports = (pool) => {
                 eliminado,
                 bascula,
                 is_pos_shortcut,
+                image_url,             // URL de imagen del producto
                 // Offline-first fields
                 global_id,
                 terminal_id,
@@ -326,13 +328,13 @@ module.exports = (pool) => {
                     proveedor_id, unidad_medida_id, eliminado, bascula, is_pos_shortcut,
                     global_id, terminal_id, local_op_seq, created_local_utc,
                     device_event_raw, last_modified_local_utc,
-                    needs_update, needs_delete,
+                    needs_update, needs_delete, image_url,
                     created_at, updated_at
                 )
                 VALUES (
                     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
                     $11, $12, $13, $14, $15, $16, $17, $18, $19,
-                    $20, $21, $22, $23, FALSE, $24, NOW(), NOW()
+                    $20, $21, $22, $23, FALSE, $24, $25, NOW(), NOW()
                 )
                 ON CONFLICT (global_id) DO UPDATE
                 SET descripcion = EXCLUDED.descripcion,
@@ -353,6 +355,7 @@ module.exports = (pool) => {
                     last_modified_local_utc = EXCLUDED.last_modified_local_utc,
                     needs_update = FALSE,
                     needs_delete = EXCLUDED.needs_delete,
+                    image_url = COALESCE(EXCLUDED.image_url, productos.image_url),
                     updated_at = NOW()
                 RETURNING *,
                     (xmax = 0) AS inserted`,
@@ -380,7 +383,8 @@ module.exports = (pool) => {
                     created_local_utc || null,
                     device_event_raw || null,
                     last_modified_local_utc || null,
-                    needs_delete || false
+                    needs_delete || false,
+                    image_url || null  // $25
                 ]
             );
 
@@ -463,13 +467,13 @@ module.exports = (pool) => {
                                 proveedor_id, unidad_medida_id, eliminado, bascula, is_pos_shortcut,
                                 global_id, terminal_id, local_op_seq, created_local_utc,
                                 device_event_raw, last_modified_local_utc,
-                                needs_update, needs_delete,
+                                needs_update, needs_delete, image_url,
                                 created_at, updated_at
                             )
                             VALUES (
                                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
                                 $11, $12, $13, $14, $15, $16, $17, $18, $19,
-                                $20, $21, $22, $23, FALSE, $24, NOW(), NOW()
+                                $20, $21, $22, $23, FALSE, $24, $25, NOW(), NOW()
                             )
                             ON CONFLICT (global_id) DO UPDATE
                             SET descripcion = EXCLUDED.descripcion,
@@ -490,6 +494,7 @@ module.exports = (pool) => {
                                 last_modified_local_utc = EXCLUDED.last_modified_local_utc,
                                 needs_update = FALSE,
                                 needs_delete = EXCLUDED.needs_delete,
+                                image_url = COALESCE(EXCLUDED.image_url, productos.image_url),
                                 updated_at = NOW()
                             RETURNING (xmax = 0) AS inserted`,
                             [
@@ -516,7 +521,8 @@ module.exports = (pool) => {
                                 prod.created_local_utc || null,
                                 prod.device_event_raw || null,
                                 prod.last_modified_local_utc || null,
-                                prod.needs_delete || false
+                                prod.needs_delete || false,
+                                prod.image_url || null  // $25
                             ]
                         );
 
