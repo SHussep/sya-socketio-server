@@ -990,6 +990,33 @@ async function runMigrations() {
                     `);
                     console.log('[Schema] ✅ Column ventas.credito_original added and calculated successfully');
                 }
+
+                // Patch: Add has_nota_credito to ventas table if missing
+                const checkHasNotaCredito = await client.query(`
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'ventas'
+                    AND column_name = 'has_nota_credito'
+                `);
+
+                if (checkHasNotaCredito.rows.length === 0) {
+                    console.log('[Schema] 📝 Adding missing column: ventas.has_nota_credito');
+                    await client.query(`
+                        ALTER TABLE ventas
+                        ADD COLUMN has_nota_credito BOOLEAN DEFAULT FALSE
+                    `);
+                    // Update existing ventas that have notas de credito
+                    console.log('[Schema] 📝 Updating has_nota_credito for existing ventas...');
+                    await client.query(`
+                        UPDATE ventas v
+                        SET has_nota_credito = TRUE
+                        WHERE EXISTS (
+                            SELECT 1 FROM notas_credito nc
+                            WHERE nc.venta_id = v.id AND nc.estado != 'cancelled'
+                        )
+                    `);
+                    console.log('[Schema] ✅ Column ventas.has_nota_credito added successfully');
+                }
             }
 
             // Patch: Add offline-first columns to purchases table
