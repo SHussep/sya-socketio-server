@@ -171,23 +171,26 @@ async function sendNotificationToAdminsInBranch(branchId, { title, body, data = 
             }
         }
 
-        // Obtener dispositivos de empleados con role_id 1 (Administrador) o 2 (Encargado)
+        // Obtener dispositivos de empleados con rol Administrador o Encargado
+        // Buscar por NOMBRE de rol para compatibilidad con diferentes tenant_id
         // INCLUYENDO employee_id para filtrar por preferencias
         // Excluyendo al empleado que ya recibió notificación personal (si aplica)
         const query = excludeEmployeeId
             ? `SELECT DISTINCT dt.device_token, dt.employee_id
                FROM device_tokens dt
                JOIN employees e ON dt.employee_id = e.id
+               JOIN roles r ON e.role_id = r.id
                WHERE dt.branch_id = $1
                  AND dt.is_active = true
-                 AND e.role_id IN (1, 2)
+                 AND LOWER(r.name) IN ('administrador', 'admin', 'encargado', 'manager', 'supervisor')
                  AND e.id != $2`
             : `SELECT DISTINCT dt.device_token, dt.employee_id
                FROM device_tokens dt
                JOIN employees e ON dt.employee_id = e.id
+               JOIN roles r ON e.role_id = r.id
                WHERE dt.branch_id = $1
                  AND dt.is_active = true
-                 AND e.role_id IN (1, 2)`;
+                 AND LOWER(r.name) IN ('administrador', 'admin', 'encargado', 'manager', 'supervisor')`;
 
         const result = excludeEmployeeId
             ? await pool.query(query, [branchId, excludeEmployeeId])
@@ -272,24 +275,27 @@ async function sendNotificationToAdminsInTenant(tenantId, { title, body, data = 
             }
         }
 
-        // Obtener dispositivos de empleados con role_id 1 (Administrador) o 2 (Encargado)
+        // Obtener dispositivos de empleados con rol Administrador o Encargado
+        // Buscar por NOMBRE de rol para compatibilidad con diferentes tenant_id
         // Filtrar por TENANT (todas las sucursales del negocio)
         const query = excludeEmployeeId
             ? `SELECT DISTINCT dt.device_token, dt.employee_id, b.name as branch_name
                FROM device_tokens dt
                JOIN employees e ON dt.employee_id = e.id
+               JOIN roles r ON e.role_id = r.id
                JOIN branches b ON dt.branch_id = b.id
                WHERE b.tenant_id = $1
                  AND dt.is_active = true
-                 AND e.role_id IN (1, 2)
+                 AND LOWER(r.name) IN ('administrador', 'admin', 'encargado', 'manager', 'supervisor')
                  AND e.id != $2`
             : `SELECT DISTINCT dt.device_token, dt.employee_id, b.name as branch_name
                FROM device_tokens dt
                JOIN employees e ON dt.employee_id = e.id
+               JOIN roles r ON e.role_id = r.id
                JOIN branches b ON dt.branch_id = b.id
                WHERE b.tenant_id = $1
                  AND dt.is_active = true
-                 AND e.role_id IN (1, 2)`;
+                 AND LOWER(r.name) IN ('administrador', 'admin', 'encargado', 'manager', 'supervisor')`;
 
         const result = excludeEmployeeId
             ? await pool.query(query, [tenantId, excludeEmployeeId])
@@ -460,16 +466,18 @@ async function notifyUserLogin(branchId, { employeeId, employeeName, branchName,
         });
 
         // Solo enviar a otros admins/encargados si no es el mismo empleado
-        // Obtener dispositivos de empleados con role_id 1 (Administrador) o 2 (Encargado)
+        // Obtener dispositivos de empleados con rol Administrador o Encargado
+        // Buscar por NOMBRE de rol para compatibilidad con diferentes tenant_id
         // EXCLUYENDO al empleado que hizo login
         // INCLUYENDO employee_id para filtrar por preferencias
         const adminTokensResult = await pool.query(
             `SELECT DISTINCT dt.device_token, dt.employee_id
              FROM device_tokens dt
              JOIN employees e ON dt.employee_id = e.id
+             JOIN roles r ON e.role_id = r.id
              WHERE dt.branch_id = $1
                AND dt.is_active = true
-               AND e.role_id IN (1, 2)
+               AND LOWER(r.name) IN ('administrador', 'admin', 'encargado', 'manager', 'supervisor')
                AND e.id != $2`,
             [branchId, employeeIdNumeric]
         );
