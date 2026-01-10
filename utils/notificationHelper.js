@@ -960,6 +960,62 @@ async function notifyPreparationModeActivated(tenantId, branchId, { operatorName
     }
 }
 
+/**
+ * Envía notificación cuando se desactiva el Modo Preparación
+ * Notifica a TODOS los administradores y encargados del TENANT
+ * @param {number} tenantId - ID del tenant
+ * @param {number} branchId - ID de la sucursal
+ * @param {object} params - Datos de la desactivación
+ */
+async function notifyPreparationModeDeactivated(tenantId, branchId, { operatorName, branchName, durationFormatted, severity, deactivatedAt, reason }) {
+    try {
+        // Determinar emoji/icono según severidad
+        const severityInfo = {
+            'Critical': { emoji: '🔴', text: 'CRÍTICA' },
+            'High': { emoji: '🟠', text: 'ALTA' },
+            'Medium': { emoji: '🟡', text: 'MEDIA' },
+            'Low': { emoji: '🟢', text: 'BAJA' }
+        };
+        const info = severityInfo[severity] || { emoji: '⚪', text: severity };
+
+        // Enviar notificación a TODOS los administradores/encargados del TENANT
+        const result = await sendNotificationToAdminsInTenant(tenantId, {
+            title: `✅ Modo Preparación Finalizado [${branchName}]`,
+            body: `${operatorName} finalizó - Duración: ${durationFormatted} (${info.emoji} ${info.text})`,
+            data: {
+                type: 'preparation_mode_deactivated',
+                operatorName,
+                branchName,
+                branchId: branchId.toString(),
+                tenantId: tenantId.toString(),
+                durationFormatted,
+                severity,
+                deactivatedAt: deactivatedAt || new Date().toISOString(),
+                reason: reason || ''
+            }
+        });
+
+        console.log(`[NotificationHelper] ✅ Notificación de desactivación enviada a admins del tenant ${tenantId}: ${result.sent}/${result.total || 0}`);
+
+        // Guardar en historial de notificaciones
+        await saveToNotificationHistory({
+            tenant_id: tenantId,
+            branch_id: branchId,
+            employee_id: null,
+            category: 'security',
+            event_type: 'preparation_mode_deactivated',
+            title: `✅ Modo Preparación Finalizado [${branchName}]`,
+            body: `${operatorName} finalizó - Duración: ${durationFormatted} (${info.text})`,
+            data: { operatorName, branchName, branchId, tenantId, durationFormatted, severity, deactivatedAt, reason }
+        });
+
+        return result;
+    } catch (error) {
+        console.error('[NotificationHelper] ❌ Error en notifyPreparationModeDeactivated:', error.message);
+        return { sent: 0, failed: 0, error: error.message };
+    }
+}
+
 module.exports = {
     sendNotificationToBranch,
     sendNotificationToAdminsInBranch,
@@ -974,5 +1030,6 @@ module.exports = {
     notifyScaleConnection,
     notifyExpenseCreated,
     notifyAssignmentCreated,
-    notifyPreparationModeActivated
+    notifyPreparationModeActivated,
+    notifyPreparationModeDeactivated
 };

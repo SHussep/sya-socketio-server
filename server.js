@@ -1007,6 +1007,38 @@ io.on('connection', (socket) => {
         }
     });
 
+    // Desactivación del Modo Preparación
+    socket.on('preparation_mode_deactivated', async (data) => {
+        stats.totalEvents++;
+        const roomName = `branch_${data.branchId}`;
+
+        console.log(`[PREPMODE] ✅ Modo Preparación DESACTIVADO en sucursal ${data.branchId} (tenant ${data.tenantId})`);
+        console.log(`[PREPMODE]   Sucursal: ${data.branchName}`);
+        console.log(`[PREPMODE]   Operador: ${data.operatorName}`);
+        console.log(`[PREPMODE]   Duración: ${data.durationFormatted} (${data.severity})`);
+
+        // Broadcast a todos los clientes en la sucursal
+        io.to(roomName).emit('preparation_mode_deactivated', {
+            ...data,
+            receivedAt: new Date().toISOString()
+        });
+
+        // Enviar notificación FCM a TODOS los administradores/encargados del TENANT
+        try {
+            await notificationHelper.notifyPreparationModeDeactivated(data.tenantId, data.branchId, {
+                operatorName: data.operatorName,
+                branchName: data.branchName,
+                durationFormatted: data.durationFormatted,
+                severity: data.severity,
+                deactivatedAt: data.deactivatedAt,
+                reason: data.reason
+            });
+            console.log(`[PREPMODE] 📨 Notificación de desactivación FCM enviada a administradores del tenant ${data.tenantId}`);
+        } catch (error) {
+            console.error(`[PREPMODE] ⚠️ Error enviando notificación FCM de desactivación:`, error.message);
+        }
+    });
+
     socket.on('get_stats', () => {
         socket.emit('stats', {
             ...stats,
