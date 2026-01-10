@@ -121,8 +121,9 @@ module.exports = (pool) => {
                     -- Mostrador: puede ser estado 3 (completada) o 5 (liquidada desde móvil)
                     COALESCE(SUM(CASE WHEN venta_tipo_id = 1 AND estado_venta_id IN (3, 5) THEN total ELSE 0 END), 0) as mostrador_total,
                     COALESCE(SUM(CASE WHEN venta_tipo_id = 2 AND estado_venta_id = 5 THEN total ELSE 0 END), 0) as repartidor_liquidado,
-                    -- Por método de pago (1=Efectivo, 2=Tarjeta, 3=Crédito)
-                    COALESCE(SUM(CASE WHEN tipo_pago_id = 1 AND estado_venta_id IN (3, 5) THEN total ELSE 0 END), 0) as efectivo_total,
+                    -- Por método de pago (1=Efectivo, 2=Tarjeta, 3=Crédito, 4=Mixto)
+                    -- 🔧 FIX: Tratar tipo_pago_id NULL como efectivo (default para mostrador)
+                    COALESCE(SUM(CASE WHEN (tipo_pago_id = 1 OR tipo_pago_id IS NULL) AND estado_venta_id IN (3, 5) THEN total ELSE 0 END), 0) as efectivo_total,
                     COALESCE(SUM(CASE WHEN tipo_pago_id = 2 AND estado_venta_id IN (3, 5) THEN total ELSE 0 END), 0) as tarjeta_total,
                     COALESCE(SUM(CASE WHEN tipo_pago_id = 3 AND estado_venta_id IN (3, 5) THEN total ELSE 0 END), 0) as credito_total,
                     -- Conteos
