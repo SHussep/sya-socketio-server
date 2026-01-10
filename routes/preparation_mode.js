@@ -223,17 +223,22 @@ module.exports = function(pool, io) {
     // ═══════════════════════════════════════════════════════════════════════════
     router.get('/', async (req, res) => {
         try {
-            const {
-                tenantId, branchId, employeeId,
-                status, severity, wasReviewed,
-                fecha_desde, fecha_hasta,
-                limit = 50, offset = 0
-            } = req.query;
+            // Aceptar ambos formatos: camelCase y snake_case
+            const tenantId = req.query.tenantId || req.query.tenant_id;
+            const branchId = req.query.branchId || req.query.branch_id;
+            const employeeId = req.query.employeeId || req.query.operator_employee_id;
+            const status = req.query.status;
+            const severity = req.query.severity;
+            const wasReviewed = req.query.wasReviewed || req.query.was_reviewed;
+            const startDate = req.query.fecha_desde || req.query.start_date;
+            const endDate = req.query.fecha_hasta || req.query.end_date;
+            const limit = req.query.limit || 50;
+            const offset = req.query.offset || 0;
 
-            if (!tenantId || !branchId) {
+            if (!tenantId) {
                 return res.status(400).json({
                     success: false,
-                    message: 'tenantId y branchId son requeridos'
+                    message: 'tenantId o tenant_id es requerido'
                 });
             }
 
@@ -252,11 +257,18 @@ module.exports = function(pool, io) {
                 LEFT JOIN employees auth ON pm.authorized_by_employee_id = auth.id
                 LEFT JOIN employees rev ON pm.reviewed_by_employee_id = rev.id
                 LEFT JOIN shifts s ON pm.shift_id = s.id
-                WHERE pm.tenant_id = $1 AND pm.branch_id = $2
+                WHERE pm.tenant_id = $1
             `;
 
-            const params = [parseInt(tenantId), parseInt(branchId)];
-            let paramIndex = 3;
+            const params = [parseInt(tenantId)];
+            let paramIndex = 2;
+
+            // branchId es opcional para consultas a nivel tenant
+            if (branchId) {
+                query += ` AND pm.branch_id = $${paramIndex}`;
+                params.push(parseInt(branchId));
+                paramIndex++;
+            }
 
             if (employeeId) {
                 query += ` AND pm.operator_employee_id = $${paramIndex}`;
@@ -282,27 +294,68 @@ module.exports = function(pool, io) {
                 paramIndex++;
             }
 
-            if (fecha_desde) {
+            if (startDate) {
                 query += ` AND pm.activated_at >= $${paramIndex}`;
-                params.push(fecha_desde);
+                params.push(startDate);
                 paramIndex++;
             }
 
-            if (fecha_hasta) {
+            if (endDate) {
                 query += ` AND pm.activated_at <= $${paramIndex}`;
-                params.push(fecha_hasta);
+                params.push(endDate);
                 paramIndex++;
             }
+
+            // Primero contar el total sin paginación
+            let countQuery = `
+                SELECT COUNT(*) as total
+                FROM preparation_mode_logs pm
+                WHERE pm.tenant_id = $1
+            `;
+            const countParams = [parseInt(tenantId)];
+            let countParamIndex = 2;
+
+            if (branchId) {
+                countQuery += ` AND pm.branch_id = $${countParamIndex}`;
+                countParams.push(parseInt(branchId));
+                countParamIndex++;
+            }
+            if (status) {
+                countQuery += ` AND pm.status = $${countParamIndex}`;
+                countParams.push(status);
+                countParamIndex++;
+            }
+            if (startDate) {
+                countQuery += ` AND pm.activated_at >= $${countParamIndex}`;
+                countParams.push(startDate);
+                countParamIndex++;
+            }
+            if (endDate) {
+                countQuery += ` AND pm.activated_at <= $${countParamIndex}`;
+                countParams.push(endDate);
+                countParamIndex++;
+            }
+
+            const countResult = await pool.query(countQuery, countParams);
+            const total = parseInt(countResult.rows[0].total);
 
             query += ` ORDER BY pm.activated_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
             params.push(parseInt(limit), parseInt(offset));
 
             const result = await pool.query(query, params);
 
+            const hasMore = (parseInt(offset) + result.rows.length) < total;
+
             res.json({
                 success: true,
                 data: result.rows,
-                count: result.rows.length
+                count: result.rows.length,
+                pagination: {
+                    total: total,
+                    limit: parseInt(limit),
+                    offset: parseInt(offset),
+                    hasMore: hasMore
+                }
             });
 
         } catch (error) {
@@ -320,28 +373,40 @@ module.exports = function(pool, io) {
     // ═══════════════════════════════════════════════════════════════════════════
     router.get('/summary', async (req, res) => {
         try {
-            const { tenantId, branchId, fecha_desde, fecha_hasta } = req.query;
+            // Aceptar ambos formatos: camelCase y snake_case
+            const tenantId = req.query.tenantId || req.query.tenant_id;
+            const branchId = req.query.branchId || req.query.branch_id;
+            const startDate = req.query.fecha_desde || req.query.start_date;
+            const endDate = req.query.fecha_hasta || req.query.end_date;
 
-            if (!tenantId || !branchId) {
+            if (!tenantId) {
                 return res.status(400).json({
                     success: false,
-                    message: 'tenantId y branchId son requeridos'
+                    message: 'tenantId o tenant_id es requerido'
                 });
             }
 
+            let branchFilter = '';
             let dateFilter = '';
-            const params = [parseInt(tenantId), parseInt(branchId)];
-            let paramIndex = 3;
+            const params = [parseInt(tenantId)];
+            let paramIndex = 2;
 
-            if (fecha_desde) {
-                dateFilter += ` AND pm.activated_at >= $${paramIndex}`;
-                params.push(fecha_desde);
+            // branchId es opcional
+            if (branchId) {
+                branchFilter = ` AND pm.branch_id = $${paramIndex}`;
+                params.push(parseInt(branchId));
                 paramIndex++;
             }
 
-            if (fecha_hasta) {
+            if (startDate) {
+                dateFilter += ` AND pm.activated_at >= $${paramIndex}`;
+                params.push(startDate);
+                paramIndex++;
+            }
+
+            if (endDate) {
                 dateFilter += ` AND pm.activated_at <= $${paramIndex}`;
-                params.push(fecha_hasta);
+                params.push(endDate);
                 paramIndex++;
             }
 
@@ -360,7 +425,8 @@ module.exports = function(pool, io) {
                     COUNT(*) FILTER (WHERE pm.severity = 'Low') as low_count,
                     COUNT(*) FILTER (WHERE pm.was_reviewed = false AND pm.status = 'completed') as pending_review
                 FROM preparation_mode_logs pm
-                WHERE pm.tenant_id = $1 AND pm.branch_id = $2
+                WHERE pm.tenant_id = $1
+                ${branchFilter}
                 ${dateFilter}
             `, params);
 
@@ -374,25 +440,29 @@ module.exports = function(pool, io) {
                     COUNT(*) FILTER (WHERE pm.severity IN ('Critical', 'High')) as high_severity_count
                 FROM preparation_mode_logs pm
                 JOIN employees e ON pm.operator_employee_id = e.id
-                WHERE pm.tenant_id = $1 AND pm.branch_id = $2
+                WHERE pm.tenant_id = $1
+                ${branchFilter}
                 ${dateFilter}
                 GROUP BY pm.operator_employee_id, e.first_name, e.last_name
                 ORDER BY activations_count DESC
                 LIMIT 10
             `, params);
 
-            // Activaciones por día (últimos 7 días)
+            // Activaciones por día (últimos 7 días) - usar solo los primeros params (sin fechas)
+            const dailyParams = branchId ? [parseInt(tenantId), parseInt(branchId)] : [parseInt(tenantId)];
+            const dailyBranchFilter = branchId ? 'AND pm.branch_id = $2' : '';
             const dailyResult = await pool.query(`
                 SELECT
                     DATE(pm.activated_at AT TIME ZONE 'UTC') as date,
                     COUNT(*) as activations_count,
                     COALESCE(SUM(pm.duration_seconds), 0) as total_duration_seconds
                 FROM preparation_mode_logs pm
-                WHERE pm.tenant_id = $1 AND pm.branch_id = $2
+                WHERE pm.tenant_id = $1
+                    ${dailyBranchFilter}
                     AND pm.activated_at >= NOW() - INTERVAL '7 days'
                 GROUP BY DATE(pm.activated_at AT TIME ZONE 'UTC')
                 ORDER BY date DESC
-            `, [parseInt(tenantId), parseInt(branchId)]);
+            `, dailyParams);
 
             res.json({
                 success: true,
