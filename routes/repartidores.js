@@ -536,10 +536,32 @@ module.exports = (pool) => {
                         total_returned_quantity: totalReturnedQuantity,
                         total_returned_amount: totalReturnedAmount,
                         // Payment info
-                        payment_method_id: row.payment_method_id ? parseInt(row.payment_method_id) : null,
-                        cash_amount: parseFloat(row.cash_amount || 0),
-                        card_amount: parseFloat(row.card_amount || 0),
-                        credit_amount: parseFloat(row.credit_amount || 0),
+                        // 🔧 FIX: Si está liquidada pero no tiene desglose de pago, asumir efectivo
+                        ...(() => {
+                            const cashAmt = parseFloat(row.cash_amount || 0);
+                            const cardAmt = parseFloat(row.card_amount || 0);
+                            const creditAmt = parseFloat(row.credit_amount || 0);
+                            const assignedAmt = parseFloat(row.assigned_amount || 0);
+                            const isLiquidated = row.status === 'liquidated';
+                            const noPaymentBreakdown = (cashAmt + cardAmt + creditAmt) === 0;
+
+                            // Si está liquidada sin desglose, asumir que es efectivo (comportamiento legacy)
+                            if (isLiquidated && noPaymentBreakdown && assignedAmt > 0) {
+                                return {
+                                    payment_method_id: row.payment_method_id ? parseInt(row.payment_method_id) : 1, // 1 = Efectivo
+                                    cash_amount: assignedAmt,
+                                    card_amount: 0,
+                                    credit_amount: 0
+                                };
+                            }
+
+                            return {
+                                payment_method_id: row.payment_method_id ? parseInt(row.payment_method_id) : null,
+                                cash_amount: cashAmt,
+                                card_amount: cardAmt,
+                                credit_amount: creditAmt
+                            };
+                        })(),
                         amount_received: parseFloat(row.amount_received || 0),
                         is_credit: row.is_credit || false,
                         payment_reference: row.payment_reference,
@@ -1006,7 +1028,16 @@ module.exports = (pool) => {
                         COUNT(*) as assignment_count,
                         COUNT(CASE WHEN ra.status = 'liquidated' THEN 1 END) as liquidated_count,
                         -- Desglose por tipo de pago (solo asignaciones liquidadas)
-                        COALESCE(SUM(CASE WHEN ra.status = 'liquidated' THEN ra.cash_amount ELSE 0 END), 0) as total_cash_amount,
+                        -- 🔧 FIX: Si liquidada sin desglose de pago, asumir efectivo (comportamiento legacy)
+                        COALESCE(SUM(CASE
+                            WHEN ra.status = 'liquidated' THEN
+                                CASE
+                                    WHEN COALESCE(ra.cash_amount, 0) + COALESCE(ra.card_amount, 0) + COALESCE(ra.credit_amount, 0) = 0
+                                    THEN ra.assigned_amount  -- Sin desglose = efectivo
+                                    ELSE ra.cash_amount
+                                END
+                            ELSE 0
+                        END), 0) as total_cash_amount,
                         COALESCE(SUM(CASE WHEN ra.status = 'liquidated' THEN ra.card_amount ELSE 0 END), 0) as total_card_amount,
                         COALESCE(SUM(CASE WHEN ra.status = 'liquidated' THEN ra.credit_amount ELSE 0 END), 0) as total_credit_amount
                     FROM repartidor_assignments ra
