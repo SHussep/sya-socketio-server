@@ -10,6 +10,10 @@
 
 const express = require('express');
 const router = express.Router();
+const {
+    notifyPreparationModeActivated,
+    notifyPreparationModeDeactivated
+} = require('../utils/notificationHelper');
 
 module.exports = function(pool, io) {
 
@@ -137,6 +141,13 @@ module.exports = function(pool, io) {
                         log.created_local_utc
                     ]);
 
+                    // Obtener nombre de la sucursal para notificaciones
+                    const branchResult = await client.query(
+                        'SELECT name FROM branches WHERE id = $1',
+                        [log.branch_id]
+                    );
+                    const branchName = branchResult.rows[0]?.name || `Sucursal ${log.branch_id}`;
+
                     if (upsertResult.rows[0].inserted) {
                         results.inserted++;
 
@@ -146,6 +157,7 @@ module.exports = function(pool, io) {
                                 type: 'preparation_mode_activated',
                                 branchId: log.branch_id,
                                 tenantId: log.tenant_id,
+                                branchName,
                                 data: {
                                     id: upsertResult.rows[0].id,
                                     global_id: log.global_id,
@@ -154,7 +166,8 @@ module.exports = function(pool, io) {
                                     authorized_by_employee_id,
                                     authorizer_name,
                                     activated_at: log.activated_at,
-                                    reason: log.reason
+                                    reason: log.reason,
+                                    branch_name: branchName
                                 }
                             });
                         }
@@ -167,6 +180,7 @@ module.exports = function(pool, io) {
                                 type: 'preparation_mode_deactivated',
                                 branchId: log.branch_id,
                                 tenantId: log.tenant_id,
+                                branchName,
                                 data: {
                                     id: upsertResult.rows[0].id,
                                     global_id: log.global_id,
@@ -174,7 +188,8 @@ module.exports = function(pool, io) {
                                     operator_name,
                                     deactivated_at: log.deactivated_at,
                                     duration_seconds: log.duration_seconds,
-                                    severity: upsertResult.rows[0].severity
+                                    severity: upsertResult.rows[0].severity,
+                                    branch_name: branchName
                                 }
                             });
                         }
@@ -188,12 +203,60 @@ module.exports = function(pool, io) {
 
             await client.query('COMMIT');
 
-            // Emitir eventos por Socket.IO
+            // Emitir eventos por Socket.IO y enviar notificaciones push
             for (const event of newEvents) {
+                // Socket.IO
                 if (io) {
                     const room = `branch_${event.branchId}`;
                     io.to(room).emit(event.type, event.data);
                     console.log(`[PrepMode/Sync] 📡 Emitiendo ${event.type} a room ${room}`);
+                }
+
+                // Notificaciones Push FCM
+                try {
+                    if (event.type === 'preparation_mode_activated') {
+                        await notifyPreparationModeActivated(
+                            event.tenantId,
+                            event.branchId,
+                            {
+                                operatorName: event.data.operator_name,
+                                authorizerName: event.data.authorizer_name || event.data.operator_name,
+                                branchName: event.branchName,
+                                reason: event.data.reason,
+                                activatedAt: event.data.activated_at
+                            }
+                        );
+                    } else if (event.type === 'preparation_mode_deactivated') {
+                        // Formatear duración
+                        const durationSecs = parseFloat(event.data.duration_seconds) || 0;
+                        let durationFormatted = '';
+                        if (durationSecs >= 3600) {
+                            const hours = Math.floor(durationSecs / 3600);
+                            const mins = Math.floor((durationSecs % 3600) / 60);
+                            durationFormatted = `${hours}h ${mins}m`;
+                        } else if (durationSecs >= 60) {
+                            const mins = Math.floor(durationSecs / 60);
+                            const secs = Math.floor(durationSecs % 60);
+                            durationFormatted = `${mins}m ${secs}s`;
+                        } else {
+                            durationFormatted = `${Math.floor(durationSecs)}s`;
+                        }
+
+                        await notifyPreparationModeDeactivated(
+                            event.tenantId,
+                            event.branchId,
+                            {
+                                operatorName: event.data.operator_name,
+                                branchName: event.branchName,
+                                durationFormatted,
+                                severity: event.data.severity || 'Low',
+                                deactivatedAt: event.data.deactivated_at
+                            }
+                        );
+                    }
+                } catch (notifError) {
+                    console.error(`[PrepMode/Sync] ⚠️ Error enviando notificación push:`, notifError.message);
+                    // No fallar el sync por error de notificación
                 }
             }
 
