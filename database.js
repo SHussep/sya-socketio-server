@@ -1966,6 +1966,115 @@ async function runMigrations() {
                 }
             }
 
+            // Patch: Create preparation_mode_logs table if missing (Migration 017)
+            // This table logs activation/deactivation of "Modo Preparación" for Guardian auditing
+            console.log('[Schema] 🔍 Checking preparation_mode_logs table...');
+            const checkPrepModeLogsTable = await client.query(`
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'preparation_mode_logs'
+                )
+            `);
+
+            if (!checkPrepModeLogsTable.rows[0].exists) {
+                console.log('[Schema] 📝 Creating table: preparation_mode_logs (auditoría Modo Preparación)');
+                await client.query(`
+                    CREATE TABLE preparation_mode_logs (
+                        id SERIAL PRIMARY KEY,
+                        tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+                        branch_id INTEGER NOT NULL REFERENCES branches(id),
+                        shift_id INTEGER REFERENCES shifts(id),
+                        operator_employee_id INTEGER NOT NULL REFERENCES employees(id),
+                        authorized_by_employee_id INTEGER REFERENCES employees(id),
+                        activated_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                        deactivated_at TIMESTAMP WITH TIME ZONE,
+                        duration_seconds DECIMAL(10,2),
+                        reason VARCHAR(500),
+                        notes TEXT,
+                        was_reviewed BOOLEAN DEFAULT FALSE,
+                        review_notes TEXT,
+                        reviewed_at TIMESTAMP WITH TIME ZONE,
+                        reviewed_by_employee_id INTEGER REFERENCES employees(id),
+                        status VARCHAR(50) NOT NULL DEFAULT 'active',
+                        severity VARCHAR(50) DEFAULT 'Low',
+                        global_id VARCHAR(36) NOT NULL UNIQUE,
+                        terminal_id VARCHAR(50),
+                        local_op_seq INTEGER DEFAULT 0,
+                        device_event_raw BIGINT DEFAULT 0,
+                        created_local_utc TIMESTAMP WITH TIME ZONE,
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                    )
+                `);
+
+                // Create indexes
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_prep_mode_logs_tenant ON preparation_mode_logs(tenant_id)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_prep_mode_logs_branch ON preparation_mode_logs(branch_id)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_prep_mode_logs_tenant_branch ON preparation_mode_logs(tenant_id, branch_id)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_prep_mode_logs_shift ON preparation_mode_logs(shift_id)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_prep_mode_logs_operator ON preparation_mode_logs(operator_employee_id)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_prep_mode_logs_authorized_by ON preparation_mode_logs(authorized_by_employee_id)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_prep_mode_logs_activated ON preparation_mode_logs(activated_at DESC)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_prep_mode_logs_status ON preparation_mode_logs(status)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_prep_mode_logs_severity ON preparation_mode_logs(severity)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_prep_mode_logs_reviewed ON preparation_mode_logs(was_reviewed) WHERE was_reviewed = false`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_prep_mode_logs_global_id ON preparation_mode_logs(global_id)`);
+
+                // Create trigger for updated_at
+                await client.query(`
+                    CREATE OR REPLACE FUNCTION update_preparation_mode_logs_updated_at()
+                    RETURNS TRIGGER AS $$
+                    BEGIN
+                        NEW.updated_at = CURRENT_TIMESTAMP;
+                        RETURN NEW;
+                    END;
+                    $$ LANGUAGE plpgsql
+                `);
+
+                await client.query(`
+                    DROP TRIGGER IF EXISTS trigger_prep_mode_logs_updated_at ON preparation_mode_logs
+                `);
+                await client.query(`
+                    CREATE TRIGGER trigger_prep_mode_logs_updated_at
+                    BEFORE UPDATE ON preparation_mode_logs
+                    FOR EACH ROW
+                    EXECUTE FUNCTION update_preparation_mode_logs_updated_at()
+                `);
+
+                // Create trigger to calculate severity based on duration
+                await client.query(`
+                    CREATE OR REPLACE FUNCTION calculate_prep_mode_severity()
+                    RETURNS TRIGGER AS $$
+                    BEGIN
+                        IF NEW.duration_seconds IS NOT NULL THEN
+                            IF NEW.duration_seconds > 1800 THEN
+                                NEW.severity = 'Critical';
+                            ELSIF NEW.duration_seconds > 600 THEN
+                                NEW.severity = 'High';
+                            ELSIF NEW.duration_seconds > 180 THEN
+                                NEW.severity = 'Medium';
+                            ELSE
+                                NEW.severity = 'Low';
+                            END IF;
+                        END IF;
+                        RETURN NEW;
+                    END;
+                    $$ LANGUAGE plpgsql
+                `);
+
+                await client.query(`
+                    DROP TRIGGER IF EXISTS trigger_prep_mode_severity ON preparation_mode_logs
+                `);
+                await client.query(`
+                    CREATE TRIGGER trigger_prep_mode_severity
+                    BEFORE INSERT OR UPDATE ON preparation_mode_logs
+                    FOR EACH ROW
+                    EXECUTE FUNCTION calculate_prep_mode_severity()
+                `);
+
+                console.log('[Schema] ✅ Table preparation_mode_logs created successfully with triggers');
+            }
+
             // 3. Always run seeds (idempotent - uses ON CONFLICT)
             console.log('[Seeds] 📝 Running seeds.sql...');
             const seedsPath = path.join(__dirname, 'seeds.sql');
