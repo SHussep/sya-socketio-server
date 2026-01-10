@@ -171,8 +171,8 @@ async function sendNotificationToAdminsInBranch(branchId, { title, body, data = 
             }
         }
 
-        // Obtener dispositivos de empleados con rol Administrador o Encargado
-        // Buscar por NOMBRE de rol para compatibilidad con diferentes tenant_id
+        // Obtener dispositivos de empleados con acceso móvil de tipo 'admin'
+        // Buscar por mobile_access_type en la tabla roles (NO por nombre de rol)
         // INCLUYENDO employee_id para filtrar por preferencias
         // Excluyendo al empleado que ya recibió notificación personal (si aplica)
         const query = excludeEmployeeId
@@ -182,7 +182,7 @@ async function sendNotificationToAdminsInBranch(branchId, { title, body, data = 
                JOIN roles r ON e.role_id = r.id
                WHERE dt.branch_id = $1
                  AND dt.is_active = true
-                 AND LOWER(r.name) IN ('administrador', 'admin', 'encargado', 'manager', 'supervisor')
+                 AND r.mobile_access_type = 'admin'
                  AND e.id != $2`
             : `SELECT DISTINCT dt.device_token, dt.employee_id
                FROM device_tokens dt
@@ -190,7 +190,7 @@ async function sendNotificationToAdminsInBranch(branchId, { title, body, data = 
                JOIN roles r ON e.role_id = r.id
                WHERE dt.branch_id = $1
                  AND dt.is_active = true
-                 AND LOWER(r.name) IN ('administrador', 'admin', 'encargado', 'manager', 'supervisor')`;
+                 AND r.mobile_access_type = 'admin'`;
 
         const result = excludeEmployeeId
             ? await pool.query(query, [branchId, excludeEmployeeId])
@@ -275,8 +275,8 @@ async function sendNotificationToAdminsInTenant(tenantId, { title, body, data = 
             }
         }
 
-        // Obtener dispositivos de empleados con rol Administrador o Encargado
-        // Buscar por NOMBRE de rol para compatibilidad con diferentes tenant_id
+        // Obtener dispositivos de empleados con acceso móvil de tipo 'admin'
+        // Buscar por mobile_access_type en la tabla roles (NO por nombre de rol)
         // Filtrar por TENANT (todas las sucursales del negocio)
         const query = excludeEmployeeId
             ? `SELECT DISTINCT dt.device_token, dt.employee_id, b.name as branch_name
@@ -286,7 +286,7 @@ async function sendNotificationToAdminsInTenant(tenantId, { title, body, data = 
                JOIN branches b ON dt.branch_id = b.id
                WHERE b.tenant_id = $1
                  AND dt.is_active = true
-                 AND LOWER(r.name) IN ('administrador', 'admin', 'encargado', 'manager', 'supervisor')
+                 AND r.mobile_access_type = 'admin'
                  AND e.id != $2`
             : `SELECT DISTINCT dt.device_token, dt.employee_id, b.name as branch_name
                FROM device_tokens dt
@@ -295,7 +295,7 @@ async function sendNotificationToAdminsInTenant(tenantId, { title, body, data = 
                JOIN branches b ON dt.branch_id = b.id
                WHERE b.tenant_id = $1
                  AND dt.is_active = true
-                 AND LOWER(r.name) IN ('administrador', 'admin', 'encargado', 'manager', 'supervisor')`;
+                 AND r.mobile_access_type = 'admin'`;
 
         const result = excludeEmployeeId
             ? await pool.query(query, [tenantId, excludeEmployeeId])
@@ -466,8 +466,8 @@ async function notifyUserLogin(branchId, { employeeId, employeeName, branchName,
         });
 
         // Solo enviar a otros admins/encargados si no es el mismo empleado
-        // Obtener dispositivos de empleados con rol Administrador o Encargado
-        // Buscar por NOMBRE de rol para compatibilidad con diferentes tenant_id
+        // Obtener dispositivos de empleados con acceso móvil de tipo 'admin'
+        // Buscar por mobile_access_type en la tabla roles (NO por nombre de rol)
         // EXCLUYENDO al empleado que hizo login
         // INCLUYENDO employee_id para filtrar por preferencias
         const adminTokensResult = await pool.query(
@@ -477,7 +477,7 @@ async function notifyUserLogin(branchId, { employeeId, employeeName, branchName,
              JOIN roles r ON e.role_id = r.id
              WHERE dt.branch_id = $1
                AND dt.is_active = true
-               AND LOWER(r.name) IN ('administrador', 'admin', 'encargado', 'manager', 'supervisor')
+               AND r.mobile_access_type = 'admin'
                AND e.id != $2`,
             [branchId, employeeIdNumeric]
         );
