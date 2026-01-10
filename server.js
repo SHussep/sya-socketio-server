@@ -973,6 +973,39 @@ io.on('connection', (socket) => {
         console.log(`[SHIFT] ℹ️ Shift closure broadcast completado. Sync y notificaciones se manejan vía /api/shifts/sync`);
     });
 
+    // ═══════════════════════════════════════════════════════════════
+    // PREPARATION MODE - Notificación en tiempo real a administradores
+    // ═══════════════════════════════════════════════════════════════
+    socket.on('preparation_mode_activated', async (data) => {
+        stats.totalEvents++;
+        const roomName = `branch_${data.branchId}`;
+
+        console.log(`[PREPMODE] ⚠️ Modo Preparación ACTIVADO en sucursal ${data.branchId}`);
+        console.log(`[PREPMODE]   Operador: ${data.operatorName} (ID: ${data.operatorEmployeeId})`);
+        console.log(`[PREPMODE]   Autorizado por: ${data.authorizerName} (ID: ${data.authorizedByEmployeeId})`);
+        console.log(`[PREPMODE]   Razón: ${data.reason || 'No especificada'}`);
+
+        // Broadcast a todos los clientes en la sucursal
+        io.to(roomName).emit('preparation_mode_activated', {
+            ...data,
+            receivedAt: new Date().toISOString()
+        });
+
+        // Enviar notificación FCM a administradores/encargados
+        try {
+            await notificationHelper.notifyPreparationModeActivated(data.branchId, {
+                operatorName: data.operatorName,
+                authorizerName: data.authorizerName,
+                branchName: data.branchName,
+                reason: data.reason,
+                activatedAt: data.activatedAt
+            });
+            console.log(`[PREPMODE] 📨 Notificación FCM enviada a administradores de sucursal ${data.branchId}`);
+        } catch (error) {
+            console.error(`[PREPMODE] ⚠️ Error enviando notificación FCM:`, error.message);
+        }
+    });
+
     socket.on('get_stats', () => {
         socket.emit('stats', {
             ...stats,

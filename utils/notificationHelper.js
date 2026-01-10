@@ -809,6 +809,57 @@ async function notifyAssignmentCreated(employeeGlobalId, { assignmentId, quantit
     };
 }
 
+/**
+ * Envía notificación cuando se activa el Modo Preparación (Guardian deshabilitado temporalmente)
+ * Solo notifica a administradores y encargados (role_id 1, 2)
+ * @param {number} branchId - ID de la sucursal
+ * @param {object} params - Datos de la activación
+ */
+async function notifyPreparationModeActivated(branchId, { operatorName, authorizerName, branchName, reason, activatedAt }) {
+    try {
+        const reasonText = reason ? ` - Razón: ${reason}` : '';
+
+        // Obtener tenant_id para guardar en historial
+        const tenantResult = await pool.query('SELECT tenant_id FROM branches WHERE id = $1', [branchId]);
+        const tenantId = tenantResult.rows[0]?.tenant_id;
+
+        // Enviar notificación a administradores/encargados
+        const result = await sendNotificationToAdminsInBranch(branchId, {
+            title: '⚠️ Modo Preparación Activado',
+            body: `${operatorName} activó el Modo Preparación${authorizerName !== operatorName ? ` (autorizado por ${authorizerName})` : ''}${reasonText}`,
+            data: {
+                type: 'preparation_mode_activated',
+                operatorName,
+                authorizerName,
+                branchName,
+                reason: reason || '',
+                activatedAt: activatedAt || new Date().toISOString()
+            }
+        });
+
+        console.log(`[NotificationHelper] ⚠️ Notificación de Modo Preparación enviada a admins de sucursal ${branchId}: ${result.sent}/${result.total || 0}`);
+
+        // Guardar en historial de notificaciones (campana)
+        if (tenantId) {
+            await saveToNotificationHistory({
+                tenant_id: tenantId,
+                branch_id: branchId,
+                employee_id: null, // No hay un empleado específico, es para todos los admins
+                category: 'guardian',
+                event_type: 'preparation_mode_activated',
+                title: '⚠️ Modo Preparación Activado',
+                body: `${operatorName} activó el Modo Preparación${reasonText}`,
+                data: { operatorName, authorizerName, branchName, reason, activatedAt }
+            });
+        }
+
+        return result;
+    } catch (error) {
+        console.error('[NotificationHelper] ❌ Error en notifyPreparationModeActivated:', error.message);
+        return { sent: 0, failed: 0, error: error.message };
+    }
+}
+
 module.exports = {
     sendNotificationToBranch,
     sendNotificationToAdminsInBranch,
@@ -821,5 +872,6 @@ module.exports = {
     notifyScaleDisconnection,
     notifyScaleConnection,
     notifyExpenseCreated,
-    notifyAssignmentCreated
+    notifyAssignmentCreated,
+    notifyPreparationModeActivated
 };
