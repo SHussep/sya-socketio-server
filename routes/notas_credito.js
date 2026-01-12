@@ -16,12 +16,22 @@ module.exports = function(pool) {
     router.post('/sync', async (req, res) => {
         const client = await pool.connect();
         try {
-            const { notas_credito = [], detalles = [] } = req.body;
+            // Soportar tanto formato batch (notas_credito array) como single (objeto directo)
+            let notas_credito = [];
+            let detalles = [];
 
-            if (!Array.isArray(notas_credito)) {
+            if (Array.isArray(req.body.notas_credito)) {
+                // Formato batch: { notas_credito: [...], detalles: [...] }
+                notas_credito = req.body.notas_credito;
+                detalles = req.body.detalles || [];
+            } else if (req.body.global_id) {
+                // Formato single (desde Desktop): objeto directo con global_id
+                notas_credito = [req.body];
+                detalles = req.body.detalles || [];
+            } else {
                 return res.status(400).json({
                     success: false,
-                    message: 'notas_credito debe ser un array'
+                    message: 'Formato inválido: enviar notas_credito array o objeto con global_id'
                 });
             }
 
@@ -29,17 +39,19 @@ module.exports = function(pool) {
 
             await client.query('BEGIN');
 
-            const results = { inserted: 0, updated: 0, errors: [] };
+            const results = { inserted: 0, updated: 0, errors: [], data: [] };
 
             for (const nc of notas_credito) {
                 try {
                     // Resolver FKs por global_id
+                    // Soportar ambos nombres: venta_global_id (legacy) o venta_original_global_id (Desktop)
+                    const ventaGlobalId = nc.venta_global_id || nc.venta_original_global_id;
                     const ventaResult = await client.query(
                         'SELECT id_venta FROM ventas WHERE global_id = $1',
-                        [nc.venta_global_id]
+                        [ventaGlobalId]
                     );
                     if (ventaResult.rows.length === 0) {
-                        results.errors.push({ global_id: nc.global_id, error: `Venta no encontrada: ${nc.venta_global_id}` });
+                        results.errors.push({ global_id: nc.global_id, error: `Venta no encontrada: ${ventaGlobalId}` });
                         continue;
                     }
                     const venta_original_id = ventaResult.rows[0].id_venta;
@@ -125,16 +137,21 @@ module.exports = function(pool) {
                         nc.created_local_utc
                     ]);
 
-                    if (upsertResult.rows[0].inserted) {
+                    const ncId = upsertResult.rows[0].id;
+                    const wasInserted = upsertResult.rows[0].inserted;
+
+                    if (wasInserted) {
                         results.inserted++;
                     } else {
                         results.updated++;
                     }
 
-                    const ncId = upsertResult.rows[0].id;
+                    // Guardar el ID para el response (útil para sync single desde Desktop)
+                    results.data.push({ global_id: nc.global_id, id: ncId, inserted: wasInserted });
 
                     // Procesar detalles de esta NC
-                    const ncDetalles = detalles.filter(d => d.nota_credito_global_id === nc.global_id);
+                    // Soportar detalles embebidos (Desktop) o en array separado
+                    const ncDetalles = nc.detalles || detalles.filter(d => d.nota_credito_global_id === nc.global_id);
                     for (const det of ncDetalles) {
                         // Resolver producto
                         let producto_id = null;
@@ -200,11 +217,19 @@ module.exports = function(pool) {
 
             console.log(`[NC/Sync] ✅ Completado: ${results.inserted} insertadas, ${results.updated} actualizadas, ${results.errors.length} errores`);
 
-            res.json({
+            // Para formato single (Desktop), incluir data con el ID
+            const response = {
                 success: true,
                 message: 'Sincronización de notas de crédito completada',
                 results
-            });
+            };
+
+            // Si es single NC, incluir data directamente para que Desktop extraiga RemoteId
+            if (results.data.length === 1) {
+                response.data = results.data[0];
+            }
+
+            res.json(response);
 
         } catch (error) {
             await client.query('ROLLBACK');
