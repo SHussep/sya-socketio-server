@@ -2143,6 +2143,168 @@ async function runMigrations() {
                 console.error('[Seeds] ❌ seeds.sql not found!');
             }
 
+            // Patch: Create notas_credito tables if missing (Migration 016)
+            console.log('[Schema] 🔍 Checking notas_credito table...');
+            const checkNotasCreditoTable = await client.query(`
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'notas_credito'
+                )
+            `);
+
+            if (!checkNotasCreditoTable.rows[0].exists) {
+                console.log('[Schema] 📝 Creating tables: notas_credito, notas_credito_detalle (Migration 016)');
+
+                // Add has_nota_credito column to ventas if not exists
+                await client.query(`ALTER TABLE ventas ADD COLUMN IF NOT EXISTS has_nota_credito BOOLEAN DEFAULT FALSE`);
+
+                // Create notas_credito table
+                await client.query(`
+                    CREATE TABLE notas_credito (
+                        id SERIAL PRIMARY KEY,
+                        venta_original_id INTEGER NOT NULL REFERENCES ventas(id_venta),
+                        shift_id INTEGER NOT NULL REFERENCES shifts(id),
+                        employee_id INTEGER NOT NULL REFERENCES employees(id),
+                        authorized_by_id INTEGER NOT NULL REFERENCES employees(id),
+                        cliente_id INTEGER REFERENCES customers(id),
+                        tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+                        branch_id INTEGER NOT NULL REFERENCES branches(id),
+                        tipo VARCHAR(50) NOT NULL DEFAULT 'Cancelacion',
+                        estado VARCHAR(50) NOT NULL DEFAULT 'Aplicada',
+                        total DECIMAL(12,2) NOT NULL,
+                        monto_credito DECIMAL(12,2) DEFAULT 0,
+                        monto_efectivo DECIMAL(12,2) DEFAULT 0,
+                        monto_tarjeta DECIMAL(12,2) DEFAULT 0,
+                        fecha_creacion TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        fecha_venta_original TIMESTAMP WITH TIME ZONE,
+                        razon VARCHAR(500) NOT NULL,
+                        notas TEXT,
+                        numero_nota_credito VARCHAR(50),
+                        ticket_original INTEGER,
+                        global_id VARCHAR(36) NOT NULL UNIQUE,
+                        terminal_id VARCHAR(50),
+                        local_op_seq INTEGER DEFAULT 0,
+                        device_event_raw BIGINT DEFAULT 0,
+                        created_local_utc TIMESTAMP WITH TIME ZONE,
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                    )
+                `);
+
+                // Create notas_credito_detalle table
+                await client.query(`
+                    CREATE TABLE notas_credito_detalle (
+                        id SERIAL PRIMARY KEY,
+                        nota_credito_id INTEGER NOT NULL REFERENCES notas_credito(id) ON DELETE CASCADE,
+                        venta_detalle_original_id INTEGER REFERENCES ventas_detalle(id_venta_detalle),
+                        producto_id INTEGER NOT NULL REFERENCES productos(id),
+                        descripcion_producto VARCHAR(255) NOT NULL,
+                        cantidad DECIMAL(12,3) NOT NULL,
+                        cantidad_original DECIMAL(12,3) DEFAULT 0,
+                        precio_unitario DECIMAL(12,2) NOT NULL,
+                        total_linea DECIMAL(12,2) NOT NULL,
+                        devuelve_a_inventario BOOLEAN DEFAULT TRUE,
+                        kardex_movimiento_id INTEGER,
+                        global_id VARCHAR(36) NOT NULL UNIQUE,
+                        terminal_id VARCHAR(50),
+                        local_op_seq INTEGER DEFAULT 0,
+                        device_event_raw BIGINT DEFAULT 0,
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                    )
+                `);
+
+                // Create indexes
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_notas_credito_tenant ON notas_credito(tenant_id)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_notas_credito_branch ON notas_credito(branch_id)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_notas_credito_venta ON notas_credito(venta_original_id)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_notas_credito_cliente ON notas_credito(cliente_id)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_notas_credito_fecha ON notas_credito(fecha_creacion DESC)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_notas_credito_global_id ON notas_credito(global_id)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_nc_detalle_nota ON notas_credito_detalle(nota_credito_id)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_nc_detalle_producto ON notas_credito_detalle(producto_id)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_nc_detalle_global_id ON notas_credito_detalle(global_id)`);
+
+                console.log('[Schema] ✅ Tables notas_credito and notas_credito_detalle created successfully');
+            }
+
+            // Patch: Create triggers for NC balance and inventory (Migration 018)
+            console.log('[Schema] 🔍 Checking NC triggers...');
+            const checkNCTrigger = await client.query(`
+                SELECT EXISTS (
+                    SELECT FROM pg_trigger WHERE tgname = 'trigger_update_balance_on_nota_credito'
+                )
+            `);
+
+            if (!checkNCTrigger.rows[0].exists) {
+                console.log('[Schema] 📝 Creating NC triggers for balance and inventory (Migration 018)');
+
+                // Trigger: Update customer balance on NC
+                await client.query(`
+                    CREATE OR REPLACE FUNCTION update_customer_balance_on_nota_credito()
+                    RETURNS TRIGGER AS $$
+                    DECLARE
+                        v_tipo_pago_id INTEGER;
+                    BEGIN
+                        IF NEW.estado = 'Aplicada' AND NEW.cliente_id IS NOT NULL THEN
+                            SELECT tipo_pago_id INTO v_tipo_pago_id FROM ventas WHERE id_venta = NEW.venta_original_id;
+                            IF v_tipo_pago_id = 3 THEN
+                                UPDATE customers SET saldo_deudor = GREATEST(saldo_deudor - NEW.total, 0), updated_at = CURRENT_TIMESTAMP WHERE id = NEW.cliente_id;
+                            END IF;
+                            IF NEW.monto_credito > 0 AND v_tipo_pago_id != 3 THEN
+                                UPDATE customers SET saldo_deudor = GREATEST(saldo_deudor - NEW.monto_credito, 0), updated_at = CURRENT_TIMESTAMP WHERE id = NEW.cliente_id;
+                            END IF;
+                        END IF;
+                        RETURN NEW;
+                    END;
+                    $$ LANGUAGE plpgsql
+                `);
+                await client.query(`DROP TRIGGER IF EXISTS trigger_update_balance_on_nota_credito ON notas_credito`);
+                await client.query(`CREATE TRIGGER trigger_update_balance_on_nota_credito AFTER INSERT ON notas_credito FOR EACH ROW EXECUTE FUNCTION update_customer_balance_on_nota_credito()`);
+
+                // Trigger: Update inventory on NC detail
+                await client.query(`
+                    CREATE OR REPLACE FUNCTION update_inventory_on_nota_credito_detalle()
+                    RETURNS TRIGGER AS $$
+                    DECLARE
+                        v_tenant_id INTEGER;
+                    BEGIN
+                        IF NEW.devuelve_a_inventario = TRUE THEN
+                            SELECT tenant_id INTO v_tenant_id FROM notas_credito WHERE id = NEW.nota_credito_id;
+                            UPDATE productos SET inventario = inventario + NEW.cantidad, updated_at = CURRENT_TIMESTAMP WHERE id = NEW.producto_id AND tenant_id = v_tenant_id;
+                        END IF;
+                        RETURN NEW;
+                    END;
+                    $$ LANGUAGE plpgsql
+                `);
+                await client.query(`DROP TRIGGER IF EXISTS trigger_update_inventory_on_nc_detalle ON notas_credito_detalle`);
+                await client.query(`CREATE TRIGGER trigger_update_inventory_on_nc_detalle AFTER INSERT ON notas_credito_detalle FOR EACH ROW EXECUTE FUNCTION update_inventory_on_nota_credito_detalle()`);
+
+                // Trigger: Revert balance on NC cancellation
+                await client.query(`
+                    CREATE OR REPLACE FUNCTION revert_customer_balance_on_nc_cancel()
+                    RETURNS TRIGGER AS $$
+                    DECLARE
+                        v_tipo_pago_id INTEGER;
+                    BEGIN
+                        IF OLD.estado = 'Aplicada' AND NEW.estado = 'Anulada' AND NEW.cliente_id IS NOT NULL THEN
+                            SELECT tipo_pago_id INTO v_tipo_pago_id FROM ventas WHERE id_venta = NEW.venta_original_id;
+                            IF v_tipo_pago_id = 3 THEN
+                                UPDATE customers SET saldo_deudor = saldo_deudor + NEW.total, updated_at = CURRENT_TIMESTAMP WHERE id = NEW.cliente_id;
+                            END IF;
+                            IF NEW.monto_credito > 0 AND v_tipo_pago_id != 3 THEN
+                                UPDATE customers SET saldo_deudor = saldo_deudor + NEW.monto_credito, updated_at = CURRENT_TIMESTAMP WHERE id = NEW.cliente_id;
+                            END IF;
+                        END IF;
+                        RETURN NEW;
+                    END;
+                    $$ LANGUAGE plpgsql
+                `);
+                await client.query(`DROP TRIGGER IF EXISTS trigger_revert_balance_on_nc_cancel ON notas_credito`);
+                await client.query(`CREATE TRIGGER trigger_revert_balance_on_nc_cancel AFTER UPDATE ON notas_credito FOR EACH ROW WHEN (OLD.estado IS DISTINCT FROM NEW.estado) EXECUTE FUNCTION revert_customer_balance_on_nc_cancel()`);
+
+                console.log('[Schema] ✅ NC triggers created successfully');
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {
