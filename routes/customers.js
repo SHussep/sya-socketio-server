@@ -911,8 +911,17 @@ module.exports = (pool) => {
 
             const customer = customerCheck.rows[0];
 
-            // Query unificada con UNION ALL para todos los tipos de movimientos
-            const movementsQuery = `
+            // Verificar si existe la tabla notas_credito
+            const tableCheck = await pool.query(`
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_schema = 'public' AND table_name = 'notas_credito'
+                ) AS has_notas_credito
+            `);
+            const hasNotasCredito = tableCheck.rows[0]?.has_notas_credito || false;
+
+            // Query base sin notas de crédito
+            let movementsQuery = `
                 WITH all_movements AS (
                     -- 1. Ventas a crédito (aumentan saldo)
                     SELECT
@@ -921,8 +930,8 @@ module.exports = (pool) => {
                         'Venta a crédito' AS movement_type_label,
                         v.fecha_venta_utc AS movement_date,
                         v.total AS amount,
-                        NULL AS balance_before,
-                        NULL AS balance_after,
+                        NULL::NUMERIC AS balance_before,
+                        NULL::NUMERIC AS balance_after,
                         v.ticket_number::TEXT AS reference,
                         CONCAT('Ticket #', v.ticket_number) AS description,
                         COALESCE(e.first_name || ' ' || COALESCE(e.last_name, ''), 'N/A') AS employee_name,
@@ -946,8 +955,8 @@ module.exports = (pool) => {
                         'Venta cancelada' AS movement_type_label,
                         v.updated_at AS movement_date,
                         -v.total AS amount,
-                        NULL AS balance_before,
-                        NULL AS balance_after,
+                        NULL::NUMERIC AS balance_before,
+                        NULL::NUMERIC AS balance_after,
                         v.ticket_number::TEXT AS reference,
                         CONCAT('Cancelación Ticket #', v.ticket_number) AS description,
                         COALESCE(e.first_name || ' ' || COALESCE(e.last_name, ''), 'N/A') AS employee_name,
@@ -975,8 +984,8 @@ module.exports = (pool) => {
                         END AS movement_type_label,
                         cp.payment_date AS movement_date,
                         -cp.amount AS amount,
-                        NULL AS balance_before,
-                        NULL AS balance_after,
+                        NULL::NUMERIC AS balance_before,
+                        NULL::NUMERIC AS balance_after,
                         cp.id::TEXT AS reference,
                         CASE cp.payment_method
                             WHEN 'cash' THEN 'Abono en efectivo'
@@ -992,7 +1001,11 @@ module.exports = (pool) => {
                     LEFT JOIN branches b ON cp.branch_id = b.id
                     WHERE cp.customer_id = $1
                         AND cp.tenant_id = $2
+            `;
 
+            // Agregar notas de crédito solo si la tabla existe
+            if (hasNotasCredito) {
+                movementsQuery += `
                     UNION ALL
 
                     -- 4. Notas de crédito aplicadas (reducen saldo)
@@ -1007,8 +1020,8 @@ module.exports = (pool) => {
                         END AS movement_type_label,
                         nc.fecha_creacion AS movement_date,
                         -nc.monto_credito AS amount,
-                        NULL AS balance_before,
-                        NULL AS balance_after,
+                        NULL::NUMERIC AS balance_before,
+                        NULL::NUMERIC AS balance_after,
                         nc.numero_nota_credito AS reference,
                         CONCAT('NC #', nc.numero_nota_credito, ' - ', nc.razon) AS description,
                         COALESCE(e.first_name || ' ' || COALESCE(e.last_name, ''), 'N/A') AS employee_name,
@@ -1022,6 +1035,10 @@ module.exports = (pool) => {
                         AND nc.tenant_id = $2
                         AND nc.estado = 'Aplicada'
                         AND nc.monto_credito > 0
+                `;
+            }
+
+            movementsQuery += `
                 )
                 SELECT *
                 FROM all_movements
@@ -1054,14 +1071,18 @@ module.exports = (pool) => {
             `;
             const paymentStats = await pool.query(paymentStatsQuery, [id, tenantId]);
 
-            const ncStatsQuery = `
-                SELECT
-                    COALESCE(SUM(monto_credito), 0) AS total_credit_notes,
-                    COUNT(*) AS credit_notes_count
-                FROM notas_credito
-                WHERE cliente_id = $1 AND tenant_id = $2 AND estado = 'Aplicada' AND monto_credito > 0
-            `;
-            const ncStats = await pool.query(ncStatsQuery, [id, tenantId]);
+            // Estadísticas de NC solo si la tabla existe
+            let ncStats = { rows: [{ total_credit_notes: 0, credit_notes_count: 0 }] };
+            if (hasNotasCredito) {
+                const ncStatsQuery = `
+                    SELECT
+                        COALESCE(SUM(monto_credito), 0) AS total_credit_notes,
+                        COUNT(*) AS credit_notes_count
+                    FROM notas_credito
+                    WHERE cliente_id = $1 AND tenant_id = $2 AND estado = 'Aplicada' AND monto_credito > 0
+                `;
+                ncStats = await pool.query(ncStatsQuery, [id, tenantId]);
+            }
 
             const stats = {
                 total_credit_sales: parseFloat(salesStats.rows[0]?.total_credit_sales || 0),
