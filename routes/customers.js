@@ -881,5 +881,237 @@ module.exports = (pool) => {
         }
     });
 
+    /**
+     * GET /api/customers/:id/movements
+     * Obtiene el historial unificado de movimientos del cliente
+     * Incluye: ventas a crédito, pagos, notas de crédito, cancelaciones
+     * Query params:
+     *   - limit (optional) - número máximo de movimientos (default: 50)
+     */
+    router.get('/:id/movements', authenticateToken, async (req, res) => {
+        try {
+            const { id } = req.params;
+            const { tenantId } = req.user;
+            const limit = parseInt(req.query.limit) || 50;
+
+            console.log(`[Customers/Movements] 📊 Obteniendo movimientos para cliente ${id}, limit: ${limit}`);
+
+            // Verificar que el cliente existe y pertenece al tenant
+            const customerCheck = await pool.query(
+                'SELECT id, nombre, saldo_deudor FROM customers WHERE id = $1 AND tenant_id = $2',
+                [id, tenantId]
+            );
+
+            if (customerCheck.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Cliente no encontrado'
+                });
+            }
+
+            const customer = customerCheck.rows[0];
+
+            // Query unificada con UNION ALL para todos los tipos de movimientos
+            const movementsQuery = `
+                WITH all_movements AS (
+                    -- 1. Ventas a crédito (aumentan saldo)
+                    SELECT
+                        v.id_venta AS id,
+                        'credit_sale' AS movement_type,
+                        'Venta a crédito' AS movement_type_label,
+                        v.fecha_venta_utc AS movement_date,
+                        v.total AS amount,
+                        NULL AS balance_before,
+                        NULL AS balance_after,
+                        v.ticket_number::TEXT AS reference,
+                        CONCAT('Ticket #', v.ticket_number) AS description,
+                        COALESCE(e.first_name || ' ' || COALESCE(e.last_name, ''), 'N/A') AS employee_name,
+                        b.name AS branch_name,
+                        v.notas AS notes,
+                        v.global_id::TEXT AS global_id
+                    FROM ventas v
+                    LEFT JOIN employees e ON v.id_empleado = e.id
+                    LEFT JOIN branches b ON v.branch_id = b.id
+                    WHERE v.id_cliente = $1
+                        AND v.tenant_id = $2
+                        AND v.tipo_pago_id = 3
+                        AND (v.status IS NULL OR v.status != 'cancelled')
+
+                    UNION ALL
+
+                    -- 2. Cancelaciones de venta a crédito (reducen saldo)
+                    SELECT
+                        v.id_venta AS id,
+                        'sale_cancellation' AS movement_type,
+                        'Venta cancelada' AS movement_type_label,
+                        v.updated_at AS movement_date,
+                        -v.total AS amount,
+                        NULL AS balance_before,
+                        NULL AS balance_after,
+                        v.ticket_number::TEXT AS reference,
+                        CONCAT('Cancelación Ticket #', v.ticket_number) AS description,
+                        COALESCE(e.first_name || ' ' || COALESCE(e.last_name, ''), 'N/A') AS employee_name,
+                        b.name AS branch_name,
+                        v.notas AS notes,
+                        v.global_id::TEXT AS global_id
+                    FROM ventas v
+                    LEFT JOIN employees e ON v.id_empleado = e.id
+                    LEFT JOIN branches b ON v.branch_id = b.id
+                    WHERE v.id_cliente = $1
+                        AND v.tenant_id = $2
+                        AND v.tipo_pago_id = 3
+                        AND v.status = 'cancelled'
+
+                    UNION ALL
+
+                    -- 3. Pagos de crédito (reducen saldo)
+                    SELECT
+                        cp.id AS id,
+                        'credit_payment' AS movement_type,
+                        CASE cp.payment_method
+                            WHEN 'cash' THEN 'Pago en efectivo'
+                            WHEN 'card' THEN 'Pago con tarjeta'
+                            ELSE 'Pago'
+                        END AS movement_type_label,
+                        cp.payment_date AS movement_date,
+                        -cp.amount AS amount,
+                        NULL AS balance_before,
+                        NULL AS balance_after,
+                        cp.id::TEXT AS reference,
+                        CASE cp.payment_method
+                            WHEN 'cash' THEN 'Abono en efectivo'
+                            WHEN 'card' THEN 'Abono con tarjeta'
+                            ELSE 'Abono a cuenta'
+                        END AS description,
+                        COALESCE(e.first_name || ' ' || COALESCE(e.last_name, ''), 'N/A') AS employee_name,
+                        b.name AS branch_name,
+                        cp.notes AS notes,
+                        cp.global_id AS global_id
+                    FROM credit_payments cp
+                    LEFT JOIN employees e ON cp.employee_id = e.id
+                    LEFT JOIN branches b ON cp.branch_id = b.id
+                    WHERE cp.customer_id = $1
+                        AND cp.tenant_id = $2
+
+                    UNION ALL
+
+                    -- 4. Notas de crédito aplicadas (reducen saldo)
+                    SELECT
+                        nc.id AS id,
+                        'credit_note' AS movement_type,
+                        CASE nc.tipo
+                            WHEN 'Cancelacion' THEN 'Nota de crédito (Cancelación)'
+                            WHEN 'Devolucion' THEN 'Nota de crédito (Devolución)'
+                            WHEN 'Ajuste' THEN 'Nota de crédito (Ajuste)'
+                            ELSE 'Nota de crédito'
+                        END AS movement_type_label,
+                        nc.fecha_creacion AS movement_date,
+                        -nc.monto_credito AS amount,
+                        NULL AS balance_before,
+                        NULL AS balance_after,
+                        nc.numero_nota_credito AS reference,
+                        CONCAT('NC #', nc.numero_nota_credito, ' - ', nc.razon) AS description,
+                        COALESCE(e.first_name || ' ' || COALESCE(e.last_name, ''), 'N/A') AS employee_name,
+                        b.name AS branch_name,
+                        nc.notas AS notes,
+                        nc.global_id AS global_id
+                    FROM notas_credito nc
+                    LEFT JOIN employees e ON nc.employee_id = e.id
+                    LEFT JOIN branches b ON nc.branch_id = b.id
+                    WHERE nc.cliente_id = $1
+                        AND nc.tenant_id = $2
+                        AND nc.estado = 'Aplicada'
+                        AND nc.monto_credito > 0
+                )
+                SELECT *
+                FROM all_movements
+                ORDER BY movement_date DESC
+                LIMIT $3
+            `;
+
+            const movementsResult = await pool.query(movementsQuery, [id, tenantId, limit]);
+
+            // Calcular estadísticas
+            const statsQuery = `
+                SELECT
+                    -- Total de ventas a crédito
+                    COALESCE(SUM(CASE WHEN tipo_pago_id = 3 AND (status IS NULL OR status != 'cancelled') THEN total ELSE 0 END), 0) AS total_credit_sales,
+                    COUNT(CASE WHEN tipo_pago_id = 3 AND (status IS NULL OR status != 'cancelled') THEN 1 END) AS credit_sales_count,
+                    -- Total de cancelaciones
+                    COALESCE(SUM(CASE WHEN tipo_pago_id = 3 AND status = 'cancelled' THEN total ELSE 0 END), 0) AS total_cancellations,
+                    COUNT(CASE WHEN tipo_pago_id = 3 AND status = 'cancelled' THEN 1 END) AS cancellations_count
+                FROM ventas
+                WHERE id_cliente = $1 AND tenant_id = $2
+            `;
+            const salesStats = await pool.query(statsQuery, [id, tenantId]);
+
+            const paymentStatsQuery = `
+                SELECT
+                    COALESCE(SUM(amount), 0) AS total_payments,
+                    COUNT(*) AS payments_count
+                FROM credit_payments
+                WHERE customer_id = $1 AND tenant_id = $2
+            `;
+            const paymentStats = await pool.query(paymentStatsQuery, [id, tenantId]);
+
+            const ncStatsQuery = `
+                SELECT
+                    COALESCE(SUM(monto_credito), 0) AS total_credit_notes,
+                    COUNT(*) AS credit_notes_count
+                FROM notas_credito
+                WHERE cliente_id = $1 AND tenant_id = $2 AND estado = 'Aplicada' AND monto_credito > 0
+            `;
+            const ncStats = await pool.query(ncStatsQuery, [id, tenantId]);
+
+            const stats = {
+                total_credit_sales: parseFloat(salesStats.rows[0]?.total_credit_sales || 0),
+                credit_sales_count: parseInt(salesStats.rows[0]?.credit_sales_count || 0),
+                total_cancellations: parseFloat(salesStats.rows[0]?.total_cancellations || 0),
+                cancellations_count: parseInt(salesStats.rows[0]?.cancellations_count || 0),
+                total_payments: parseFloat(paymentStats.rows[0]?.total_payments || 0),
+                payments_count: parseInt(paymentStats.rows[0]?.payments_count || 0),
+                total_credit_notes: parseFloat(ncStats.rows[0]?.total_credit_notes || 0),
+                credit_notes_count: parseInt(ncStats.rows[0]?.credit_notes_count || 0),
+                current_balance: parseFloat(customer.saldo_deudor || 0)
+            };
+
+            console.log(`[Customers/Movements] ✅ ${movementsResult.rows.length} movimientos encontrados`);
+
+            res.json({
+                success: true,
+                customer: {
+                    id: customer.id,
+                    name: customer.nombre,
+                    current_balance: parseFloat(customer.saldo_deudor || 0)
+                },
+                movements: movementsResult.rows.map(m => ({
+                    id: m.id,
+                    movement_type: m.movement_type,
+                    movement_type_label: m.movement_type_label,
+                    movement_date: m.movement_date,
+                    amount: parseFloat(m.amount || 0),
+                    balance_before: m.balance_before ? parseFloat(m.balance_before) : null,
+                    balance_after: m.balance_after ? parseFloat(m.balance_after) : null,
+                    reference: m.reference,
+                    description: m.description,
+                    employee_name: m.employee_name,
+                    branch_name: m.branch_name,
+                    notes: m.notes,
+                    global_id: m.global_id
+                })),
+                stats: stats,
+                count: movementsResult.rows.length
+            });
+
+        } catch (error) {
+            console.error('[Customers/Movements] ❌ Error:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Error al obtener movimientos del cliente',
+                error: error.message
+            });
+        }
+    });
+
     return router;
 };
