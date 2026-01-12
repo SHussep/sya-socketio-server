@@ -1048,6 +1048,29 @@ module.exports = (pool) => {
 
             const movementsResult = await pool.query(movementsQuery, [id, tenantId, limit]);
 
+            // Calcular saldos progresivos (balance_before y balance_after)
+            // Los movimientos vienen ordenados DESC (más reciente primero)
+            // balance_after del más reciente = saldo actual del cliente
+            const currentBalance = parseFloat(customer.saldo_deudor || 0);
+            let runningBalance = currentBalance;
+
+            // Recorrer en orden (más reciente primero) y calcular saldos
+            for (let i = 0; i < movementsResult.rows.length; i++) {
+                const movement = movementsResult.rows[i];
+                const amount = parseFloat(movement.amount || 0);
+
+                // balance_after es el saldo DESPUÉS de este movimiento
+                movement.balance_after = runningBalance;
+
+                // balance_before es el saldo ANTES de este movimiento
+                // Si amount es positivo (venta), antes era menor: before = after - amount
+                // Si amount es negativo (pago), antes era mayor: before = after - amount
+                movement.balance_before = runningBalance - amount;
+
+                // Para el siguiente movimiento (más antiguo), el saldo era balance_before de este
+                runningBalance = movement.balance_before;
+            }
+
             // Calcular estadísticas
             const statsQuery = `
                 SELECT
