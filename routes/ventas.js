@@ -48,10 +48,10 @@ module.exports = function(pool) {
                     c.nombre as cliente_nombre,
                     CONCAT(r.first_name, ' ', r.last_name) as repartidor_nombre,
                     v.created_at,
-                    -- Payment breakdown from repartidor_assignments (for mixed payments)
-                    ra.cash_amount,
-                    ra.card_amount,
-                    ra.credit_amount
+                    -- Payment breakdown (directly from ventas, fallback to repartidor_assignments for legacy)
+                    COALESCE(v.cash_amount, ra.cash_amount) as cash_amount,
+                    COALESCE(v.card_amount, ra.card_amount) as card_amount,
+                    COALESCE(v.credit_amount, ra.credit_amount) as credit_amount
                 FROM ventas v
                 LEFT JOIN employees e ON v.id_empleado = e.id
                 LEFT JOIN customers c ON v.id_cliente = c.id
@@ -370,6 +370,10 @@ module.exports = function(pool) {
                 total,
                 monto_pagado,
                 notas,
+                // Payment breakdown for mixed payments
+                cash_amount,
+                card_amount,
+                credit_amount,
                 // Detalles de la venta
                 items = [],
                 // Opcional: global_id (si viene de offline-first)
@@ -441,6 +445,42 @@ module.exports = function(pool) {
             try {
                 await client.query('BEGIN');
 
+                // Calcular montos de pago si no vienen explícitos
+                let finalCashAmount = cash_amount;
+                let finalCardAmount = card_amount;
+                let finalCreditAmount = credit_amount;
+
+                // Si no viene desglose, calcularlo según tipo de pago
+                if (finalCashAmount === undefined && finalCardAmount === undefined && finalCreditAmount === undefined) {
+                    const totalAmount = parseFloat(total);
+                    switch (parseInt(tipo_pago_id)) {
+                        case 1: // Efectivo
+                            finalCashAmount = totalAmount;
+                            finalCardAmount = 0;
+                            finalCreditAmount = 0;
+                            break;
+                        case 2: // Tarjeta
+                            finalCashAmount = 0;
+                            finalCardAmount = totalAmount;
+                            finalCreditAmount = 0;
+                            break;
+                        case 3: // Crédito
+                            finalCashAmount = 0;
+                            finalCardAmount = 0;
+                            finalCreditAmount = totalAmount;
+                            break;
+                        case 4: // Mixto - requiere desglose explícito, default a efectivo
+                            finalCashAmount = parseFloat(monto_pagado) || totalAmount;
+                            finalCardAmount = 0;
+                            finalCreditAmount = 0;
+                            break;
+                        default:
+                            finalCashAmount = totalAmount;
+                            finalCardAmount = 0;
+                            finalCreditAmount = 0;
+                    }
+                }
+
                 // Insertar venta
                 const insertResult = await client.query(`
                     INSERT INTO ventas (
@@ -448,17 +488,22 @@ module.exports = function(pool) {
                         estado_venta_id, venta_tipo_id, tipo_pago_id,
                         ticket_number, subtotal, total_descuentos, total, monto_pagado,
                         credito_original, notas, global_id,
+                        cash_amount, card_amount, credit_amount,
                         terminal_id, fecha_venta_utc, created_local_utc
                     ) VALUES (
                         $1, $2, $3, $4, $5,
                         $6, $7, $8,
                         $9, $10, $11, $12, $13,
                         $14, $15, $16,
+                        $17, $18, $19,
                         'MOBILE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                     )
                     ON CONFLICT (global_id) DO UPDATE SET
                         estado_venta_id = EXCLUDED.estado_venta_id,
                         monto_pagado = EXCLUDED.monto_pagado,
+                        cash_amount = EXCLUDED.cash_amount,
+                        card_amount = EXCLUDED.card_amount,
+                        credit_amount = EXCLUDED.credit_amount,
                         updated_at = CURRENT_TIMESTAMP
                     RETURNING id_venta, global_id
                 `, [
@@ -471,7 +516,10 @@ module.exports = function(pool) {
                     parseFloat(monto_pagado) || parseFloat(total),
                     tipo_pago_id === 3 ? parseFloat(total) : 0, // credito_original
                     notas || null,
-                    finalGlobalId
+                    finalGlobalId,
+                    parseFloat(finalCashAmount) || 0,
+                    parseFloat(finalCardAmount) || 0,
+                    parseFloat(finalCreditAmount) || 0
                 ]);
 
                 const newVenta = insertResult.rows[0];

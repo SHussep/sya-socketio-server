@@ -1017,6 +1017,59 @@ async function runMigrations() {
                     `);
                     console.log('[Schema] ✅ Column ventas.has_nota_credito added successfully');
                 }
+
+                // Patch: Add payment breakdown columns to ventas for mixed payments (mostrador)
+                const checkVentasCashAmount = await client.query(`
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'ventas'
+                    AND column_name = 'cash_amount'
+                `);
+
+                if (checkVentasCashAmount.rows.length === 0) {
+                    console.log('[Schema] 📝 Adding payment breakdown columns to ventas...');
+                    await client.query(`
+                        ALTER TABLE ventas
+                        ADD COLUMN IF NOT EXISTS cash_amount DECIMAL(12, 2),
+                        ADD COLUMN IF NOT EXISTS card_amount DECIMAL(12, 2),
+                        ADD COLUMN IF NOT EXISTS credit_amount DECIMAL(12, 2)
+                    `);
+                    // Backfill: Para ventas no-mixtas, poner el total en la columna correspondiente
+                    console.log('[Schema] 📝 Backfilling payment breakdown for existing ventas...');
+                    // Efectivo (tipo_pago_id = 1): cash_amount = total
+                    await client.query(`
+                        UPDATE ventas SET cash_amount = total, card_amount = 0, credit_amount = 0
+                        WHERE tipo_pago_id = 1 AND cash_amount IS NULL
+                    `);
+                    // Tarjeta (tipo_pago_id = 2): card_amount = total
+                    await client.query(`
+                        UPDATE ventas SET cash_amount = 0, card_amount = total, credit_amount = 0
+                        WHERE tipo_pago_id = 2 AND card_amount IS NULL
+                    `);
+                    // Crédito (tipo_pago_id = 3): credit_amount = total
+                    await client.query(`
+                        UPDATE ventas SET cash_amount = 0, card_amount = 0, credit_amount = total
+                        WHERE tipo_pago_id = 3 AND credit_amount IS NULL
+                    `);
+                    // Mixto (tipo_pago_id = 4): Intentar obtener de repartidor_assignments
+                    await client.query(`
+                        UPDATE ventas v
+                        SET
+                            cash_amount = COALESCE(ra.cash_amount, 0),
+                            card_amount = COALESCE(ra.card_amount, 0),
+                            credit_amount = COALESCE(ra.credit_amount, 0)
+                        FROM repartidor_assignments ra
+                        WHERE ra.venta_id = v.id_venta
+                          AND v.tipo_pago_id = 4
+                          AND v.cash_amount IS NULL
+                    `);
+                    // Para mixtos sin assignment, asumir todo efectivo como fallback
+                    await client.query(`
+                        UPDATE ventas SET cash_amount = monto_pagado, card_amount = 0, credit_amount = credito_original
+                        WHERE tipo_pago_id = 4 AND cash_amount IS NULL
+                    `);
+                    console.log('[Schema] ✅ Payment breakdown columns added to ventas');
+                }
             }
 
             // Patch: Add offline-first columns to purchases table
