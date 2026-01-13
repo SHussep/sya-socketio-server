@@ -59,6 +59,9 @@ module.exports = (pool) => {
                        v.venta_tipo_id as sale_type, v.id_empleado as employee_id,
                        v.estado_venta_id, v.status,
                        v.tenant_id, v.branch_id, v.id_turno as shift_id,
+                       v.has_nota_credito,
+                       -- Payment breakdown for mixed payments
+                       v.cash_amount, v.card_amount, v.credit_amount,
                        CONCAT(e.first_name, ' ', e.last_name) as employee_name,
                        r.name as employee_role,
                        b.name as branch_name, b.id as "branchId",
@@ -127,10 +130,14 @@ module.exports = (pool) => {
                 console.log(`[Sales] IDs: ${result.rows.map(r => r.id).join(', ')}`);
             }
 
-            // Normalizar total_amount a número y formatear timestamps en UTC
+            // Normalizar total_amount y payment breakdown a números, formatear timestamps en UTC
             const normalizedRows = result.rows.map(row => ({
                 ...row,
                 total_amount: parseFloat(row.total_amount),
+                // Payment breakdown as numbers
+                cash_amount: row.cash_amount ? parseFloat(row.cash_amount) : null,
+                card_amount: row.card_amount ? parseFloat(row.card_amount) : null,
+                credit_amount: row.credit_amount ? parseFloat(row.credit_amount) : null,
                 // Ensure sale_date is always sent as ISO string in UTC (Z suffix)
                 sale_date: row.sale_date ? new Date(row.sale_date).toISOString() : null,
                 // Convert sale_date_display to ISO string as well
