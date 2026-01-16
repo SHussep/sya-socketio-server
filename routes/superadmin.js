@@ -177,6 +177,8 @@ module.exports = function(pool, io) {
                     (SELECT COUNT(*) FROM employees WHERE tenant_id = t.id AND is_active = true) as employee_count,
                     (SELECT COUNT(*) FROM telemetry_events WHERE tenant_id = t.id AND event_type = 'app_open') as app_opens,
                     (SELECT COUNT(DISTINCT branch_id) FROM telemetry_events WHERE tenant_id = t.id AND event_type = 'scale_configured') as branches_with_scale,
+                    (SELECT COUNT(*) FROM ventas WHERE tenant_id = t.id) as total_sales,
+                    (SELECT COALESCE(SUM(total), 0) FROM ventas WHERE tenant_id = t.id) as total_revenue,
                     (SELECT MAX(event_timestamp) FROM telemetry_events WHERE tenant_id = t.id) as last_activity
                 FROM tenants t
                 JOIN subscriptions s ON t.subscription_id = s.id
@@ -234,7 +236,9 @@ module.exports = function(pool, io) {
                         branches: parseInt(tenant.branch_count),
                         employees: parseInt(tenant.employee_count),
                         appOpens: parseInt(tenant.app_opens),
-                        branchesWithScale: parseInt(tenant.branches_with_scale)
+                        branchesWithScale: parseInt(tenant.branches_with_scale),
+                        totalSales: parseInt(tenant.total_sales),
+                        totalRevenue: parseFloat(tenant.total_revenue)
                     },
                     lastActivity: tenant.last_activity,
                     isActive: tenant.is_active,
