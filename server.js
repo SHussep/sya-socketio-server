@@ -654,6 +654,8 @@ app.post('/api/branches/sync-info', async (req, res) => {
 
         // Si es la sucursal principal y se cambió el nombre, también actualizar el tenant
         let tenantUpdated = false;
+        const branchIdInt = parseInt(branchId);
+
         if (name && name !== oldName) {
             const primaryBranch = await pool.query(
                 `SELECT id FROM branches
@@ -663,14 +665,20 @@ app.post('/api/branches/sync-info', async (req, res) => {
                 [tenantId]
             );
 
-            if (primaryBranch.rows.length > 0 && primaryBranch.rows[0].id === branchId) {
+            console.log(`[Branch Sync] 🔍 Primary branch check: primaryId=${primaryBranch.rows[0]?.id}, currentBranchId=${branchIdInt}`);
+
+            if (primaryBranch.rows.length > 0 && primaryBranch.rows[0].id === branchIdInt) {
                 await pool.query(
                     `UPDATE tenants SET business_name = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
                     [name, tenantId]
                 );
                 tenantUpdated = true;
                 console.log(`[Branch Sync] ✅ Tenant también actualizado con business_name: ${name}`);
+            } else {
+                console.log(`[Branch Sync] ℹ️ No es sucursal principal, solo se actualizó la sucursal`);
             }
+        } else {
+            console.log(`[Branch Sync] ℹ️ Nombre no cambió (old: ${oldName}, new: ${name})`);
         }
 
         res.json({
