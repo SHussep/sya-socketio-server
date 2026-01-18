@@ -637,12 +637,12 @@ app.post('/api/branches/sync-info', async (req, res) => {
 
         const oldName = existing.rows[0].name;
 
-        // Actualizar sucursal
+        // Actualizar sucursal (columna es 'phone', no 'phone_number')
         const result = await pool.query(`
             UPDATE branches
             SET name = COALESCE($1, name),
                 address = COALESCE($2, address),
-                phone_number = COALESCE($3, phone_number),
+                phone = COALESCE($3, phone),
                 rfc = COALESCE($4, rfc),
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = $5 AND tenant_id = $6
@@ -682,7 +682,7 @@ app.post('/api/branches/sync-info', async (req, res) => {
                 id: branch.id,
                 name: branch.name,
                 address: branch.address,
-                phone: branch.phone_number,
+                phone: branch.phone,
                 rfc: branch.rfc,
                 tenantUpdated: tenantUpdated,
                 updatedAt: branch.updated_at
