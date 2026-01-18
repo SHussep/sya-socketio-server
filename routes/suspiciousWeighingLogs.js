@@ -4,6 +4,7 @@
 
 const express = require('express');
 const notificationHelper = require('../utils/notificationHelper');
+const { formatDurationsInText } = require('../utils/durationFormatter');
 
 module.exports = (pool, io) => {
     const router = express.Router();
@@ -184,10 +185,13 @@ module.exports = (pool, io) => {
 
                 // ✅ Enviar notificación FCM a admins/encargados
                 try {
+                    // Formatear duraciones en el texto de details (ej: "Duración: 6489.7s" → "Duración: 1h 48m 09s")
+                    const formattedDetails = formatDurationsInText(details) || 'Alerta de báscula detectada';
+
                     await notificationHelper.notifyScaleAlert(branch_id, {
                         severity: severity || 'medium',
                         eventType: event_type,
-                        details: details || 'Alerta de báscula detectada',
+                        details: formattedDetails,
                         employeeName: employeeName
                     });
                     console.log(`[Sync/GuardianLogs] ✅ FCM enviado: ${event_type} - ${employeeName}`);
