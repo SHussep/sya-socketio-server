@@ -327,5 +327,102 @@ module.exports = function(pool, authenticateToken) {
         }
     });
 
+    // ─────────────────────────────────────────────────────────
+    // POST /api/branches/sync-info
+    // Sincronizar información de sucursal desde Desktop (SIN JWT)
+    // Usa tenantId/branchId del payload para identificación
+    // Si es la sucursal principal, también actualiza el tenant
+    // ─────────────────────────────────────────────────────────
+    router.post('/sync-info', async (req, res) => {
+        const { tenantId, branchId, name, address, phone, rfc } = req.body;
+
+        console.log(`[Branch Sync] 📥 Recibida solicitud de sync: tenantId=${tenantId}, branchId=${branchId}`);
+
+        if (!tenantId || !branchId) {
+            return res.status(400).json({
+                success: false,
+                message: 'tenantId y branchId son requeridos'
+            });
+        }
+
+        try {
+            // Verificar que la sucursal pertenece al tenant
+            const existing = await pool.query(
+                'SELECT id, name FROM branches WHERE id = $1 AND tenant_id = $2',
+                [branchId, tenantId]
+            );
+
+            if (existing.rows.length === 0) {
+                console.log(`[Branch Sync] ❌ Sucursal no encontrada: branchId=${branchId}, tenantId=${tenantId}`);
+                return res.status(404).json({
+                    success: false,
+                    message: 'Sucursal no encontrada para este tenant'
+                });
+            }
+
+            const oldName = existing.rows[0].name;
+
+            // Actualizar sucursal
+            const result = await pool.query(`
+                UPDATE branches
+                SET name = COALESCE($1, name),
+                    address = COALESCE($2, address),
+                    phone_number = COALESCE($3, phone_number),
+                    rfc = COALESCE($4, rfc),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = $5 AND tenant_id = $6
+                RETURNING *
+            `, [name, address, phone, rfc, branchId, tenantId]);
+
+            const branch = result.rows[0];
+            console.log(`[Branch Sync] ✅ Sucursal actualizada: ${branch.name} (RFC: ${branch.rfc || 'N/A'})`);
+
+            // Si es la sucursal principal y se cambió el nombre, también actualizar el tenant
+            let tenantUpdated = false;
+            if (name && name !== oldName) {
+                const primaryBranch = await pool.query(
+                    `SELECT id FROM branches
+                     WHERE tenant_id = $1
+                     ORDER BY created_at ASC
+                     LIMIT 1`,
+                    [tenantId]
+                );
+
+                if (primaryBranch.rows.length > 0 && primaryBranch.rows[0].id === branchId) {
+                    await pool.query(
+                        `UPDATE tenants SET name = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+                        [name, tenantId]
+                    );
+                    tenantUpdated = true;
+                    console.log(`[Branch Sync] ✅ Tenant también actualizado con nombre: ${name}`);
+                }
+            }
+
+            res.json({
+                success: true,
+                message: tenantUpdated
+                    ? 'Sucursal y negocio actualizados exitosamente'
+                    : 'Sucursal actualizada exitosamente',
+                data: {
+                    id: branch.id,
+                    name: branch.name,
+                    address: branch.address,
+                    phone: branch.phone_number,
+                    rfc: branch.rfc,
+                    tenantUpdated: tenantUpdated,
+                    updatedAt: branch.updated_at
+                }
+            });
+
+        } catch (error) {
+            console.error('[Branch Sync] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al sincronizar sucursal',
+                error: error.message
+            });
+        }
+    });
+
     return router;
 };
