@@ -665,11 +665,11 @@ app.post('/api/branches/sync-info', async (req, res) => {
 
             if (primaryBranch.rows.length > 0 && primaryBranch.rows[0].id === branchId) {
                 await pool.query(
-                    `UPDATE tenants SET name = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+                    `UPDATE tenants SET business_name = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
                     [name, tenantId]
                 );
                 tenantUpdated = true;
-                console.log(`[Branch Sync] ✅ Tenant también actualizado con nombre: ${name}`);
+                console.log(`[Branch Sync] ✅ Tenant también actualizado con business_name: ${name}`);
             }
         }
 
