@@ -93,7 +93,7 @@ function formatMinutes(totalMinutes) {
 
 /**
  * Extrae y reemplaza duraciones en segundos dentro de un texto.
- * Busca patrones como "Duración: 6489.7s" y los reemplaza con formato legible.
+ * Busca varios patrones de duraciones y los reemplaza con formato legible.
  * @param {string} text - Texto que puede contener duraciones en segundos
  * @returns {string} Texto con duraciones formateadas
  */
@@ -102,11 +102,37 @@ function formatDurationsInText(text) {
         return text;
     }
 
-    // Patrón: "Duración: 123.4s" o "Duration: 123s"
-    return text.replace(/([Dd]uraci[oó]n|[Dd]uration):\s*(\d+\.?\d*)\s*s\b/g, (match, label, seconds) => {
+    // Patrón 1: "Duración: 123.4s" o "Duration: 123s"
+    let result = text.replace(/([Dd]uraci[oó]n|[Dd]uration):\s*(\d+\.?\d*)\s*s\b/g, (match, label, seconds) => {
         const formatted = formatDuration(parseFloat(seconds));
         return `${label}: ${formatted}`;
     });
+
+    // Patrón 2: "desconexión de 123.4s" o "desconectada 123.4s" o "desconectada hace 123s"
+    result = result.replace(/(desconexi[oó]n de|desconectada(?:\s+hace)?)\s*(\d+\.?\d*)\s*s\b/gi, (match, label, seconds) => {
+        const formatted = formatDuration(parseFloat(seconds));
+        return `${label} ${formatted}`;
+    });
+
+    // Patrón 3: "en 123.4s" al final de una oración (para mensajes como "...NO fue registrado en 6489.7s")
+    result = result.replace(/\ben\s+(\d+\.?\d*)\s*s\b(?=\.|,|$|\s*[A-ZÁÉÍÓÚ])/g, (match, seconds) => {
+        const formatted = formatDuration(parseFloat(seconds));
+        return `en ${formatted}`;
+    });
+
+    // Patrón 4: "hace 123.4s" o "hace 123s"
+    result = result.replace(/\bhace\s+(\d+\.?\d*)\s*s\b/gi, (match, seconds) => {
+        const formatted = formatDuration(parseFloat(seconds));
+        return `hace ${formatted}`;
+    });
+
+    // Patrón 5: Standalone duration at end like "(123.4s)" or "período (123.4s)"
+    result = result.replace(/\((\d+\.?\d*)\s*s\)/g, (match, seconds) => {
+        const formatted = formatDuration(parseFloat(seconds));
+        return `(${formatted})`;
+    });
+
+    return result;
 }
 
 module.exports = {
