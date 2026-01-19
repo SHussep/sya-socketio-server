@@ -236,6 +236,10 @@ module.exports = (pool) => {
                 total,
                 monto_pagado,
                 credito_original, // ✅ AUDITORÍA: Crédito generado al momento de la venta (INMUTABLE)
+                // ✅ DESGLOSE DE PAGO - Para dashboard móvil
+                cash_amount,
+                card_amount,
+                credit_amount,
                 fecha_venta_raw,
                 fecha_liquidacion_raw,
                 notas,
@@ -250,6 +254,7 @@ module.exports = (pool) => {
             console.log(`[Sync/Sales] 🔄 Sincronizando venta - Tenant: ${tenant_id}, Branch: ${branch_id}, Ticket: ${ticket_number}`);
             console.log(`[Sync/Sales] 🔑 GlobalIds - empleado: ${empleado_global_id}, turno: ${turno_global_id}, cliente: ${cliente_global_id || 'null'}`);
             console.log(`[Sync/Sales] 🔑 Repartidor - global_id: ${repartidor_global_id || 'null'}, turno_global_id: ${turno_repartidor_global_id || 'null'}`);
+            console.log(`[Sync/Sales] 💳 Desglose - Efectivo: ${cash_amount || 0}, Tarjeta: ${card_amount || 0}, Crédito: ${credit_amount || 0}`);
             console.log(`[Sync/Sales] 💰 Montos - Subtotal: ${subtotal}, Descuentos: ${total_descuentos}, Total: ${total}, Pagado: ${monto_pagado}, Crédito Original: ${credito_original || 0}`);
 
             // Validar campos requeridos (incluyendo global_id para idempotencia)
@@ -368,6 +373,11 @@ module.exports = (pool) => {
             };
             const status = statusMap[estado_venta_id] || 'completed';
 
+            // ✅ DESGLOSE DE PAGO - Convertir a números
+            const numericCashAmount = parseFloat(cash_amount) || 0;
+            const numericCardAmount = parseFloat(card_amount) || 0;
+            const numericCreditAmount = parseFloat(credit_amount) || 0;
+
             // ✅ IDEMPOTENTE: INSERT con ON CONFLICT (global_id) DO UPDATE
             const result = await pool.query(
                 `INSERT INTO ventas (
@@ -376,17 +386,21 @@ module.exports = (pool) => {
                     id_repartidor_asignado, id_turno_repartidor,
                     ticket_number, id_cliente,
                     subtotal, total_descuentos, total, monto_pagado, credito_original,
+                    cash_amount, card_amount, credit_amount,
                     fecha_venta_raw, fecha_liquidacion_raw,
                     notas, status,
                     global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw
                  )
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
                  ON CONFLICT (tenant_id, branch_id, ticket_number, id_turno) DO UPDATE
                  SET subtotal = EXCLUDED.subtotal,
                      total_descuentos = EXCLUDED.total_descuentos,
                      total = EXCLUDED.total,
                      monto_pagado = EXCLUDED.monto_pagado,
                      credito_original = CASE WHEN ventas.credito_original = 0 OR ventas.credito_original IS NULL THEN EXCLUDED.credito_original ELSE ventas.credito_original END,
+                     cash_amount = EXCLUDED.cash_amount,
+                     card_amount = EXCLUDED.card_amount,
+                     credit_amount = EXCLUDED.credit_amount,
                      estado_venta_id = EXCLUDED.estado_venta_id,
                      status = EXCLUDED.status,
                      notas = EXCLUDED.notas,
@@ -411,6 +425,9 @@ module.exports = (pool) => {
                     numericTotal,
                     numericMontoPagado,
                     numericCreditoOriginal,                   // ✅ AUDITORÍA: Crédito original inmutable
+                    numericCashAmount,                        // ✅ Desglose: Efectivo
+                    numericCardAmount,                        // ✅ Desglose: Tarjeta
+                    numericCreditAmount,                      // ✅ Desglose: Crédito
                     fecha_venta_raw || null,
                     fecha_liquidacion_raw || null,
                     notas || null,
