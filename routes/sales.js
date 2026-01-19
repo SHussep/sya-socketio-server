@@ -945,7 +945,11 @@ module.exports = (pool) => {
                 // ✅ RELACIONES: Todas usan GlobalIds (offline-first completo)
                 repartidor_global_id,             // GlobalId (empleados pueden crearse offline)
                 turno_repartidor_global_id,       // GlobalId (turnos se crean offline)
-                notas
+                notas,
+                // ✅ DESGLOSE DE PAGO - Para correcciones y re-sync
+                cash_amount,
+                card_amount,
+                credit_amount
             } = req.body;
 
             console.log(`[Sync/Sales/Update] 🔄 Actualizando venta GlobalId: ${globalId}`);
@@ -1010,7 +1014,17 @@ module.exports = (pool) => {
             };
             const newStatus = statusMap[estado_venta_id] || 'completed';
 
-            // Actualizar venta con campos modificables
+            // ✅ Parsear montos de desglose (solo si se envían)
+            const numericCashAmount = cash_amount !== undefined ? parseFloat(cash_amount) : null;
+            const numericCardAmount = card_amount !== undefined ? parseFloat(card_amount) : null;
+            const numericCreditAmount = credit_amount !== undefined ? parseFloat(credit_amount) : null;
+
+            // Log del desglose si se envía
+            if (numericCashAmount !== null || numericCardAmount !== null || numericCreditAmount !== null) {
+                console.log(`[Sync/Sales/Update] 💳 Desglose recibido - Efectivo: ${numericCashAmount}, Tarjeta: ${numericCardAmount}, Crédito: ${numericCreditAmount}`);
+            }
+
+            // Actualizar venta con campos modificables (incluyendo desglose si se envía)
             const result = await pool.query(
                 `UPDATE ventas
                  SET estado_venta_id = $1,
@@ -1023,6 +1037,9 @@ module.exports = (pool) => {
                      id_turno_repartidor = $8,
                      notas = $9,
                      status = $12,
+                     cash_amount = COALESCE($13, cash_amount),
+                     card_amount = COALESCE($14, card_amount),
+                     credit_amount = COALESCE($15, credit_amount),
                      updated_at = NOW()
                  WHERE global_id = $10 AND tenant_id = $11
                  RETURNING *`,
@@ -1038,7 +1055,10 @@ module.exports = (pool) => {
                     notas,
                     globalId,
                     tenant_id,
-                    newStatus  // $12 - status mapeado desde estado_venta_id
+                    newStatus,  // $12 - status mapeado desde estado_venta_id
+                    numericCashAmount,   // $13
+                    numericCardAmount,   // $14
+                    numericCreditAmount  // $15
                 ]
             );
 
