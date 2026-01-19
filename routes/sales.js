@@ -447,6 +447,7 @@ module.exports = (pool) => {
             console.log(`[Sync/Sales]    Ticket: ${insertedVenta.ticket_number}`);
             console.log(`[Sync/Sales]    Total: $${insertedVenta.total}`);
             console.log(`[Sync/Sales]    Estado: ${insertedVenta.estado_venta_id}`);
+            console.log(`[Sync/Sales]    💳 GUARDADO - Efectivo: $${insertedVenta.cash_amount}, Tarjeta: $${insertedVenta.card_amount}, Crédito: $${insertedVenta.credit_amount}`);
             console.log(`[Sync/Sales]    Tipo: ${insertedVenta.venta_tipo_id}`);
 
             // ═══════════════════════════════════════════════════════════════
