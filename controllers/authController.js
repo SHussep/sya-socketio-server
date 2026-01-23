@@ -10,6 +10,24 @@ const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
 
+// Helper: Derive mobile access type from role_id and can_use_mobile_app
+// Must match the logic in routes/employees.js getMobileAccessType
+const deriveMobileAccessType = (roleId, canUseMobileApp) => {
+    if (!canUseMobileApp) return 'none';
+
+    switch (roleId) {
+        case 1:
+        case 2:
+            return 'admin';      // Administrador, Encargado
+        case 3:
+            return 'distributor'; // Repartidor
+        case 4:
+        case 99:
+        default:
+            return 'none';
+    }
+};
+
 class AuthController {
     constructor(pool) {
         this.pool = pool;
@@ -696,11 +714,11 @@ class AuthController {
                 roleId: employee.role_id,
                 isActive: employee.is_active,
                 canUseMobileApp: employee.can_use_mobile_app,
-                mobileAccessType: employee.mobile_access_type || 'none',  // 'admin', 'distributor', 'none'
+                mobileAccessType: deriveMobileAccessType(employee.role_id, employee.can_use_mobile_app),  // 'admin', 'distributor', 'none'
                 createdAt: employee.created_at
             };
 
-            console.log(`[Mobile Login] 📱 Tipo de acceso móvil: ${employee.mobile_access_type || 'none'} para ${employee.email}`);
+            console.log(`[Mobile Login] 📱 Tipo de acceso móvil: ${deriveMobileAccessType(employee.role_id, employee.can_use_mobile_app)} (roleId=${employee.role_id}, canUseMobileApp=${employee.can_use_mobile_app}) para ${employee.email}`);
 
             const branchesData = branches.map(branch => ({
                 id: branch.id,
