@@ -2358,6 +2358,32 @@ async function runMigrations() {
                 console.log('[Schema] ✅ NC triggers created successfully');
             }
 
+            // Patch: Add receipt_image column to expenses (Migration 019)
+            console.log('[Schema] 🔍 Checking expenses.receipt_image column...');
+            const checkReceiptImage = await client.query(`
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'expenses'
+                AND column_name = 'receipt_image'
+            `);
+
+            if (checkReceiptImage.rows.length === 0) {
+                console.log('[Schema] 📝 Adding expenses.receipt_image column (Migration 019)...');
+                await client.query(`
+                    ALTER TABLE expenses
+                    ADD COLUMN receipt_image TEXT
+                `);
+                await client.query(`
+                    COMMENT ON COLUMN expenses.receipt_image IS 'Imagen del recibo en Base64 (JPEG comprimido). Max recomendado: 500KB'
+                `);
+                await client.query(`
+                    CREATE INDEX IF NOT EXISTS idx_expenses_has_receipt
+                    ON expenses(id)
+                    WHERE receipt_image IS NOT NULL
+                `);
+                console.log('[Schema] ✅ expenses.receipt_image column added successfully');
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {
