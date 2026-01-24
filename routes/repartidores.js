@@ -1005,6 +1005,140 @@ module.exports = (pool) => {
     });
 
     // ============================================================================
+    // GET /api/repartidores/shifts/:shiftId/cash-snapshot
+    // Obtiene el cash snapshot de un turno específico de repartidor
+    // ============================================================================
+    router.get('/shifts/:shiftId/cash-snapshot', authenticateToken, async (req, res) => {
+        try {
+            const { tenantId } = req.user;
+            const { shiftId } = req.params;
+            const { recalculate = 'false' } = req.query;
+
+            console.log(`[Repartidor CashSnapshot] GET - Shift: ${shiftId}, Tenant: ${tenantId}, Recalculate: ${recalculate}`);
+
+            // Verificar que el turno existe y pertenece al tenant
+            const shiftResult = await pool.query(`
+                SELECT s.*, e.first_name, e.last_name, b.name as branch_name
+                FROM shifts s
+                INNER JOIN employees e ON s.employee_id = e.id
+                INNER JOIN branches b ON s.branch_id = b.id
+                WHERE s.id = $1 AND s.tenant_id = $2
+            `, [shiftId, tenantId]);
+
+            if (shiftResult.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Turno no encontrado'
+                });
+            }
+
+            const shift = shiftResult.rows[0];
+
+            // Calcular totales de asignaciones
+            const assignmentsResult = await pool.query(`
+                SELECT
+                    COALESCE(SUM(assigned_quantity), 0) as total_assigned_quantity,
+                    COALESCE(SUM(assigned_amount), 0) as total_assigned_amount,
+                    COUNT(*) as assignment_count,
+                    COUNT(CASE WHEN status = 'liquidated' THEN 1 END) as liquidated_count,
+                    COALESCE(SUM(CASE WHEN status = 'liquidated' THEN
+                        CASE
+                            WHEN COALESCE(cash_amount, 0) + COALESCE(card_amount, 0) + COALESCE(credit_amount, 0) = 0
+                            THEN assigned_amount
+                            ELSE cash_amount
+                        END
+                    ELSE 0 END), 0) as total_cash_collected,
+                    COALESCE(SUM(CASE WHEN status = 'liquidated' THEN card_amount ELSE 0 END), 0) as total_card_collected,
+                    COALESCE(SUM(CASE WHEN status = 'liquidated' THEN credit_amount ELSE 0 END), 0) as total_credit_collected
+                FROM repartidor_assignments
+                WHERE repartidor_shift_id = $1
+                  AND tenant_id = $2
+                  AND status NOT IN ('cancelled', 'voided')
+            `, [shiftId, tenantId]);
+
+            // Calcular totales de devoluciones
+            const returnsResult = await pool.query(`
+                SELECT
+                    COALESCE(SUM(quantity), 0) as total_returned_quantity,
+                    COALESCE(SUM(amount), 0) as total_returned_amount,
+                    COUNT(*) as return_count
+                FROM repartidor_returns
+                WHERE shift_id = $1 AND tenant_id = $2
+            `, [shiftId, tenantId]);
+
+            // Calcular totales de gastos
+            const expensesResult = await pool.query(`
+                SELECT
+                    COALESCE(SUM(amount), 0) as total_expenses,
+                    COUNT(*) as expense_count
+                FROM expenses
+                WHERE id_turno = $1 AND tenant_id = $2
+            `, [shiftId, tenantId]);
+
+            const assignments = assignmentsResult.rows[0];
+            const returns = returnsResult.rows[0];
+            const expenses = expensesResult.rows[0];
+
+            // Calcular valores
+            const initialAmount = parseFloat(shift.initial_amount) || 0;
+            const totalAssignedAmount = parseFloat(assignments.total_assigned_amount) || 0;
+            const totalAssignedQuantity = parseFloat(assignments.total_assigned_quantity) || 0;
+            const totalReturnedAmount = parseFloat(returns.total_returned_amount) || 0;
+            const totalReturnedQuantity = parseFloat(returns.total_returned_quantity) || 0;
+            const totalExpenses = parseFloat(expenses.total_expenses) || 0;
+            const totalCashCollected = parseFloat(assignments.total_cash_collected) || 0;
+            const totalCardCollected = parseFloat(assignments.total_card_collected) || 0;
+            const totalCreditCollected = parseFloat(assignments.total_credit_collected) || 0;
+
+            // Neto a entregar = Fondo inicial + Ventas netas - Gastos
+            const netSales = totalAssignedAmount - totalReturnedAmount;
+            const netAmountToDeliver = initialAmount + netSales - totalExpenses;
+
+            const snapshot = {
+                shiftId: parseInt(shiftId),
+                employeeId: shift.employee_id,
+                employeeName: `${shift.first_name} ${shift.last_name}`,
+                branchName: shift.branch_name,
+                startTime: shift.start_time,
+                endTime: shift.end_time,
+                isOpen: shift.is_cash_cut_open,
+                initialAmount,
+                totalAssignedAmount,
+                totalAssignedQuantity,
+                totalReturnedAmount,
+                totalReturnedQuantity,
+                totalExpenses,
+                expenseCount: parseInt(expenses.expense_count) || 0,
+                assignmentCount: parseInt(assignments.assignment_count) || 0,
+                liquidatedCount: parseInt(assignments.liquidated_count) || 0,
+                returnCount: parseInt(returns.return_count) || 0,
+                totalCashCollected,
+                totalCardCollected,
+                totalCreditCollected,
+                netSales,
+                netAmountToDeliver,
+                actualCashDelivered: 0, // Se actualiza cuando se cierra el turno
+                cashDifference: 0
+            };
+
+            console.log(`[Repartidor CashSnapshot] ✅ Snapshot calculado para turno ${shiftId}`);
+
+            res.json({
+                success: true,
+                data: snapshot
+            });
+
+        } catch (error) {
+            console.error('[Repartidor CashSnapshot] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al obtener cash snapshot',
+                error: error.message
+            });
+        }
+    });
+
+    // ============================================================================
     // GET /api/repartidores/:employeeId/shifts-summary
     // Obtiene resumen de turnos de caja de un repartidor con estadísticas
     // ============================================================================
