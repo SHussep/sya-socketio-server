@@ -714,11 +714,11 @@ class AuthController {
                 roleId: employee.role_id,
                 isActive: employee.is_active,
                 canUseMobileApp: employee.can_use_mobile_app,
-                mobileAccessType: deriveMobileAccessType(employee.role_id, employee.can_use_mobile_app),  // 'admin', 'distributor', 'none'
+                mobileAccessType: employee.mobile_access_type || 'none',  // Viene del JOIN con roles table
                 createdAt: employee.created_at
             };
 
-            console.log(`[Mobile Login] 📱 Tipo de acceso móvil: ${deriveMobileAccessType(employee.role_id, employee.can_use_mobile_app)} (roleId=${employee.role_id}, canUseMobileApp=${employee.can_use_mobile_app}) para ${employee.email}`);
+            console.log(`[Mobile Login] 📱 Tipo de acceso móvil: ${employee.mobile_access_type || 'none'} (from roles table, roleId=${employee.role_id}) para ${employee.email}`);
 
             const branchesData = branches.map(branch => ({
                 id: branch.id,

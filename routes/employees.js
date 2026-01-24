@@ -115,10 +115,13 @@ module.exports = (pool) => {
             const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
 
             // Validar que el rol exista en la base de datos para este tenant
+            // Y obtener su mobile_access_type directamente de la tabla roles
             let mappedRoleId = roleId;
+            let roleMobileAccessType = 'none';
+
             if (roleId) {
                 const roleCheck = await client.query(
-                    `SELECT id, name FROM roles WHERE id = $1 AND tenant_id = $2`,
+                    `SELECT id, name, mobile_access_type FROM roles WHERE id = $1 AND tenant_id = $2`,
                     [roleId, tenantId]
                 );
 
@@ -136,16 +139,16 @@ module.exports = (pool) => {
                     });
                 }
                 mappedRoleId = roleId;
+                roleMobileAccessType = roleCheck.rows[0].mobile_access_type || 'none';
             }
 
             // Determine if employee can use mobile app
-            // If canUseMobileApp is explicitly provided, use it; otherwise determine from role
+            // If canUseMobileApp is explicitly provided, use it; otherwise determine from role's mobile_access_type
             let canUseMobileApp = req.body.canUseMobileApp;
 
             if (canUseMobileApp === undefined || canUseMobileApp === null) {
-                // Auto-assign based on role if not explicitly provided
-                // Roles 1, 2, 3 can use mobile app by default; 4 and 99 cannot
-                canUseMobileApp = [1, 2, 3].includes(mappedRoleId) ? true : false;
+                // Auto-assign based on role's mobile_access_type
+                canUseMobileApp = roleMobileAccessType !== 'none';
             }
 
             // Validate canUseMobileApp is boolean
@@ -157,10 +160,10 @@ module.exports = (pool) => {
                 });
             }
 
-            // Derive the access type from role + boolean
-            const mobileAccessType = getMobileAccessType(mappedRoleId, canUseMobileApp);
+            // Usar mobile_access_type del rol (de la tabla roles), respetando canUseMobileApp
+            const mobileAccessType = canUseMobileApp ? roleMobileAccessType : 'none';
 
-            console.log(`[Employees/Sync] 📱 Mobile Access: ${mobileAccessType} (Role: ${mappedRoleId}, Can Use: ${canUseMobileApp})`);
+            console.log(`[Employees/Sync] 📱 Mobile Access: ${mobileAccessType} (Role: ${mappedRoleId}, roleMobileAccessType: ${roleMobileAccessType}, canUseMobileApp: ${canUseMobileApp})`);
 
             // ✅ IDEMPOTENCIA: Check if employee already exists by global_id
             const existingResult = await client.query(
@@ -1129,9 +1132,13 @@ module.exports = (pool) => {
                 });
             }
 
+            // JOIN con roles para obtener mobile_access_type directamente de la tabla roles
             const result = await client.query(
-                `SELECT id, email, first_name, last_name, role_id, can_use_mobile_app FROM employees
-                 WHERE id = $1 AND tenant_id = $2 AND is_active = true`,
+                `SELECT e.id, e.email, e.first_name, e.last_name, e.role_id, e.can_use_mobile_app,
+                        r.mobile_access_type as role_mobile_access_type
+                 FROM employees e
+                 LEFT JOIN roles r ON e.role_id = r.id AND e.tenant_id = r.tenant_id
+                 WHERE e.id = $1 AND e.tenant_id = $2 AND e.is_active = true`,
                 [employeeId, tenantId]
             );
 
@@ -1145,8 +1152,8 @@ module.exports = (pool) => {
             const employee = result.rows[0];
             const employeeFullName = `${employee.first_name || ''} ${employee.last_name || ''}`.trim();
 
-            // Derive access type from role_id + can_use_mobile_app
-            const accessType = getMobileAccessType(employee.role_id, employee.can_use_mobile_app);
+            // Usar mobile_access_type de la tabla roles (no derivar de role_id)
+            const accessType = employee.role_mobile_access_type || 'none';
             const hasMobileAccess = accessType !== 'none' && employee.can_use_mobile_app;
 
             return res.json({
@@ -1351,14 +1358,25 @@ module.exports = (pool) => {
             const query = `UPDATE employees
                           SET ${updates.join(', ')}
                           WHERE id = $${paramIndex} AND tenant_id = $${paramIndex + 1}
-                          RETURNING id, email, first_name, last_name, role_id, can_use_mobile_app, is_active, updated_at`;
+                          RETURNING id, email, first_name, last_name, role_id, can_use_mobile_app, is_active, updated_at, tenant_id`;
 
             const updateResult = await client.query(query, params);
 
             if (updateResult.rows.length > 0) {
                 const updatedEmployee = updateResult.rows[0];
                 const updatedFullName = `${updatedEmployee.first_name || ''} ${updatedEmployee.last_name || ''}`.trim();
-                const accessType = getMobileAccessType(updatedEmployee.role_id, updatedEmployee.can_use_mobile_app);
+
+                // Obtener mobile_access_type del rol (de la tabla roles)
+                let accessType = 'none';
+                if (updatedEmployee.role_id && updatedEmployee.can_use_mobile_app) {
+                    const roleResult = await client.query(
+                        `SELECT mobile_access_type FROM roles WHERE id = $1 AND tenant_id = $2`,
+                        [updatedEmployee.role_id, updatedEmployee.tenant_id]
+                    );
+                    if (roleResult.rows.length > 0) {
+                        accessType = roleResult.rows[0].mobile_access_type || 'none';
+                    }
+                }
 
                 // Log what was updated
                 const changes = [];
