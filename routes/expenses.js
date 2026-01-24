@@ -39,6 +39,7 @@ module.exports = (pool, io) => {
             const endDate = req.query.endDate || req.query.end_date;
             const { timezone, employee_id, tenant_id, shift_id, shiftId, all_branches = 'false' } = req.query;
             const shiftIdFilter = shift_id || shiftId;
+            const includeImage = req.query.include_image === 'true'; // Solo incluir imagen si se solicita explícitamente
 
             // Obtener tenant_id del JWT si no viene en query
             const targetTenantId = tenant_id || (req.user ? req.user.tenantId : null);
@@ -67,6 +68,7 @@ module.exports = (pool, io) => {
             }
 
             // Construir query con filtros opcionales
+            // Solo incluir receipt_image si se solicita explícitamente (para evitar transferir datos grandes)
             let query = `
                 SELECT
                     e.id,
@@ -91,7 +93,9 @@ module.exports = (pool, io) => {
                     e.reviewed_at,
                     e.is_active,
                     e.created_at,
-                    e.updated_at
+                    e.updated_at,
+                    (e.receipt_image IS NOT NULL) as has_receipt_image
+                    ${includeImage ? ', e.receipt_image' : ''}
                 FROM expenses e
                 LEFT JOIN employees emp ON e.employee_id = emp.id
                 LEFT JOIN branches b ON e.branch_id = b.id
@@ -286,6 +290,7 @@ module.exports = (pool, io) => {
                 employee_global_id,      // ✅ NUEVO: UUID del empleado (idempotente)
                 consumer_employee_global_id, // ✅ NUEVO: UUID del consumidor (si aplica)
                 category, description, amount, quantity, userEmail,
+                receipt_image,               // ✅ NUEVO: Imagen del recibo en Base64 (JPEG comprimido)
                 global_category_id,      // ✅ NUEVO: ID canónico de categoría (1-14) desde Desktop
                 payment_type_id, expense_date_utc,
                 id_turno,               // LEGACY: ID local del turno
@@ -567,13 +572,16 @@ module.exports = (pool, io) => {
                 if (finalConsumerEmployeeId) {
                     console.log(`[Sync/Expenses] 👤 Gasto asignado a consumer_employee_id: ${finalConsumerEmployeeId}`);
                 }
+                if (receipt_image) {
+                    console.log(`[Sync/Expenses] 📷 Imagen de recibo incluida (${Math.round(receipt_image.length / 1024)}KB)`);
+                }
                 result = await pool.query(
                     `INSERT INTO expenses (
                         tenant_id, branch_id, employee_id, consumer_employee_id, payment_type_id, id_turno, global_category_id, description, amount, quantity, expense_date,
-                        status, reviewed_by_desktop, is_active,
+                        status, reviewed_by_desktop, is_active, receipt_image,
                         global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw
                      )
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, true, $14, $15, $16, $17, $18)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, true, $14, $15, $16, $17, $18, $19)
                      RETURNING *`,
                     [
                         tenantId,
@@ -581,20 +589,21 @@ module.exports = (pool, io) => {
                         finalEmployeeId,
                         finalConsumerEmployeeId,      // $4 - Empleado consumidor (repartidor)
                         payment_type_id,              // $5
-                        finalShiftId,                 // $5 - Turno (resuelto por GlobalId)
-                        globalCategoryId,             // $6 - CANÓNICO: global category ID (1-14)
-                        description || '',            // $7
-                        numericAmount,                // $8
-                        quantity || null,             // $9 - Cantidad (litros, kg, etc.)
-                        expenseDate,                  // $10
-                        finalStatus,                  // $11 - Status (draft/confirmed/deleted)
-                        reviewedValue,                // $12 - TRUE para Desktop, FALSE para Mobile
-                        // is_active = true (hardcoded)   // $13 position shifted
-                        finalGlobalId,                // $13 - UUID (Desktop) o generado (Mobile)
-                        finalTerminalId,              // $14 - UUID (Desktop) o generado (Mobile)
-                        finalLocalOpSeq,              // $15 - Sequence (Desktop) o 0 (Mobile)
-                        finalCreatedLocalUtc,         // $16 - ISO 8601 timestamp
-                        finalDeviceEventRaw           // $17 - Raw ticks
+                        finalShiftId,                 // $6 - Turno (resuelto por GlobalId)
+                        globalCategoryId,             // $7 - CANÓNICO: global category ID (1-14)
+                        description || '',            // $8
+                        numericAmount,                // $9
+                        quantity || null,             // $10 - Cantidad (litros, kg, etc.)
+                        expenseDate,                  // $11
+                        finalStatus,                  // $12 - Status (draft/confirmed/deleted)
+                        reviewedValue,                // $13 - TRUE para Desktop, FALSE para Mobile
+                        // is_active = true (hardcoded)
+                        receipt_image || null,        // $14 - Imagen del recibo en Base64
+                        finalGlobalId,                // $15 - UUID (Desktop) o generado (Mobile)
+                        finalTerminalId,              // $16 - UUID (Desktop) o generado (Mobile)
+                        finalLocalOpSeq,              // $17 - Sequence (Desktop) o 0 (Mobile)
+                        finalCreatedLocalUtc,         // $18 - ISO 8601 timestamp
+                        finalDeviceEventRaw           // $19 - Raw ticks
                     ]
                 );
             }
@@ -1361,6 +1370,53 @@ module.exports = (pool, io) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al rechazar gastos huérfanos',
+                error: error.message
+            });
+        }
+    });
+
+    // GET /api/expenses/:global_id/image - Obtener imagen del recibo
+    router.get('/:global_id/image', authenticateToken, async (req, res) => {
+        try {
+            const { global_id } = req.params;
+            const tenantId = req.user?.tenantId;
+
+            console.log(`[Expenses/Image] 📷 Obteniendo imagen del gasto ${global_id}`);
+
+            const result = await pool.query(
+                `SELECT receipt_image FROM expenses WHERE global_id = $1 AND tenant_id = $2`,
+                [global_id, tenantId]
+            );
+
+            if (result.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Gasto no encontrado'
+                });
+            }
+
+            const receiptImage = result.rows[0].receipt_image;
+            if (!receiptImage) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Este gasto no tiene imagen de recibo'
+                });
+            }
+
+            console.log(`[Expenses/Image] ✅ Imagen encontrada (${Math.round(receiptImage.length / 1024)}KB)`);
+
+            res.json({
+                success: true,
+                data: {
+                    global_id,
+                    receipt_image: receiptImage
+                }
+            });
+        } catch (error) {
+            console.error('[Expenses/Image] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al obtener imagen del recibo',
                 error: error.message
             });
         }
