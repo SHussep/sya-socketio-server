@@ -721,6 +721,129 @@ module.exports = (pool) => {
     });
 
     // ═══════════════════════════════════════════════════════════════
+    // POST /api/productos/cleanup-duplicates - Limpiar productos duplicados
+    // ═══════════════════════════════════════════════════════════════
+    // Si hay múltiples productos con el mismo id_producto (SKU local) pero
+    // diferentes global_id, elimina los que NO coinciden con los GlobalIds
+    // proporcionados (los de la BD local del cliente).
+    // ═══════════════════════════════════════════════════════════════
+    router.post('/cleanup-duplicates', async (req, res) => {
+        const client = await pool.connect();
+
+        try {
+            const { tenant_id, products } = req.body;
+
+            if (!tenant_id || !products || !Array.isArray(products)) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Datos incompletos (tenant_id, products[] requeridos)'
+                });
+            }
+
+            console.log(`[Productos/CleanupDuplicates] 🧹 Iniciando limpieza para tenant ${tenant_id} con ${products.length} productos`);
+
+            await client.query('BEGIN');
+
+            let duplicatesRemoved = 0;
+            let productsProcessed = 0;
+            const errors = [];
+
+            for (const product of products) {
+                const { id_producto, global_id } = product;
+
+                if (!id_producto || !global_id) {
+                    continue;
+                }
+
+                productsProcessed++;
+
+                try {
+                    // Buscar todos los productos con este id_producto para este tenant
+                    const existingProducts = await client.query(
+                        `SELECT id, global_id, descripcion
+                         FROM productos
+                         WHERE tenant_id = $1
+                         AND id = $2`,
+                        [tenant_id, id_producto]
+                    );
+
+                    // También buscar por el campo "id" que podría ser diferente del SKU
+                    // El problema es que el campo "id" en PostgreSQL es el PK auto-increment,
+                    // pero el cliente usa "IDProducto" como identificador único local.
+                    // Necesitamos buscar duplicados por global_id que empiecen con SEED_PRODUCT_
+                    // y tengan el mismo número de producto.
+
+                    // Buscar productos duplicados: mismo tenant, mismo patrón de ID en global_id
+                    // Ejemplo: SEED_PRODUCT_9001 y SEED_PRODUCT_16_9001 son el mismo producto
+                    const productIdMatch = global_id.match(/(\d+)$/); // Extraer número final
+                    if (productIdMatch) {
+                        const productNumber = productIdMatch[1];
+
+                        // Buscar todos los productos con global_id que terminen en este número
+                        // y sean del mismo tenant (productos seed duplicados)
+                        const duplicates = await client.query(
+                            `SELECT id, global_id, descripcion
+                             FROM productos
+                             WHERE tenant_id = $1
+                             AND global_id LIKE 'SEED_PRODUCT_%'
+                             AND global_id LIKE $2
+                             AND global_id != $3
+                             AND eliminado = false`,
+                            [tenant_id, `%_${productNumber}`, global_id]
+                        );
+
+                        if (duplicates.rows.length > 0) {
+                            console.log(`[Productos/CleanupDuplicates] 🔍 Encontrados ${duplicates.rows.length} duplicados para producto ${productNumber}`);
+
+                            for (const dup of duplicates.rows) {
+                                console.log(`[Productos/CleanupDuplicates] 🗑️ Eliminando duplicado: id=${dup.id}, global_id=${dup.global_id}, descripcion=${dup.descripcion}`);
+
+                                // Soft delete del duplicado
+                                await client.query(
+                                    `UPDATE productos
+                                     SET eliminado = true,
+                                         needs_delete = true,
+                                         updated_at = NOW()
+                                     WHERE id = $1`,
+                                    [dup.id]
+                                );
+
+                                duplicatesRemoved++;
+                            }
+                        }
+                    }
+                } catch (productError) {
+                    console.error(`[Productos/CleanupDuplicates] ⚠️ Error procesando producto ${id_producto}:`, productError.message);
+                    errors.push({ id_producto, error: productError.message });
+                }
+            }
+
+            await client.query('COMMIT');
+
+            console.log(`[Productos/CleanupDuplicates] ✅ Limpieza completada: ${duplicatesRemoved} duplicados eliminados de ${productsProcessed} productos procesados`);
+
+            res.json({
+                success: true,
+                message: `Limpieza completada`,
+                duplicatesRemoved,
+                productsProcessed,
+                errors: errors.length > 0 ? errors : undefined
+            });
+
+        } catch (error) {
+            await client.query('ROLLBACK');
+            console.error('[Productos/CleanupDuplicates] ❌ Error:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Error al limpiar duplicados',
+                error: error.message
+            });
+        } finally {
+            client.release();
+        }
+    });
+
+    // ═══════════════════════════════════════════════════════════════
     // GET /api/productos/categories - Categorías de productos
     // ═══════════════════════════════════════════════════════════════
     router.get('/categories', authenticateToken, async (req, res) => {
