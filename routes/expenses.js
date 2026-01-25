@@ -1473,25 +1473,25 @@ module.exports = (pool, io) => {
         }
     });
 
-    // DELETE /api/expenses/:global_id - Eliminar gasto rechazado
-    router.delete('/:global_id', async (req, res) => {
+    // DELETE /api/expenses/:global_id - Eliminar gasto (usuario móvil o rechazado)
+    router.delete('/:global_id', authenticateToken, async (req, res) => {
         try {
             const { global_id } = req.params;
-            const { tenant_id } = req.query;
+            const tenantId = req.user?.tenantId || req.query.tenant_id;
 
-            console.log(`[Expenses/Delete] 🗑️ Eliminando gasto ${global_id} - Tenant: ${tenant_id}`);
+            console.log(`[Expenses/Delete] 🗑️ Eliminando gasto ${global_id} - Tenant: ${tenantId}`);
 
-            if (!tenant_id) {
+            if (!tenantId) {
                 return res.status(400).json({
                     success: false,
                     message: 'tenant_id es requerido'
                 });
             }
 
-            // Validar que el gasto existe y pertenece al tenant
+            // Obtener el gasto para verificar propiedad y obtener imagen
             const checkResult = await pool.query(
-                'SELECT id FROM expenses WHERE global_id = $1 AND tenant_id = $2',
-                [global_id, tenant_id]
+                'SELECT id, receipt_image, reviewed_by_desktop, employee_id FROM expenses WHERE global_id = $1 AND tenant_id = $2',
+                [global_id, tenantId]
             );
 
             if (checkResult.rows.length === 0) {
@@ -1501,12 +1501,39 @@ module.exports = (pool, io) => {
                 });
             }
 
+            const expense = checkResult.rows[0];
+
+            // Solo permitir eliminar gastos NO aprobados (pendientes de revisión)
+            if (expense.reviewed_by_desktop) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'No se puede eliminar un gasto ya aprobado'
+                });
+            }
+
+            // Eliminar imagen de Cloudinary si existe
+            if (expense.receipt_image && expense.receipt_image.includes('cloudinary')) {
+                try {
+                    const urlParts = expense.receipt_image.split('/');
+                    const uploadIndex = urlParts.indexOf('upload');
+                    if (uploadIndex !== -1) {
+                        const pathAfterUpload = urlParts.slice(uploadIndex + 2).join('/');
+                        const publicId = pathAfterUpload.replace(/\.[^/.]+$/, '');
+                        console.log(`[Expenses/Delete] 🗑️ Eliminando imagen de Cloudinary: ${publicId}`);
+                        await cloudinaryService.deleteReceiptImage(publicId);
+                    }
+                } catch (cloudinaryError) {
+                    console.error(`[Expenses/Delete] ⚠️ Error eliminando de Cloudinary:`, cloudinaryError.message);
+                    // Continuar con la eliminación del gasto
+                }
+            }
+
             // Eliminación PERMANENTE (hard delete)
             const result = await pool.query(
                 `DELETE FROM expenses
              WHERE global_id = $1 AND tenant_id = $2
              RETURNING *`,
-                [global_id, tenant_id]
+                [global_id, tenantId]
             );
 
             console.log(`[Expenses/Delete] ✅ Gasto ${global_id} eliminado permanentemente`);
@@ -1565,12 +1592,45 @@ module.exports = (pool, io) => {
             let receiptImageValue = existing.receipt_image; // Mantener existente por defecto
             if (receipt_image !== undefined) {
                 if (receipt_image === null || receipt_image === '') {
-                    // Eliminar imagen
+                    // Eliminar imagen existente de Cloudinary si era una URL
+                    if (existing.receipt_image && existing.receipt_image.includes('cloudinary')) {
+                        try {
+                            // Extraer public_id de la URL de Cloudinary
+                            const urlParts = existing.receipt_image.split('/');
+                            const uploadIndex = urlParts.indexOf('upload');
+                            if (uploadIndex !== -1) {
+                                // El public_id está después de 'upload/v{version}/'
+                                const pathAfterUpload = urlParts.slice(uploadIndex + 2).join('/');
+                                const publicId = pathAfterUpload.replace(/\.[^/.]+$/, ''); // Quitar extensión
+                                console.log(`[Expenses/Update] 🗑️ Eliminando de Cloudinary: ${publicId}`);
+                                await cloudinaryService.deleteReceiptImage(publicId);
+                            }
+                        } catch (deleteError) {
+                            console.error(`[Expenses/Update] ⚠️ Error eliminando de Cloudinary:`, deleteError.message);
+                            // Continuar aunque falle la eliminación en Cloudinary
+                        }
+                    }
                     receiptImageValue = null;
                     console.log(`[Expenses/Update] 🗑️ Imagen eliminada`);
                 } else if (receipt_image.length > 100) {
-                    // Nueva imagen (Base64 largo)
+                    // Nueva imagen (Base64 largo) - primero eliminar la anterior si existía en Cloudinary
                     console.log(`[Expenses/Update] 📷 Nueva imagen recibida (${Math.round(receipt_image.length / 1024)}KB)`);
+
+                    // Eliminar imagen anterior de Cloudinary si existía
+                    if (existing.receipt_image && existing.receipt_image.includes('cloudinary')) {
+                        try {
+                            const urlParts = existing.receipt_image.split('/');
+                            const uploadIndex = urlParts.indexOf('upload');
+                            if (uploadIndex !== -1) {
+                                const pathAfterUpload = urlParts.slice(uploadIndex + 2).join('/');
+                                const publicId = pathAfterUpload.replace(/\.[^/.]+$/, '');
+                                console.log(`[Expenses/Update] 🔄 Reemplazando imagen, eliminando anterior: ${publicId}`);
+                                await cloudinaryService.deleteReceiptImage(publicId);
+                            }
+                        } catch (deleteError) {
+                            console.error(`[Expenses/Update] ⚠️ Error eliminando imagen anterior:`, deleteError.message);
+                        }
+                    }
 
                     if (cloudinaryService.isConfigured()) {
                         try {
