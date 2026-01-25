@@ -705,101 +705,14 @@ module.exports = (pool, io) => {
         }
     });
 
-    // PUT /api/expenses/:global_id - Actualizar gasto existente
+    // PUT /api/expenses/:global_id - Actualizar gasto existente (LEGACY - redirige a la ruta autenticada)
+    // NOTA: Esta ruta fue consolidada con la ruta autenticada en línea ~1560
+    // Se mantiene comentada por referencia histórica
+    /*
     router.put('/:global_id', async (req, res) => {
-        try {
-            const { global_id } = req.params;
-            const {
-                tenant_id,
-                category,
-                description,
-                amount,
-                payment_type_id,
-                expense_date_utc,
-                last_modified_local_utc
-            } = req.body;
-
-            console.log(`[Expenses/Update] 🔄 Actualizando gasto ${global_id} - Tenant: ${tenant_id}`);
-
-            // Validar campos requeridos
-            if (!tenant_id || !category || amount === null || !payment_type_id || !global_id) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Datos incompletos (tenant_id, category, amount, payment_type_id, global_id requeridos)'
-                });
-            }
-
-            // Validar que el gasto existe y pertenece al tenant
-            // NOTA: global_id es VARCHAR, no UUID - no usar ::uuid cast
-            const checkResult = await pool.query(
-                'SELECT id FROM expenses WHERE global_id = $1 AND tenant_id = $2',
-                [global_id, tenant_id]
-            );
-
-            if (checkResult.rows.length === 0) {
-                return res.status(404).json({
-                    success: false,
-                    message: 'Gasto no encontrado o no pertenece al tenant'
-                });
-            }
-
-            // Buscar categoría global por nombre
-            let globalCategoryId = 12; // Default: Otros Gastos
-            const catResult = await pool.query(
-                `SELECT id FROM global_expense_categories
-                 WHERE LOWER(name) = LOWER($1)
-                    OR LOWER(name) LIKE '%' || LOWER($1) || '%'
-                 LIMIT 1`,
-                [category]
-            );
-
-            if (catResult.rows.length > 0) {
-                globalCategoryId = catResult.rows[0].id;
-            } else {
-                console.log(`[Expenses/Update] Categoría '${category}' no encontrada, usando Otros Gastos (ID: 12)`);
-            }
-
-            // Actualizar gasto
-            // NOTA: global_id es VARCHAR, no UUID - no usar ::uuid cast
-            const numericAmount = parseFloat(amount);
-            const updateResult = await pool.query(
-                `UPDATE expenses
-                 SET global_category_id = $1,
-                     description = $2,
-                     amount = $3,
-                     payment_type_id = $4,
-                     expense_date = $5,
-                     updated_at = NOW()
-                 WHERE global_id = $6 AND tenant_id = $7
-                 RETURNING *`,
-                [
-                    globalCategoryId,
-                    description || '',
-                    numericAmount,
-                    payment_type_id,
-                    expense_date_utc || new Date().toISOString(),
-                    global_id,
-                    tenant_id
-                ]
-            );
-
-            console.log(`[Expenses/Update] ✅ Gasto ${global_id} actualizado exitosamente`);
-
-            const responseData = updateResult.rows[0];
-            if (responseData) {
-                responseData.amount = parseFloat(responseData.amount);
-            }
-
-            res.json({ success: true, data: responseData });
-        } catch (error) {
-            console.error('[Expenses/Update] Error:', error);
-            res.status(500).json({
-                success: false,
-                message: 'Error al actualizar gasto',
-                error: error.message
-            });
-        }
+        // Ruta legacy sin autenticación - ahora usa authenticateToken
     });
+    */
 
     // PATCH /api/expenses/:global_id/deactivate - Soft delete (marcar como eliminado)
     router.patch('/:global_id/deactivate', async (req, res) => {
