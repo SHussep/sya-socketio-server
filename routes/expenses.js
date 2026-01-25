@@ -1387,10 +1387,11 @@ module.exports = (pool, io) => {
     });
 
     // DELETE /api/expenses/:global_id - Eliminar gasto (usuario móvil o rechazado)
-    router.delete('/:global_id', authenticateToken, async (req, res) => {
+    // Sin JWT - usa tenant_id del query string (consistente con otras rutas)
+    router.delete('/:global_id', async (req, res) => {
         try {
             const { global_id } = req.params;
-            const tenantId = req.user?.tenantId || req.query.tenant_id;
+            const tenantId = req.query.tenant_id;
 
             console.log(`[Expenses/Delete] 🗑️ Eliminando gasto ${global_id} - Tenant: ${tenantId}`);
 
@@ -1468,23 +1469,33 @@ module.exports = (pool, io) => {
 
     // ═══════════════════════════════════════════════════════════════
     // PUT /api/expenses/:global_id - Actualizar gasto existente
-    // Solo online, sin offline-first
+    // Sin JWT - usa tenant_id del body (igual que POST)
     // ═══════════════════════════════════════════════════════════════
-    router.put('/:global_id', authenticateToken, async (req, res) => {
+    router.put('/:global_id', async (req, res) => {
         try {
             const { global_id } = req.params;
-            const tenantId = req.user?.tenantId;
             const {
+                tenant_id,
                 category,
                 description,
                 amount,
                 quantity,
-                receipt_image, // Puede ser Base64 nuevo o null para mantener existente
+                receipt_image, // Puede ser Base64 nuevo, '' para eliminar, o undefined para mantener
                 global_category_id,
                 payment_type_id,
             } = req.body;
 
-            console.log(`[Expenses/Update] 📝 Actualizando gasto ${global_id}`);
+            // Usar tenant_id del body (consistente con otras rutas)
+            const tenantId = tenant_id;
+
+            console.log(`[Expenses/Update] 📝 Actualizando gasto ${global_id} - Tenant: ${tenantId}`);
+
+            if (!tenantId) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'tenant_id es requerido'
+                });
+            }
 
             // Verificar que el gasto existe y pertenece al tenant
             const existingResult = await pool.query(
