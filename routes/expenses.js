@@ -680,7 +680,16 @@ module.exports = (pool, io) => {
                 console.log(`[Sync/Expenses] ℹ️ Gasto de Desktop (reviewed_by_desktop=true) - NO se envía notificación push`);
             }
 
-            res.json({ success: true, data: responseData });
+            // Incluir receipt_image_url en la respuesta si es una URL de Cloudinary
+            const receiptImageUrl = responseData?.receipt_image?.startsWith('http')
+                ? responseData.receipt_image
+                : null;
+
+            res.json({
+                success: true,
+                data: responseData,
+                receipt_image_url: receiptImageUrl  // Para que Desktop actualice su registro local
+            });
         } catch (error) {
             console.error('[Sync/Expenses] Error:', error);
             res.status(500).json({ success: false, message: 'Error al sincronizar gasto', error: error.message });
