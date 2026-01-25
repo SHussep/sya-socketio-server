@@ -986,7 +986,16 @@ module.exports = (pool, io) => {
                 e.local_op_seq,
                 e.created_local_utc,
                 e.device_event_raw,
-                e.created_at
+                e.created_at,
+                -- Imagen del comprobante (Cloudinary URL o indicador)
+                CASE
+                    WHEN e.receipt_image IS NOT NULL AND e.receipt_image LIKE 'http%' THEN e.receipt_image
+                    ELSE NULL
+                END as receipt_image_url,
+                CASE
+                    WHEN e.receipt_image IS NOT NULL AND LENGTH(e.receipt_image) > 0 THEN true
+                    ELSE false
+                END as has_receipt_image
             FROM expenses e
             LEFT JOIN employees emp ON e.employee_id = emp.id
             LEFT JOIN global_expense_categories gcat ON e.global_category_id = gcat.id
