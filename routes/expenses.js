@@ -1517,5 +1517,130 @@ module.exports = (pool, io) => {
         }
     });
 
+    // ═══════════════════════════════════════════════════════════════
+    // PUT /api/expenses/:global_id - Actualizar gasto existente
+    // Solo online, sin offline-first
+    // ═══════════════════════════════════════════════════════════════
+    router.put('/:global_id', authenticateToken, async (req, res) => {
+        try {
+            const { global_id } = req.params;
+            const tenantId = req.user?.tenantId;
+            const {
+                category,
+                description,
+                amount,
+                quantity,
+                receipt_image, // Puede ser Base64 nuevo o null para mantener existente
+                global_category_id,
+                payment_type_id,
+            } = req.body;
+
+            console.log(`[Expenses/Update] 📝 Actualizando gasto ${global_id}`);
+
+            // Verificar que el gasto existe y pertenece al tenant
+            const existingResult = await pool.query(
+                `SELECT * FROM expenses WHERE global_id = $1 AND tenant_id = $2`,
+                [global_id, tenantId]
+            );
+
+            if (existingResult.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Gasto no encontrado o no pertenece al tenant'
+                });
+            }
+
+            const existing = existingResult.rows[0];
+
+            // Procesar imagen si se envió una nueva
+            let receiptImageValue = existing.receipt_image; // Mantener existente por defecto
+            if (receipt_image !== undefined) {
+                if (receipt_image === null || receipt_image === '') {
+                    // Eliminar imagen
+                    receiptImageValue = null;
+                    console.log(`[Expenses/Update] 🗑️ Imagen eliminada`);
+                } else if (receipt_image.length > 100) {
+                    // Nueva imagen (Base64 largo)
+                    console.log(`[Expenses/Update] 📷 Nueva imagen recibida (${Math.round(receipt_image.length / 1024)}KB)`);
+
+                    if (cloudinaryService.isConfigured()) {
+                        try {
+                            console.log(`[Expenses/Update] ☁️ Subiendo imagen a Cloudinary...`);
+                            const cloudinaryResult = await cloudinaryService.uploadReceiptImage(receipt_image, {
+                                tenantId,
+                                branchId: existing.branch_id,
+                                employeeId: existing.employee_id,
+                                expenseGlobalId: global_id,
+                            });
+                            receiptImageValue = cloudinaryResult.url;
+                            console.log(`[Expenses/Update] ✅ Imagen subida: ${receiptImageValue}`);
+                        } catch (cloudinaryError) {
+                            console.error(`[Expenses/Update] ❌ Error Cloudinary:`, cloudinaryError.message);
+                            receiptImageValue = receipt_image; // Fallback a Base64
+                        }
+                    } else {
+                        receiptImageValue = receipt_image;
+                    }
+                }
+            }
+
+            // Resolver global_category_id si se envía categoría por nombre
+            let finalGlobalCategoryId = global_category_id || existing.global_category_id;
+            if (category && !global_category_id) {
+                const categoryMap = {
+                    'Gasolina': 1, 'Gas': 2, 'Mantenimiento': 3, 'Refacciones': 4,
+                    'Limpieza': 5, 'Oficina': 6, 'Servicios': 7, 'Comida empleados': 8,
+                    'Comida': 8, 'Transporte': 9, 'Publicidad': 10, 'Impuestos': 11,
+                    'Seguros': 12, 'Otros': 13, 'Faltante de caja': 14
+                };
+                finalGlobalCategoryId = categoryMap[category] || existing.global_category_id;
+            }
+
+            // Actualizar gasto
+            const updateResult = await pool.query(
+                `UPDATE expenses SET
+                    description = COALESCE($1, description),
+                    amount = COALESCE($2, amount),
+                    quantity = COALESCE($3, quantity),
+                    receipt_image = $4,
+                    global_category_id = COALESCE($5, global_category_id),
+                    payment_type_id = COALESCE($6, payment_type_id),
+                    updated_at = NOW()
+                WHERE global_id = $7 AND tenant_id = $8
+                RETURNING *`,
+                [
+                    description,
+                    amount ? parseFloat(amount) : null,
+                    quantity,
+                    receiptImageValue,
+                    finalGlobalCategoryId,
+                    payment_type_id,
+                    global_id,
+                    tenantId
+                ]
+            );
+
+            const updatedExpense = updateResult.rows[0];
+            if (updatedExpense) {
+                updatedExpense.amount = parseFloat(updatedExpense.amount);
+            }
+
+            console.log(`[Expenses/Update] ✅ Gasto actualizado: ${global_id}`);
+
+            res.json({
+                success: true,
+                message: 'Gasto actualizado correctamente',
+                data: updatedExpense
+            });
+        } catch (error) {
+            console.error('[Expenses/Update] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al actualizar gasto',
+                error: error.message
+            });
+        }
+    });
+
     return router;
 };
