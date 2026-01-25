@@ -7,6 +7,7 @@ const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
 const JWT_SECRET = process.env.JWT_SECRET;
 const { notifyExpenseCreated } = require('../utils/notificationHelper');
+const cloudinaryService = require('../services/cloudinaryService');
 
 // Middleware: Autenticación JWT
 function authenticateToken(req, res, next) {
@@ -572,9 +573,41 @@ module.exports = (pool, io) => {
                 if (finalConsumerEmployeeId) {
                     console.log(`[Sync/Expenses] 👤 Gasto asignado a consumer_employee_id: ${finalConsumerEmployeeId}`);
                 }
+
+                // ═══════════════════════════════════════════════════════════════
+                // CLOUDINARY: Subir imagen del recibo si existe
+                // ═══════════════════════════════════════════════════════════════
+                let receiptImageValue = null;
                 if (receipt_image) {
-                    console.log(`[Sync/Expenses] 📷 Imagen de recibo incluida (${Math.round(receipt_image.length / 1024)}KB)`);
+                    console.log(`[Sync/Expenses] 📷 Imagen de recibo recibida (${Math.round(receipt_image.length / 1024)}KB)`);
+
+                    // Verificar si Cloudinary está configurado
+                    if (cloudinaryService.isConfigured()) {
+                        try {
+                            console.log(`[Sync/Expenses] ☁️ Subiendo imagen a Cloudinary...`);
+                            const cloudinaryResult = await cloudinaryService.uploadReceiptImage(receipt_image, {
+                                tenantId,
+                                branchId,
+                                employeeId: finalEmployeeId,
+                                expenseGlobalId: finalGlobalId,
+                            });
+                            // Guardar solo la URL de Cloudinary (mucho más pequeña que el Base64)
+                            receiptImageValue = cloudinaryResult.url;
+                            console.log(`[Sync/Expenses] ✅ Imagen subida a Cloudinary: ${receiptImageValue}`);
+                        } catch (cloudinaryError) {
+                            console.error(`[Sync/Expenses] ❌ Error subiendo a Cloudinary:`, cloudinaryError.message);
+                            // Si falla Cloudinary, guardar Base64 como fallback
+                            console.log(`[Sync/Expenses] ⚠️ Usando Base64 como fallback`);
+                            receiptImageValue = receipt_image;
+                        }
+                    } else {
+                        // Cloudinary no configurado, usar Base64 (comportamiento legacy)
+                        console.log(`[Sync/Expenses] ⚠️ Cloudinary no configurado, guardando Base64 directamente`);
+                        receiptImageValue = receipt_image;
+                    }
                 }
+                // ═══════════════════════════════════════════════════════════════
+
                 result = await pool.query(
                     `INSERT INTO expenses (
                         tenant_id, branch_id, employee_id, consumer_employee_id, payment_type_id, id_turno, global_category_id, description, amount, quantity, expense_date,
@@ -598,7 +631,7 @@ module.exports = (pool, io) => {
                         finalStatus,                  // $12 - Status (draft/confirmed/deleted)
                         reviewedValue,                // $13 - TRUE para Desktop, FALSE para Mobile
                         // is_active = true (hardcoded)
-                        receipt_image || null,        // $14 - Imagen del recibo en Base64
+                        receiptImageValue,            // $14 - URL de Cloudinary o Base64 (fallback)
                         finalGlobalId,                // $15 - UUID (Desktop) o generado (Mobile)
                         finalTerminalId,              // $16 - UUID (Desktop) o generado (Mobile)
                         finalLocalOpSeq,              // $17 - Sequence (Desktop) o 0 (Mobile)
@@ -1376,6 +1409,7 @@ module.exports = (pool, io) => {
     });
 
     // GET /api/expenses/:global_id/image - Obtener imagen del recibo
+    // Soporta tanto URLs de Cloudinary como Base64 legacy
     router.get('/:global_id/image', authenticateToken, async (req, res) => {
         try {
             const { global_id } = req.params;
@@ -1403,13 +1437,21 @@ module.exports = (pool, io) => {
                 });
             }
 
-            console.log(`[Expenses/Image] ✅ Imagen encontrada (${Math.round(receiptImage.length / 1024)}KB)`);
+            // Detectar si es URL de Cloudinary o Base64 legacy
+            const isCloudinaryUrl = receiptImage.startsWith('http://') || receiptImage.startsWith('https://');
+
+            if (isCloudinaryUrl) {
+                console.log(`[Expenses/Image] ✅ URL de Cloudinary encontrada`);
+            } else {
+                console.log(`[Expenses/Image] ✅ Imagen Base64 encontrada (${Math.round(receiptImage.length / 1024)}KB)`);
+            }
 
             res.json({
                 success: true,
                 data: {
                     global_id,
-                    receipt_image: receiptImage
+                    receipt_image: receiptImage,
+                    is_url: isCloudinaryUrl, // true = URL de Cloudinary, false = Base64
                 }
             });
         } catch (error) {
