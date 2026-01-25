@@ -391,7 +391,10 @@ async function sendNotificationToEmployee(employeeId, { title, body, data = {} }
         }
 
         // 🔍 DEBUG: Log cantidad de tokens para detectar duplicados
-        console.log(`[NotificationHelper] 📱 Employee ${employeeIdNumeric} tiene ${deviceTokens.length} dispositivo(s) activo(s)`);
+        console.log(`[NotificationHelper] 📱 Employee ${employeeIdNumeric} (global_id: ${employeeId}) tiene ${deviceTokens.length} dispositivo(s) activo(s)`);
+        if (deviceTokens.length > 1) {
+            console.log(`[NotificationHelper] ⚠️ ADVERTENCIA: Employee ${employeeIdNumeric} tiene MÚLTIPLES dispositivos activos - se enviarán ${deviceTokens.length} notificaciones`);
+        }
 
         const results = await sendNotificationToMultipleDevices(deviceTokens, {
             title,
@@ -790,6 +793,8 @@ async function notifyScaleConnection(branchId, { message }) {
  */
 async function notifyExpenseCreated(employeeGlobalId, { expenseId, amount, description, category, branchId, branchName, employeeName }) {
     try {
+        console.log(`[NotificationHelper] 💸 Iniciando notificación de gasto para empleado ${employeeName} (global_id: ${employeeGlobalId})`);
+
         // 1️⃣ Notificar al empleado/repartidor (notificación personalizada)
         const employeeResult = await sendNotificationToEmployee(employeeGlobalId, {
             title: '✏️ Gasto Registrado',
@@ -803,10 +808,11 @@ async function notifyExpenseCreated(employeeGlobalId, { expenseId, amount, descr
             }
         });
 
-        console.log(`[NotificationHelper] ✅ Notificación de gasto enviada al empleado ${employeeName} (global_id: ${employeeGlobalId}): ${employeeResult.sent}/${employeeResult.total || employeeResult.sent}`);
+        console.log(`[NotificationHelper] ✅ Notificación PERSONAL de gasto enviada al empleado ${employeeName} (global_id: ${employeeGlobalId}): ${employeeResult.sent}/${employeeResult.total || employeeResult.sent} dispositivos`);
 
         // 2️⃣ Notificar a administradores/encargados
         // EXCLUIR al empleado que ya recibió su notificación personal (evita duplicados)
+        console.log(`[NotificationHelper] 📤 Enviando notificación a admins de sucursal ${branchId}, EXCLUYENDO a ${employeeGlobalId}...`);
         const adminResult = await sendNotificationToAdminsInBranch(branchId, {
             title: '💸 Gasto Registrado',
             body: `${employeeName} registró $${amount.toFixed(2)} - ${description || category}`,
@@ -820,7 +826,7 @@ async function notifyExpenseCreated(employeeGlobalId, { expenseId, amount, descr
             }
         }, { excludeEmployeeGlobalId: employeeGlobalId, notificationType: 'notify_expense_created' });
 
-        console.log(`[NotificationHelper] ✅ Notificaciones de gasto enviadas a admins/encargados de sucursal ${branchId}: ${adminResult.sent}/${adminResult.total || adminResult.sent}`);
+        console.log(`[NotificationHelper] ✅ Notificaciones de gasto enviadas a ADMINS/ENCARGADOS de sucursal ${branchId}: ${adminResult.sent}/${adminResult.total || adminResult.sent} dispositivos (empleado ${employeeGlobalId} EXCLUIDO)`);
 
         // Guardar en historial de notificaciones (campana)
         const tenantResult = await pool.query('SELECT tenant_id FROM branches WHERE id = $1', [branchId]);
