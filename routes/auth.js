@@ -1,4 +1,5 @@
 const AuthController = require('../controllers/authController');
+const { loginRateLimiter } = require('../middleware/rateLimiter');
 
 module.exports = function (pool) {
     const router = require('express').Router();
@@ -17,17 +18,14 @@ module.exports = function (pool) {
     router.post('/gmail/oauth-callback', bind(authController.exchangeGmailCode));
     router.post('/gmail/refresh-token', bind(authController.refreshGmailToken));
 
-    // Debug
-    router.get('/debug-employee/:email', bind(authController.debugEmployee));
-
-    // Login
-    router.post('/desktop-login', bind(authController.desktopLogin));
-    router.post('/mobile-login', bind(authController.mobileLogin));
+    // Login (con rate limiting para prevenir fuerza bruta)
+    router.post('/desktop-login', loginRateLimiter, bind(authController.desktopLogin));
+    router.post('/mobile-login', loginRateLimiter, bind(authController.mobileLogin));
     router.post('/refresh-token', bind(authController.refreshToken));
 
-    // Google Auth
-    router.post('/google-signup', bind(authController.googleSignup));
-    router.post('/google-login', bind(authController.googleLogin));
+    // Google Auth (con rate limiting)
+    router.post('/google-signup', loginRateLimiter, bind(authController.googleSignup));
+    router.post('/google-login', loginRateLimiter, bind(authController.googleLogin));
 
     // Devices
     router.post('/devices/register', bind(authController.registerDevice));

@@ -220,63 +220,12 @@ class AuthController {
         }
     }
 
-    async debugEmployee(req, res) {
-        try {
-            const email = req.params.email;
-            console.log(`[DEBUG] Buscando empleado: ${email}`);
-
-            const result = await this.pool.query(
-                `SELECT id, tenant_id, email, username, first_name, last_name,
-                        password_hash, is_active, role_id, created_at
-                 FROM employees
-                 WHERE LOWER(email) = LOWER($1)`,
-                [email]
-            );
-
-            const employees = result.rows.map(emp => ({
-                id: emp.id,
-                tenant_id: emp.tenant_id,
-                email: emp.email,
-                username: emp.username,
-                first_name: emp.first_name,
-                last_name: emp.last_name,
-                is_active: emp.is_active,
-                role_id: emp.role_id,
-                created_at: emp.created_at,
-                has_password: !!emp.password_hash,
-                password_length: emp.password_hash ? emp.password_hash.length : 0,
-                password_preview: emp.password_hash ? emp.password_hash.substring(0, 20) + '...' : 'NULL'
-            }));
-
-            res.json({
-                success: true,
-                count: employees.length,
-                employees: employees
-            });
-        } catch (error) {
-            console.error('[DEBUG] Error:', error);
-            res.status(500).json({
-                success: false,
-                error: error.message
-            });
-        }
-    }
-
     async desktopLogin(req, res) {
-        console.log('[Desktop Login] Nueva solicitud de login');
-        console.log('[Desktop Login] Headers:', JSON.stringify(req.headers));
-        console.log('[Desktop Login] Body:', JSON.stringify(req.body));
-
         const { email, password, branchId, tenantCode } = req.body;
 
-        console.log('[Desktop Login] Parsed values:');
-        console.log('  - tenantCode:', tenantCode);
-        console.log('  - email:', email);
-        console.log('  - password:', password ? `(${password.length} chars)` : 'undefined');
-        console.log('  - branchId:', branchId);
+        console.log(`[Desktop Login] Intento de login: email=${email}, tenantCode=${tenantCode}`);
 
         if (!tenantCode || !email || !password) {
-            console.log('[Desktop Login] ❌ Validación falló - credenciales incompletas');
             return res.status(400).json({
                 success: false,
                 message: 'TenantCode, Email y contraseña son requeridos'
@@ -313,10 +262,7 @@ class AuthController {
             console.log(`[Desktop Login] Empleados encontrados: ${employeeResult.rows.length}`);
 
             if (employeeResult.rows.length > 1) {
-                console.log('[Desktop Login] ⚠️ ADVERTENCIA: Múltiples empleados con el mismo email/username:');
-                employeeResult.rows.forEach((emp, idx) => {
-                    console.log(`  ${idx + 1}. ID: ${emp.id}, Tenant: ${emp.tenant_id}, Email: ${emp.email}, Password: ${emp.password ? 'EXISTS' : 'NULL'}`);
-                });
+                console.log('[Desktop Login] ADVERTENCIA: Multiples empleados con el mismo email');
             }
 
             if (employeeResult.rows.length === 0) {
@@ -328,8 +274,7 @@ class AuthController {
             }
 
             const employee = employeeResult.rows[0];
-            console.log(`[Desktop Login] Empleado seleccionado: ID ${employee.id}, Tenant ${employee.tenant_id}, Email ${employee.email}`);
-            console.log(`[Desktop Login] Password en DB: ${employee.password_hash ? 'EXISTS (length: ' + employee.password_hash.length + ')' : 'NULL/UNDEFINED'}`);
+            console.log(`[Desktop Login] Empleado encontrado: ID ${employee.id}, Email ${employee.email}`);
 
             if (!employee.password_hash) {
                 console.log(`[Desktop Login] ⚠️ Empleado ${employee.email} no tiene contraseña configurada`);
@@ -341,20 +286,12 @@ class AuthController {
 
             let validPassword = false;
             try {
-                console.log('[Desktop Login] Comparando contraseñas...');
-                console.log(`  - Password from request: ${password ? 'EXISTS' : 'UNDEFINED'} (length: ${password?.length})`);
-                console.log(`  - Password from DB: ${employee.password_hash ? 'EXISTS' : 'UNDEFINED'} (starts with: ${employee.password_hash?.substring(0, 10)}...)`);
-
                 validPassword = await bcrypt.compare(password, employee.password_hash);
-                console.log(`[Desktop Login] Resultado comparación: ${validPassword}`);
             } catch (bcryptError) {
-                console.error('[Desktop Login] ❌ Error en bcrypt.compare:', bcryptError);
-                console.error('  - password (input):', password);
-                console.error('  - employee.password_hash (hash):', employee.password_hash);
+                console.error('[Desktop Login] Error en verificacion de password');
                 return res.status(500).json({
                     success: false,
-                    message: 'Error en el servidor',
-                    error: `bcrypt error: ${bcryptError.message}`
+                    message: 'Error en el servidor'
                 });
             }
 
@@ -1521,14 +1458,10 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                 });
             }
 
-            console.error('[Device Register] Error:', error);
-            console.error('[Device Register] Error stack:', error.stack);
-            console.error('[Device Register] Request data:', { tenantId, branchId, employeeId, deviceId, deviceName, deviceType });
+            console.error('[Device Register] Error:', error.message);
             res.status(500).json({
                 success: false,
-                message: 'Error al registrar dispositivo',
-                error: error.message,
-                details: error.stack
+                message: 'Error al registrar dispositivo'
             });
         } finally {
             client.release();

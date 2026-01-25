@@ -1,32 +1,14 @@
 // ═══════════════════════════════════════════════════════════════
-// DEVICES ROUTES - Gestión de dispositivos (Primary/Auxiliar)
+// DEVICES ROUTES - Gestion de dispositivos (Primary/Auxiliar)
 // ═══════════════════════════════════════════════════════════════
 
 const express = require('express');
-const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const JWT_SECRET = process.env.JWT_SECRET;
-
-// Middleware: Autenticación JWT
-function authenticateToken(req, res, next) {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
-
-    if (!token) {
-        return res.status(401).json({ success: false, message: 'Token no proporcionado' });
-    }
-
-    jwt.verify(token, JWT_SECRET, (err, user) => {
-        if (err) {
-            return res.status(403).json({ success: false, message: 'Token inválido o expirado' });
-        }
-        req.user = user;
-        next();
-    });
-}
+const { createAuthMiddleware } = require('../middleware/auth');
 
 module.exports = (pool) => {
     const router = express.Router();
+    const authenticateToken = createAuthMiddleware(pool);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // POST /api/devices/claim-primary - Reclamar rol de Equipo Principal
@@ -38,7 +20,7 @@ module.exports = (pool) => {
 
         try {
             const { device_id, device_name, branch_id, admin_password_hash } = req.body;
-            const tenantId = req.user.tenantId || req.body.tenant_id;
+            const tenantId = req.user.tenantId; // SEGURO: Solo del JWT, nunca del body
 
             console.log(`[Devices] POST /claim-primary - Device: ${device_id?.substring(0, 10)}..., Branch: ${branch_id}`);
 
@@ -199,7 +181,7 @@ module.exports = (pool) => {
     router.post('/register', authenticateToken, async (req, res) => {
         try {
             const { device_id, device_name, device_type, branch_id } = req.body;
-            const tenantId = req.user.tenantId || req.body.tenant_id;
+            const tenantId = req.user.tenantId; // SEGURO: Solo del JWT, nunca del body
 
             console.log(`[Devices] POST /register - Device: ${device_id?.substring(0, 10)}..., Type: ${device_type}`);
 
@@ -295,7 +277,7 @@ module.exports = (pool) => {
     router.post('/heartbeat', authenticateToken, async (req, res) => {
         try {
             const { device_id, branch_id } = req.body;
-            const tenantId = req.user.tenantId || req.body.tenant_id;
+            const tenantId = req.user.tenantId; // SEGURO: Solo del JWT, nunca del body
 
             if (!device_id || !branch_id || !tenantId) {
                 return res.status(400).json({

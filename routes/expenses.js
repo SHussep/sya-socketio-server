@@ -3,32 +3,14 @@
 // ═══════════════════════════════════════════════════════════════
 
 const express = require('express');
-const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
-const JWT_SECRET = process.env.JWT_SECRET;
 const { notifyExpenseCreated } = require('../utils/notificationHelper');
 const cloudinaryService = require('../services/cloudinaryService');
-
-// Middleware: Autenticación JWT
-function authenticateToken(req, res, next) {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
-
-    if (!token) {
-        return res.status(401).json({ success: false, message: 'Token no proporcionado' });
-    }
-
-    jwt.verify(token, JWT_SECRET, (err, user) => {
-        if (err) {
-            return res.status(403).json({ success: false, message: 'Token inválido o expirado' });
-        }
-        req.user = user;
-        next();
-    });
-}
+const { createAuthMiddleware } = require('../middleware/auth');
 
 module.exports = (pool, io) => {
     const router = express.Router();
+    const authenticateToken = createAuthMiddleware(pool);
 
     // GET /api/expenses - Obtener gastos por sucursal y rango de fechas
     // 🔧 FIX: Agregar authenticateToken para que req.user tenga tenantId
@@ -1386,19 +1368,19 @@ module.exports = (pool, io) => {
         }
     });
 
-    // DELETE /api/expenses/:global_id - Eliminar gasto (usuario móvil o rechazado)
-    // Sin JWT - usa tenant_id del query string (consistente con otras rutas)
-    router.delete('/:global_id', async (req, res) => {
+    // DELETE /api/expenses/:global_id - Eliminar gasto (usuario movil o rechazado)
+    // SEGURIDAD: Requiere JWT - tenant_id viene del token, no del query
+    router.delete('/:global_id', authenticateToken, async (req, res) => {
         try {
             const { global_id } = req.params;
-            const tenantId = req.query.tenant_id;
+            const tenantId = req.user.tenantId; // SEGURO: Del JWT, no del query
 
-            console.log(`[Expenses/Delete] 🗑️ Eliminando gasto ${global_id} - Tenant: ${tenantId}`);
+            console.log(`[Expenses/Delete] Eliminando gasto ${global_id} - Tenant: ${tenantId}`);
 
             if (!tenantId) {
-                return res.status(400).json({
+                return res.status(401).json({
                     success: false,
-                    message: 'tenant_id es requerido'
+                    message: 'Token invalido - tenant_id no encontrado'
                 });
             }
 

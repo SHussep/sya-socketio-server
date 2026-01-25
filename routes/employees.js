@@ -4,9 +4,11 @@
 
 const express = require('express');
 const bcrypt = require('bcryptjs');
+const { createTenantValidationMiddleware } = require('../middleware/deviceAuth');
 
 module.exports = (pool) => {
     const router = express.Router();
+    const validateSyncTenant = createTenantValidationMiddleware(pool);
 
     // ═════════════════════════════════════════════════════════════
     // HELPER: Detect if a string is already a BCrypt hash
@@ -49,8 +51,8 @@ module.exports = (pool) => {
     };
 
     // POST /api/employees - Sync employee from Desktop or Mobile app
-    // Handles password hashing and mobile-specific logic
-    router.post('/', async (req, res) => {
+    // validateSyncTenant verifica que tenant existe y employee pertenece al tenant
+    router.post('/', validateSyncTenant, async (req, res) => {
         const client = await pool.connect();
         try {
             const {
