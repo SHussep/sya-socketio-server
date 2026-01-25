@@ -143,9 +143,153 @@ function isConfigured() {
   );
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// IMÁGENES DE PRODUCTOS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * URLs fijas para imágenes de productos semilla.
+ * Estas imágenes son compartidas entre todos los tenants para ahorrar espacio.
+ * Estructura: sya-seed-products/{nombre_imagen}
+ */
+const SEED_PRODUCT_IMAGES = {
+  9001: 'sya-seed-products/tortilla_maiz',      // Tortilla de Maíz
+  9002: 'sya-seed-products/masa',               // Masa
+  9003: 'sya-seed-products/totopos',            // Totopos
+  9004: 'sya-seed-products/salsa_roja',         // Salsa Roja
+  9005: 'sya-seed-products/salsa_verde',        // Salsa Verde
+  9006: 'sya-seed-products/tortilla_harina',    // Tortilla de Harina
+};
+
+/**
+ * Obtiene la URL de Cloudinary para una imagen de producto semilla
+ * @param {number} productId - ID del producto semilla (9001-9006)
+ * @returns {string|null} URL de Cloudinary o null si no es producto semilla
+ */
+function getSeedProductImageUrl(productId) {
+  const publicId = SEED_PRODUCT_IMAGES[productId];
+  if (!publicId) {
+    return null;
+  }
+
+  // Generar URL optimizada
+  return cloudinary.url(publicId, {
+    secure: true,
+    transformation: [
+      { width: 400, height: 400, crop: 'limit' },
+      { quality: 'auto:good' },
+      { fetch_format: 'auto' },
+    ],
+  });
+}
+
+/**
+ * Verifica si un producto tiene una imagen semilla predeterminada
+ * @param {number} productId - ID del producto
+ * @returns {boolean}
+ */
+function isSeedProduct(productId) {
+  return productId >= 9001 && productId <= 9006;
+}
+
+/**
+ * Sube una imagen de producto personalizada a Cloudinary
+ * @param {string} base64Image - Imagen en Base64
+ * @param {object} options - Opciones
+ * @param {number} options.tenantId - ID del tenant
+ * @param {number} options.productId - ID del producto (local)
+ * @param {string} options.globalId - Global ID del producto
+ * @returns {Promise<{url: string, publicId: string}>}
+ */
+async function uploadProductImage(base64Image, options) {
+  const { tenantId, productId, globalId } = options;
+
+  if (!isConfigured()) {
+    console.error('[Cloudinary] ❌ Variables de entorno no configuradas');
+    throw new Error('Cloudinary no está configurado');
+  }
+
+  // Asegurar prefijo correcto
+  let imageData = base64Image;
+  if (!base64Image.startsWith('data:')) {
+    imageData = `data:image/jpeg;base64,${base64Image}`;
+  }
+
+  // Carpeta organizada por tenant: sya-products/tenant_{id}/
+  const folder = `sya-products/tenant_${tenantId}`;
+  const publicId = `${folder}/product_${productId}_${globalId}`;
+
+  console.log(`[Cloudinary] 📤 Subiendo imagen de producto a ${publicId}...`);
+  const startTime = Date.now();
+
+  try {
+    const result = await cloudinary.uploader.upload(imageData, {
+      public_id: publicId,
+      overwrite: true,
+      resource_type: 'image',
+      transformation: [
+        { width: 800, height: 800, crop: 'limit' },
+        { quality: 'auto:good' },
+        { fetch_format: 'auto' },
+      ],
+      tags: [`tenant_${tenantId}`, `product_${productId}`, 'product-image'],
+      context: {
+        tenant_id: String(tenantId),
+        product_id: String(productId),
+        global_id: globalId,
+      },
+    });
+
+    const elapsed = Date.now() - startTime;
+    console.log(`[Cloudinary] ✅ Imagen de producto subida en ${elapsed}ms`);
+    console.log(`[Cloudinary] URL: ${result.secure_url}`);
+
+    return {
+      url: result.secure_url,
+      publicId: result.public_id,
+    };
+  } catch (error) {
+    console.error('[Cloudinary] ❌ Error subiendo imagen de producto:', error.message);
+    throw error;
+  }
+}
+
+/**
+ * Elimina una imagen de producto de Cloudinary
+ * @param {string} publicId - Public ID de la imagen
+ * @returns {Promise<boolean>}
+ */
+async function deleteProductImage(publicId) {
+  if (!publicId) {
+    return false;
+  }
+
+  // No eliminar imágenes semilla (compartidas)
+  if (publicId.startsWith('sya-seed-products/')) {
+    console.log('[Cloudinary] ⚠️ No se puede eliminar imagen semilla compartida');
+    return false;
+  }
+
+  try {
+    console.log(`[Cloudinary] 🗑️ Eliminando imagen de producto: ${publicId}`);
+    const result = await cloudinary.uploader.destroy(publicId);
+    return result.result === 'ok';
+  } catch (error) {
+    console.error('[Cloudinary] ❌ Error eliminando imagen de producto:', error.message);
+    return false;
+  }
+}
+
 module.exports = {
+  // Receipts (gastos)
   uploadReceiptImage,
   deleteReceiptImage,
   getOptimizedUrl,
   isConfigured,
+  // Products (productos)
+  uploadProductImage,
+  deleteProductImage,
+  getSeedProductImageUrl,
+  isSeedProduct,
+  SEED_PRODUCT_IMAGES,
 };

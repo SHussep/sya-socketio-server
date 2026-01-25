@@ -8,6 +8,7 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const JWT_SECRET = process.env.JWT_SECRET;
+const cloudinaryService = require('../services/cloudinaryService');
 
 // Middleware: Autenticación JWT
 function authenticateToken(req, res, next) {
@@ -841,6 +842,128 @@ module.exports = (pool) => {
         } finally {
             client.release();
         }
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // POST /api/productos/upload-image - Subir imagen de producto a Cloudinary
+    // ═══════════════════════════════════════════════════════════════
+    // Para productos personalizados (no seed).
+    // Los productos seed usan URLs fijas compartidas.
+    // ═══════════════════════════════════════════════════════════════
+    router.post('/upload-image', async (req, res) => {
+        try {
+            const { tenant_id, product_id, global_id, image_base64 } = req.body;
+
+            if (!tenant_id || !product_id || !global_id || !image_base64) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Datos incompletos (tenant_id, product_id, global_id, image_base64 requeridos)'
+                });
+            }
+
+            // Verificar si es producto seed
+            if (cloudinaryService.isSeedProduct(product_id)) {
+                // Retornar URL fija de imagen seed
+                const seedUrl = cloudinaryService.getSeedProductImageUrl(product_id);
+                console.log(`[Productos/UploadImage] 🌱 Producto seed ${product_id} - usando URL fija: ${seedUrl}`);
+
+                return res.json({
+                    success: true,
+                    message: 'Producto seed - usando imagen compartida',
+                    data: {
+                        image_url: seedUrl,
+                        is_seed: true
+                    }
+                });
+            }
+
+            // Verificar si Cloudinary está configurado
+            if (!cloudinaryService.isConfigured()) {
+                console.log('[Productos/UploadImage] ⚠️ Cloudinary no configurado');
+                return res.status(503).json({
+                    success: false,
+                    message: 'Servicio de imágenes no disponible'
+                });
+            }
+
+            console.log(`[Productos/UploadImage] 📤 Subiendo imagen para producto ${product_id} (tenant ${tenant_id})`);
+
+            // Subir a Cloudinary
+            const result = await cloudinaryService.uploadProductImage(image_base64, {
+                tenantId: tenant_id,
+                productId: product_id,
+                globalId: global_id
+            });
+
+            // Actualizar image_url en la base de datos
+            await pool.query(
+                `UPDATE productos
+                 SET image_url = $1, updated_at = NOW()
+                 WHERE global_id = $2 AND tenant_id = $3`,
+                [result.url, global_id, tenant_id]
+            );
+
+            console.log(`[Productos/UploadImage] ✅ Imagen subida: ${result.url}`);
+
+            res.json({
+                success: true,
+                message: 'Imagen subida exitosamente',
+                data: {
+                    image_url: result.url,
+                    public_id: result.publicId,
+                    is_seed: false
+                }
+            });
+
+        } catch (error) {
+            console.error('[Productos/UploadImage] ❌ Error:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Error al subir imagen',
+                error: error.message
+            });
+        }
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // GET /api/productos/seed-image/:productId - Obtener URL de imagen seed
+    // ═══════════════════════════════════════════════════════════════
+    router.get('/seed-image/:productId', (req, res) => {
+        const productId = parseInt(req.params.productId);
+
+        if (!cloudinaryService.isSeedProduct(productId)) {
+            return res.status(404).json({
+                success: false,
+                message: 'No es un producto seed'
+            });
+        }
+
+        const imageUrl = cloudinaryService.getSeedProductImageUrl(productId);
+
+        res.json({
+            success: true,
+            data: {
+                product_id: productId,
+                image_url: imageUrl,
+                is_seed: true
+            }
+        });
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // GET /api/productos/seed-images - Obtener todas las URLs de imágenes seed
+    // ═══════════════════════════════════════════════════════════════
+    router.get('/seed-images', (req, res) => {
+        const seedImages = {};
+
+        for (const productId of [9001, 9002, 9003, 9004, 9005, 9006]) {
+            seedImages[productId] = cloudinaryService.getSeedProductImageUrl(productId);
+        }
+
+        res.json({
+            success: true,
+            data: seedImages
+        });
     });
 
     // ═══════════════════════════════════════════════════════════════
