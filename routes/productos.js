@@ -967,6 +967,69 @@ module.exports = (pool) => {
     });
 
     // ═══════════════════════════════════════════════════════════════
+    // POST /api/productos/delete-image - Eliminar imagen de Cloudinary
+    // ═══════════════════════════════════════════════════════════════
+    router.post('/delete-image', async (req, res) => {
+        try {
+            const { image_url } = req.body;
+
+            if (!image_url) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Se requiere image_url'
+                });
+            }
+
+            console.log(`[Productos/DeleteImage] Eliminando imagen: ${image_url}`);
+
+            // Extraer public_id de la URL de Cloudinary
+            // URL format: https://res.cloudinary.com/cloud_name/image/upload/v1234567890/folder/filename.ext
+            const urlMatch = image_url.match(/\/upload\/(?:v\d+\/)?(.+?)(?:\.[^.]+)?$/);
+            if (!urlMatch) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'URL de imagen inválida'
+                });
+            }
+
+            const publicId = urlMatch[1];
+
+            // No eliminar imágenes seed (compartidas)
+            if (publicId.startsWith('sya-seed-products/')) {
+                console.log(`[Productos/DeleteImage] ⚠️ No se elimina imagen seed: ${publicId}`);
+                return res.json({
+                    success: false,
+                    message: 'No se puede eliminar imagen de producto semilla'
+                });
+            }
+
+            // Eliminar de Cloudinary
+            const deleted = await cloudinaryService.deleteProductImage(publicId);
+
+            if (deleted) {
+                console.log(`[Productos/DeleteImage] ✅ Imagen eliminada: ${publicId}`);
+                res.json({
+                    success: true,
+                    message: 'Imagen eliminada exitosamente'
+                });
+            } else {
+                res.json({
+                    success: false,
+                    message: 'No se pudo eliminar la imagen'
+                });
+            }
+
+        } catch (error) {
+            console.error('[Productos/DeleteImage] ❌ Error:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Error al eliminar imagen',
+                error: error.message
+            });
+        }
+    });
+
+    // ═══════════════════════════════════════════════════════════════
     // GET /api/productos/categories - Categorías de productos
     // ═══════════════════════════════════════════════════════════════
     router.get('/categories', authenticateToken, async (req, res) => {
