@@ -254,17 +254,27 @@ module.exports = (pool) => {
             // 2. Si se requiere balance, calcular saldo antes/después de cada pago
             if (include_balance === 'true' && normalizedPayments.length > 0) {
                 // Obtener TODAS las transacciones del cliente ordenadas por fecha
+                // ✅ FIX: Incluir ventas mixtas (tipo_pago_id = 4) con crédito
                 const transactionsResult = await pool.query(
                     `SELECT * FROM (
                         -- Ventas a crédito (aumentan deuda)
+                        -- Incluye crédito puro (3) y ventas mixtas (4) con credito_original > 0
                         SELECT
                             'sale' as type,
                             id_venta as id,
                             ticket_number,
-                            total as amount,
+                            -- Para crédito puro usar total, para mixto usar credito_original
+                            CASE tipo_pago_id
+                                WHEN 3 THEN total
+                                ELSE COALESCE(credito_original, total - COALESCE(monto_pagado, 0))
+                            END as amount,
                             fecha_venta_utc as date
                         FROM ventas
-                        WHERE id_cliente = $1 AND tenant_id = $2 AND tipo_pago_id = 3
+                        WHERE id_cliente = $1 AND tenant_id = $2
+                            AND (
+                                tipo_pago_id = 3  -- Crédito puro
+                                OR (tipo_pago_id = 4 AND COALESCE(credito_original, 0) > 0)  -- Mixto con crédito
+                            )
 
                         UNION ALL
 

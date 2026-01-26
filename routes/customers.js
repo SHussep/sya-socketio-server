@@ -759,6 +759,7 @@ module.exports = (pool) => {
             const tenantData = tenantResult.rows[0] || {};
 
             // 3. Ventas a crédito pendientes (no canceladas) CON sus items
+            // ✅ FIX: Incluir ventas mixtas (tipo_pago_id = 4) con crédito pendiente
             const salesQuery = `
                 SELECT
                     v.id_venta AS id,
@@ -766,8 +767,13 @@ module.exports = (pool) => {
                     v.fecha_venta_utc AS sale_date,
                     v.total AS amount,
                     v.monto_pagado AS amount_paid,
-                    (v.total - COALESCE(v.monto_pagado, 0)) AS pending_amount,
+                    -- Para crédito puro usar (total - pagado), para mixto usar credito_original menos pagos aplicados
+                    CASE v.tipo_pago_id
+                        WHEN 3 THEN (v.total - COALESCE(v.monto_pagado, 0))
+                        ELSE COALESCE(v.credito_original, v.total - COALESCE(v.monto_pagado, 0))
+                    END AS pending_amount,
                     v.notas AS notes,
+                    v.tipo_pago_id,
                     -- Items de la venta como JSON array
                     CASE
                         WHEN COUNT(vd.id_venta_detalle) > 0 THEN
@@ -786,10 +792,13 @@ module.exports = (pool) => {
                 LEFT JOIN ventas_detalle vd ON v.id_venta = vd.id_venta
                 WHERE v.id_cliente = $1
                     AND v.tenant_id = $2
-                    AND v.tipo_pago_id = 3
+                    AND (
+                        v.tipo_pago_id = 3  -- Crédito puro
+                        OR (v.tipo_pago_id = 4 AND COALESCE(v.credito_original, 0) > 0)  -- Mixto con crédito
+                    )
                     AND (v.status IS NULL OR v.status != 'cancelled')
                     AND (v.total - COALESCE(v.monto_pagado, 0)) > 0
-                GROUP BY v.id_venta, v.ticket_number, v.fecha_venta_utc, v.total, v.monto_pagado, v.notas
+                GROUP BY v.id_venta, v.ticket_number, v.fecha_venta_utc, v.total, v.monto_pagado, v.notas, v.tipo_pago_id, v.credito_original
                 ORDER BY v.fecha_venta_utc DESC
             `;
             const salesResult = await pool.query(salesQuery, [id, tenantId]);
@@ -921,15 +930,27 @@ module.exports = (pool) => {
             const hasNotasCredito = tableCheck.rows[0]?.has_notas_credito || false;
 
             // Query base sin notas de crédito
+            // ✅ FIX: Incluir ventas mixtas (tipo_pago_id = 4) que tienen crédito
+            // - tipo_pago_id = 3: Crédito puro → monto = total
+            // - tipo_pago_id = 4: Mixto con crédito → monto = credito_original
             let movementsQuery = `
                 WITH all_movements AS (
                     -- 1. Ventas a crédito (aumentan saldo)
+                    -- Incluye crédito puro (3) y ventas mixtas (4) con credito_original > 0
                     SELECT
                         v.id_venta AS id,
                         'credit_sale' AS movement_type,
-                        'Venta a crédito' AS movement_type_label,
+                        CASE v.tipo_pago_id
+                            WHEN 3 THEN 'Venta a crédito'
+                            WHEN 4 THEN 'Venta mixta (crédito)'
+                            ELSE 'Venta a crédito'
+                        END AS movement_type_label,
                         v.fecha_venta_utc AS movement_date,
-                        v.total AS amount,
+                        -- Para crédito puro usar total, para mixto usar credito_original
+                        CASE v.tipo_pago_id
+                            WHEN 3 THEN v.total
+                            ELSE COALESCE(v.credito_original, v.total - COALESCE(v.monto_pagado, 0))
+                        END AS amount,
                         NULL::NUMERIC AS balance_before,
                         NULL::NUMERIC AS balance_after,
                         v.ticket_number::TEXT AS reference,
@@ -943,18 +964,26 @@ module.exports = (pool) => {
                     LEFT JOIN branches b ON v.branch_id = b.id
                     WHERE v.id_cliente = $1
                         AND v.tenant_id = $2
-                        AND v.tipo_pago_id = 3
+                        AND (
+                            v.tipo_pago_id = 3  -- Crédito puro
+                            OR (v.tipo_pago_id = 4 AND COALESCE(v.credito_original, 0) > 0)  -- Mixto con crédito
+                        )
                         AND (v.status IS NULL OR v.status != 'cancelled')
 
                     UNION ALL
 
                     -- 2. Cancelaciones de venta a crédito (reducen saldo)
+                    -- Incluye cancelaciones de crédito puro (3) y ventas mixtas (4) con credito_original
                     SELECT
                         v.id_venta AS id,
                         'sale_cancellation' AS movement_type,
                         'Venta cancelada' AS movement_type_label,
                         v.updated_at AS movement_date,
-                        -v.total AS amount,
+                        -- Para crédito puro usar -total, para mixto usar -credito_original
+                        -CASE v.tipo_pago_id
+                            WHEN 3 THEN v.total
+                            ELSE COALESCE(v.credito_original, v.total - COALESCE(v.monto_pagado, 0))
+                        END AS amount,
                         NULL::NUMERIC AS balance_before,
                         NULL::NUMERIC AS balance_after,
                         v.ticket_number::TEXT AS reference,
@@ -968,7 +997,10 @@ module.exports = (pool) => {
                     LEFT JOIN branches b ON v.branch_id = b.id
                     WHERE v.id_cliente = $1
                         AND v.tenant_id = $2
-                        AND v.tipo_pago_id = 3
+                        AND (
+                            v.tipo_pago_id = 3  -- Crédito puro
+                            OR (v.tipo_pago_id = 4 AND COALESCE(v.credito_original, 0) > 0)  -- Mixto con crédito
+                        )
                         AND v.status = 'cancelled'
 
                     UNION ALL
@@ -1072,14 +1104,29 @@ module.exports = (pool) => {
             }
 
             // Calcular estadísticas
+            // ✅ FIX: Incluir ventas mixtas (tipo_pago_id = 4) con crédito
             const statsQuery = `
                 SELECT
-                    -- Total de ventas a crédito
-                    COALESCE(SUM(CASE WHEN tipo_pago_id = 3 AND (status IS NULL OR status != 'cancelled') THEN total ELSE 0 END), 0) AS total_credit_sales,
-                    COUNT(CASE WHEN tipo_pago_id = 3 AND (status IS NULL OR status != 'cancelled') THEN 1 END) AS credit_sales_count,
-                    -- Total de cancelaciones
-                    COALESCE(SUM(CASE WHEN tipo_pago_id = 3 AND status = 'cancelled' THEN total ELSE 0 END), 0) AS total_cancellations,
-                    COUNT(CASE WHEN tipo_pago_id = 3 AND status = 'cancelled' THEN 1 END) AS cancellations_count
+                    -- Total de ventas a crédito (crédito puro + crédito en ventas mixtas)
+                    COALESCE(SUM(CASE
+                        WHEN tipo_pago_id = 3 AND (status IS NULL OR status != 'cancelled') THEN total
+                        WHEN tipo_pago_id = 4 AND COALESCE(credito_original, 0) > 0 AND (status IS NULL OR status != 'cancelled') THEN credito_original
+                        ELSE 0
+                    END), 0) AS total_credit_sales,
+                    COUNT(CASE
+                        WHEN (tipo_pago_id = 3 OR (tipo_pago_id = 4 AND COALESCE(credito_original, 0) > 0))
+                             AND (status IS NULL OR status != 'cancelled') THEN 1
+                    END) AS credit_sales_count,
+                    -- Total de cancelaciones (crédito puro + crédito en ventas mixtas)
+                    COALESCE(SUM(CASE
+                        WHEN tipo_pago_id = 3 AND status = 'cancelled' THEN total
+                        WHEN tipo_pago_id = 4 AND COALESCE(credito_original, 0) > 0 AND status = 'cancelled' THEN credito_original
+                        ELSE 0
+                    END), 0) AS total_cancellations,
+                    COUNT(CASE
+                        WHEN (tipo_pago_id = 3 OR (tipo_pago_id = 4 AND COALESCE(credito_original, 0) > 0))
+                             AND status = 'cancelled' THEN 1
+                    END) AS cancellations_count
                 FROM ventas
                 WHERE id_cliente = $1 AND tenant_id = $2
             `;
