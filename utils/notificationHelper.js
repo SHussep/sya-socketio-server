@@ -1030,6 +1030,151 @@ async function notifyPreparationModeDeactivated(tenantId, branchId, { operatorNa
     }
 }
 
+/**
+ * Envía notificación cuando se realiza una venta a crédito
+ * Notifica a TODOS los administradores y encargados del TENANT
+ * @param {number} tenantId - ID del tenant
+ * @param {number} branchId - ID de la sucursal
+ * @param {object} params - Datos de la venta a crédito
+ */
+async function notifyCreditSaleCreated(tenantId, branchId, { ticketNumber, total, creditAmount, clientName, branchName, employeeName }) {
+    try {
+        const result = await sendNotificationToAdminsInTenant(tenantId, {
+            title: `💳 Venta a Crédito [${branchName}]`,
+            body: `${clientName}: $${creditAmount.toFixed(2)} de $${total.toFixed(2)} - Ticket #${ticketNumber}`,
+            data: {
+                type: 'credit_sale_created',
+                ticketNumber: ticketNumber.toString(),
+                total: total.toString(),
+                creditAmount: creditAmount.toString(),
+                clientName,
+                branchName,
+                employeeName,
+                branchId: branchId.toString(),
+                tenantId: tenantId.toString()
+            }
+        });
+
+        console.log(`[NotificationHelper] 💳 Notificación de venta a crédito enviada a admins del tenant ${tenantId}: ${result.sent}/${result.total || 0}`);
+
+        // Guardar en historial de notificaciones (campana)
+        await saveToNotificationHistory({
+            tenant_id: tenantId,
+            branch_id: branchId,
+            employee_id: null,
+            category: 'business',
+            event_type: 'credit_sale_created',
+            title: `💳 Venta a Crédito [${branchName}]`,
+            body: `${clientName}: $${creditAmount.toFixed(2)} de $${total.toFixed(2)} - Ticket #${ticketNumber}`,
+            data: { ticketNumber, total, creditAmount, clientName, branchName, employeeName }
+        });
+
+        return result;
+    } catch (error) {
+        console.error('[NotificationHelper] ❌ Error en notifyCreditSaleCreated:', error.message);
+        return { sent: 0, failed: 0, error: error.message };
+    }
+}
+
+/**
+ * Envía notificación cuando un cliente realiza un abono/pago
+ * Notifica a TODOS los administradores y encargados del TENANT
+ * @param {number} tenantId - ID del tenant
+ * @param {number} branchId - ID de la sucursal
+ * @param {object} params - Datos del pago recibido
+ */
+async function notifyClientPaymentReceived(tenantId, branchId, { paymentAmount, clientName, branchName, employeeName, remainingBalance, paymentMethod }) {
+    try {
+        const balanceText = remainingBalance > 0
+            ? `Saldo restante: $${remainingBalance.toFixed(2)}`
+            : 'Deuda liquidada';
+
+        const result = await sendNotificationToAdminsInTenant(tenantId, {
+            title: `💵 Abono Recibido [${branchName}]`,
+            body: `${clientName} abonó $${paymentAmount.toFixed(2)} (${paymentMethod || 'Efectivo'}) - ${balanceText}`,
+            data: {
+                type: 'client_payment_received',
+                paymentAmount: paymentAmount.toString(),
+                clientName,
+                branchName,
+                employeeName,
+                remainingBalance: remainingBalance.toString(),
+                paymentMethod: paymentMethod || 'Efectivo',
+                branchId: branchId.toString(),
+                tenantId: tenantId.toString()
+            }
+        });
+
+        console.log(`[NotificationHelper] 💵 Notificación de abono recibido enviada a admins del tenant ${tenantId}: ${result.sent}/${result.total || 0}`);
+
+        // Guardar en historial de notificaciones (campana)
+        await saveToNotificationHistory({
+            tenant_id: tenantId,
+            branch_id: branchId,
+            employee_id: null,
+            category: 'business',
+            event_type: 'client_payment_received',
+            title: `💵 Abono Recibido [${branchName}]`,
+            body: `${clientName} abonó $${paymentAmount.toFixed(2)} - ${balanceText}`,
+            data: { paymentAmount, clientName, branchName, employeeName, remainingBalance, paymentMethod }
+        });
+
+        return result;
+    } catch (error) {
+        console.error('[NotificationHelper] ❌ Error en notifyClientPaymentReceived:', error.message);
+        return { sent: 0, failed: 0, error: error.message };
+    }
+}
+
+/**
+ * Envía notificación cuando se cancela una venta
+ * Notifica a TODOS los administradores y encargados del TENANT
+ * @param {number} tenantId - ID del tenant
+ * @param {number} branchId - ID de la sucursal
+ * @param {object} params - Datos de la venta cancelada
+ */
+async function notifySaleCancelled(tenantId, branchId, { ticketNumber, total, reason, branchName, employeeName, authorizedBy }) {
+    try {
+        const reasonText = reason ? ` - ${reason}` : '';
+        const authText = authorizedBy ? ` (Autorizado por ${authorizedBy})` : '';
+
+        const result = await sendNotificationToAdminsInTenant(tenantId, {
+            title: `❌ Venta Cancelada [${branchName}]`,
+            body: `Ticket #${ticketNumber} ($${total.toFixed(2)}) cancelado por ${employeeName}${authText}${reasonText}`,
+            data: {
+                type: 'sale_cancelled',
+                ticketNumber: ticketNumber.toString(),
+                total: total.toString(),
+                reason: reason || '',
+                branchName,
+                employeeName,
+                authorizedBy: authorizedBy || '',
+                branchId: branchId.toString(),
+                tenantId: tenantId.toString()
+            }
+        });
+
+        console.log(`[NotificationHelper] ❌ Notificación de venta cancelada enviada a admins del tenant ${tenantId}: ${result.sent}/${result.total || 0}`);
+
+        // Guardar en historial de notificaciones (campana)
+        await saveToNotificationHistory({
+            tenant_id: tenantId,
+            branch_id: branchId,
+            employee_id: null,
+            category: 'business',
+            event_type: 'sale_cancelled',
+            title: `❌ Venta Cancelada [${branchName}]`,
+            body: `Ticket #${ticketNumber} ($${total.toFixed(2)}) cancelado por ${employeeName}${authText}${reasonText}`,
+            data: { ticketNumber, total, reason, branchName, employeeName, authorizedBy }
+        });
+
+        return result;
+    } catch (error) {
+        console.error('[NotificationHelper] ❌ Error en notifySaleCancelled:', error.message);
+        return { sent: 0, failed: 0, error: error.message };
+    }
+}
+
 module.exports = {
     sendNotificationToBranch,
     sendNotificationToAdminsInBranch,
@@ -1045,5 +1190,8 @@ module.exports = {
     notifyExpenseCreated,
     notifyAssignmentCreated,
     notifyPreparationModeActivated,
-    notifyPreparationModeDeactivated
+    notifyPreparationModeDeactivated,
+    notifyCreditSaleCreated,
+    notifyClientPaymentReceived,
+    notifySaleCancelled
 };

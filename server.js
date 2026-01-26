@@ -1078,6 +1078,76 @@ io.on('connection', (socket) => {
     });
 
     // ═══════════════════════════════════════════════════════════════
+    // BUSINESS ALERTS - Alertas de negocio (ventas a crédito, abonos, cancelaciones)
+    // ═══════════════════════════════════════════════════════════════
+
+    socket.on('credit_sale_created', async (data) => {
+        stats.totalEvents++;
+        // Desktop envía: total (monto a crédito), newBalance, previousBalance
+        const creditAmount = data.creditAmount || data.total || 0;
+        console.log(`[CREDIT_SALE] 💳 Venta a crédito en sucursal ${data.branchId}: Ticket #${data.ticketNumber}, Cliente: ${data.clientName}, Crédito: $${creditAmount}`);
+
+        try {
+            await notificationHelper.notifyCreditSaleCreated(data.tenantId, data.branchId, {
+                ticketNumber: data.ticketNumber,
+                total: data.total || creditAmount,
+                creditAmount: creditAmount,
+                clientName: data.clientName,
+                branchName: data.branchName,
+                employeeName: data.employeeName
+            });
+            console.log(`[CREDIT_SALE] ✅ Notificación FCM enviada para venta a crédito Ticket #${data.ticketNumber}`);
+        } catch (error) {
+            console.error(`[CREDIT_SALE] ❌ Error enviando notificación FCM:`, error.message);
+        }
+    });
+
+    socket.on('client_payment_received', async (data) => {
+        stats.totalEvents++;
+        // Desktop envía: amount (monto del pago), newBalance (saldo restante después del pago)
+        const paymentAmount = data.paymentAmount || data.amount || 0;
+        const remainingBalance = data.remainingBalance || data.newBalance || 0;
+        console.log(`[CLIENT_PAYMENT] 💵 Abono recibido en sucursal ${data.branchId}: Cliente: ${data.clientName}, Monto: $${paymentAmount}`);
+
+        try {
+            await notificationHelper.notifyClientPaymentReceived(data.tenantId, data.branchId, {
+                paymentAmount: paymentAmount,
+                clientName: data.clientName,
+                branchName: data.branchName,
+                employeeName: data.employeeName,
+                remainingBalance: remainingBalance,
+                paymentMethod: data.paymentMethod || 'Efectivo'
+            });
+            console.log(`[CLIENT_PAYMENT] ✅ Notificación FCM enviada para abono de ${data.clientName}`);
+        } catch (error) {
+            console.error(`[CLIENT_PAYMENT] ❌ Error enviando notificación FCM:`, error.message);
+        }
+    });
+
+    socket.on('sale_cancelled', async (data) => {
+        stats.totalEvents++;
+        // Desktop envía: cancellationReason, cancelledByEmployeeName, originalEmployeeName
+        const reason = data.reason || data.cancellationReason || '';
+        const employeeName = data.employeeName || data.cancelledByEmployeeName || 'Empleado';
+        const authorizedBy = data.authorizedBy || '';
+        console.log(`[SALE_CANCELLED] ❌ Venta cancelada en sucursal ${data.branchId}: Ticket #${data.ticketNumber}, Total: $${data.total}`);
+
+        try {
+            await notificationHelper.notifySaleCancelled(data.tenantId, data.branchId, {
+                ticketNumber: data.ticketNumber,
+                total: data.total,
+                reason: reason,
+                branchName: data.branchName,
+                employeeName: employeeName,
+                authorizedBy: authorizedBy
+            });
+            console.log(`[SALE_CANCELLED] ✅ Notificación FCM enviada para cancelación de Ticket #${data.ticketNumber}`);
+        } catch (error) {
+            console.error(`[SALE_CANCELLED] ❌ Error enviando notificación FCM:`, error.message);
+        }
+    });
+
+    // ═══════════════════════════════════════════════════════════════
     // PREPARATION MODE - Notificación en tiempo real a administradores
     // ═══════════════════════════════════════════════════════════════
     socket.on('preparation_mode_activated', async (data) => {
