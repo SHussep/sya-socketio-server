@@ -847,8 +847,8 @@ module.exports = (pool) => {
     // ═══════════════════════════════════════════════════════════════
     // POST /api/productos/upload-image - Subir imagen de producto a Cloudinary
     // ═══════════════════════════════════════════════════════════════
-    // Para productos personalizados (no seed).
-    // Los productos seed usan URLs fijas compartidas.
+    // Permite subir imágenes personalizadas para cualquier producto,
+    // incluyendo productos seed (cada tenant puede personalizar).
     // ═══════════════════════════════════════════════════════════════
     router.post('/upload-image', async (req, res) => {
         try {
@@ -861,20 +861,10 @@ module.exports = (pool) => {
                 });
             }
 
-            // Verificar si es producto seed
-            if (cloudinaryService.isSeedProduct(product_id)) {
-                // Retornar URL fija de imagen seed
-                const seedUrl = cloudinaryService.getSeedProductImageUrl(product_id);
-                console.log(`[Productos/UploadImage] 🌱 Producto seed ${product_id} - usando URL fija: ${seedUrl}`);
-
-                return res.json({
-                    success: true,
-                    message: 'Producto seed - usando imagen compartida',
-                    data: {
-                        image_url: seedUrl,
-                        is_seed: true
-                    }
-                });
+            // Nota: Ya no bloqueamos productos seed - cada tenant puede personalizar sus imágenes
+            const isSeed = cloudinaryService.isSeedProduct(product_id);
+            if (isSeed) {
+                console.log(`[Productos/UploadImage] 🌱 Producto seed ${product_id} - subiendo imagen personalizada para tenant ${tenant_id}`);
             }
 
             // Verificar si Cloudinary está configurado
@@ -903,15 +893,15 @@ module.exports = (pool) => {
                 [result.url, global_id, tenant_id]
             );
 
-            console.log(`[Productos/UploadImage] ✅ Imagen subida: ${result.url}`);
+            console.log(`[Productos/UploadImage] ✅ Imagen subida: ${result.url}${isSeed ? ' (producto seed personalizado)' : ''}`);
 
             res.json({
                 success: true,
-                message: 'Imagen subida exitosamente',
+                message: isSeed ? 'Imagen personalizada subida para producto seed' : 'Imagen subida exitosamente',
                 data: {
                     image_url: result.url,
                     public_id: result.publicId,
-                    is_seed: false
+                    is_seed: isSeed
                 }
             });
 
