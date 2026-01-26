@@ -45,8 +45,8 @@ const server = http.createServer(app);
 
 // Middleware
 app.use(cors());
-app.use(bodyParser.json({ limit: '2mb' }));  // Aumentado para soportar imágenes Base64 de recibos
-app.use(bodyParser.urlencoded({ extended: true, limit: '2mb' }));
+app.use(bodyParser.json({ limit: '10mb' }));  // Aumentado para soportar imágenes Base64 de productos
+app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 
 // ═══════════════════════════════════════════════════════════════
 // REST API ENDPOINTS
