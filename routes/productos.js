@@ -783,8 +783,9 @@ module.exports = (pool) => {
 
                         // Buscar todos los productos con global_id que terminen en este número
                         // y sean del mismo tenant (productos seed duplicados)
+                        // ✅ INCLUIR image_url para preservarla
                         const duplicates = await client.query(
-                            `SELECT id, global_id, descripcion
+                            `SELECT id, global_id, descripcion, image_url
                              FROM productos
                              WHERE tenant_id = $1
                              AND global_id LIKE 'SEED_PRODUCT_%'
@@ -798,7 +799,28 @@ module.exports = (pool) => {
                             console.log(`[Productos/CleanupDuplicates] 🔍 Encontrados ${duplicates.rows.length} duplicados para producto ${productNumber}`);
 
                             for (const dup of duplicates.rows) {
-                                console.log(`[Productos/CleanupDuplicates] 🗑️ Eliminando duplicado: id=${dup.id}, global_id=${dup.global_id}, descripcion=${dup.descripcion}`);
+                                console.log(`[Productos/CleanupDuplicates] 🗑️ Eliminando duplicado: id=${dup.id}, global_id=${dup.global_id}, descripcion=${dup.descripcion}, image_url=${dup.image_url || '(null)'}`);
+
+                                // ✅ PRESERVAR IMAGEN: Si el duplicado tiene image_url y el original no, transferirla
+                                if (dup.image_url) {
+                                    // Buscar el producto original (el que se queda) y verificar si tiene imagen
+                                    const original = await client.query(
+                                        `SELECT id, image_url FROM productos
+                                         WHERE tenant_id = $1 AND global_id = $2`,
+                                        [tenant_id, global_id]
+                                    );
+
+                                    if (original.rows.length > 0 && !original.rows[0].image_url) {
+                                        // Transferir imagen del duplicado al original
+                                        await client.query(
+                                            `UPDATE productos
+                                             SET image_url = $1, updated_at = NOW()
+                                             WHERE id = $2`,
+                                            [dup.image_url, original.rows[0].id]
+                                        );
+                                        console.log(`[Productos/CleanupDuplicates] 🖼️ Imagen transferida de duplicado ${dup.id} a original ${original.rows[0].id}: ${dup.image_url}`);
+                                    }
+                                }
 
                                 // Soft delete del duplicado
                                 await client.query(
