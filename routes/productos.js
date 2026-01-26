@@ -357,7 +357,7 @@ module.exports = (pool) => {
                     last_modified_local_utc = EXCLUDED.last_modified_local_utc,
                     needs_update = FALSE,
                     needs_delete = EXCLUDED.needs_delete,
-                    image_url = COALESCE(productos.image_url, EXCLUDED.image_url),
+                    image_url = COALESCE(EXCLUDED.image_url, productos.image_url),
                     updated_at = NOW()
                 RETURNING *,
                     (xmax = 0) AS inserted`,
@@ -496,7 +496,7 @@ module.exports = (pool) => {
                                 last_modified_local_utc = EXCLUDED.last_modified_local_utc,
                                 needs_update = FALSE,
                                 needs_delete = EXCLUDED.needs_delete,
-                                image_url = COALESCE(productos.image_url, EXCLUDED.image_url),
+                                image_url = COALESCE(EXCLUDED.image_url, productos.image_url),
                                 updated_at = NOW()
                             RETURNING (xmax = 0) AS inserted`,
                             [
