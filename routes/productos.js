@@ -293,6 +293,7 @@ module.exports = (pool) => {
             console.log(`[Productos/Sync] 🔄 Sincronizando producto - GlobalId: ${global_id}`);
             console.log(`[Productos/Sync] 📦 Descripcion: ${descripcion}, Tenant: ${tenant_id}`);
             console.log(`[Productos/Sync] 🏭 Proveedor: ID=${proveedor_id}, GlobalId=${proveedor_global_id}`);
+            console.log(`[Productos/Sync] 🖼️ ImageUrl recibido: ${image_url || '(null)'}`);  // Debug image
 
             // Validar campos requeridos
             if (!tenant_id || !descripcion || !global_id) {
