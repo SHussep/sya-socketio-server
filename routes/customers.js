@@ -1121,6 +1121,13 @@ module.exports = (pool) => {
 
             console.log(`[Customers/Movements] ✅ ${movementsResult.rows.length} movimientos encontrados`);
 
+            // Debug: contar por tipo de movimiento
+            const byType = {};
+            movementsResult.rows.forEach(m => {
+                byType[m.movement_type] = (byType[m.movement_type] || 0) + 1;
+            });
+            console.log(`[Customers/Movements] 📊 Desglose por tipo:`, byType);
+
             res.json({
                 success: true,
                 customer: {
