@@ -443,13 +443,13 @@ module.exports = (pool) => {
     });
 
     // ============================================================================
-    // PATCH /api/guardian/events/:id/hide
-    // Soft-delete (hide) a Guardian event
+    // DELETE /api/guardian/events/:id
+    // Delete a Guardian event permanently
     // ============================================================================
-    router.patch('/events/:id/hide', async (req, res) => {
+    router.delete('/events/:id', async (req, res) => {
         try {
             const { id } = req.params;
-            const { event_category, tenant_id, is_hidden = true } = req.body;
+            const { event_category, tenant_id } = req.body;
 
             if (!id || !event_category || !tenant_id) {
                 return res.status(400).json({
@@ -471,11 +471,10 @@ module.exports = (pool) => {
             }
 
             const result = await pool.query(
-                `UPDATE ${table}
-                 SET is_hidden = $1, updated_at = NOW()
-                 WHERE id = $2 AND tenant_id = $3
-                 RETURNING id, is_hidden`,
-                [is_hidden, id, tenant_id]
+                `DELETE FROM ${table}
+                 WHERE id = $1 AND tenant_id = $2
+                 RETURNING id`,
+                [id, tenant_id]
             );
 
             if (result.rows.length === 0) {
@@ -485,29 +484,29 @@ module.exports = (pool) => {
                 });
             }
 
-            console.log(`[Guardian] ${is_hidden ? '🙈 Evento ocultado' : '👁️ Evento visible'}: ${event_category} #${id}`);
+            console.log(`[Guardian] 🗑️ Evento eliminado: ${event_category} #${id}`);
 
             res.json({
                 success: true,
                 data: result.rows[0],
-                message: is_hidden ? 'Evento ocultado' : 'Evento visible'
+                message: 'Evento eliminado'
             });
 
         } catch (error) {
-            console.error('[Guardian/Hide] ❌ Error:', error.message);
+            console.error('[Guardian/Delete] ❌ Error:', error.message);
             res.status(500).json({
                 success: false,
-                message: 'Error al ocultar evento',
+                message: 'Error al eliminar evento',
                 error: error.message
             });
         }
     });
 
     // ============================================================================
-    // PATCH /api/guardian/events/hide-all
-    // Soft-delete (hide) all Guardian events for a date range
+    // DELETE /api/guardian/events/delete-all
+    // Delete all Guardian events for a date range permanently
     // ============================================================================
-    router.patch('/events/hide-all', async (req, res) => {
+    router.delete('/events/delete-all', async (req, res) => {
         try {
             const { tenant_id, branch_id, start_date, end_date } = req.body;
 
@@ -523,10 +522,9 @@ module.exports = (pool) => {
             const startOfDay = start_date || new Date(today.setHours(0, 0, 0, 0)).toISOString();
             const endOfDay = end_date || new Date(today.setHours(23, 59, 59, 999)).toISOString();
 
-            // Update suspicious_weighing_logs
+            // Delete from suspicious_weighing_logs
             let suspiciousQuery = `
-                UPDATE suspicious_weighing_logs
-                SET is_hidden = true, updated_at = NOW()
+                DELETE FROM suspicious_weighing_logs
                 WHERE tenant_id = $1
                   AND timestamp >= $2::timestamptz
                   AND timestamp < $3::timestamptz
@@ -540,10 +538,9 @@ module.exports = (pool) => {
 
             const suspiciousResult = await pool.query(suspiciousQuery, suspiciousParams);
 
-            // Update scale_disconnection_logs
+            // Delete from scale_disconnection_logs
             let disconnectionQuery = `
-                UPDATE scale_disconnection_logs
-                SET is_hidden = true, updated_at = NOW()
+                DELETE FROM scale_disconnection_logs
                 WHERE tenant_id = $1
                   AND disconnected_at >= $2::timestamptz
                   AND disconnected_at < $3::timestamptz
@@ -557,24 +554,24 @@ module.exports = (pool) => {
 
             const disconnectionResult = await pool.query(disconnectionQuery, disconnectionParams);
 
-            const totalHidden = suspiciousResult.rowCount + disconnectionResult.rowCount;
-            console.log(`[Guardian] 🙈 ${totalHidden} eventos ocultados (${suspiciousResult.rowCount} suspicious, ${disconnectionResult.rowCount} disconnections)`);
+            const totalDeleted = suspiciousResult.rowCount + disconnectionResult.rowCount;
+            console.log(`[Guardian] 🗑️ ${totalDeleted} eventos eliminados (${suspiciousResult.rowCount} suspicious, ${disconnectionResult.rowCount} disconnections)`);
 
             res.json({
                 success: true,
                 data: {
-                    suspiciousHidden: suspiciousResult.rowCount,
-                    disconnectionsHidden: disconnectionResult.rowCount,
-                    totalHidden
+                    suspiciousDeleted: suspiciousResult.rowCount,
+                    disconnectionsDeleted: disconnectionResult.rowCount,
+                    totalDeleted
                 },
-                message: `${totalHidden} eventos ocultados`
+                message: `${totalDeleted} eventos eliminados`
             });
 
         } catch (error) {
-            console.error('[Guardian/HideAll] ❌ Error:', error.message);
+            console.error('[Guardian/DeleteAll] ❌ Error:', error.message);
             res.status(500).json({
                 success: false,
-                message: 'Error al ocultar eventos',
+                message: 'Error al eliminar eventos',
                 error: error.message
             });
         }
