@@ -51,20 +51,22 @@ module.exports = (pool) => {
     };
 
     // ═════════════════════════════════════════════════════════════
-    // HELPER: Check email uniqueness per tenant
+    // HELPER: Check email uniqueness GLOBALLY (across all tenants)
+    // Owners (is_owner=true) are excluded because they share the
+    // tenant registration email and are unique per tenant.
     // ═════════════════════════════════════════════════════════════
     const checkEmailUniqueness = async (client, tenantId, email, excludeEmployeeId = null) => {
         if (!email) return null; // NULL emails are always allowed
 
         let query, params;
         if (excludeEmployeeId) {
-            query = `SELECT id, first_name, last_name FROM employees
-                     WHERE tenant_id = $1 AND LOWER(email) = LOWER($2) AND id != $3 AND is_active = true`;
-            params = [tenantId, email.trim(), excludeEmployeeId];
+            query = `SELECT id, first_name, last_name, tenant_id FROM employees
+                     WHERE LOWER(email) = LOWER($1) AND id != $2 AND is_active = true AND is_owner = false`;
+            params = [email.trim(), excludeEmployeeId];
         } else {
-            query = `SELECT id, first_name, last_name FROM employees
-                     WHERE tenant_id = $1 AND LOWER(email) = LOWER($2) AND is_active = true`;
-            params = [tenantId, email.trim()];
+            query = `SELECT id, first_name, last_name, tenant_id FROM employees
+                     WHERE LOWER(email) = LOWER($1) AND is_active = true AND is_owner = false`;
+            params = [email.trim()];
         }
 
         const result = await client.query(query, params);
@@ -73,7 +75,8 @@ module.exports = (pool) => {
             return {
                 exists: true,
                 employeeName: `${conflicting.first_name || ''} ${conflicting.last_name || ''}`.trim(),
-                employeeId: conflicting.id
+                employeeId: conflicting.id,
+                tenantId: conflicting.tenant_id
             };
         }
         return null;
