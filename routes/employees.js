@@ -1277,7 +1277,8 @@ module.exports = (pool) => {
                 isActive,
                 email,
                 password_hash,        // ✅ Nuevo: para sincronizar cambios de contraseña
-                passwordUpdatedAt     // ✅ Nuevo: timestamp del cambio de contraseña
+                passwordUpdatedAt,    // ✅ Nuevo: timestamp del cambio de contraseña
+                emailVerified         // ✅ Nuevo: sincronizar estado de verificación de email
             } = req.body;
 
             console.log(`[Employees/Update] 🔄 [UPDATE RECIBIDO] Actualizando empleado ID: ${employeeId}`);
@@ -1440,6 +1441,11 @@ module.exports = (pool) => {
                 // También actualizar password_updated_at
                 updates.push(`password_updated_at = NOW()`);
                 console.log(`[Employees/Update] 🔐 Actualizando password_hash para empleado ${employeeId}`);
+            }
+
+            // ✅ Sincronizar email_verified desde Desktop (solo permite poner en true, nunca revertir)
+            if (emailVerified === true) {
+                updates.push(`email_verified = true`);
             }
 
             // Always update timestamp
