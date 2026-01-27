@@ -627,21 +627,40 @@ function createRepartidorAssignmentRoutes(io) {
               return `• ${qty} ${unit} - ${row.product_name}`;
             });
 
-            console.log(`[RepartidorAssignments] 📨 Enviando notificación CONSOLIDADA para venta #${resolvedVentaId}`);
+            console.log(`[RepartidorAssignments] 📨 Enviando notificación para venta #${resolvedVentaId} (${totalItems} item(s))`);
             console.log(`   📦 Total: ${totalItems} producto(s), Monto total: $${totalAmount.toFixed(2)}`);
 
-            notificationData = {
-              assignmentId: assignment.id,
-              quantity: totalItems,
-              amount: totalAmount,
-              branchName,
-              branchId: branch_id,
-              employeeName,
-              createdByName,
-              isConsolidated: true,
-              itemCount: totalItems,
-              itemsBreakdown
-            };
+            if (totalItems === 1 && itemsResult.rows.length === 1) {
+              // Un solo producto con venta: usar datos reales del producto
+              const singleItem = itemsResult.rows[0];
+              notificationData = {
+                assignmentId: assignment.id,
+                quantity: parseFloat(singleItem.assigned_quantity),
+                amount: parseFloat(singleItem.assigned_amount),
+                unitAbbreviation: singleItem.unit_abbreviation || 'kg',
+                productName: singleItem.product_name,
+                branchName,
+                branchId: branch_id,
+                employeeName,
+                createdByName,
+                isConsolidated: false,
+                itemCount: 1
+              };
+            } else {
+              // Múltiples productos: notificación consolidada con desglose
+              notificationData = {
+                assignmentId: assignment.id,
+                quantity: totalItems,
+                amount: totalAmount,
+                branchName,
+                branchId: branch_id,
+                employeeName,
+                createdByName,
+                isConsolidated: true,
+                itemCount: totalItems,
+                itemsBreakdown
+              };
+            }
           } else {
             // ✅ INDIVIDUAL: Un solo producto sin venta asociada
             console.log(`[RepartidorAssignments] 📨 Enviando notificación INDIVIDUAL`);
