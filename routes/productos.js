@@ -1107,36 +1107,71 @@ module.exports = (pool) => {
 
             console.log(`[Productos/ForceSync] 🗑️ ${productsToDelete.length} productos a eliminar`);
 
-            // 3. HARD DELETE de productos que no existen localmente
+            // 3. Eliminar productos que no existen localmente
+            // SEGURO: Verificar si tienen historial (ventas, asignaciones, notas de crédito)
+            // - Sin historial → HARD DELETE
+            // - Con historial → SOFT DELETE (eliminado = true) para preservar integridad referencial
             const deletedProducts = [];
+            const softDeletedProducts = [];
             for (const prod of productsToDelete) {
-                // Eliminar imagen de Cloudinary si existe (excepto seeds compartidos)
-                if (prod.image_url && !prod.image_url.includes('sya-seed-products')) {
-                    try {
-                        const urlMatch = prod.image_url.match(/\/upload\/(?:v\d+\/)?(.+?)(?:\.[^.]+)?$/);
-                        if (urlMatch) {
-                            const publicId = urlMatch[1];
-                            await cloudinaryService.deleteProductImage(publicId);
-                            console.log(`[Productos/ForceSync] 🖼️ Imagen eliminada: ${publicId}`);
-                        }
-                    } catch (imgErr) {
-                        console.log(`[Productos/ForceSync] ⚠️ Error eliminando imagen: ${imgErr.message}`);
-                    }
-                }
-
-                // HARD DELETE del producto
-                await client.query(
-                    `DELETE FROM productos WHERE id = $1`,
+                // Verificar si el producto tiene registros asociados
+                const hasHistory = await client.query(
+                    `SELECT EXISTS(
+                        SELECT 1 FROM ventas_detalle WHERE id_producto = $1
+                        UNION ALL
+                        SELECT 1 FROM repartidor_assignments WHERE product_id = $1
+                        UNION ALL
+                        SELECT 1 FROM repartidor_returns WHERE product_id = $1
+                        UNION ALL
+                        SELECT 1 FROM notas_credito_detalle WHERE producto_id = $1
+                    ) AS has_refs`,
                     [prod.id]
                 );
 
-                deletedProducts.push({
-                    id: prod.id,
-                    global_id: prod.global_id,
-                    descripcion: prod.descripcion
-                });
+                if (hasHistory.rows[0]?.has_refs) {
+                    // SOFT DELETE - producto tiene historial, no podemos eliminarlo sin romper registros
+                    await client.query(
+                        `UPDATE productos SET eliminado = TRUE, updated_at = NOW() WHERE id = $1`,
+                        [prod.id]
+                    );
 
-                console.log(`[Productos/ForceSync] ❌ ELIMINADO: ${prod.descripcion} (${prod.global_id})`);
+                    softDeletedProducts.push({
+                        id: prod.id,
+                        global_id: prod.global_id,
+                        descripcion: prod.descripcion,
+                        reason: 'Tiene historial de ventas/asignaciones'
+                    });
+
+                    console.log(`[Productos/ForceSync] ⚠️ SOFT DELETE (tiene historial): ${prod.descripcion} (${prod.global_id})`);
+                } else {
+                    // HARD DELETE - producto sin historial, seguro de eliminar
+                    // Eliminar imagen de Cloudinary si existe (excepto seeds compartidos)
+                    if (prod.image_url && !prod.image_url.includes('sya-seed-products')) {
+                        try {
+                            const urlMatch = prod.image_url.match(/\/upload\/(?:v\d+\/)?(.+?)(?:\.[^.]+)?$/);
+                            if (urlMatch) {
+                                const publicId = urlMatch[1];
+                                await cloudinaryService.deleteProductImage(publicId);
+                                console.log(`[Productos/ForceSync] 🖼️ Imagen eliminada: ${publicId}`);
+                            }
+                        } catch (imgErr) {
+                            console.log(`[Productos/ForceSync] ⚠️ Error eliminando imagen: ${imgErr.message}`);
+                        }
+                    }
+
+                    await client.query(
+                        `DELETE FROM productos WHERE id = $1`,
+                        [prod.id]
+                    );
+
+                    deletedProducts.push({
+                        id: prod.id,
+                        global_id: prod.global_id,
+                        descripcion: prod.descripcion
+                    });
+
+                    console.log(`[Productos/ForceSync] ❌ HARD DELETE: ${prod.descripcion} (${prod.global_id})`);
+                }
             }
 
             // 4. Sincronizar/actualizar productos locales
@@ -1226,7 +1261,7 @@ module.exports = (pool) => {
 
             await client.query('COMMIT');
 
-            console.log(`[Productos/ForceSync] ✅ Completado: ${deletedProducts.length} eliminados, ${inserted} insertados, ${updated} actualizados`);
+            console.log(`[Productos/ForceSync] ✅ Completado: ${deletedProducts.length} hard-deleted, ${softDeletedProducts.length} soft-deleted, ${inserted} insertados, ${updated} actualizados`);
 
             res.json({
                 success: true,
@@ -1234,6 +1269,8 @@ module.exports = (pool) => {
                 data: {
                     deleted: deletedProducts.length,
                     deleted_products: deletedProducts,
+                    soft_deleted: softDeletedProducts.length,
+                    soft_deleted_products: softDeletedProducts,
                     inserted,
                     updated,
                     total_local: local_products.length
