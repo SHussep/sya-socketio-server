@@ -1043,6 +1043,353 @@ module.exports = (pool) => {
     });
 
     // ═══════════════════════════════════════════════════════════════
+    // POST /api/productos/force-sync - Sincronización agresiva (hard delete)
+    // ═══════════════════════════════════════════════════════════════
+    // PELIGROSO: Elimina permanentemente productos que no existan en la lista local.
+    // Usar solo cuando el cliente quiere forzar que PostgreSQL coincida con su BD local.
+    // ═══════════════════════════════════════════════════════════════
+    router.post('/force-sync', async (req, res) => {
+        const client = await pool.connect();
+
+        try {
+            const { tenant_id: tenantId, local_products, terminal_id } = req.body;
+
+            if (!tenantId) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Se requiere tenant_id'
+                });
+            }
+
+            if (!local_products || !Array.isArray(local_products)) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Se requiere array local_products con GlobalIds'
+                });
+            }
+
+            console.log(`[Productos/ForceSync] ⚠️ SYNC AGRESIVO - Tenant: ${tenantId}, Terminal: ${terminal_id}`);
+            console.log(`[Productos/ForceSync] 📦 ${local_products.length} productos locales recibidos`);
+
+            await client.query('BEGIN');
+
+            // Obtener GlobalIds de la lista local
+            const localGlobalIds = local_products
+                .map(p => p.global_id)
+                .filter(id => id != null && id !== '');
+
+            if (localGlobalIds.length === 0) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({
+                    success: false,
+                    message: 'No se recibieron productos válidos con global_id'
+                });
+            }
+
+            console.log(`[Productos/ForceSync] 🔍 GlobalIds válidos: ${localGlobalIds.length}`);
+
+            // 1. Obtener productos actuales en PostgreSQL para este tenant
+            const existingResult = await client.query(
+                `SELECT id, global_id, descripcion, image_url
+                 FROM productos
+                 WHERE tenant_id = $1`,
+                [tenantId]
+            );
+
+            const existingProducts = existingResult.rows;
+            console.log(`[Productos/ForceSync] 📋 ${existingProducts.length} productos en PostgreSQL`);
+
+            // 2. Identificar productos a eliminar (no están en la lista local)
+            const localGlobalIdSet = new Set(localGlobalIds.map(id => id.toLowerCase()));
+            const productsToDelete = existingProducts.filter(
+                p => !localGlobalIdSet.has(p.global_id?.toLowerCase())
+            );
+
+            console.log(`[Productos/ForceSync] 🗑️ ${productsToDelete.length} productos a eliminar`);
+
+            // 3. HARD DELETE de productos que no existen localmente
+            const deletedProducts = [];
+            for (const prod of productsToDelete) {
+                // Eliminar imagen de Cloudinary si existe (excepto seeds compartidos)
+                if (prod.image_url && !prod.image_url.includes('sya-seed-products')) {
+                    try {
+                        const urlMatch = prod.image_url.match(/\/upload\/(?:v\d+\/)?(.+?)(?:\.[^.]+)?$/);
+                        if (urlMatch) {
+                            const publicId = urlMatch[1];
+                            await cloudinaryService.deleteProductImage(publicId);
+                            console.log(`[Productos/ForceSync] 🖼️ Imagen eliminada: ${publicId}`);
+                        }
+                    } catch (imgErr) {
+                        console.log(`[Productos/ForceSync] ⚠️ Error eliminando imagen: ${imgErr.message}`);
+                    }
+                }
+
+                // HARD DELETE del producto
+                await client.query(
+                    `DELETE FROM productos WHERE id = $1`,
+                    [prod.id]
+                );
+
+                deletedProducts.push({
+                    id: prod.id,
+                    global_id: prod.global_id,
+                    descripcion: prod.descripcion
+                });
+
+                console.log(`[Productos/ForceSync] ❌ ELIMINADO: ${prod.descripcion} (${prod.global_id})`);
+            }
+
+            // 4. Sincronizar/actualizar productos locales
+            let inserted = 0;
+            let updated = 0;
+
+            for (const localProd of local_products) {
+                if (!localProd.global_id) continue;
+
+                try {
+                    const result = await client.query(
+                        `INSERT INTO productos (
+                            tenant_id, id_producto, descripcion, categoria,
+                            precio_compra, precio_venta, produccion, inventariar,
+                            tipos_de_salida_id, notificar, minimo, inventario,
+                            proveedor_id, unidad_medida_id, eliminado, bascula, is_pos_shortcut,
+                            global_id, terminal_id, local_op_seq, created_local_utc,
+                            device_event_raw, last_modified_local_utc,
+                            needs_update, needs_delete, image_url,
+                            created_at, updated_at
+                        )
+                        VALUES (
+                            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+                            $11, $12, $13, $14, $15, $16, $17, $18, $19,
+                            $20, $21, $22, $23, FALSE, FALSE, $24, NOW(), NOW()
+                        )
+                        ON CONFLICT (global_id) DO UPDATE
+                        SET descripcion = EXCLUDED.descripcion,
+                            categoria = EXCLUDED.categoria,
+                            precio_compra = EXCLUDED.precio_compra,
+                            precio_venta = EXCLUDED.precio_venta,
+                            produccion = EXCLUDED.produccion,
+                            inventariar = EXCLUDED.inventariar,
+                            tipos_de_salida_id = EXCLUDED.tipos_de_salida_id,
+                            notificar = EXCLUDED.notificar,
+                            minimo = EXCLUDED.minimo,
+                            inventario = EXCLUDED.inventario,
+                            proveedor_id = EXCLUDED.proveedor_id,
+                            unidad_medida_id = EXCLUDED.unidad_medida_id,
+                            eliminado = EXCLUDED.eliminado,
+                            bascula = EXCLUDED.bascula,
+                            is_pos_shortcut = EXCLUDED.is_pos_shortcut,
+                            terminal_id = COALESCE(EXCLUDED.terminal_id, productos.terminal_id),
+                            last_modified_local_utc = EXCLUDED.last_modified_local_utc,
+                            needs_update = FALSE,
+                            needs_delete = FALSE,
+                            image_url = COALESCE(EXCLUDED.image_url, productos.image_url),
+                            updated_at = NOW()
+                        RETURNING (xmax = 0) AS inserted`,
+                        [
+                            tenantId,
+                            localProd.id_producto || null,
+                            localProd.descripcion,
+                            localProd.categoria || null,
+                            localProd.precio_compra || 0,
+                            localProd.precio_venta || 0,
+                            localProd.produccion || false,
+                            localProd.inventariar || false,
+                            localProd.tipos_de_salida_id || null,
+                            localProd.notificar || false,
+                            localProd.minimo || 0,
+                            localProd.inventario || 0,
+                            localProd.proveedor_id || null,
+                            localProd.unidad_medida_id || null,
+                            localProd.eliminado || false,
+                            localProd.bascula || false,
+                            localProd.is_pos_shortcut || false,
+                            localProd.global_id,
+                            localProd.terminal_id || terminal_id || null,
+                            localProd.local_op_seq || null,
+                            localProd.created_local_utc || null,
+                            localProd.device_event_raw || null,
+                            localProd.last_modified_local_utc || null,
+                            localProd.image_url || null
+                        ]
+                    );
+
+                    if (result.rows[0]?.inserted) {
+                        inserted++;
+                    } else {
+                        updated++;
+                    }
+                } catch (prodErr) {
+                    console.log(`[Productos/ForceSync] ⚠️ Error con ${localProd.descripcion}: ${prodErr.message}`);
+                }
+            }
+
+            await client.query('COMMIT');
+
+            console.log(`[Productos/ForceSync] ✅ Completado: ${deletedProducts.length} eliminados, ${inserted} insertados, ${updated} actualizados`);
+
+            res.json({
+                success: true,
+                message: 'Sincronización agresiva completada',
+                data: {
+                    deleted: deletedProducts.length,
+                    deleted_products: deletedProducts,
+                    inserted,
+                    updated,
+                    total_local: local_products.length
+                }
+            });
+
+        } catch (error) {
+            await client.query('ROLLBACK');
+            console.error('[Productos/ForceSync] ❌ Error:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Error en sincronización agresiva',
+                error: error.message
+            });
+        } finally {
+            client.release();
+        }
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // POST /api/productos/check-code-exists - Verificar si código existe
+    // ═══════════════════════════════════════════════════════════════
+    // Usado antes de crear un producto para evitar duplicados entre PCs
+    // ═══════════════════════════════════════════════════════════════
+    router.post('/check-code-exists', async (req, res) => {
+        try {
+            const { tenant_id: tenantId, id_producto, descripcion, exclude_global_id } = req.body;
+
+            if (!tenantId) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Se requiere tenant_id'
+                });
+            }
+
+            console.log(`[Productos/CheckCode] 🔍 Verificando código ${id_producto} para tenant ${tenantId}`);
+
+            // Buscar por id_producto (código/SKU)
+            let query = `
+                SELECT id, global_id, descripcion, terminal_id, id_producto
+                FROM productos
+                WHERE tenant_id = $1
+                AND eliminado = FALSE
+                AND (id_producto = $2 OR LOWER(descripcion) = LOWER($3))
+            `;
+            const params = [tenantId, id_producto, descripcion];
+
+            // Excluir el producto actual si se está editando
+            if (exclude_global_id) {
+                query += ` AND global_id != $4`;
+                params.push(exclude_global_id);
+            }
+
+            const result = await pool.query(query, params);
+
+            const exists = result.rows.length > 0;
+            const conflicts = result.rows.map(r => ({
+                id: r.id,
+                global_id: r.global_id,
+                descripcion: r.descripcion,
+                id_producto: r.id_producto,
+                terminal_id: r.terminal_id
+            }));
+
+            console.log(`[Productos/CheckCode] ${exists ? '⚠️ CONFLICTO' : '✅ OK'}: ${conflicts.length} coincidencias`);
+
+            res.json({
+                success: true,
+                exists,
+                conflicts,
+                message: exists
+                    ? `Ya existe un producto con código ${id_producto} o descripción "${descripcion}"`
+                    : 'Código disponible'
+            });
+
+        } catch (error) {
+            console.error('[Productos/CheckCode] ❌ Error:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Error verificando código',
+                error: error.message
+            });
+        }
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // POST /api/productos/check-pending-duplicates - Verificar duplicados pendientes
+    // ═══════════════════════════════════════════════════════════════
+    // Llamado al iniciar la app para verificar productos que se crearon offline
+    // ═══════════════════════════════════════════════════════════════
+    router.post('/check-pending-duplicates', async (req, res) => {
+        try {
+            const { tenant_id: tenantId, products_to_check } = req.body;
+
+            if (!tenantId || !products_to_check || !Array.isArray(products_to_check)) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Se requiere tenant_id y array products_to_check'
+                });
+            }
+
+            console.log(`[Productos/CheckDuplicates] 🔍 Verificando ${products_to_check.length} productos para tenant ${tenantId}`);
+
+            const duplicates = [];
+
+            for (const prod of products_to_check) {
+                const { global_id, id_producto, descripcion } = prod;
+
+                // Buscar duplicados (mismo código o descripción, diferente global_id)
+                const result = await pool.query(
+                    `SELECT id, global_id, descripcion, terminal_id, id_producto, created_at
+                     FROM productos
+                     WHERE tenant_id = $1
+                     AND eliminado = FALSE
+                     AND global_id != $2
+                     AND (id_producto = $3 OR LOWER(descripcion) = LOWER($4))`,
+                    [tenantId, global_id, id_producto, descripcion]
+                );
+
+                if (result.rows.length > 0) {
+                    duplicates.push({
+                        local_product: prod,
+                        conflicts: result.rows.map(r => ({
+                            id: r.id,
+                            global_id: r.global_id,
+                            descripcion: r.descripcion,
+                            id_producto: r.id_producto,
+                            terminal_id: r.terminal_id,
+                            created_at: r.created_at
+                        }))
+                    });
+                }
+            }
+
+            console.log(`[Productos/CheckDuplicates] ${duplicates.length > 0 ? '⚠️' : '✅'} ${duplicates.length} productos con duplicados`);
+
+            res.json({
+                success: true,
+                has_duplicates: duplicates.length > 0,
+                duplicates,
+                message: duplicates.length > 0
+                    ? `Se encontraron ${duplicates.length} productos con posibles duplicados`
+                    : 'No se encontraron duplicados'
+            });
+
+        } catch (error) {
+            console.error('[Productos/CheckDuplicates] ❌ Error:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Error verificando duplicados',
+                error: error.message
+            });
+        }
+    });
+
+    // ═══════════════════════════════════════════════════════════════
     // GET /api/productos/categories - Categorías de productos
     // ═══════════════════════════════════════════════════════════════
     router.get('/categories', authenticateToken, async (req, res) => {
