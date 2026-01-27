@@ -50,6 +50,35 @@ module.exports = (pool) => {
         }
     };
 
+    // ═════════════════════════════════════════════════════════════
+    // HELPER: Check email uniqueness per tenant
+    // ═════════════════════════════════════════════════════════════
+    const checkEmailUniqueness = async (client, tenantId, email, excludeEmployeeId = null) => {
+        if (!email) return null; // NULL emails are always allowed
+
+        let query, params;
+        if (excludeEmployeeId) {
+            query = `SELECT id, first_name, last_name FROM employees
+                     WHERE tenant_id = $1 AND LOWER(email) = LOWER($2) AND id != $3 AND is_active = true`;
+            params = [tenantId, email.trim(), excludeEmployeeId];
+        } else {
+            query = `SELECT id, first_name, last_name FROM employees
+                     WHERE tenant_id = $1 AND LOWER(email) = LOWER($2) AND is_active = true`;
+            params = [tenantId, email.trim()];
+        }
+
+        const result = await client.query(query, params);
+        if (result.rows.length > 0) {
+            const conflicting = result.rows[0];
+            return {
+                exists: true,
+                employeeName: `${conflicting.first_name || ''} ${conflicting.last_name || ''}`.trim(),
+                employeeId: conflicting.id
+            };
+        }
+        return null;
+    };
+
     // POST /api/employees - Sync employee from Desktop or Mobile app
     // validateSyncTenant verifica que tenant existe y employee pertenece al tenant
     router.post('/', validateSyncTenant, async (req, res) => {
@@ -167,6 +196,29 @@ module.exports = (pool) => {
 
             console.log(`[Employees/Sync] 📱 Mobile Access: ${mobileAccessType} (Role: ${mappedRoleId}, roleMobileAccessType: ${roleMobileAccessType}, canUseMobileApp: ${canUseMobileApp})`);
 
+            // ═════════════════════════════════════════════════════════════
+            // EMAIL UNIQUENESS CHECK (before insert/update)
+            // ═════════════════════════════════════════════════════════════
+            if (email) {
+                // Buscar si ya existe un empleado con este email (excluyendo al que tiene el mismo global_id)
+                const existingByGlobalId = await client.query(
+                    `SELECT id FROM employees WHERE global_id = $1 AND tenant_id = $2`,
+                    [global_id, tenantId]
+                );
+                const excludeId = existingByGlobalId.rows.length > 0 ? existingByGlobalId.rows[0].id : null;
+
+                const emailConflict = await checkEmailUniqueness(client, tenantId, email, excludeId);
+                if (emailConflict) {
+                    console.log(`[Employees/Sync] ❌ Email duplicado: ${email} ya pertenece a ${emailConflict.employeeName} (ID: ${emailConflict.employeeId})`);
+                    return res.status(409).json({
+                        success: false,
+                        message: `El correo ${email} ya está registrado para el empleado "${emailConflict.employeeName}"`,
+                        errorCode: 'EMAIL_ALREADY_EXISTS',
+                        conflictingEmployee: emailConflict.employeeName
+                    });
+                }
+            }
+
             // ✅ IDEMPOTENCIA: Check if employee already exists by global_id
             const existingResult = await client.query(
                 `SELECT id, password_hash FROM employees WHERE global_id = $1 AND tenant_id = $2`,
@@ -278,6 +330,14 @@ module.exports = (pool) => {
 
                 } catch (txError) {
                     await client.query('ROLLBACK').catch(() => {});
+                    if (txError.code === '23505' && txError.constraint && txError.constraint.includes('email')) {
+                        console.log(`[Employees/Sync] ❌ Constraint violation: email duplicado`);
+                        return res.status(409).json({
+                            success: false,
+                            message: 'El correo electrónico ya está registrado para otro empleado en este negocio',
+                            errorCode: 'EMAIL_ALREADY_EXISTS'
+                        });
+                    }
                     console.error(`[Employees/Sync] ❌ Error al actualizar empleado:`, txError.message);
                     return res.status(500).json({
                         success: false,
@@ -415,6 +475,14 @@ module.exports = (pool) => {
 
             } catch (txError) {
                 await client.query('ROLLBACK').catch(() => {});
+                if (txError.code === '23505' && txError.constraint && txError.constraint.includes('email')) {
+                    console.log(`[Employees/Sync] ❌ Constraint violation: email duplicado`);
+                    return res.status(409).json({
+                        success: false,
+                        message: 'El correo electrónico ya está registrado para otro empleado en este negocio',
+                        errorCode: 'EMAIL_ALREADY_EXISTS'
+                    });
+                }
                 console.error(`[Employees/Sync] ❌ Error en transacción:`, txError.message);
                 return res.status(500).json({
                     success: false,
@@ -426,6 +494,14 @@ module.exports = (pool) => {
         } catch (error) {
             console.error(`[Employees/Sync] ❌ Error:`, error.message);
             console.error(`[Employees/Sync] Stack:`, error.stack);
+
+            if (error.code === '23505' && error.constraint && error.constraint.includes('email')) {
+                return res.status(409).json({
+                    success: false,
+                    message: 'El correo electrónico ya está registrado para otro empleado en este negocio',
+                    errorCode: 'EMAIL_ALREADY_EXISTS'
+                });
+            }
 
             res.status(500).json({
                 success: false,
@@ -1302,6 +1378,22 @@ module.exports = (pool) => {
                 }
             }
 
+            // ═════════════════════════════════════════════════════════════
+            // EMAIL UNIQUENESS CHECK
+            // ═════════════════════════════════════════════════════════════
+            if (email !== undefined && email !== null && email !== '') {
+                const emailConflict = await checkEmailUniqueness(client, tenantId, email, employeeId);
+                if (emailConflict) {
+                    console.log(`[Employees/Update] ❌ Email duplicado: ${email} ya pertenece a ${emailConflict.employeeName} (ID: ${emailConflict.employeeId})`);
+                    return res.status(409).json({
+                        success: false,
+                        message: `El correo ${email} ya está registrado para el empleado "${emailConflict.employeeName}"`,
+                        errorCode: 'EMAIL_ALREADY_EXISTS',
+                        conflictingEmployee: emailConflict.employeeName
+                    });
+                }
+            }
+
             // Build dynamic UPDATE statement
             const updates = [];
             const params = [];
@@ -1413,6 +1505,13 @@ module.exports = (pool) => {
 
         } catch (error) {
             console.error('[Employees/Update] ❌ Error:', error.message);
+            if (error.code === '23505' && error.constraint && error.constraint.includes('email')) {
+                return res.status(409).json({
+                    success: false,
+                    message: 'El correo electrónico ya está registrado para otro empleado en este negocio',
+                    errorCode: 'EMAIL_ALREADY_EXISTS'
+                });
+            }
             res.status(500).json({
                 success: false,
                 message: 'Error al actualizar empleado',
