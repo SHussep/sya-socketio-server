@@ -865,20 +865,23 @@ async function notifyExpenseCreated(employeeGlobalId, { expenseId, amount, descr
  * @param {string} employeeGlobalId - GlobalId (UUID) del repartidor
  * @param {object} params - Datos de la asignación
  */
-async function notifyAssignmentCreated(employeeGlobalId, { assignmentId, quantity, amount, unitAbbreviation, productName, branchName, branchId, employeeName, createdByName, isConsolidated, itemCount }) {
+async function notifyAssignmentCreated(employeeGlobalId, { assignmentId, quantity, amount, unitAbbreviation, productName, branchName, branchId, employeeName, createdByName, isConsolidated, itemCount, itemsBreakdown }) {
     // ✅ Formatear mensaje según si es consolidado (múltiples items) o individual
     let repartidorBody, adminBody;
     const unit = unitAbbreviation || 'kg';
 
     if (isConsolidated && itemCount > 1) {
-        // Notificación CONSOLIDADA: "Recibiste 4 productos por $207.75"
-        repartidorBody = `Recibiste ${itemCount} producto${itemCount > 1 ? 's' : ''} por $${amount.toFixed(2)} en ${branchName}`;
-        adminBody = `${employeeName} recibió ${itemCount} producto${itemCount > 1 ? 's' : ''} ($${amount.toFixed(2)}) - ${createdByName}`;
+        // Notificación CONSOLIDADA con desglose de productos
+        const breakdownText = itemsBreakdown && itemsBreakdown.length > 0
+            ? '\n' + itemsBreakdown.join('\n')
+            : '';
+        repartidorBody = `Recibiste ${itemCount} producto${itemCount > 1 ? 's' : ''} por $${amount.toFixed(2)} en ${branchName}${breakdownText}`;
+        adminBody = `${employeeName} recibió ${itemCount} producto${itemCount > 1 ? 's' : ''} ($${amount.toFixed(2)}) autorizado por ${createdByName}${breakdownText}`;
     } else {
         // Notificación INDIVIDUAL: "Se te asignó 25.00 pz ($750.00) - Salsa Roja"
         const productInfo = productName ? ` - ${productName}` : '';
         repartidorBody = `Se te asignó ${quantity.toFixed(2)} ${unit} ($${amount.toFixed(2)})${productInfo}`;
-        adminBody = `${employeeName} recibió ${quantity.toFixed(2)} ${unit} ($${amount.toFixed(2)}) autorizado por ${createdByName}`;
+        adminBody = `${employeeName} recibió ${quantity.toFixed(2)} ${unit} ($${amount.toFixed(2)})${productInfo} autorizado por ${createdByName}`;
     }
 
     // Notificar al repartidor (usando GlobalId)

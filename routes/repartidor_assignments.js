@@ -603,7 +603,7 @@ function createRepartidorAssignmentRoutes(io) {
           let notificationData;
 
           if (resolvedVentaId) {
-            // ✅ CONSOLIDADA: Múltiples productos en una venta
+            // ✅ CONSOLIDADA: Múltiples productos en una venta - incluir desglose
             const totalsResult = await pool.query(
               `SELECT COUNT(*) as item_count, COALESCE(SUM(assigned_amount), 0) as total_amount
                FROM repartidor_assignments
@@ -612,6 +612,20 @@ function createRepartidorAssignmentRoutes(io) {
             );
             const totalItems = parseInt(totalsResult.rows[0]?.item_count) || 1;
             const totalAmount = parseFloat(totalsResult.rows[0]?.total_amount) || parseFloat(assigned_amount);
+
+            // Obtener desglose de productos para el mensaje
+            const itemsResult = await pool.query(
+              `SELECT product_name, assigned_quantity, unit_abbreviation, assigned_amount
+               FROM repartidor_assignments
+               WHERE venta_id = $1 AND tenant_id = $2
+               ORDER BY id`,
+              [resolvedVentaId, tenant_id]
+            );
+            const itemsBreakdown = itemsResult.rows.map(row => {
+              const qty = parseFloat(row.assigned_quantity).toFixed(2);
+              const unit = row.unit_abbreviation || 'kg';
+              return `• ${qty} ${unit} - ${row.product_name}`;
+            });
 
             console.log(`[RepartidorAssignments] 📨 Enviando notificación CONSOLIDADA para venta #${resolvedVentaId}`);
             console.log(`   📦 Total: ${totalItems} producto(s), Monto total: $${totalAmount.toFixed(2)}`);
@@ -625,7 +639,8 @@ function createRepartidorAssignmentRoutes(io) {
               employeeName,
               createdByName,
               isConsolidated: true,
-              itemCount: totalItems
+              itemCount: totalItems,
+              itemsBreakdown
             };
           } else {
             // ✅ INDIVIDUAL: Un solo producto sin venta asociada
