@@ -1093,13 +1093,17 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
 
             console.log(`[Google Login] Token verificado. Email: ${email}`);
 
-            const employeeResult = await this.pool.query(
-                'SELECT * FROM employees WHERE LOWER(email) = LOWER($1) AND is_active = true',
+            // Buscar en TENANTS (fuente de verdad del email de registro)
+            const tenantResult = await this.pool.query(
+                `SELECT t.*, s.name as subscription_name, s.max_branches, s.max_employees, s.max_devices_per_branch
+                 FROM tenants t
+                 JOIN subscriptions s ON t.subscription_id = s.id
+                 WHERE LOWER(t.email) = LOWER($1) AND t.is_active = true`,
                 [email]
             );
 
-            if (employeeResult.rows.length === 0) {
-                console.log(`[Google Login] Email no registrado: ${email}`);
+            if (tenantResult.rows.length === 0) {
+                console.log(`[Google Login] Email no registrado en tenants: ${email}`);
                 return res.json({
                     success: true,
                     emailExists: false,
@@ -1108,67 +1112,64 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                 });
             }
 
-            const employee = employeeResult.rows[0];
+            const tenant = tenantResult.rows[0];
+            console.log(`[Google Login] Tenant encontrado: ${tenant.business_name} (ID: ${tenant.id})`);
 
-            const tenantResult = await this.pool.query(
-                `SELECT t.*, s.name as subscription_name, s.max_branches, s.max_employees, s.max_devices_per_branch
-                 FROM tenants t
-                 JOIN subscriptions s ON t.subscription_id = s.id
-                 WHERE t.id = $1 AND t.is_active = true`,
-                [employee.tenant_id]
+            // Buscar el employee owner del tenant (role_id = 1 o el primer empleado activo)
+            const employeeResult = await this.pool.query(
+                `SELECT * FROM employees
+                 WHERE tenant_id = $1 AND is_active = true
+                 ORDER BY role_id ASC, id ASC
+                 LIMIT 1`,
+                [tenant.id]
             );
 
-            if (tenantResult.rows.length === 0) {
-                return res.status(403).json({
-                    success: false,
-                    message: 'Tenant inactivo o no encontrado'
-                });
-            }
-
-            const tenant = tenantResult.rows[0];
+            const employee = employeeResult.rows[0] || null;
 
             const branchesResult = await this.pool.query(`
                 SELECT b.id, b.branch_code, b.name, b.address, b.timezone
                 FROM branches b
                 WHERE b.tenant_id = $1 AND b.is_active = true
                 ORDER BY b.created_at ASC
-            `, [employee.tenant_id]);
+            `, [tenant.id]);
 
             const branches = branchesResult.rows;
 
-            const accessToken = jwt.sign(
-                {
-                    employeeId: employee.id,
-                    tenantId: employee.tenant_id,
-                    roleId: employee.role_id,
-                    email: employee.email
-                },
-                JWT_SECRET,
-                { expiresIn: '7d' }
-            );
+            // Generar tokens usando el employee si existe, o datos mínimos del tenant
+            const tokenPayload = employee ? {
+                employeeId: employee.id,
+                tenantId: tenant.id,
+                roleId: employee.role_id,
+                email: email
+            } : {
+                tenantId: tenant.id,
+                email: email
+            };
 
-            const refreshToken = jwt.sign(
-                {
-                    employeeId: employee.id,
-                    tenantId: employee.tenant_id
-                },
-                JWT_SECRET,
-                { expiresIn: '30d' }
-            );
+            const accessToken = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: '7d' });
 
-            console.log(`[Google Login] ✅ Email existe: ${employee.email} - ${branches.length} sucursales disponibles`);
+            const refreshPayload = employee ? {
+                employeeId: employee.id,
+                tenantId: tenant.id
+            } : {
+                tenantId: tenant.id
+            };
+
+            const refreshToken = jwt.sign(refreshPayload, JWT_SECRET, { expiresIn: '30d' });
+
+            console.log(`[Google Login] ✅ Email existe en tenant: ${tenant.business_name} - ${branches.length} sucursales disponibles`);
 
             res.json({
                 success: true,
                 emailExists: true,
                 email: email,
-                employee: {
+                employee: employee ? {
                     id: employee.id,
                     email: employee.email,
                     username: employee.username,
                     fullName: `${employee.first_name || ''} ${employee.last_name || ''}`.trim(),
                     role: employee.role
-                },
+                } : null,
                 tenant: {
                     id: tenant.id,
                     tenantCode: tenant.tenant_code,
