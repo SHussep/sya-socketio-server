@@ -1034,6 +1034,57 @@ async function notifyPreparationModeDeactivated(tenantId, branchId, { operatorNa
 }
 
 /**
+ * Envía notificación cuando se activa/desactiva el Peso Manual (override de báscula)
+ * Notifica a TODOS los administradores y encargados del TENANT
+ * @param {number} tenantId - ID del tenant
+ * @param {number} branchId - ID de la sucursal
+ * @param {object} params - Datos del cambio
+ */
+async function notifyManualWeightOverrideChanged(tenantId, branchId, { employeeName, branchName, isActivated, timestamp }) {
+    try {
+        const action = isActivated ? 'activó' : 'desactivó';
+        const emoji = isActivated ? '⚠️' : '✅';
+        const title = isActivated
+            ? `⚠️ Peso Manual Activado [${branchName}]`
+            : `✅ Peso Manual Desactivado [${branchName}]`;
+        const body = `${employeeName} ${action} el modo de peso manual`;
+
+        const result = await sendNotificationToAdminsInTenant(tenantId, {
+            title,
+            body,
+            data: {
+                type: 'manual_weight_override_changed',
+                employeeName,
+                branchName,
+                branchId: branchId.toString(),
+                tenantId: tenantId.toString(),
+                isActivated: isActivated.toString(),
+                timestamp: timestamp || new Date().toISOString()
+            }
+        });
+
+        console.log(`[NotificationHelper] ${emoji} Notificación de Peso Manual (${action}) enviada a admins del tenant ${tenantId}: ${result.sent}/${result.total || 0}`);
+
+        // Guardar en historial de notificaciones (campana)
+        await saveToNotificationHistory({
+            tenant_id: tenantId,
+            branch_id: branchId,
+            employee_id: null,
+            category: 'security',
+            event_type: 'manual_weight_override_changed',
+            title,
+            body,
+            data: { employeeName, branchName, branchId, tenantId, isActivated, timestamp }
+        });
+
+        return result;
+    } catch (error) {
+        console.error('[NotificationHelper] ❌ Error en notifyManualWeightOverrideChanged:', error.message);
+        return { sent: 0, failed: 0, error: error.message };
+    }
+}
+
+/**
  * Envía notificación cuando se realiza una venta a crédito
  * Notifica a TODOS los administradores y encargados del TENANT
  * @param {number} tenantId - ID del tenant
@@ -1194,6 +1245,7 @@ module.exports = {
     notifyAssignmentCreated,
     notifyPreparationModeActivated,
     notifyPreparationModeDeactivated,
+    notifyManualWeightOverrideChanged,
     notifyCreditSaleCreated,
     notifyClientPaymentReceived,
     notifySaleCancelled

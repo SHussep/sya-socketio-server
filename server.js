@@ -1213,6 +1213,38 @@ io.on('connection', (socket) => {
         }
     });
 
+    // ═══════════════════════════════════════════════════════════════
+    // MANUAL WEIGHT OVERRIDE - Notificación de activación/desactivación de Peso Manual
+    // ═══════════════════════════════════════════════════════════════
+    socket.on('manual_weight_override_changed', async (data) => {
+        stats.totalEvents++;
+        const roomName = `branch_${data.branchId}`;
+        const action = data.isActivated ? 'ACTIVADO' : 'DESACTIVADO';
+
+        console.log(`[WEIGHT-OVERRIDE] Peso Manual ${action} en sucursal ${data.branchId} (tenant ${data.tenantId})`);
+        console.log(`[WEIGHT-OVERRIDE]   Sucursal: ${data.branchName}`);
+        console.log(`[WEIGHT-OVERRIDE]   Empleado: ${data.employeeName} (ID: ${data.employeeId})`);
+
+        // Broadcast a todos los clientes en la sucursal
+        io.to(roomName).emit('manual_weight_override_changed', {
+            ...data,
+            receivedAt: new Date().toISOString()
+        });
+
+        // Enviar notificación FCM a administradores del TENANT
+        try {
+            await notificationHelper.notifyManualWeightOverrideChanged(data.tenantId, data.branchId, {
+                employeeName: data.employeeName,
+                branchName: data.branchName,
+                isActivated: data.isActivated,
+                timestamp: data.timestamp
+            });
+            console.log(`[WEIGHT-OVERRIDE] Notificación FCM enviada a administradores del tenant ${data.tenantId}`);
+        } catch (error) {
+            console.error(`[WEIGHT-OVERRIDE] Error enviando notificación FCM:`, error.message);
+        }
+    });
+
     socket.on('get_stats', () => {
         socket.emit('stats', {
             ...stats,
