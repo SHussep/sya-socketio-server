@@ -503,10 +503,12 @@ module.exports = (pool) => {
     });
 
     // ============================================================================
-    // DELETE /api/guardian/events/delete-all
+    // POST /api/guardian/events/delete-all
     // Delete all Guardian events for a date range permanently
+    // (Changed from DELETE to POST: DELETE with body is unreliable on some
+    //  HTTP clients/Android - the body gets stripped silently)
     // ============================================================================
-    router.delete('/events/delete-all', async (req, res) => {
+    router.post('/events/delete-all', async (req, res) => {
         try {
             const { tenant_id, branch_id, start_date, end_date } = req.body;
 

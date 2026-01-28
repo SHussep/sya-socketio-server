@@ -341,7 +341,7 @@ module.exports = (pool) => {
             console.log(`[Dashboard Summary] ✅ Unit totals:`, JSON.stringify(unitTotals));
 
             // ═══════════════════════════════════════════════════════════════
-            // TOP CLIENTE - Cliente con más ventas (excluyendo Público en General)
+            // TOP 3 CLIENTES - Clientes con más compras (excluyendo Público en General)
             // ═══════════════════════════════════════════════════════════════
             let topCustomerQuery = `
                 SELECT c.nombre as customer_name, SUM(v.total) as total_amount, COUNT(*) as sale_count
@@ -369,15 +369,56 @@ module.exports = (pool) => {
                 topCustParamIndex++;
             }
 
-            topCustomerQuery += ` GROUP BY c.id, c.nombre ORDER BY total_amount DESC LIMIT 1`;
+            topCustomerQuery += ` GROUP BY c.id, c.nombre ORDER BY total_amount DESC LIMIT 3`;
 
             const topCustomerResult = await pool.query(topCustomerQuery, topCustomerParams);
-            const topCustomer = topCustomerResult.rows.length > 0 ? {
-                customerName: topCustomerResult.rows[0].customer_name,
-                totalAmount: parseFloat(topCustomerResult.rows[0].total_amount),
-                saleCount: parseInt(topCustomerResult.rows[0].sale_count)
+            const topCustomers = topCustomerResult.rows.map(row => ({
+                customerName: row.customer_name,
+                totalAmount: parseFloat(row.total_amount),
+                saleCount: parseInt(row.sale_count)
+            }));
+            // Keep backward compat: topCustomer = first item or null
+            const topCustomer = topCustomers.length > 0 ? topCustomers[0] : null;
+            console.log(`[Dashboard Summary] ✅ Top customers:`, JSON.stringify(topCustomers));
+
+            // ═══════════════════════════════════════════════════════════════
+            // TOP EMPLEADO - Empleado con más ventas
+            // ═══════════════════════════════════════════════════════════════
+            let topEmployeeQuery = `
+                SELECT CONCAT(e.first_name, ' ', e.last_name) as employee_name,
+                       SUM(v.total) as total_amount, COUNT(*) as sale_count
+                FROM ventas v
+                JOIN employees e ON v.id_empleado = e.id
+                WHERE v.tenant_id = $1
+                AND (
+                    (v.estado_venta_id = 3 AND ${dateFilter.replace(/fecha_venta_utc/g, 'v.fecha_venta_utc')})
+                    OR
+                    (v.estado_venta_id = 5 AND ${dateFilter.replace(/fecha_venta_utc/g, 'COALESCE(v.fecha_liquidacion_utc, v.fecha_venta_utc)')})
+                )`;
+            let topEmployeeParams = [tenantId];
+            let topEmpParamIndex = 2;
+
+            if (shouldFilterByBranch) {
+                topEmployeeQuery += ` AND v.branch_id = $${topEmpParamIndex}`;
+                topEmployeeParams.push(targetBranchId);
+                topEmpParamIndex++;
+            }
+
+            if (shift_id) {
+                topEmployeeQuery += ` AND v.id_turno = $${topEmpParamIndex}`;
+                topEmployeeParams.push(parseInt(shift_id));
+                topEmpParamIndex++;
+            }
+
+            topEmployeeQuery += ` GROUP BY e.id, e.first_name, e.last_name ORDER BY total_amount DESC LIMIT 1`;
+
+            const topEmployeeResult = await pool.query(topEmployeeQuery, topEmployeeParams);
+            const topEmployee = topEmployeeResult.rows.length > 0 ? {
+                employeeName: topEmployeeResult.rows[0].employee_name,
+                totalAmount: parseFloat(topEmployeeResult.rows[0].total_amount),
+                saleCount: parseInt(topEmployeeResult.rows[0].sale_count)
             } : null;
-            console.log(`[Dashboard Summary] ✅ Top customer:`, JSON.stringify(topCustomer));
+            console.log(`[Dashboard Summary] ✅ Top employee:`, JSON.stringify(topEmployee));
 
             res.json({
                 success: true,
@@ -404,8 +445,12 @@ module.exports = (pool) => {
                         creditoTotal: parseFloat(breakdown.credito_total),
                         // Totales por unidad de medida
                         unitTotals: unitTotals,
-                        // Top cliente
-                        topCustomer: topCustomer
+                        // Top cliente (backward compat)
+                        topCustomer: topCustomer,
+                        // Top 3 clientes
+                        topCustomers: topCustomers,
+                        // Top empleado
+                        topEmployee: topEmployee
                     },
                     // 🔍 DEBUG: Gastos del tenant (TEMPORAL - remover después de debug)
                     _debug_expenses: expensesDebugInfo,
