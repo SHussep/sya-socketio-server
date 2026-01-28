@@ -302,6 +302,83 @@ module.exports = (pool) => {
 
             console.log(`[Dashboard Summary] Fetching summary - Tenant: ${tenantId}, Branch: ${targetBranchId}, Shift: ${shift_id || 'ALL'}, all_branches: ${all_branches}`);
 
+            // ═══════════════════════════════════════════════════════════════
+            // TOTALES POR UNIDAD DE MEDIDA - kg, pz, L, etc.
+            // ═══════════════════════════════════════════════════════════════
+            let unitTotalsQuery = `
+                SELECT COALESCE(um.abbreviation, 'kg') as unit, SUM(vd.cantidad) as total_qty
+                FROM ventas v
+                JOIN ventas_detalle vd ON vd.id_venta = v.id_venta
+                LEFT JOIN productos p ON vd.id_producto = p.id AND p.tenant_id = v.tenant_id
+                LEFT JOIN units_of_measure um ON p.unidad_medida_id = um.id
+                WHERE v.tenant_id = $1 AND (
+                    (v.estado_venta_id = 3 AND ${dateFilter.replace(/fecha_venta_utc/g, 'v.fecha_venta_utc')})
+                    OR
+                    (v.estado_venta_id = 5 AND ${dateFilter.replace(/fecha_venta_utc/g, 'COALESCE(v.fecha_liquidacion_utc, v.fecha_venta_utc)')})
+                )`;
+            let unitTotalsParams = [tenantId];
+            let unitParamIndex = 2;
+
+            if (shouldFilterByBranch) {
+                unitTotalsQuery += ` AND v.branch_id = $${unitParamIndex}`;
+                unitTotalsParams.push(targetBranchId);
+                unitParamIndex++;
+            }
+
+            if (shift_id) {
+                unitTotalsQuery += ` AND v.id_turno = $${unitParamIndex}`;
+                unitTotalsParams.push(parseInt(shift_id));
+                unitParamIndex++;
+            }
+
+            unitTotalsQuery += ` GROUP BY COALESCE(um.abbreviation, 'kg') ORDER BY total_qty DESC`;
+
+            const unitTotalsResult = await pool.query(unitTotalsQuery, unitTotalsParams);
+            const unitTotals = unitTotalsResult.rows.map(row => ({
+                unit: row.unit,
+                totalQty: parseFloat(row.total_qty)
+            }));
+            console.log(`[Dashboard Summary] ✅ Unit totals:`, JSON.stringify(unitTotals));
+
+            // ═══════════════════════════════════════════════════════════════
+            // TOP CLIENTE - Cliente con más ventas (excluyendo Público en General)
+            // ═══════════════════════════════════════════════════════════════
+            let topCustomerQuery = `
+                SELECT c.nombre as customer_name, SUM(v.total) as total_amount, COUNT(*) as sale_count
+                FROM ventas v
+                JOIN customers c ON v.id_cliente = c.id
+                WHERE v.tenant_id = $1
+                AND c.is_system_generic = FALSE
+                AND (
+                    (v.estado_venta_id = 3 AND ${dateFilter.replace(/fecha_venta_utc/g, 'v.fecha_venta_utc')})
+                    OR
+                    (v.estado_venta_id = 5 AND ${dateFilter.replace(/fecha_venta_utc/g, 'COALESCE(v.fecha_liquidacion_utc, v.fecha_venta_utc)')})
+                )`;
+            let topCustomerParams = [tenantId];
+            let topCustParamIndex = 2;
+
+            if (shouldFilterByBranch) {
+                topCustomerQuery += ` AND v.branch_id = $${topCustParamIndex}`;
+                topCustomerParams.push(targetBranchId);
+                topCustParamIndex++;
+            }
+
+            if (shift_id) {
+                topCustomerQuery += ` AND v.id_turno = $${topCustParamIndex}`;
+                topCustomerParams.push(parseInt(shift_id));
+                topCustParamIndex++;
+            }
+
+            topCustomerQuery += ` GROUP BY c.id, c.nombre ORDER BY total_amount DESC LIMIT 1`;
+
+            const topCustomerResult = await pool.query(topCustomerQuery, topCustomerParams);
+            const topCustomer = topCustomerResult.rows.length > 0 ? {
+                customerName: topCustomerResult.rows[0].customer_name,
+                totalAmount: parseFloat(topCustomerResult.rows[0].total_amount),
+                saleCount: parseInt(topCustomerResult.rows[0].sale_count)
+            } : null;
+            console.log(`[Dashboard Summary] ✅ Top customer:`, JSON.stringify(topCustomer));
+
             res.json({
                 success: true,
                 data: {
@@ -324,7 +401,11 @@ module.exports = (pool) => {
                         // Por método de pago
                         efectivoTotal: parseFloat(breakdown.efectivo_total),
                         tarjetaTotal: parseFloat(breakdown.tarjeta_total),
-                        creditoTotal: parseFloat(breakdown.credito_total)
+                        creditoTotal: parseFloat(breakdown.credito_total),
+                        // Totales por unidad de medida
+                        unitTotals: unitTotals,
+                        // Top cliente
+                        topCustomer: topCustomer
                     },
                     // 🔍 DEBUG: Gastos del tenant (TEMPORAL - remover después de debug)
                     _debug_expenses: expensesDebugInfo,

@@ -65,14 +65,30 @@ module.exports = (pool) => {
                        CONCAT(e.first_name, ' ', e.last_name) as employee_name,
                        r.name as employee_role,
                        b.name as branch_name, b.id as "branchId",
+                       -- Customer name
+                       c.nombre as customer_name,
                        (SELECT ra.id FROM repartidor_assignments ra
                         WHERE ra.venta_id = v.id_venta
                         ORDER BY ra.created_at DESC LIMIT 1) as assignment_id,
-                       (v.fecha_venta_utc AT TIME ZONE '${userTimezone}') as sale_date_display
+                       (v.fecha_venta_utc AT TIME ZONE '${userTimezone}') as sale_date_display,
+                       -- Items summary: quantities grouped by unit of measure
+                       items_agg.items_summary
                 FROM ventas v
                 LEFT JOIN employees e ON v.id_empleado = e.id
                 LEFT JOIN roles r ON e.role_id = r.id
                 LEFT JOIN branches b ON v.branch_id = b.id
+                LEFT JOIN customers c ON v.id_cliente = c.id
+                LEFT JOIN LATERAL (
+                    SELECT json_agg(json_build_object('unit', sub.unit, 'qty', sub.total_qty) ORDER BY sub.total_qty DESC) as items_summary
+                    FROM (
+                        SELECT COALESCE(um.abbreviation, 'kg') as unit, SUM(vd.cantidad) as total_qty
+                        FROM ventas_detalle vd
+                        LEFT JOIN productos p ON vd.id_producto = p.id AND p.tenant_id = v.tenant_id
+                        LEFT JOIN units_of_measure um ON p.unidad_medida_id = um.id
+                        WHERE vd.id_venta = v.id_venta
+                        GROUP BY COALESCE(um.abbreviation, 'kg')
+                    ) sub
+                ) items_agg ON true
                 WHERE v.tenant_id = $1 AND ${estadoFilter}
             `;
 
@@ -141,7 +157,10 @@ module.exports = (pool) => {
                 // Ensure sale_date is always sent as ISO string in UTC (Z suffix)
                 sale_date: row.sale_date ? new Date(row.sale_date).toISOString() : null,
                 // Convert sale_date_display to ISO string as well
-                sale_date_display: row.sale_date_display ? new Date(row.sale_date_display).toISOString() : null
+                sale_date_display: row.sale_date_display ? new Date(row.sale_date_display).toISOString() : null,
+                // Customer name and items summary
+                customer_name: row.customer_name || null,
+                items_summary: row.items_summary || []
             }));
 
             res.json({
