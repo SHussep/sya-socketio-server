@@ -655,9 +655,12 @@ module.exports = (pool) => {
                     vd.total_linea as subtotal,
                     vd.created_at,
                     v.ticket_number,
-                    v.total as total_amount
+                    v.total as total_amount,
+                    COALESCE(um.abbreviation, 'kg') as unit_abbreviation
                 FROM ventas_detalle vd
                 INNER JOIN ventas v ON vd.id_venta = v.id_venta
+                LEFT JOIN productos p ON vd.id_producto = p.id AND p.tenant_id = v.tenant_id
+                LEFT JOIN units_of_measure um ON p.unidad_medida_id = um.id
                 WHERE vd.id_venta = $1 AND v.tenant_id = $2 AND v.branch_id = $3
                 ORDER BY vd.created_at ASC`,
                 [parseInt(sale_id), parseInt(tenant_id), parseInt(branch_id)]
