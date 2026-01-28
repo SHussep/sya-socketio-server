@@ -410,15 +410,17 @@ module.exports = (pool) => {
                 topEmpParamIndex++;
             }
 
-            topEmployeeQuery += ` GROUP BY e.id, e.first_name, e.last_name ORDER BY total_amount DESC LIMIT 1`;
+            topEmployeeQuery += ` GROUP BY e.id, e.first_name, e.last_name ORDER BY total_amount DESC LIMIT 3`;
 
             const topEmployeeResult = await pool.query(topEmployeeQuery, topEmployeeParams);
-            const topEmployee = topEmployeeResult.rows.length > 0 ? {
-                employeeName: topEmployeeResult.rows[0].employee_name,
-                totalAmount: parseFloat(topEmployeeResult.rows[0].total_amount),
-                saleCount: parseInt(topEmployeeResult.rows[0].sale_count)
-            } : null;
-            console.log(`[Dashboard Summary] ✅ Top employee:`, JSON.stringify(topEmployee));
+            const topEmployees = topEmployeeResult.rows.map(row => ({
+                employeeName: row.employee_name,
+                totalAmount: parseFloat(row.total_amount),
+                saleCount: parseInt(row.sale_count)
+            }));
+            // Backward compat
+            const topEmployee = topEmployees.length > 0 ? topEmployees[0] : null;
+            console.log(`[Dashboard Summary] ✅ Top employees:`, JSON.stringify(topEmployees));
 
             res.json({
                 success: true,
@@ -449,8 +451,10 @@ module.exports = (pool) => {
                         topCustomer: topCustomer,
                         // Top 3 clientes
                         topCustomers: topCustomers,
-                        // Top empleado
-                        topEmployee: topEmployee
+                        // Top empleado (backward compat)
+                        topEmployee: topEmployee,
+                        // Top 3 empleados
+                        topEmployees: topEmployees
                     },
                     // 🔍 DEBUG: Gastos del tenant (TEMPORAL - remover después de debug)
                     _debug_expenses: expensesDebugInfo,
