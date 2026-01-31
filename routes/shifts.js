@@ -305,6 +305,31 @@ module.exports = (pool, io) => {
                     WHERE id_turno_repartidor = $1
                 `, [shift.id]);
 
+                // 1C. Obtener DESGLOSE DETALLADO de ventas de reparto (con cliente, cantidades, tipo pago)
+                const assignmentSalesDetailResult = await pool.query(`
+                    SELECT
+                        v.id,
+                        v.num_ticket,
+                        v.total,
+                        v.tipo_pago_id,
+                        v.fecha_venta,
+                        CASE
+                            WHEN v.tipo_pago_id = 1 THEN 'Efectivo'
+                            WHEN v.tipo_pago_id = 2 THEN 'Tarjeta'
+                            WHEN v.tipo_pago_id = 3 THEN 'Crédito'
+                            ELSE 'Otro'
+                        END as payment_method_label,
+                        c.nombre as customer_name,
+                        c.apellido as customer_lastname,
+                        COALESCE(SUM(dvp.cantidad), 0) as total_quantity
+                    FROM ventas v
+                    LEFT JOIN clientes c ON v.id_cliente = c.id
+                    LEFT JOIN detalle_venta_productos dvp ON v.id = dvp.id_venta
+                    WHERE v.id_turno_repartidor = $1
+                    GROUP BY v.id, v.num_ticket, v.total, v.tipo_pago_id, v.fecha_venta, c.nombre, c.apellido
+                    ORDER BY v.fecha_venta DESC
+                `, [shift.id]);
+
                 // 2. Calcular gastos + desglose individual
                 const expensesResult = await pool.query(`
                     SELECT
@@ -381,6 +406,17 @@ module.exports = (pool, io) => {
                     total_cash_assignments: parseFloat(assignmentSalesResult.rows[0]?.total_cash_assignments || 0),
                     total_card_assignments: parseFloat(assignmentSalesResult.rows[0]?.total_card_assignments || 0),
                     total_credit_assignments: parseFloat(assignmentSalesResult.rows[0]?.total_credit_assignments || 0),
+                    // 🆕 Desglose detallado de ventas de reparto (cliente, cantidades, tipo pago)
+                    assignment_sales_detail: assignmentSalesDetailResult.rows.map(sale => ({
+                        id: sale.id,
+                        ticket_number: sale.num_ticket,
+                        total: parseFloat(sale.total),
+                        payment_method_id: sale.tipo_pago_id,
+                        payment_method_label: sale.payment_method_label,
+                        sale_date: sale.fecha_venta ? new Date(sale.fecha_venta).toISOString() : null,
+                        customer_name: sale.customer_name ? `${sale.customer_name} ${sale.customer_lastname || ''}`.trim() : null,
+                        total_quantity: parseFloat(sale.total_quantity || 0),
+                    })),
                     total_expenses: parseFloat(expensesResult.rows[0]?.total_expenses || 0),
                     expenses_detail: expensesResult.rows[0]?.expenses_detail || [],  // 🆕 Desglose de gastos
                     total_deposits: parseFloat(depositsResult.rows[0]?.total_deposits || 0),
