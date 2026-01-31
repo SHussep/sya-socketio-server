@@ -327,7 +327,7 @@ module.exports = (pool, io) => {
                             WHERE id_venta = v.id
                         ) as total_quantity
                     FROM ventas v
-                    LEFT JOIN clientes c ON v.id_cliente = c.id
+                    LEFT JOIN customers c ON v.id_cliente = c.id
                     WHERE v.id_turno_repartidor = $1
                     ORDER BY v.fecha_venta DESC
                 `, [shift.id]);
