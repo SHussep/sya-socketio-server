@@ -308,11 +308,11 @@ module.exports = (pool, io) => {
                 // 1C. Obtener DESGLOSE DETALLADO de ventas de reparto (con cliente, cantidades, tipo pago)
                 const assignmentSalesDetailResult = await pool.query(`
                     SELECT
-                        v.id,
-                        v.num_ticket,
+                        v.id_venta,
+                        v.ticket_number,
                         v.total,
                         v.tipo_pago_id,
-                        v.fecha_venta,
+                        v.fecha_venta_utc,
                         CASE
                             WHEN v.tipo_pago_id = 1 THEN 'Efectivo'
                             WHEN v.tipo_pago_id = 2 THEN 'Tarjeta'
@@ -320,16 +320,15 @@ module.exports = (pool, io) => {
                             ELSE 'Otro'
                         END as payment_method_label,
                         c.nombre as customer_name,
-                        c.apellido as customer_lastname,
                         (
                             SELECT COALESCE(SUM(cantidad), 0)
-                            FROM detalle_venta_productos
-                            WHERE id_venta = v.id
+                            FROM ventas_detalle
+                            WHERE id_venta = v.id_venta
                         ) as total_quantity
                     FROM ventas v
                     LEFT JOIN customers c ON v.id_cliente = c.id
                     WHERE v.id_turno_repartidor = $1
-                    ORDER BY v.fecha_venta DESC
+                    ORDER BY v.fecha_venta_utc DESC
                 `, [shift.id]);
 
                 // 2. Calcular gastos + desglose individual
@@ -410,13 +409,13 @@ module.exports = (pool, io) => {
                     total_credit_assignments: parseFloat(assignmentSalesResult.rows[0]?.total_credit_assignments || 0),
                     // 🆕 Desglose detallado de ventas de reparto (cliente, cantidades, tipo pago)
                     assignment_sales_detail: assignmentSalesDetailResult.rows.map(sale => ({
-                        id: sale.id,
-                        ticket_number: sale.num_ticket,
+                        id: sale.id_venta,
+                        ticket_number: sale.ticket_number,
                         total: parseFloat(sale.total),
                         payment_method_id: sale.tipo_pago_id,
                         payment_method_label: sale.payment_method_label,
-                        sale_date: sale.fecha_venta ? new Date(sale.fecha_venta).toISOString() : null,
-                        customer_name: sale.customer_name ? `${sale.customer_name} ${sale.customer_lastname || ''}`.trim() : null,
+                        sale_date: sale.fecha_venta_utc ? new Date(sale.fecha_venta_utc).toISOString() : null,
+                        customer_name: sale.customer_name || null,
                         total_quantity: parseFloat(sale.total_quantity || 0),
                     })),
                     total_expenses: parseFloat(expensesResult.rows[0]?.total_expenses || 0),
