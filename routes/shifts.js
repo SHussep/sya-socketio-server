@@ -321,12 +321,14 @@ module.exports = (pool, io) => {
                         END as payment_method_label,
                         c.nombre as customer_name,
                         c.apellido as customer_lastname,
-                        COALESCE(SUM(dvp.cantidad), 0) as total_quantity
+                        (
+                            SELECT COALESCE(SUM(cantidad), 0)
+                            FROM detalle_venta_productos
+                            WHERE id_venta = v.id
+                        ) as total_quantity
                     FROM ventas v
                     LEFT JOIN clientes c ON v.id_cliente = c.id
-                    LEFT JOIN detalle_venta_productos dvp ON v.id = dvp.id_venta
                     WHERE v.id_turno_repartidor = $1
-                    GROUP BY v.id, v.num_ticket, v.total, v.tipo_pago_id, v.fecha_venta, c.nombre, c.apellido
                     ORDER BY v.fecha_venta DESC
                 `, [shift.id]);
 
