@@ -283,19 +283,26 @@ module.exports = (pool, io) => {
             // Para cada turno, calcular totales de ventas, gastos, pagos, etc.
             const enrichedShifts = [];
             for (const shift of result.rows) {
-                // 1. Calcular ventas por método de pago (tipo_pago_id: 1=Efectivo, 2=Tarjeta, 3=Crédito)
-                // 🔧 FIX: INCLUIR todas las ventas del turno (con y sin id_turno_repartidor)
-                // para mostrar todas las ventas que hizo el empleado, incluyendo asignaciones liquidadas
+                // 1. Calcular ventas DIRECTAS del empleado (sin asignaciones)
+                // Solo incluir ventas donde id_turno_repartidor IS NULL
                 const salesResult = await pool.query(`
                     SELECT
                         COALESCE(SUM(CASE WHEN tipo_pago_id = 1 THEN total ELSE 0 END), 0) as total_cash_sales,
                         COALESCE(SUM(CASE WHEN tipo_pago_id = 2 THEN total ELSE 0 END), 0) as total_card_sales,
-                        COALESCE(SUM(CASE WHEN tipo_pago_id = 3 THEN total ELSE 0 END), 0) as total_credit_sales,
-                        COALESCE(SUM(CASE WHEN tipo_pago_id = 1 AND id_turno_repartidor IS NOT NULL THEN total ELSE 0 END), 0) as total_cash_assignments,
-                        COALESCE(SUM(CASE WHEN tipo_pago_id = 2 AND id_turno_repartidor IS NOT NULL THEN total ELSE 0 END), 0) as total_card_assignments,
-                        COALESCE(SUM(CASE WHEN tipo_pago_id = 3 AND id_turno_repartidor IS NOT NULL THEN total ELSE 0 END), 0) as total_credit_assignments
+                        COALESCE(SUM(CASE WHEN tipo_pago_id = 3 THEN total ELSE 0 END), 0) as total_credit_sales
                     FROM ventas
-                    WHERE id_turno = $1
+                    WHERE id_turno = $1 AND id_turno_repartidor IS NULL
+                `, [shift.id]);
+
+                // 1B. Calcular ventas DE REPARTO que hizo este empleado (repartidor)
+                // Estas son las ventas donde id_turno_repartidor = shift.id
+                const assignmentSalesResult = await pool.query(`
+                    SELECT
+                        COALESCE(SUM(CASE WHEN tipo_pago_id = 1 THEN total ELSE 0 END), 0) as total_cash_assignments,
+                        COALESCE(SUM(CASE WHEN tipo_pago_id = 2 THEN total ELSE 0 END), 0) as total_card_assignments,
+                        COALESCE(SUM(CASE WHEN tipo_pago_id = 3 THEN total ELSE 0 END), 0) as total_credit_assignments
+                    FROM ventas
+                    WHERE id_turno_repartidor = $1
                 `, [shift.id]);
 
                 // 2. Calcular gastos + desglose individual
@@ -370,10 +377,10 @@ module.exports = (pool, io) => {
                     total_cash_sales: parseFloat(salesResult.rows[0]?.total_cash_sales || 0),
                     total_card_sales: parseFloat(salesResult.rows[0]?.total_card_sales || 0),
                     total_credit_sales: parseFloat(salesResult.rows[0]?.total_credit_sales || 0),
-                    // 🆕 Ventas de asignaciones liquidadas (separadas para UI)
-                    total_cash_assignments: parseFloat(salesResult.rows[0]?.total_cash_assignments || 0),
-                    total_card_assignments: parseFloat(salesResult.rows[0]?.total_card_assignments || 0),
-                    total_credit_assignments: parseFloat(salesResult.rows[0]?.total_credit_assignments || 0),
+                    // 🆕 Ventas de reparto que hizo el repartidor (id_turno_repartidor = shift.id)
+                    total_cash_assignments: parseFloat(assignmentSalesResult.rows[0]?.total_cash_assignments || 0),
+                    total_card_assignments: parseFloat(assignmentSalesResult.rows[0]?.total_card_assignments || 0),
+                    total_credit_assignments: parseFloat(assignmentSalesResult.rows[0]?.total_credit_assignments || 0),
                     total_expenses: parseFloat(expensesResult.rows[0]?.total_expenses || 0),
                     expenses_detail: expensesResult.rows[0]?.expenses_detail || [],  // 🆕 Desglose de gastos
                     total_deposits: parseFloat(depositsResult.rows[0]?.total_deposits || 0),
