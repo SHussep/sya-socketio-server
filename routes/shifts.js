@@ -284,22 +284,35 @@ module.exports = (pool, io) => {
             const enrichedShifts = [];
             for (const shift of result.rows) {
                 // 1. Calcular ventas por método de pago (tipo_pago_id: 1=Efectivo, 2=Tarjeta, 3=Crédito)
-                // IMPORTANTE: Excluir ventas asignadas a repartidores (id_turno_repartidor != null)
+                // 🔧 FIX: INCLUIR todas las ventas del turno (con y sin id_turno_repartidor)
+                // para mostrar todas las ventas que hizo el empleado, incluyendo asignaciones liquidadas
                 const salesResult = await pool.query(`
                     SELECT
                         COALESCE(SUM(CASE WHEN tipo_pago_id = 1 THEN total ELSE 0 END), 0) as total_cash_sales,
                         COALESCE(SUM(CASE WHEN tipo_pago_id = 2 THEN total ELSE 0 END), 0) as total_card_sales,
-                        COALESCE(SUM(CASE WHEN tipo_pago_id = 3 THEN total ELSE 0 END), 0) as total_credit_sales
+                        COALESCE(SUM(CASE WHEN tipo_pago_id = 3 THEN total ELSE 0 END), 0) as total_credit_sales,
+                        COALESCE(SUM(CASE WHEN tipo_pago_id = 1 AND id_turno_repartidor IS NOT NULL THEN total ELSE 0 END), 0) as total_cash_assignments,
+                        COALESCE(SUM(CASE WHEN tipo_pago_id = 2 AND id_turno_repartidor IS NOT NULL THEN total ELSE 0 END), 0) as total_card_assignments,
+                        COALESCE(SUM(CASE WHEN tipo_pago_id = 3 AND id_turno_repartidor IS NOT NULL THEN total ELSE 0 END), 0) as total_credit_assignments
                     FROM ventas
                     WHERE id_turno = $1
-                      AND id_turno_repartidor IS NULL
                 `, [shift.id]);
 
-                // 2. Calcular gastos
+                // 2. Calcular gastos + desglose individual
                 const expensesResult = await pool.query(`
-                    SELECT COALESCE(SUM(amount), 0) as total_expenses
+                    SELECT
+                        COALESCE(SUM(amount), 0) as total_expenses,
+                        json_agg(
+                            json_build_object(
+                                'id', id,
+                                'category', global_category_id,
+                                'description', description,
+                                'amount', amount,
+                                'expense_date', expense_date
+                            ) ORDER BY expense_date DESC
+                        ) FILTER (WHERE id IS NOT NULL) as expenses_detail
                     FROM expenses
-                    WHERE id_turno = $1
+                    WHERE id_turno = $1 AND is_active = true
                 `, [shift.id]);
 
                 // 3. Calcular depósitos
@@ -357,7 +370,12 @@ module.exports = (pool, io) => {
                     total_cash_sales: parseFloat(salesResult.rows[0]?.total_cash_sales || 0),
                     total_card_sales: parseFloat(salesResult.rows[0]?.total_card_sales || 0),
                     total_credit_sales: parseFloat(salesResult.rows[0]?.total_credit_sales || 0),
+                    // 🆕 Ventas de asignaciones liquidadas (separadas para UI)
+                    total_cash_assignments: parseFloat(salesResult.rows[0]?.total_cash_assignments || 0),
+                    total_card_assignments: parseFloat(salesResult.rows[0]?.total_card_assignments || 0),
+                    total_credit_assignments: parseFloat(salesResult.rows[0]?.total_credit_assignments || 0),
                     total_expenses: parseFloat(expensesResult.rows[0]?.total_expenses || 0),
+                    expenses_detail: expensesResult.rows[0]?.expenses_detail || [],  // 🆕 Desglose de gastos
                     total_deposits: parseFloat(depositsResult.rows[0]?.total_deposits || 0),
                     total_withdrawals: parseFloat(withdrawalsResult.rows[0]?.total_withdrawals || 0),
                     total_cash_payments: parseFloat(paymentsResult.rows[0]?.total_cash_payments || 0),
