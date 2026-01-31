@@ -213,6 +213,26 @@ module.exports = (pool, io) => {
                 }
             }
 
+            // ✅ FIX: Resolver turno abierto del empleado para asociar el gasto al turno correcto
+            let shiftId = null;
+            if (employeeId) {
+                const shiftResult = await pool.query(
+                    `SELECT id FROM shifts
+                     WHERE employee_id = $1
+                       AND tenant_id = $2
+                       AND is_cash_cut_open = true
+                     ORDER BY start_time DESC
+                     LIMIT 1`,
+                    [employeeId, tenantId]
+                );
+                if (shiftResult.rows.length > 0) {
+                    shiftId = shiftResult.rows[0].id;
+                    console.log(`[Expenses] ✅ Turno abierto del empleado ${employeeId}: ${shiftId}`);
+                } else {
+                    console.log(`[Expenses] ⚠️ Empleado ${employeeId} no tiene turno abierto`);
+                }
+            }
+
             // Buscar categoría global por nombre
             let globalCategoryId = 12; // Default: Otros Gastos (ID 12)
             const catResult = await pool.query(
@@ -231,14 +251,14 @@ module.exports = (pool, io) => {
             }
 
             const result = await pool.query(
-                `INSERT INTO expenses (tenant_id, branch_id, employee_id, global_category_id, description, amount, global_id, terminal_id, local_op_seq, created_local_utc)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $9)
+                `INSERT INTO expenses (tenant_id, branch_id, employee_id, global_category_id, description, amount, id_turno, global_id, terminal_id, local_op_seq, created_local_utc)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, $10)
                  RETURNING *`,
-                [tenantId, branchId, employeeId, globalCategoryId, description, amount, uuidv4(), uuidv4(), new Date().toISOString()]
+                [tenantId, branchId, employeeId, globalCategoryId, description, amount, shiftId, uuidv4(), uuidv4(), new Date().toISOString()]
             );
 
             const newExpense = result.rows[0];
-            console.log(`[Expenses] ✅ Gasto creado desde Desktop: ${category} - $${amount}`);
+            console.log(`[Expenses] ✅ Gasto creado desde Desktop: ${category} - $${amount} (Shift: ${shiftId || 'NULL'})`);
 
             // 📢 EMITIR EVENTO SOCKET.IO
             if (io && employeeId) {

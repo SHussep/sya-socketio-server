@@ -208,11 +208,12 @@ module.exports = (pool) => {
             );
 
             // Aggregate expenses
+            // ✅ FIX: Use id_turno (not shift_id) to filter expenses by shift
             const expensesResult = await client.query(
                 `SELECT COALESCE(SUM(amount), 0) as total
                  FROM expenses
-                 WHERE tenant_id = $1 AND branch_id = $2 AND shift_id = $3
-                 AND expense_date >= $4 AND expense_date <= $5`,
+                 WHERE tenant_id = $1 AND branch_id = $2 AND id_turno = $3
+                 AND expense_date >= $4 AND expense_date <= $5 AND is_active = true`,
                 [tenantId, targetBranchId, shiftId, startTime, endTime]
             );
 
