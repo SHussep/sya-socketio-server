@@ -268,37 +268,13 @@ module.exports = (pool) => {
             const cashCutResult = await pool.query(cashCutQuery, cashCutParams);
 
             // ═══════════════════════════════════════════════════════════════
-            // KILOS NO REGISTRADOS - Eventos Guardian de categoría 'peso_no_registrado'
-            // Tabla: suspicious_weighing_logs
-            // Eventos que indican peso detectado pero no cobrado
+            // KILOS NO REGISTRADOS - Eventos Guardian
+            // Tabla: suspicious_weighing_logs (TODOS los registros son pesos no registrados)
             // ═══════════════════════════════════════════════════════════════
             let guardianKilosQuery = `
-                SELECT COALESCE(SUM(weight_detected), 0) as total_kg
+                SELECT COALESCE(SUM(max_weight_in_cycle), 0) as total_kg
                 FROM suspicious_weighing_logs
                 WHERE tenant_id = $1
-                AND (
-                    LOWER(event_type) LIKE '%peso no cobrado%'
-                    OR LOWER(event_type) LIKE '%peso sin registro%'
-                    OR LOWER(event_type) LIKE '%pesosinregistro%'
-                    OR LOWER(event_type) LIKE '%múltiples pesos sin cobrar%'
-                    OR LOWER(event_type) LIKE '%multiplespesossinregistro%'
-                    OR LOWER(event_type) LIKE '%retiro parcial sin cobrar%'
-                    OR LOWER(event_type) LIKE '%pesoparcialsinregistro%'
-                    OR LOWER(event_type) LIKE '%peso fuera de ventas%'
-                    OR LOWER(event_type) LIKE '%pesoenpantallanoautorizada%'
-                    OR LOWER(event_type) LIKE '%salió de ventas con peso%'
-                    OR LOWER(event_type) LIKE '%cambiopantalladurantepesaje%'
-                    OR LOWER(event_type) LIKE '%peso sin sesión%'
-                    OR LOWER(event_type) LIKE '%sesionnoiniciadaconpeso%'
-                    OR LOWER(event_type) LIKE '%pesaje abandonado%'
-                    OR LOWER(event_type) LIKE '%pesosinconfirmacionfinal%'
-                    OR LOWER(event_type) LIKE '%producto pesado eliminado%'
-                    OR LOWER(event_type) LIKE '%productopesadoeliminado%'
-                    OR LOWER(event_type) LIKE '%pesaje cancelado%'
-                    OR LOWER(event_type) LIKE '%dialogocanceladoconpeso%'
-                    OR LOWER(event_type) LIKE '%actividad fuera de horario%'
-                    OR LOWER(event_type) LIKE '%actividadfuerahorario%'
-                )
                 AND ${guardianDateFilter.replace(/event_date/g, 'created_at')}`;
             let guardianKilosParams = [tenantId];
             let guardianParamIndex = 2;
