@@ -367,12 +367,12 @@ module.exports = (pool) => {
         try {
             const { tenantId, branchId: userBranchId, employeeId: jwtEmployeeId } = req.user;
             const { employeeId } = req.params;
-            const { status, limit = 100, offset = 0, only_open_shifts = 'false' } = req.query;
+            const { status, limit = 100, offset = 0, only_open_shifts = 'false', shift_id, repartidor_shift_id } = req.query;
 
             console.log(`[Repartidor Assignments] 🔍 === REQUEST INFO ===`);
             console.log(`[Repartidor Assignments] JWT User: tenantId=${tenantId}, branchId=${userBranchId}, employeeId=${jwtEmployeeId}`);
             console.log(`[Repartidor Assignments] Params: employeeId=${employeeId} (from URL)`);
-            console.log(`[Repartidor Assignments] Query: status=${status || 'ALL'}, only_open_shifts=${only_open_shifts}, limit=${limit}, offset=${offset}`);
+            console.log(`[Repartidor Assignments] Query: status=${status || 'ALL'}, only_open_shifts=${only_open_shifts}, shift_id=${shift_id || 'ALL'}, repartidor_shift_id=${repartidor_shift_id || 'ALL'}, limit=${limit}, offset=${offset}`);
 
             // 🔧 QUERY SIN AGRUPACIÓN - Cada producto es una asignación individual
             // Esto permite asociar devoluciones correctamente a cada producto
@@ -421,19 +421,31 @@ module.exports = (pool) => {
                 WHERE ra.tenant_id = $1 AND ra.employee_id = $2
             `;
 
-            // Filtrar turnos abiertos si se solicita
-            // 🔧 FIX: Devolver TODAS las asignaciones del turno (pending, in_progress Y liquidated)
-            // El filtro de status se aplica en el cliente, no aquí
-            if (only_open_shifts === 'true') {
+            const params = [tenantId, parseInt(employeeId)];
+            let paramIndex = 3;
+
+            // 🔧 NUEVO: Filtrar por turno específico del repartidor (para historial)
+            // Esto es crítico para mostrar solo las asignaciones de un turno específico en el historial de cortes
+            if (repartidor_shift_id) {
+                query += ` AND ra.repartidor_shift_id = $${paramIndex}`;
+                params.push(parseInt(repartidor_shift_id));
+                paramIndex++;
+                console.log(`[Repartidor Assignments] 🎯 Filtrando por repartidor_shift_id=${repartidor_shift_id}`);
+            } else if (shift_id) {
+                query += ` AND ra.shift_id = $${paramIndex}`;
+                params.push(parseInt(shift_id));
+                paramIndex++;
+                console.log(`[Repartidor Assignments] 🎯 Filtrando por shift_id=${shift_id}`);
+            } else if (only_open_shifts === 'true') {
+                // Filtrar turnos abiertos si se solicita (solo cuando NO se especifica un turno específico)
+                // 🔧 FIX: Devolver TODAS las asignaciones del turno (pending, in_progress Y liquidated)
+                // El filtro de status se aplica en el cliente, no aquí
                 query += ` AND (s.id IS NULL OR s.is_cash_cut_open = true)`;
                 // 🔧 Ya NO filtrar por status - incluir pending, in_progress Y liquidated
                 // query += ` AND ra.status IN ('pending', 'in_progress')`;  // REMOVED
                 query += ` AND (ra.venta_id IS NULL OR v.status NOT IN ('cancelled', 'voided'))`;
                 console.log(`[Repartidor Assignments] ✅ Filtrando asignaciones de turnos abiertos (todos los status)`);
             }
-
-            const params = [tenantId, parseInt(employeeId)];
-            let paramIndex = 3;
 
             // Filtrar por status si se proporciona
             if (status && only_open_shifts !== 'true') {
