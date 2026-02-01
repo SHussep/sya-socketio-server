@@ -298,6 +298,40 @@ module.exports = (pool) => {
             const guardianKilosResult = await pool.query(guardianKilosQuery, guardianKilosParams);
             console.log(`[Dashboard Summary] ✅ Total kilos no registrados: ${guardianKilosResult.rows[0].total_kg}`);
 
+            // 🔍 DEBUG: Ver qué hay en additional_data_json de algunos eventos
+            let debugJsonQuery = `
+                SELECT
+                    id,
+                    additional_data_json,
+                    max_weight_in_cycle,
+                    event_type,
+                    branch_id
+                FROM suspicious_weighing_logs
+                WHERE tenant_id = $1
+                AND ${guardianDateFilter.replace(/event_date/g, 'created_at')}
+                LIMIT 5`;
+            let debugJsonParams = [tenantId];
+            if (shouldFilterByBranch) {
+                debugJsonQuery = debugJsonQuery.replace('LIMIT 5', `AND branch_id = ${targetBranchId} LIMIT 5`);
+            }
+            const debugJsonResult = await pool.query(debugJsonQuery, debugJsonParams);
+            console.log(`[Dashboard Summary] 🔍 DEBUG - Sample suspicious_weighing_logs (${debugJsonResult.rows.length} rows):`);
+            debugJsonResult.rows.forEach((row, idx) => {
+                console.log(`  ${idx + 1}. ID=${row.id}, Branch=${row.branch_id}, Weight=${row.max_weight_in_cycle}kg`);
+                console.log(`     EventType: ${row.event_type}`);
+                console.log(`     JSON: ${row.additional_data_json}`);
+
+                // Intentar parsear el JSON
+                if (row.additional_data_json) {
+                    try {
+                        const parsed = JSON.parse(row.additional_data_json);
+                        console.log(`     Parsed ProductId: ${parsed.ProductId}`);
+                    } catch (e) {
+                        console.log(`     ⚠️ Error parsing JSON: ${e.message}`);
+                    }
+                }
+            });
+
             // Query 2: Detalle por producto con cálculo de dinero perdido
             // Usar COALESCE para precio: primero de sucursal (productos_branch_precios), sino precio general (productos.precio_venta)
             let guardianDetailQuery = `
@@ -340,8 +374,20 @@ module.exports = (pool) => {
             guardianDetailQuery += ` GROUP BY p.id, p.descripcion, p.precio_venta, pbp.precio_venta ORDER BY total_amount_lost DESC LIMIT 10`;
 
             console.log(`[Dashboard Summary] Guardian Detail Query: ${guardianDetailQuery}`);
+            console.log(`[Dashboard Summary] Guardian Detail Params: ${JSON.stringify(guardianDetailParams)}`);
             const guardianDetailResult = await pool.query(guardianDetailQuery, guardianDetailParams);
             console.log(`[Dashboard Summary] ✅ Guardian detail: ${guardianDetailResult.rows.length} productos`);
+
+            // 🔍 DEBUG: Ver qué datos están llegando
+            guardianDetailResult.rows.forEach((row, index) => {
+                console.log(`[Dashboard Summary] 🔍 Producto ${index + 1}:`, {
+                    product_name: row.product_name,
+                    product_price: row.product_price,
+                    event_count: row.event_count,
+                    total_kg: row.total_kg,
+                    total_amount_lost: row.total_amount_lost
+                });
+            });
 
             const guardianKilosDetail = guardianDetailResult.rows.map(row => ({
                 productName: row.product_name || 'Producto desconocido',
