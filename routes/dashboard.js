@@ -268,9 +268,11 @@ module.exports = (pool) => {
             const cashCutResult = await pool.query(cashCutQuery, cashCutParams);
 
             // ═══════════════════════════════════════════════════════════════
-            // KILOS NO REGISTRADOS - Eventos Guardian
+            // KILOS NO REGISTRADOS - Eventos Guardian con detalle de productos
             // Tabla: suspicious_weighing_logs (TODOS los registros son pesos no registrados)
             // ═══════════════════════════════════════════════════════════════
+
+            // Query 1: Total de kilos
             let guardianKilosQuery = `
                 SELECT COALESCE(SUM(max_weight_in_cycle), 0) as total_kg
                 FROM suspicious_weighing_logs
@@ -295,6 +297,52 @@ module.exports = (pool) => {
             console.log(`[Dashboard Summary] Guardian Kilos Params: ${JSON.stringify(guardianKilosParams)}`);
             const guardianKilosResult = await pool.query(guardianKilosQuery, guardianKilosParams);
             console.log(`[Dashboard Summary] ✅ Total kilos no registrados: ${guardianKilosResult.rows[0].total_kg}`);
+
+            // Query 2: Detalle por producto con cálculo de dinero perdido
+            let guardianDetailQuery = `
+                SELECT
+                    p.nombre as product_name,
+                    p.precio as product_price,
+                    COUNT(*) as event_count,
+                    COALESCE(SUM(swl.max_weight_in_cycle), 0) as total_kg,
+                    COALESCE(AVG(swl.max_weight_in_cycle), 0) as avg_kg,
+                    COALESCE(SUM(swl.max_weight_in_cycle * p.precio), 0) as total_amount_lost
+                FROM suspicious_weighing_logs swl
+                LEFT JOIN productos p ON (swl.additional_data_json->>'ProductId')::INTEGER = p.id AND p.tenant_id = swl.tenant_id
+                WHERE swl.tenant_id = $1
+                AND ${guardianDateFilter.replace(/event_date/g, 'swl.created_at')}`;
+            let guardianDetailParams = [tenantId];
+            let detailParamIndex = 2;
+
+            if (shouldFilterByBranch) {
+                guardianDetailQuery += ` AND swl.branch_id = $${detailParamIndex}`;
+                guardianDetailParams.push(targetBranchId);
+                detailParamIndex++;
+            }
+
+            if (shift_id) {
+                guardianDetailQuery += ` AND swl.shift_id = $${detailParamIndex}`;
+                guardianDetailParams.push(parseInt(shift_id));
+                detailParamIndex++;
+            }
+
+            guardianDetailQuery += ` GROUP BY p.id, p.nombre, p.precio ORDER BY total_amount_lost DESC LIMIT 10`;
+
+            console.log(`[Dashboard Summary] Guardian Detail Query: ${guardianDetailQuery}`);
+            const guardianDetailResult = await pool.query(guardianDetailQuery, guardianDetailParams);
+            console.log(`[Dashboard Summary] ✅ Guardian detail: ${guardianDetailResult.rows.length} productos`);
+
+            const guardianKilosDetail = guardianDetailResult.rows.map(row => ({
+                productName: row.product_name || 'Producto desconocido',
+                productPrice: parseFloat(row.product_price || 0),
+                eventCount: parseInt(row.event_count),
+                totalKg: parseFloat(row.total_kg),
+                avgKg: parseFloat(row.avg_kg),
+                totalAmountLost: parseFloat(row.total_amount_lost)
+            }));
+
+            // Calcular total de dinero no registrado
+            const totalDineroNoRegistrado = guardianKilosDetail.reduce((sum, item) => sum + item.totalAmountLost, 0);
 
             // ═══════════════════════════════════════════════════════════════
             // EVENTOS GUARDIAN NO LEÍDOS - Para badge de alertas
@@ -475,6 +523,8 @@ module.exports = (pool) => {
                     cashInDrawer: cashCutResult.rows.length > 0 ? parseFloat(cashCutResult.rows[0].counted_cash) : 0,
                     unreadGuardianEvents: parseInt(guardianEventsResult.rows[0].count),
                     totalKilosNoRegistrados: parseFloat(guardianKilosResult.rows[0].total_kg),
+                    totalDineroNoRegistrado: totalDineroNoRegistrado,
+                    kilosNoRegistradosDetail: guardianKilosDetail,
                     totalAssignments: parseInt(assignmentsResult.rows[0].total_assignments),
                     activeAssignments: parseInt(assignmentsResult.rows[0].active_assignments),
                     activeAssignmentsAmount: parseFloat(assignmentsResult.rows[0].active_amount),
