@@ -2391,34 +2391,48 @@ async function runMigrations() {
             const currentPermCount = await client.query(`SELECT COUNT(*) as cnt FROM permissions`);
             const permCount = parseInt(currentPermCount.rows[0].cnt);
 
-            if (permCount < 20) {
-                console.log(`[Schema] 📝 Seeding system permissions (currently ${permCount}, need 20)...`);
+            // Also check if IDs are in the correct order (AccessPointOfSale should be ID 1)
+            const idCheck = await client.query(`SELECT id FROM permissions WHERE code = 'AccessPointOfSale'`);
+            const needsReorder = idCheck.rows.length > 0 && idCheck.rows[0].id !== 1;
 
-                // Insert all 20 system permissions (ON CONFLICT DO NOTHING for idempotency)
+            if (permCount < 20 || needsReorder) {
+                console.log(`[Schema] 📝 Seeding system permissions (currently ${permCount}, reorder=${needsReorder})...`);
+
+                // Delete existing permissions and role_permissions to re-insert with correct IDs
+                // IDs MUST match local SQLite order (1-20) for consistency across platforms
+                if (permCount > 0) {
+                    console.log(`[Schema] 🔄 Cleaning existing ${permCount} permissions to re-insert with correct IDs...`);
+                    await client.query(`DELETE FROM role_permissions`);
+                    await client.query(`DELETE FROM permissions`);
+                }
+
+                // Insert all 20 system permissions with explicit IDs matching SQLite local
                 await client.query(`
-                    INSERT INTO permissions (code, name, description, category) VALUES
-                    ('AccessPointOfSale', 'Acceso al Punto de Venta', 'Permite realizar ventas desde el punto de venta principal', 'ventas'),
-                    ('SettleDeliveries', 'Liquidar Repartidores', 'Permite realizar la liquidación de las ventas de un repartidor', 'repartidores'),
-                    ('ManageCashDrawer', 'Gestionar Caja', 'Permite registrar ingresos y retiros de efectivo en la caja', 'caja'),
-                    ('ManageProducts', 'Gestionar Productos', 'Permite crear, editar y eliminar productos del catálogo', 'inventario'),
-                    ('ManageCustomers', 'Gestionar Clientes', 'Permite crear, editar y gestionar la información de los clientes', 'clientes'),
-                    ('ManageSuppliers', 'Gestionar Proveedores', 'Permite crear, editar y gestionar la información de los proveedores', 'compras'),
-                    ('ManagePurchases', 'Gestionar Compras', 'Permite registrar las compras de materia prima a proveedores', 'compras'),
-                    ('ManageExpenses', 'Gestionar Gastos', 'Permite registrar gastos operativos del negocio', 'gastos'),
-                    ('ViewDashboard', 'Ver Dashboard', 'Permite ver el panel de control con las métricas generales del negocio', 'reportes'),
-                    ('ManageCashCuts', 'Gestionar Cortes de Caja', 'Permite realizar y consultar los cortes de caja', 'caja'),
-                    ('ViewScaleAudits', 'Ver Auditorías de Báscula', 'Permite acceder al registro de auditoría de la báscula', 'seguridad'),
-                    ('ManageEmployees', 'Gestionar Empleados', 'Permite crear, editar y gestionar los usuarios y sus roles', 'administracion'),
-                    ('AccessSettings', 'Acceso a Configuración', 'Permite acceder y modificar la configuración general del sistema', 'administracion'),
-                    ('ActivatePreparationMode', 'Activar Modo Preparación', 'Permite activar Peso de Alistamiento para pesar producto sin generar alertas', 'produccion'),
-                    ('AccessMobileAppAsAdmin', 'Acceso Móvil Admin', 'Acceso a la aplicación móvil con permisos de Administrador', 'movil'),
-                    ('AccessMobileAppAsDistributor', 'Acceso Móvil Repartidor', 'Acceso a la aplicación móvil con permisos de Repartidor', 'movil'),
-                    ('CloseApplication', 'Cerrar Aplicación', 'Permite cerrar la aplicación', 'administracion'),
-                    ('ManageProduction', 'Gestionar Producción', 'Permite acceder a la bitácora, configuración y alertas del módulo de producción', 'produccion'),
-                    ('AccessProduction', 'Acceso a Producción', 'Permite acceder al módulo de Producción para registrar peso de masa', 'produccion'),
-                    ('ManualWeightOverride', 'Peso Manual', 'Permite ingresar peso manualmente aún con la báscula conectada', 'produccion')
-                    ON CONFLICT (code) DO NOTHING
+                    INSERT INTO permissions (id, code, name, description, category) VALUES
+                    (1,  'AccessPointOfSale',           'Acceso al Punto de Venta',     'Permite realizar ventas desde el punto de venta principal', 'ventas'),
+                    (2,  'SettleDeliveries',            'Liquidar Repartidores',        'Permite realizar la liquidación de las ventas de un repartidor', 'repartidores'),
+                    (3,  'ManageCashDrawer',            'Gestionar Caja',               'Permite registrar ingresos y retiros de efectivo en la caja', 'caja'),
+                    (4,  'ManageProducts',              'Gestionar Productos',          'Permite crear, editar y eliminar productos del catálogo', 'inventario'),
+                    (5,  'ManageCustomers',             'Gestionar Clientes',           'Permite crear, editar y gestionar la información de los clientes', 'clientes'),
+                    (6,  'ManageSuppliers',             'Gestionar Proveedores',        'Permite crear, editar y gestionar la información de los proveedores', 'compras'),
+                    (7,  'ManagePurchases',             'Gestionar Compras',            'Permite registrar las compras de materia prima a proveedores', 'compras'),
+                    (8,  'ManageExpenses',              'Gestionar Gastos',             'Permite registrar gastos operativos del negocio', 'gastos'),
+                    (9,  'ViewDashboard',               'Ver Dashboard',                'Permite ver el panel de control con las métricas generales del negocio', 'reportes'),
+                    (10, 'ManageCashCuts',              'Gestionar Cortes de Caja',     'Permite realizar y consultar los cortes de caja', 'caja'),
+                    (11, 'ViewScaleAudits',             'Ver Auditorías de Báscula',    'Permite acceder al registro de auditoría de la báscula', 'seguridad'),
+                    (12, 'ManageEmployees',             'Gestionar Empleados',          'Permite crear, editar y gestionar los usuarios y sus roles', 'administracion'),
+                    (13, 'AccessSettings',              'Acceso a Configuración',       'Permite acceder y modificar la configuración general del sistema', 'administracion'),
+                    (14, 'ActivatePreparationMode',     'Activar Modo Preparación',     'Permite activar Peso de Alistamiento para pesar producto sin generar alertas', 'produccion'),
+                    (15, 'AccessMobileAppAsAdmin',      'Acceso Móvil Admin',           'Acceso a la aplicación móvil con permisos de Administrador', 'movil'),
+                    (16, 'AccessMobileAppAsDistributor', 'Acceso Móvil Repartidor',     'Acceso a la aplicación móvil con permisos de Repartidor', 'movil'),
+                    (17, 'CloseApplication',            'Cerrar Aplicación',            'Permite cerrar la aplicación', 'administracion'),
+                    (18, 'ManageProduction',            'Gestionar Producción',         'Permite acceder a la bitácora, configuración y alertas del módulo de producción', 'produccion'),
+                    (19, 'AccessProduction',            'Acceso a Producción',          'Permite acceder al módulo de Producción para registrar peso de masa', 'produccion'),
+                    (20, 'ManualWeightOverride',        'Peso Manual',                  'Permite ingresar peso manualmente aún con la báscula conectada', 'produccion')
                 `);
+
+                // Reset sequence so next auto-generated ID is 21
+                await client.query(`SELECT setval('permissions_id_seq', 20, true)`);
 
                 // Seed default role_permissions for all tenant system roles
                 // Administrador → ALL permissions
