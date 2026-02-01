@@ -268,14 +268,15 @@ module.exports = (pool) => {
             const cashCutResult = await pool.query(cashCutQuery, cashCutParams);
 
             // ═══════════════════════════════════════════════════════════════
-            // KILOS NO REGISTRADOS - Guardian events de tipo 'peso_no_registrado'
+            // KILOS NO REGISTRADOS - Eventos Guardian de tipo 'peso_no_registrado'
+            // Tabla: suspicious_weighing_logs
             // ═══════════════════════════════════════════════════════════════
             let guardianKilosQuery = `
-                SELECT COALESCE(SUM(weight_kg), 0) as total_kg
-                FROM guardian_events
+                SELECT COALESCE(SUM(weight_detected), 0) as total_kg
+                FROM suspicious_weighing_logs
                 WHERE tenant_id = $1
                 AND event_type LIKE '%peso_no_registrado%'
-                AND ${guardianDateFilter}`;
+                AND ${guardianDateFilter.replace(/event_date/g, 'created_at')}`;
             let guardianKilosParams = [tenantId];
             let guardianParamIndex = 2;
 
@@ -298,8 +299,9 @@ module.exports = (pool) => {
 
             // ═══════════════════════════════════════════════════════════════
             // EVENTOS GUARDIAN NO LEÍDOS - Para badge de alertas
+            // Tabla: suspicious_weighing_logs (usa is_hidden para determinar si fue "leído")
             // ═══════════════════════════════════════════════════════════════
-            let guardianEventsQuery = `SELECT COUNT(*) as count FROM guardian_events WHERE tenant_id = $1 AND is_read = false`;
+            let guardianEventsQuery = `SELECT COUNT(*) as count FROM suspicious_weighing_logs WHERE tenant_id = $1 AND is_hidden = false`;
             let guardianEventsParams = [tenantId];
             let guardianEventsParamIndex = 2;
 
