@@ -439,7 +439,8 @@ router.get('/by-uuid/:globalId/role', async (req, res) => {
             SELECT
                 e.id,
                 e.global_id,
-                e.full_name,
+                e.first_name,
+                e.last_name,
                 e.email,
                 e.main_branch_id,
                 r.id as role_id,
@@ -468,7 +469,7 @@ router.get('/by-uuid/:globalId/role', async (req, res) => {
             data: {
                 globalId: emp.global_id,
                 employeeId: emp.id,
-                fullName: emp.full_name,
+                fullName: `${emp.first_name} ${emp.last_name || ''}`.trim(),
                 email: emp.email,
                 roleId: emp.role_id,
                 roleName: emp.role_name,
@@ -519,7 +520,7 @@ router.put('/by-uuid/:globalId/role', async (req, res) => {
 
         // 1. Verify employee exists by global_id
         const employeeCheck = await client.query(
-            'SELECT id, role_id, main_branch_id, full_name, email FROM employees WHERE global_id = $1 AND tenant_id = $2',
+            'SELECT id, role_id, main_branch_id, first_name, last_name, email FROM employees WHERE global_id = $1 AND tenant_id = $2',
             [globalId, tenantId]
         );
 
@@ -575,7 +576,8 @@ router.put('/by-uuid/:globalId/role', async (req, res) => {
             SELECT
                 e.id,
                 e.global_id,
-                e.full_name,
+                e.first_name,
+                e.last_name,
                 e.email,
                 e.main_branch_id,
                 r.id as role_id,
@@ -600,7 +602,7 @@ router.put('/by-uuid/:globalId/role', async (req, res) => {
             const eventData = {
                 employeeGlobalId: globalId,
                 employeeId: employee.id,
-                employeeName: employee.full_name,
+                employeeName: `${employee.first_name} ${employee.last_name || ''}`.trim(),
                 newRoleId: newRoleId,
                 newRoleName: newRole.name,
                 mobileAccessType: newRole.mobile_access_type,
@@ -621,7 +623,7 @@ router.put('/by-uuid/:globalId/role', async (req, res) => {
             data: {
                 globalId: emp.global_id,
                 employeeId: emp.id,
-                fullName: emp.full_name,
+                fullName: `${emp.first_name} ${emp.last_name || ''}`.trim(),
                 roleId: emp.role_id,
                 roleName: emp.role_name,
                 mobileAccessType: emp.mobile_access_type,
