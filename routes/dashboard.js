@@ -308,7 +308,13 @@ module.exports = (pool) => {
                     COALESCE(AVG(swl.max_weight_in_cycle), 0) as avg_kg,
                     COALESCE(SUM(swl.max_weight_in_cycle * p.precio), 0) as total_amount_lost
                 FROM suspicious_weighing_logs swl
-                LEFT JOIN productos p ON (swl.additional_data_json->>'ProductId')::INTEGER = p.id AND p.tenant_id = swl.tenant_id
+                LEFT JOIN productos p ON
+                    CASE
+                        WHEN swl.additional_data_json IS NOT NULL AND swl.additional_data_json != ''
+                        THEN (swl.additional_data_json::jsonb->>'ProductId')::INTEGER
+                        ELSE NULL
+                    END = p.id
+                    AND p.tenant_id = swl.tenant_id
                 WHERE swl.tenant_id = $1
                 AND ${guardianDateFilter.replace(/event_date/g, 'swl.created_at')}`;
             let guardianDetailParams = [tenantId];
