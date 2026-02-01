@@ -64,6 +64,7 @@ module.exports = (pool) => {
             let dateFilter = `DATE(fecha_venta_utc AT TIME ZONE '${effectiveTimezone}') = DATE(NOW() AT TIME ZONE '${effectiveTimezone}')`;
             let expenseDateFilter = `DATE(expense_date AT TIME ZONE '${effectiveTimezone}') = DATE(NOW() AT TIME ZONE '${effectiveTimezone}')`;
             let assignmentDateFilter = `DATE(fecha_asignacion AT TIME ZONE '${effectiveTimezone}') = DATE(NOW() AT TIME ZONE '${effectiveTimezone}')`;
+            let guardianDateFilter = `DATE(event_date AT TIME ZONE '${effectiveTimezone}') = DATE(NOW() AT TIME ZONE '${effectiveTimezone}')`;
 
             if (start_date && end_date) {
                 // El cliente envía fechas locales (ej: 2025-12-16T00:00:00.000 = medianoche en SU timezone)
@@ -77,6 +78,7 @@ module.exports = (pool) => {
                 dateFilter = `(fecha_venta_utc AT TIME ZONE '${effectiveTimezone}')::date >= '${startDateOnly}'::date AND (fecha_venta_utc AT TIME ZONE '${effectiveTimezone}')::date <= '${endDateOnly}'::date`;
                 expenseDateFilter = `(expense_date AT TIME ZONE '${effectiveTimezone}')::date >= '${startDateOnly}'::date AND (expense_date AT TIME ZONE '${effectiveTimezone}')::date <= '${endDateOnly}'::date`;
                 assignmentDateFilter = `(fecha_asignacion AT TIME ZONE '${effectiveTimezone}')::date >= '${startDateOnly}'::date AND (fecha_asignacion AT TIME ZONE '${effectiveTimezone}')::date <= '${endDateOnly}'::date`;
+                guardianDateFilter = `(event_date AT TIME ZONE '${effectiveTimezone}')::date >= '${startDateOnly}'::date AND (event_date AT TIME ZONE '${effectiveTimezone}')::date <= '${endDateOnly}'::date`;
             }
 
             // Total de ventas
@@ -265,10 +267,50 @@ module.exports = (pool) => {
             cashCutQuery += ` ORDER BY cut_date DESC LIMIT 1`;
             const cashCutResult = await pool.query(cashCutQuery, cashCutParams);
 
-            // Eventos Guardian - NO hay tabla guardian_events, los eventos se guardan como agregados en cash_cuts
-            // Por ahora, retornar 0 eventos
-            const guardianEventsResult = { rows: [{ count: 0 }] };
-            console.log(`[Dashboard Summary] ⚠️ Guardian events no implementado (tabla no existe) - retornando 0`);
+            // ═══════════════════════════════════════════════════════════════
+            // KILOS NO REGISTRADOS - Guardian events de tipo 'peso_no_registrado'
+            // ═══════════════════════════════════════════════════════════════
+            let guardianKilosQuery = `
+                SELECT COALESCE(SUM(weight_kg), 0) as total_kg
+                FROM guardian_events
+                WHERE tenant_id = $1
+                AND event_type LIKE '%peso_no_registrado%'
+                AND ${guardianDateFilter}`;
+            let guardianKilosParams = [tenantId];
+            let guardianParamIndex = 2;
+
+            if (shouldFilterByBranch) {
+                guardianKilosQuery += ` AND branch_id = $${guardianParamIndex}`;
+                guardianKilosParams.push(targetBranchId);
+                guardianParamIndex++;
+            }
+
+            if (shift_id) {
+                guardianKilosQuery += ` AND shift_id = $${guardianParamIndex}`;
+                guardianKilosParams.push(parseInt(shift_id));
+                guardianParamIndex++;
+            }
+
+            console.log(`[Dashboard Summary] Guardian Kilos Query: ${guardianKilosQuery}`);
+            console.log(`[Dashboard Summary] Guardian Kilos Params: ${JSON.stringify(guardianKilosParams)}`);
+            const guardianKilosResult = await pool.query(guardianKilosQuery, guardianKilosParams);
+            console.log(`[Dashboard Summary] ✅ Total kilos no registrados: ${guardianKilosResult.rows[0].total_kg}`);
+
+            // ═══════════════════════════════════════════════════════════════
+            // EVENTOS GUARDIAN NO LEÍDOS - Para badge de alertas
+            // ═══════════════════════════════════════════════════════════════
+            let guardianEventsQuery = `SELECT COUNT(*) as count FROM guardian_events WHERE tenant_id = $1 AND is_read = false`;
+            let guardianEventsParams = [tenantId];
+            let guardianEventsParamIndex = 2;
+
+            if (shouldFilterByBranch) {
+                guardianEventsQuery += ` AND branch_id = $${guardianEventsParamIndex}`;
+                guardianEventsParams.push(targetBranchId);
+                guardianEventsParamIndex++;
+            }
+
+            const guardianEventsResult = await pool.query(guardianEventsQuery, guardianEventsParams);
+            console.log(`[Dashboard Summary] ✅ Unread Guardian events: ${guardianEventsResult.rows[0].count}`);
 
             // Asignaciones de repartidores (activas: pending + in_progress)
             // ✅ Usar created_at que es más confiable que fecha_asignacion
@@ -431,6 +473,7 @@ module.exports = (pool) => {
                     purchasesCount: parseInt(purchasesResult.rows[0].count),
                     cashInDrawer: cashCutResult.rows.length > 0 ? parseFloat(cashCutResult.rows[0].counted_cash) : 0,
                     unreadGuardianEvents: parseInt(guardianEventsResult.rows[0].count),
+                    totalKilosNoRegistrados: parseFloat(guardianKilosResult.rows[0].total_kg),
                     totalAssignments: parseInt(assignmentsResult.rows[0].total_assignments),
                     activeAssignments: parseInt(assignmentsResult.rows[0].active_assignments),
                     activeAssignmentsAmount: parseFloat(assignmentsResult.rows[0].active_amount),
