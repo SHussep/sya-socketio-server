@@ -299,14 +299,15 @@ module.exports = (pool) => {
             console.log(`[Dashboard Summary] ✅ Total kilos no registrados: ${guardianKilosResult.rows[0].total_kg}`);
 
             // Query 2: Detalle por producto con cálculo de dinero perdido
+            // Usar COALESCE para precio: primero de sucursal (productos_branch_precios), sino precio general (productos.precio_venta)
             let guardianDetailQuery = `
                 SELECT
-                    p.nombre as product_name,
-                    p.precio as product_price,
+                    p.descripcion as product_name,
+                    COALESCE(pbp.precio_venta, p.precio_venta) as product_price,
                     COUNT(*) as event_count,
                     COALESCE(SUM(swl.max_weight_in_cycle), 0) as total_kg,
                     COALESCE(AVG(swl.max_weight_in_cycle), 0) as avg_kg,
-                    COALESCE(SUM(swl.max_weight_in_cycle * p.precio), 0) as total_amount_lost
+                    COALESCE(SUM(swl.max_weight_in_cycle * COALESCE(pbp.precio_venta, p.precio_venta)), 0) as total_amount_lost
                 FROM suspicious_weighing_logs swl
                 LEFT JOIN productos p ON
                     CASE
@@ -315,6 +316,10 @@ module.exports = (pool) => {
                         ELSE NULL
                     END = p.id
                     AND p.tenant_id = swl.tenant_id
+                LEFT JOIN productos_branch_precios pbp ON
+                    pbp.producto_id = p.id
+                    AND pbp.branch_id = swl.branch_id
+                    AND pbp.eliminado = FALSE
                 WHERE swl.tenant_id = $1
                 AND ${guardianDateFilter.replace(/event_date/g, 'swl.created_at')}`;
             let guardianDetailParams = [tenantId];
@@ -332,7 +337,7 @@ module.exports = (pool) => {
                 detailParamIndex++;
             }
 
-            guardianDetailQuery += ` GROUP BY p.id, p.nombre, p.precio ORDER BY total_amount_lost DESC LIMIT 10`;
+            guardianDetailQuery += ` GROUP BY p.id, p.descripcion, p.precio_venta, pbp.precio_venta ORDER BY total_amount_lost DESC LIMIT 10`;
 
             console.log(`[Dashboard Summary] Guardian Detail Query: ${guardianDetailQuery}`);
             const guardianDetailResult = await pool.query(guardianDetailQuery, guardianDetailParams);
