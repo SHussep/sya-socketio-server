@@ -2384,6 +2384,175 @@ async function runMigrations() {
                 console.log('[Schema] ✅ expenses.receipt_image column added successfully');
             }
 
+            // Patch: Seed all 20 system permissions and default role_permissions (Migration 020)
+            // The permissions table is system-controlled and uses 'code' as natural key
+            console.log('[Schema] 🔍 Checking system permissions completeness (Migration 020)...');
+
+            const currentPermCount = await client.query(`SELECT COUNT(*) as cnt FROM permissions`);
+            const permCount = parseInt(currentPermCount.rows[0].cnt);
+
+            if (permCount < 20) {
+                console.log(`[Schema] 📝 Seeding system permissions (currently ${permCount}, need 20)...`);
+
+                // Insert all 20 system permissions (ON CONFLICT DO NOTHING for idempotency)
+                await client.query(`
+                    INSERT INTO permissions (code, name, description, category) VALUES
+                    ('AccessPointOfSale', 'Acceso al Punto de Venta', 'Permite realizar ventas desde el punto de venta principal', 'ventas'),
+                    ('SettleDeliveries', 'Liquidar Repartidores', 'Permite realizar la liquidación de las ventas de un repartidor', 'repartidores'),
+                    ('ManageCashDrawer', 'Gestionar Caja', 'Permite registrar ingresos y retiros de efectivo en la caja', 'caja'),
+                    ('ManageProducts', 'Gestionar Productos', 'Permite crear, editar y eliminar productos del catálogo', 'inventario'),
+                    ('ManageCustomers', 'Gestionar Clientes', 'Permite crear, editar y gestionar la información de los clientes', 'clientes'),
+                    ('ManageSuppliers', 'Gestionar Proveedores', 'Permite crear, editar y gestionar la información de los proveedores', 'compras'),
+                    ('ManagePurchases', 'Gestionar Compras', 'Permite registrar las compras de materia prima a proveedores', 'compras'),
+                    ('ManageExpenses', 'Gestionar Gastos', 'Permite registrar gastos operativos del negocio', 'gastos'),
+                    ('ViewDashboard', 'Ver Dashboard', 'Permite ver el panel de control con las métricas generales del negocio', 'reportes'),
+                    ('ManageCashCuts', 'Gestionar Cortes de Caja', 'Permite realizar y consultar los cortes de caja', 'caja'),
+                    ('ViewScaleAudits', 'Ver Auditorías de Báscula', 'Permite acceder al registro de auditoría de la báscula', 'seguridad'),
+                    ('ManageEmployees', 'Gestionar Empleados', 'Permite crear, editar y gestionar los usuarios y sus roles', 'administracion'),
+                    ('AccessSettings', 'Acceso a Configuración', 'Permite acceder y modificar la configuración general del sistema', 'administracion'),
+                    ('ActivatePreparationMode', 'Activar Modo Preparación', 'Permite activar Peso de Alistamiento para pesar producto sin generar alertas', 'produccion'),
+                    ('AccessMobileAppAsAdmin', 'Acceso Móvil Admin', 'Acceso a la aplicación móvil con permisos de Administrador', 'movil'),
+                    ('AccessMobileAppAsDistributor', 'Acceso Móvil Repartidor', 'Acceso a la aplicación móvil con permisos de Repartidor', 'movil'),
+                    ('CloseApplication', 'Cerrar Aplicación', 'Permite cerrar la aplicación', 'administracion'),
+                    ('ManageProduction', 'Gestionar Producción', 'Permite acceder a la bitácora, configuración y alertas del módulo de producción', 'produccion'),
+                    ('AccessProduction', 'Acceso a Producción', 'Permite acceder al módulo de Producción para registrar peso de masa', 'produccion'),
+                    ('ManualWeightOverride', 'Peso Manual', 'Permite ingresar peso manualmente aún con la báscula conectada', 'produccion')
+                    ON CONFLICT (code) DO NOTHING
+                `);
+
+                // Seed default role_permissions for all tenant system roles
+                // Administrador → ALL permissions
+                await client.query(`
+                    INSERT INTO role_permissions (role_id, permission_id)
+                    SELECT r.id, p.id
+                    FROM roles r
+                    CROSS JOIN permissions p
+                    WHERE r.is_system = true AND r.name = 'Administrador'
+                    ON CONFLICT (role_id, permission_id) DO NOTHING
+                `);
+
+                // Encargado → specific permissions
+                await client.query(`
+                    INSERT INTO role_permissions (role_id, permission_id)
+                    SELECT r.id, p.id
+                    FROM roles r
+                    CROSS JOIN permissions p
+                    WHERE r.is_system = true AND r.name = 'Encargado'
+                    AND p.code IN (
+                        'AccessPointOfSale', 'SettleDeliveries', 'ManageCashDrawer',
+                        'ManageExpenses', 'ManageCustomers', 'ManageProducts',
+                        'ManageCashCuts', 'AccessProduction', 'ManageProduction'
+                    )
+                    ON CONFLICT (role_id, permission_id) DO NOTHING
+                `);
+
+                // Repartidor → AccessPointOfSale only
+                await client.query(`
+                    INSERT INTO role_permissions (role_id, permission_id)
+                    SELECT r.id, p.id
+                    FROM roles r
+                    CROSS JOIN permissions p
+                    WHERE r.is_system = true AND r.name = 'Repartidor'
+                    AND p.code IN ('AccessPointOfSale')
+                    ON CONFLICT (role_id, permission_id) DO NOTHING
+                `);
+
+                // Ayudante → AccessPointOfSale, AccessProduction
+                await client.query(`
+                    INSERT INTO role_permissions (role_id, permission_id)
+                    SELECT r.id, p.id
+                    FROM roles r
+                    CROSS JOIN permissions p
+                    WHERE r.is_system = true AND r.name = 'Ayudante'
+                    AND p.code IN ('AccessPointOfSale', 'AccessProduction')
+                    ON CONFLICT (role_id, permission_id) DO NOTHING
+                `);
+
+                // Cajero → specific permissions (if role exists)
+                await client.query(`
+                    INSERT INTO role_permissions (role_id, permission_id)
+                    SELECT r.id, p.id
+                    FROM roles r
+                    CROSS JOIN permissions p
+                    WHERE r.is_system = true AND r.name = 'Cajero'
+                    AND p.code IN ('AccessPointOfSale', 'SettleDeliveries', 'ManageExpenses', 'AccessProduction')
+                    ON CONFLICT (role_id, permission_id) DO NOTHING
+                `);
+
+                // Derive mobile_access_type from permissions for all roles
+                await client.query(`
+                    UPDATE roles r SET mobile_access_type =
+                        CASE
+                            WHEN EXISTS (
+                                SELECT 1 FROM role_permissions rp
+                                JOIN permissions p ON rp.permission_id = p.id
+                                WHERE rp.role_id = r.id AND p.code = 'AccessMobileAppAsAdmin'
+                            ) THEN 'admin'
+                            WHEN EXISTS (
+                                SELECT 1 FROM role_permissions rp
+                                JOIN permissions p ON rp.permission_id = p.id
+                                WHERE rp.role_id = r.id AND p.code = 'AccessMobileAppAsDistributor'
+                            ) THEN 'distributor'
+                            ELSE 'none'
+                        END
+                `);
+
+                // Update the trigger function to seed all permissions for new tenants
+                await client.query(`
+                    CREATE OR REPLACE FUNCTION seed_default_roles_for_tenant()
+                    RETURNS TRIGGER AS $$
+                    BEGIN
+                        -- Insert default roles
+                        INSERT INTO roles (tenant_id, name, description, is_system, mobile_access_type)
+                        VALUES
+                            (NEW.id, 'Administrador', 'Acceso total al sistema', true, 'admin'),
+                            (NEW.id, 'Encargado', 'Gerente de turno - permisos extensos', true, 'none'),
+                            (NEW.id, 'Repartidor', 'Acceso limitado como repartidor', true, 'distributor'),
+                            (NEW.id, 'Ayudante', 'Soporte - acceso limitado', true, 'none');
+
+                        -- Administrador gets ALL permissions
+                        INSERT INTO role_permissions (role_id, permission_id)
+                        SELECT r.id, p.id
+                        FROM roles r CROSS JOIN permissions p
+                        WHERE r.tenant_id = NEW.id AND r.name = 'Administrador';
+
+                        -- Encargado gets specific permissions
+                        INSERT INTO role_permissions (role_id, permission_id)
+                        SELECT r.id, p.id
+                        FROM roles r CROSS JOIN permissions p
+                        WHERE r.tenant_id = NEW.id AND r.name = 'Encargado'
+                        AND p.code IN (
+                            'AccessPointOfSale', 'SettleDeliveries', 'ManageCashDrawer',
+                            'ManageExpenses', 'ManageCustomers', 'ManageProducts',
+                            'ManageCashCuts', 'AccessProduction', 'ManageProduction'
+                        );
+
+                        -- Repartidor gets AccessPointOfSale
+                        INSERT INTO role_permissions (role_id, permission_id)
+                        SELECT r.id, p.id
+                        FROM roles r CROSS JOIN permissions p
+                        WHERE r.tenant_id = NEW.id AND r.name = 'Repartidor'
+                        AND p.code = 'AccessPointOfSale';
+
+                        -- Ayudante gets AccessPointOfSale, AccessProduction
+                        INSERT INTO role_permissions (role_id, permission_id)
+                        SELECT r.id, p.id
+                        FROM roles r CROSS JOIN permissions p
+                        WHERE r.tenant_id = NEW.id AND r.name = 'Ayudante'
+                        AND p.code IN ('AccessPointOfSale', 'AccessProduction');
+
+                        RETURN NEW;
+                    END;
+                    $$ LANGUAGE plpgsql
+                `);
+
+                const finalPermCount = await client.query(`SELECT COUNT(*) as cnt FROM permissions`);
+                const finalRpCount = await client.query(`SELECT COUNT(*) as cnt FROM role_permissions`);
+                console.log(`[Schema] ✅ System permissions seeded: ${finalPermCount.rows[0].cnt} permissions, ${finalRpCount.rows[0].cnt} role_permissions`);
+            } else {
+                console.log(`[Schema] ℹ️ Permissions already complete (${permCount} permissions found)`);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {

@@ -327,6 +327,9 @@ const io = new Server(server, {
     pingInterval: 25000,
 });
 
+// Make io accessible from routes via req.app.get('io')
+app.set('io', io);
+
 let stats = {
     desktopClients: 0,
     mobileClients: 0,
