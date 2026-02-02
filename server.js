@@ -1208,7 +1208,9 @@ io.on('connection', (socket) => {
                 durationFormatted: data.durationFormatted,
                 severity: data.severity,
                 deactivatedAt: data.deactivatedAt,
-                reason: data.reason
+                reason: data.reason,
+                weighingCycleCount: data.weighingCycleCount || 0,
+                totalWeightKg: data.totalWeightKg || 0
             });
             console.log(`[PREPMODE] 📨 Notificación de desactivación FCM enviada a administradores del tenant ${data.tenantId}`);
         } catch (error) {

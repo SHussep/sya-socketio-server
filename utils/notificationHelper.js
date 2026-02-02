@@ -984,7 +984,7 @@ async function notifyPreparationModeActivated(tenantId, branchId, { operatorName
  * @param {number} branchId - ID de la sucursal
  * @param {object} params - Datos de la desactivación
  */
-async function notifyPreparationModeDeactivated(tenantId, branchId, { operatorName, branchName, durationFormatted, severity, deactivatedAt, reason }) {
+async function notifyPreparationModeDeactivated(tenantId, branchId, { operatorName, branchName, durationFormatted, severity, deactivatedAt, reason, weighingCycleCount = 0, totalWeightKg = 0 }) {
     try {
         // Determinar emoji/icono según severidad
         const severityInfo = {
@@ -995,10 +995,16 @@ async function notifyPreparationModeDeactivated(tenantId, branchId, { operatorNa
         };
         const info = severityInfo[severity] || { emoji: '⚪', text: severity };
 
+        // Construir body con datos de pesaje si los hay
+        let body = `${operatorName} finalizó - Duración: ${durationFormatted} (${info.emoji} ${info.text})`;
+        if (weighingCycleCount > 0) {
+            body += ` | Pesajes: ${weighingCycleCount}, Total: ${Number(totalWeightKg).toFixed(3)}kg`;
+        }
+
         // Enviar notificación a TODOS los administradores/encargados del TENANT
         const result = await sendNotificationToAdminsInTenant(tenantId, {
             title: `✅ Modo Preparación Finalizado [${branchName}]`,
-            body: `${operatorName} finalizó - Duración: ${durationFormatted} (${info.emoji} ${info.text})`,
+            body,
             data: {
                 type: 'preparation_mode_deactivated',
                 operatorName,
@@ -1008,7 +1014,9 @@ async function notifyPreparationModeDeactivated(tenantId, branchId, { operatorNa
                 durationFormatted,
                 severity,
                 deactivatedAt: deactivatedAt || new Date().toISOString(),
-                reason: reason || ''
+                reason: reason || '',
+                weighingCycleCount: weighingCycleCount.toString(),
+                totalWeightKg: totalWeightKg.toString()
             }
         });
 
@@ -1022,8 +1030,8 @@ async function notifyPreparationModeDeactivated(tenantId, branchId, { operatorNa
             category: 'security',
             event_type: 'preparation_mode_deactivated',
             title: `✅ Modo Preparación Finalizado [${branchName}]`,
-            body: `${operatorName} finalizó - Duración: ${durationFormatted} (${info.text})`,
-            data: { operatorName, branchName, branchId, tenantId, durationFormatted, severity, deactivatedAt, reason }
+            body,
+            data: { operatorName, branchName, branchId, tenantId, durationFormatted, severity, deactivatedAt, reason, weighingCycleCount, totalWeightKg }
         });
 
         return result;
