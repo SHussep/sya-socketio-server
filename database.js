@@ -2567,6 +2567,43 @@ async function runMigrations() {
                 console.log(`[Schema] ℹ️ Permissions already complete (${permCount} permissions found)`);
             }
 
+            // ═══════════════════════════════════════════════════════════════
+            // Migration 021: device_tokens - crear tabla si no existe + agregar email
+            // ═══════════════════════════════════════════════════════════════
+            console.log('[Schema] 🔍 Checking device_tokens table (Migration 021)...');
+            try {
+                // Crear tabla si no existe (antes se hacía con script manual)
+                await client.query(`
+                    CREATE TABLE IF NOT EXISTS device_tokens (
+                        id SERIAL PRIMARY KEY,
+                        employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+                        branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+                        device_token TEXT NOT NULL UNIQUE,
+                        platform VARCHAR(50) NOT NULL,
+                        device_name VARCHAR(255),
+                        device_id VARCHAR(255),
+                        email VARCHAR(255),
+                        is_active BOOLEAN DEFAULT true,
+                        last_used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                `);
+                // Agregar columnas que podrían faltar en tablas existentes
+                await client.query(`ALTER TABLE device_tokens ADD COLUMN IF NOT EXISTS email VARCHAR(255)`);
+                await client.query(`ALTER TABLE device_tokens ADD COLUMN IF NOT EXISTS device_id VARCHAR(255)`);
+                await client.query(`ALTER TABLE device_tokens ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`);
+                // Índices
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_device_tokens_employee_id ON device_tokens(employee_id)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_device_tokens_branch_id ON device_tokens(branch_id)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_device_tokens_is_active ON device_tokens(is_active)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_device_tokens_device_id ON device_tokens(device_id)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_device_tokens_email ON device_tokens(email)`);
+                console.log('[Schema] ✅ device_tokens table ready');
+            } catch (dtErr) {
+                console.error(`[Schema] ⚠️ device_tokens migration error: ${dtErr.message}`);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {

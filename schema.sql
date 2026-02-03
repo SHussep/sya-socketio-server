@@ -132,6 +132,7 @@ CREATE TABLE IF NOT EXISTS device_tokens (
     platform VARCHAR(50) NOT NULL, -- 'android' or 'ios'
     device_name VARCHAR(255),
     device_id VARCHAR(255), -- Identificador único del dispositivo físico (Android ID o iOS identifierForVendor)
+    email VARCHAR(255), -- Email del usuario logueado (para visibilidad y debug)
     is_active BOOLEAN DEFAULT true,
     last_used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

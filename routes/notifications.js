@@ -13,7 +13,7 @@ const router = express.Router();
 // Registra un dispositivo para recibir notificaciones
 // ═══════════════════════════════════════════════════════════════
 router.post('/register-device', async (req, res) => {
-    const { employeeId, branchId, deviceToken, platform, deviceName, deviceId } = req.body;
+    const { employeeId, branchId, deviceToken, platform, deviceName, deviceId, email } = req.body;
 
     // Validaciones
     if (!employeeId || !branchId || !deviceToken || !platform) {
@@ -57,22 +57,42 @@ router.post('/register-device', async (req, res) => {
             });
         }
 
-        // Si se proporciona deviceId, desactivar todos los tokens previos de ese dispositivo
-        // Esto previene múltiples tokens activos para el mismo dispositivo físico
+        // ═══════════════════════════════════════════════════════════════
+        // CRÍTICO: Desactivar TODOS los tokens previos de este dispositivo
+        // sin importar el employee_id o tenant. Esto evita que al cambiar
+        // de tenant, el dispositivo siga recibiendo notificaciones del
+        // tenant anterior.
+        // ═══════════════════════════════════════════════════════════════
+
+        // 1. Desactivar por device_token (mismo token FCM = mismo dispositivo)
+        const deactivatedByToken = await pool.query(
+            `UPDATE device_tokens
+             SET is_active = false, updated_at = CURRENT_TIMESTAMP
+             WHERE device_token = $1 AND is_active = true`,
+            [deviceToken]
+        );
+        if (deactivatedByToken.rowCount > 0) {
+            console.log(`[Notifications] 🧹 Deactivated ${deactivatedByToken.rowCount} old token(s) by device_token`);
+        }
+
+        // 2. Si se proporciona deviceId, desactivar todos los tokens de ese
+        //    dispositivo físico (sin filtrar por employee_id)
         if (deviceId) {
-            await pool.query(
+            const deactivatedByDevice = await pool.query(
                 `UPDATE device_tokens
-                 SET is_active = false
-                 WHERE device_id = $1 AND employee_id = $2 AND device_token != $3`,
-                [deviceId, employeeId, deviceToken]
+                 SET is_active = false, updated_at = CURRENT_TIMESTAMP
+                 WHERE device_id = $1 AND device_token != $2 AND is_active = true`,
+                [deviceId, deviceToken]
             );
-            console.log(`[Notifications] 🧹 Deactivated old tokens for device ${deviceId}`);
+            if (deactivatedByDevice.rowCount > 0) {
+                console.log(`[Notifications] 🧹 Deactivated ${deactivatedByDevice.rowCount} old token(s) by device_id ${deviceId}`);
+            }
         }
 
         // Insertar o actualizar el device token
         const query = `
-            INSERT INTO device_tokens (employee_id, branch_id, device_token, platform, device_name, device_id, last_used_at)
-            VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)
+            INSERT INTO device_tokens (employee_id, branch_id, device_token, platform, device_name, device_id, email, is_active, last_used_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, true, CURRENT_TIMESTAMP)
             ON CONFLICT (device_token)
             DO UPDATE SET
                 employee_id = $1,
@@ -80,8 +100,10 @@ router.post('/register-device', async (req, res) => {
                 platform = $4,
                 device_name = $5,
                 device_id = $6,
+                email = $7,
                 is_active = true,
-                last_used_at = CURRENT_TIMESTAMP
+                last_used_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
             RETURNING id, device_token, platform;
         `;
 
@@ -91,10 +113,11 @@ router.post('/register-device', async (req, res) => {
             deviceToken,
             platform,
             deviceName || `Device-${new Date().getTime()}`,
-            deviceId || null
+            deviceId || null,
+            email || null
         ]);
 
-        console.log(`[Notifications] ✅ Device registered: Employee ${employeeId} - ${platform} - ${result.rows[0].device_token.substring(0, 20)}...`);
+        console.log(`[Notifications] ✅ Device registered: Employee ${employeeId} - ${platform} - ${email || 'no-email'} - ${result.rows[0].device_token.substring(0, 20)}...`);
 
         res.json({
             success: true,
