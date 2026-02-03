@@ -278,26 +278,18 @@ async function getTableCount(tableName, tenantId, branchId = null, tableConfig =
     }
 }
 
-async function disableGenericCustomerTrigger() {
+async function removeGenericCustomerProtection(tenantId) {
+    // El trigger verifica is_system_generic = true
+    // Cambiamos a false para permitir la eliminacion
     try {
-        await pool.query(`
-            ALTER TABLE customers DISABLE TRIGGER prevent_generic_customer_delete
-        `);
-        return true;
+        const result = await pool.query(`
+            UPDATE customers
+            SET is_system_generic = false
+            WHERE tenant_id = $1 AND is_system_generic = true
+        `, [tenantId]);
+        return result.rowCount;
     } catch (err) {
-        // El trigger puede no existir
-        return false;
-    }
-}
-
-async function enableGenericCustomerTrigger() {
-    try {
-        await pool.query(`
-            ALTER TABLE customers ENABLE TRIGGER prevent_generic_customer_delete
-        `);
-        return true;
-    } catch (err) {
-        return false;
+        return 0;
     }
 }
 
@@ -550,9 +542,12 @@ async function runFullCleanup(tenantId, selectedTenant) {
     // Ejecutar
     dangerHeader('EJECUTANDO ELIMINACION COMPLETA');
 
-    // Deshabilitar trigger del cliente generico para permitir eliminacion
-    log('Deshabilitando proteccion de cliente generico...', 'yellow');
-    await disableGenericCustomerTrigger();
+    // Quitar proteccion del cliente generico (cambia is_system_generic a false)
+    log('Removiendo proteccion de cliente generico...', 'yellow');
+    const genericRemoved = await removeGenericCustomerProtection(tenantId);
+    if (genericRemoved > 0) {
+        log(`  ${genericRemoved} cliente(s) generico(s) desprotegido(s)`, 'dim');
+    }
 
     const results = [];
     for (const tableConfig of tablesToDelete) {
@@ -568,10 +563,6 @@ async function runFullCleanup(tenantId, selectedTenant) {
             console.log(`${colors.green}OK (${result.deleted})${colors.reset}`);
         }
     }
-
-    // Rehabilitar trigger del cliente generico
-    log('Rehabilitando proteccion de cliente generico...', 'yellow');
-    await enableGenericCustomerTrigger();
 
     // Resumen
     const totalDeleted = results.reduce((sum, r) => sum + (r.deleted || 0), 0);
@@ -793,10 +784,10 @@ Ejemplos:
             tablesToProcess = PARTIAL_CLEANUP_TABLES.map(t => ({ ...t, fkColumn: 'tenant_id' }));
         }
 
-        // Deshabilitar trigger del cliente generico para limpieza completa
+        // Quitar proteccion del cliente generico para limpieza completa
         if (isFullCleanup && !dryRun) {
-            log('Deshabilitando proteccion de cliente generico...', 'yellow');
-            await disableGenericCustomerTrigger();
+            log('Removiendo proteccion de cliente generico...', 'yellow');
+            await removeGenericCustomerProtection(tenantId);
         }
 
         let totalDeleted = 0;
@@ -821,12 +812,6 @@ Ejemplos:
                     success(`${tableConfig.name}: ${result.deleted} registros`);
                 }
             }
-        }
-
-        // Rehabilitar trigger del cliente generico
-        if (isFullCleanup && !dryRun) {
-            log('Rehabilitando proteccion de cliente generico...', 'yellow');
-            await enableGenericCustomerTrigger();
         }
 
         console.log('');
