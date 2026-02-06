@@ -902,8 +902,9 @@ module.exports = (pool) => {
             const { id } = req.params;
             const { tenantId } = req.user;
             const limit = parseInt(req.query.limit) || 50;
+            const { startDate, endDate } = req.query;
 
-            console.log(`[Customers/Movements] 📊 Obteniendo movimientos para cliente ${id}, limit: ${limit}`);
+            console.log(`[Customers/Movements] 📊 Obteniendo movimientos para cliente ${id}, limit: ${limit}, startDate: ${startDate}, endDate: ${endDate}`);
 
             // Verificar que el cliente existe y pertenece al tenant
             const customerCheck = await pool.query(
@@ -928,6 +929,26 @@ module.exports = (pool) => {
                 ) AS has_notas_credito
             `);
             const hasNotasCredito = tableCheck.rows[0]?.has_notas_credito || false;
+
+            // Construir filtros de fecha opcionales
+            // $4 = startDate, $5 = endDate (pueden ser null)
+            const hasDateFilter = startDate || endDate;
+            const dateFilterVentas = hasDateFilter ? `
+                ${startDate ? "AND v.fecha_venta_utc >= $4::DATE" : ""}
+                ${endDate ? "AND v.fecha_venta_utc < ($5::DATE + INTERVAL '1 day')" : ""}
+            ` : '';
+            const dateFilterCancellations = hasDateFilter ? `
+                ${startDate ? "AND v.updated_at >= $4::DATE" : ""}
+                ${endDate ? "AND v.updated_at < ($5::DATE + INTERVAL '1 day')" : ""}
+            ` : '';
+            const dateFilterPayments = hasDateFilter ? `
+                ${startDate ? "AND cp.payment_date >= $4::DATE" : ""}
+                ${endDate ? "AND cp.payment_date < ($5::DATE + INTERVAL '1 day')" : ""}
+            ` : '';
+            const dateFilterNotasCredito = hasDateFilter ? `
+                ${startDate ? "AND nc.fecha_creacion >= $4::DATE" : ""}
+                ${endDate ? "AND nc.fecha_creacion < ($5::DATE + INTERVAL '1 day')" : ""}
+            ` : '';
 
             // Query base sin notas de crédito
             // ✅ FIX: Incluir ventas mixtas (tipo_pago_id = 4) que tienen crédito
@@ -969,6 +990,7 @@ module.exports = (pool) => {
                             OR (v.tipo_pago_id = 4 AND COALESCE(v.credito_original, 0) > 0)  -- Mixto con crédito
                         )
                         AND (v.status IS NULL OR v.status != 'cancelled')
+                        ${dateFilterVentas}
 
                     UNION ALL
 
@@ -1002,6 +1024,7 @@ module.exports = (pool) => {
                             OR (v.tipo_pago_id = 4 AND COALESCE(v.credito_original, 0) > 0)  -- Mixto con crédito
                         )
                         AND v.status = 'cancelled'
+                        ${dateFilterCancellations}
 
                     UNION ALL
 
@@ -1033,6 +1056,7 @@ module.exports = (pool) => {
                     LEFT JOIN branches b ON cp.branch_id = b.id
                     WHERE cp.customer_id = $1
                         AND cp.tenant_id = $2
+                        ${dateFilterPayments}
             `;
 
             // Agregar notas de crédito solo si la tabla existe
@@ -1067,6 +1091,7 @@ module.exports = (pool) => {
                         AND nc.tenant_id = $2
                         AND nc.estado = 'Aplicada'
                         AND nc.monto_credito > 0
+                        ${dateFilterNotasCredito}
                 `;
             }
 
@@ -1078,7 +1103,14 @@ module.exports = (pool) => {
                 LIMIT $3
             `;
 
-            const movementsResult = await pool.query(movementsQuery, [id, tenantId, limit]);
+            // Construir array de parámetros (incluyendo fechas opcionales)
+            const queryParams = [id, tenantId, limit];
+            if (hasDateFilter) {
+                queryParams.push(startDate || null);  // $4
+                queryParams.push(endDate || null);    // $5
+            }
+
+            const movementsResult = await pool.query(movementsQuery, queryParams);
 
             // Calcular saldos progresivos (balance_before y balance_after)
             // Los movimientos vienen ordenados DESC (más reciente primero)
@@ -1103,7 +1135,7 @@ module.exports = (pool) => {
                 runningBalance = movement.balance_before;
             }
 
-            // Calcular estadísticas
+            // Calcular estadísticas globales (sin filtro de fecha - historial completo)
             // ✅ FIX: Incluir ventas mixtas (tipo_pago_id = 4) con crédito
             const statsQuery = `
                 SELECT
@@ -1154,6 +1186,49 @@ module.exports = (pool) => {
                 ncStats = await pool.query(ncStatsQuery, [id, tenantId]);
             }
 
+            // ✅ Calcular estadísticas filtradas por período (si hay filtro de fecha)
+            let periodStats = null;
+            if (hasDateFilter) {
+                // Construir condición de fecha para SQL
+                let dateCondition = '';
+                const periodParams = [id, tenantId];
+                if (startDate && endDate) {
+                    dateCondition = 'AND fecha_venta_utc >= $3::DATE AND fecha_venta_utc < ($4::DATE + INTERVAL \'1 day\')';
+                    periodParams.push(startDate, endDate);
+                } else if (startDate) {
+                    dateCondition = 'AND fecha_venta_utc >= $3::DATE';
+                    periodParams.push(startDate);
+                } else if (endDate) {
+                    dateCondition = 'AND fecha_venta_utc < ($3::DATE + INTERVAL \'1 day\')';
+                    periodParams.push(endDate);
+                }
+
+                const periodStatsQuery = `
+                    SELECT
+                        COALESCE(SUM(CASE
+                            WHEN tipo_pago_id = 3 AND (status IS NULL OR status != 'cancelled') THEN total
+                            WHEN tipo_pago_id = 4 AND COALESCE(credito_original, 0) > 0 AND (status IS NULL OR status != 'cancelled') THEN credito_original
+                            ELSE 0
+                        END), 0) AS period_credit_sales,
+                        COUNT(CASE
+                            WHEN (tipo_pago_id = 3 OR (tipo_pago_id = 4 AND COALESCE(credito_original, 0) > 0))
+                                 AND (status IS NULL OR status != 'cancelled') THEN 1
+                        END) AS period_sales_count
+                    FROM ventas
+                    WHERE id_cliente = $1 AND tenant_id = $2
+                    ${dateCondition}
+                `;
+                const periodResult = await pool.query(periodStatsQuery, periodParams);
+
+                periodStats = {
+                    total_sales: parseFloat(periodResult.rows[0]?.period_credit_sales || 0),
+                    sales_count: parseInt(periodResult.rows[0]?.period_sales_count || 0),
+                    start_date: startDate || null,
+                    end_date: endDate || null
+                };
+                console.log(`[Customers/Movements] 📅 Período filtrado: ${JSON.stringify(periodStats)}`);
+            }
+
             const stats = {
                 total_credit_sales: parseFloat(salesStats.rows[0]?.total_credit_sales || 0),
                 credit_sales_count: parseInt(salesStats.rows[0]?.credit_sales_count || 0),
@@ -1163,7 +1238,9 @@ module.exports = (pool) => {
                 payments_count: parseInt(paymentStats.rows[0]?.payments_count || 0),
                 total_credit_notes: parseFloat(ncStats.rows[0]?.total_credit_notes || 0),
                 credit_notes_count: parseInt(ncStats.rows[0]?.credit_notes_count || 0),
-                current_balance: parseFloat(customer.saldo_deudor || 0)
+                current_balance: parseFloat(customer.saldo_deudor || 0),
+                // Estadísticas del período filtrado (si aplica)
+                period: periodStats
             };
 
             console.log(`[Customers/Movements] ✅ ${movementsResult.rows.length} movimientos encontrados`);
