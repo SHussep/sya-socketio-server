@@ -1321,5 +1321,191 @@ module.exports = (pool) => {
         }
     });
 
+    /**
+     * GET /api/customers/:id/sales-history
+     * Obtiene el historial completo de ventas de un cliente (todos los tipos de pago)
+     * Query params:
+     *   - limit (optional) - número máximo de ventas (default: 50)
+     *   - startDate (optional) - fecha inicio YYYY-MM-DD
+     *   - endDate (optional) - fecha fin YYYY-MM-DD
+     *   - paymentType (optional) - 1=efectivo, 2=tarjeta, 3=crédito, 4=mixto, 'all'=todos
+     */
+    router.get('/:id/sales-history', authenticateToken, async (req, res) => {
+        try {
+            const { id } = req.params;
+            const { tenantId } = req.user;
+            const limit = parseInt(req.query.limit) || 50;
+            const { startDate, endDate, paymentType } = req.query;
+
+            console.log(`[Customers/SalesHistory] 📊 Obteniendo historial para cliente ${id}, paymentType: ${paymentType || 'all'}`);
+
+            // 🔄 RESOLVER ID: puede ser numérico o GlobalId (UUID)
+            let customerId;
+            let customerCheck;
+            const isUuid = id.includes('-') && id.length >= 32;
+
+            if (isUuid) {
+                customerCheck = await pool.query(
+                    'SELECT id, nombre, saldo_deudor FROM customers WHERE global_id = $1 AND tenant_id = $2',
+                    [id, tenantId]
+                );
+                if (customerCheck.rows.length > 0) {
+                    customerId = customerCheck.rows[0].id;
+                }
+                console.log(`[Customers/SalesHistory] 🔐 Resolviendo GlobalId ${id} → ID: ${customerId}`);
+            } else {
+                customerCheck = await pool.query(
+                    'SELECT id, nombre, saldo_deudor FROM customers WHERE id = $1 AND tenant_id = $2',
+                    [id, tenantId]
+                );
+                if (customerCheck.rows.length > 0) {
+                    customerId = customerCheck.rows[0].id;
+                }
+            }
+
+            if (!customerId || customerCheck.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Cliente no encontrado'
+                });
+            }
+
+            const customer = customerCheck.rows[0];
+
+            // Construir filtros
+            let whereConditions = ['v.id_cliente = $1', 'v.tenant_id = $2'];
+            const queryParams = [customerId, tenantId];
+            let paramIndex = 3;
+
+            // Filtro por tipo de pago
+            if (paymentType && paymentType !== 'all') {
+                whereConditions.push(`v.tipo_pago_id = $${paramIndex}`);
+                queryParams.push(parseInt(paymentType));
+                paramIndex++;
+            }
+
+            // Filtro por fecha
+            if (startDate) {
+                whereConditions.push(`v.fecha_venta_utc >= $${paramIndex}::DATE`);
+                queryParams.push(startDate);
+                paramIndex++;
+            }
+            if (endDate) {
+                whereConditions.push(`v.fecha_venta_utc < ($${paramIndex}::DATE + INTERVAL '1 day')`);
+                queryParams.push(endDate);
+                paramIndex++;
+            }
+
+            // Excluir canceladas
+            whereConditions.push("(v.status IS NULL OR v.status != 'cancelled')");
+
+            const salesQuery = `
+                SELECT
+                    v.id_venta AS id,
+                    v.ticket_number,
+                    v.fecha_venta_utc AS sale_date,
+                    v.total,
+                    v.tipo_pago_id AS payment_type_id,
+                    CASE v.tipo_pago_id
+                        WHEN 1 THEN 'Efectivo'
+                        WHEN 2 THEN 'Tarjeta'
+                        WHEN 3 THEN 'Crédito'
+                        WHEN 4 THEN 'Mixto'
+                        ELSE 'Otro'
+                    END AS payment_type_label,
+                    v.monto_pagado AS amount_paid,
+                    v.status,
+                    COALESCE(e.first_name || ' ' || COALESCE(e.last_name, ''), 'N/A') AS employee_name,
+                    b.name AS branch_name
+                FROM ventas v
+                LEFT JOIN employees e ON v.id_empleado = e.id
+                LEFT JOIN branches b ON v.branch_id = b.id
+                WHERE ${whereConditions.join(' AND ')}
+                ORDER BY v.fecha_venta_utc DESC
+                LIMIT $${paramIndex}
+            `;
+            queryParams.push(limit);
+
+            const salesResult = await pool.query(salesQuery, queryParams);
+
+            // Calcular estadísticas por tipo de pago (del período filtrado)
+            let statsWhereConditions = ['v.id_cliente = $1', 'v.tenant_id = $2', "(v.status IS NULL OR v.status != 'cancelled')"];
+            const statsParams = [customerId, tenantId];
+            let statsParamIndex = 3;
+
+            if (startDate) {
+                statsWhereConditions.push(`v.fecha_venta_utc >= $${statsParamIndex}::DATE`);
+                statsParams.push(startDate);
+                statsParamIndex++;
+            }
+            if (endDate) {
+                statsWhereConditions.push(`v.fecha_venta_utc < ($${statsParamIndex}::DATE + INTERVAL '1 day')`);
+                statsParams.push(endDate);
+                statsParamIndex++;
+            }
+
+            const statsQuery = `
+                SELECT
+                    COALESCE(SUM(total), 0) AS total_sales,
+                    COUNT(*) AS sales_count,
+                    COALESCE(SUM(CASE WHEN tipo_pago_id = 1 THEN total ELSE 0 END), 0) AS cash_total,
+                    COUNT(CASE WHEN tipo_pago_id = 1 THEN 1 END) AS cash_count,
+                    COALESCE(SUM(CASE WHEN tipo_pago_id = 2 THEN total ELSE 0 END), 0) AS card_total,
+                    COUNT(CASE WHEN tipo_pago_id = 2 THEN 1 END) AS card_count,
+                    COALESCE(SUM(CASE WHEN tipo_pago_id = 3 THEN total ELSE 0 END), 0) AS credit_total,
+                    COUNT(CASE WHEN tipo_pago_id = 3 THEN 1 END) AS credit_count,
+                    COALESCE(SUM(CASE WHEN tipo_pago_id = 4 THEN total ELSE 0 END), 0) AS mixed_total,
+                    COUNT(CASE WHEN tipo_pago_id = 4 THEN 1 END) AS mixed_count
+                FROM ventas v
+                WHERE ${statsWhereConditions.join(' AND ')}
+            `;
+            const statsResult = await pool.query(statsQuery, statsParams);
+            const stats = statsResult.rows[0];
+
+            console.log(`[Customers/SalesHistory] ✅ ${salesResult.rows.length} ventas encontradas`);
+
+            res.json({
+                success: true,
+                customer: {
+                    id: customer.id,
+                    name: customer.nombre
+                },
+                sales: salesResult.rows.map(s => ({
+                    id: s.id,
+                    ticket_number: s.ticket_number,
+                    sale_date: s.sale_date,
+                    total: parseFloat(s.total || 0),
+                    payment_type_id: s.payment_type_id,
+                    payment_type_label: s.payment_type_label,
+                    amount_paid: parseFloat(s.amount_paid || 0),
+                    status: s.status,
+                    employee_name: s.employee_name,
+                    branch_name: s.branch_name
+                })),
+                summary: {
+                    total_sales: parseFloat(stats.total_sales || 0),
+                    sales_count: parseInt(stats.sales_count || 0),
+                    by_payment_type: {
+                        cash: { total: parseFloat(stats.cash_total || 0), count: parseInt(stats.cash_count || 0) },
+                        card: { total: parseFloat(stats.card_total || 0), count: parseInt(stats.card_count || 0) },
+                        credit: { total: parseFloat(stats.credit_total || 0), count: parseInt(stats.credit_count || 0) },
+                        mixed: { total: parseFloat(stats.mixed_total || 0), count: parseInt(stats.mixed_count || 0) }
+                    },
+                    start_date: startDate || null,
+                    end_date: endDate || null
+                },
+                count: salesResult.rows.length
+            });
+
+        } catch (error) {
+            console.error('[Customers/SalesHistory] ❌ Error:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Error al obtener historial de ventas',
+                error: error.message
+            });
+        }
+    });
+
     return router;
 };
