@@ -285,24 +285,62 @@ module.exports = (pool, io) => {
             for (const shift of result.rows) {
                 // 1. Calcular ventas DIRECTAS del empleado (sin asignaciones)
                 // Solo incluir ventas donde id_turno_repartidor IS NULL
-                // Usar cash_amount/card_amount/credit_amount para manejar pagos mixtos correctamente
+                // IMPORTANTE: Usar tipo_pago_id para pagos puros, y cash_amount/card_amount para mixtos
+                // tipo_pago_id: 1=Efectivo, 2=Tarjeta, 3=Crédito, 4=Mixto
                 const salesResult = await pool.query(`
                     SELECT
-                        COALESCE(SUM(cash_amount), 0) as total_cash_sales,
-                        COALESCE(SUM(card_amount), 0) as total_card_sales,
-                        COALESCE(SUM(credit_amount), 0) as total_credit_sales
+                        COALESCE(SUM(
+                            CASE
+                                WHEN tipo_pago_id = 4 THEN cash_amount
+                                WHEN tipo_pago_id = 1 THEN total
+                                ELSE 0
+                            END
+                        ), 0) as total_cash_sales,
+                        COALESCE(SUM(
+                            CASE
+                                WHEN tipo_pago_id = 4 THEN card_amount
+                                WHEN tipo_pago_id = 2 THEN total
+                                ELSE 0
+                            END
+                        ), 0) as total_card_sales,
+                        COALESCE(SUM(
+                            CASE
+                                WHEN tipo_pago_id = 4 THEN credit_amount
+                                WHEN tipo_pago_id = 3 THEN total
+                                ELSE 0
+                            END
+                        ), 0) as total_credit_sales
                     FROM ventas
                     WHERE id_turno = $1 AND id_turno_repartidor IS NULL
                 `, [shift.id]);
 
                 // 1B. Calcular ventas DE REPARTO que hizo este empleado (repartidor)
                 // Estas son las ventas donde id_turno_repartidor = shift.id
-                // Usar cash_amount/card_amount/credit_amount para manejar pagos mixtos correctamente
+                // IMPORTANTE: Usar tipo_pago_id para pagos puros, y cash_amount/card_amount para mixtos
+                // tipo_pago_id: 1=Efectivo, 2=Tarjeta, 3=Crédito, 4=Mixto
                 const assignmentSalesResult = await pool.query(`
                     SELECT
-                        COALESCE(SUM(cash_amount), 0) as total_cash_assignments,
-                        COALESCE(SUM(card_amount), 0) as total_card_assignments,
-                        COALESCE(SUM(credit_amount), 0) as total_credit_assignments
+                        COALESCE(SUM(
+                            CASE
+                                WHEN tipo_pago_id = 4 THEN cash_amount
+                                WHEN tipo_pago_id = 1 THEN total
+                                ELSE 0
+                            END
+                        ), 0) as total_cash_assignments,
+                        COALESCE(SUM(
+                            CASE
+                                WHEN tipo_pago_id = 4 THEN card_amount
+                                WHEN tipo_pago_id = 2 THEN total
+                                ELSE 0
+                            END
+                        ), 0) as total_card_assignments,
+                        COALESCE(SUM(
+                            CASE
+                                WHEN tipo_pago_id = 4 THEN credit_amount
+                                WHEN tipo_pago_id = 3 THEN total
+                                ELSE 0
+                            END
+                        ), 0) as total_credit_assignments
                     FROM ventas
                     WHERE id_turno_repartidor = $1
                 `, [shift.id]);
@@ -1422,12 +1460,30 @@ module.exports = (pool, io) => {
                     // 1. Calcular ventas por método de pago
                     // IMPORTANTE: Excluir ventas asignadas a repartidores (id_turno_repartidor != null)
                     // porque ese dinero NO está en la caja del empleado de mostrador
-                    // Usar cash_amount/card_amount/credit_amount para manejar pagos mixtos correctamente
+                    // tipo_pago_id: 1=Efectivo, 2=Tarjeta, 3=Crédito, 4=Mixto
                     const salesQuery = await pool.query(`
                         SELECT
-                            COALESCE(SUM(cash_amount), 0) as cash_sales,
-                            COALESCE(SUM(card_amount), 0) as card_sales,
-                            COALESCE(SUM(credit_amount), 0) as credit_sales
+                            COALESCE(SUM(
+                                CASE
+                                    WHEN tipo_pago_id = 4 THEN cash_amount
+                                    WHEN tipo_pago_id = 1 THEN total
+                                    ELSE 0
+                                END
+                            ), 0) as cash_sales,
+                            COALESCE(SUM(
+                                CASE
+                                    WHEN tipo_pago_id = 4 THEN card_amount
+                                    WHEN tipo_pago_id = 2 THEN total
+                                    ELSE 0
+                                END
+                            ), 0) as card_sales,
+                            COALESCE(SUM(
+                                CASE
+                                    WHEN tipo_pago_id = 4 THEN credit_amount
+                                    WHEN tipo_pago_id = 3 THEN total
+                                    ELSE 0
+                                END
+                            ), 0) as credit_sales
                         FROM ventas
                         WHERE id_turno = $1
                           AND id_turno_repartidor IS NULL
