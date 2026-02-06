@@ -1416,7 +1416,27 @@ module.exports = (pool) => {
                     v.monto_pagado AS amount_paid,
                     v.status,
                     COALESCE(e.first_name || ' ' || COALESCE(e.last_name, ''), 'N/A') AS employee_name,
-                    b.name AS branch_name
+                    b.name AS branch_name,
+                    -- Items de la venta con cantidad y detalles
+                    COALESCE(
+                        (SELECT json_agg(
+                            json_build_object(
+                                'product_name', vd.descripcion_producto,
+                                'quantity', vd.cantidad,
+                                'unit', COALESCE(vd.unidad_medida, 'kg'),
+                                'unit_price', vd.precio_unitario,
+                                'subtotal', vd.total_linea
+                            ) ORDER BY vd.id_venta_detalle
+                        )
+                        FROM ventas_detalle vd
+                        WHERE vd.id_venta = v.id_venta),
+                        '[]'::json
+                    ) AS items,
+                    -- Total de cantidad vendida (suma de kg/pz)
+                    COALESCE(
+                        (SELECT SUM(vd.cantidad) FROM ventas_detalle vd WHERE vd.id_venta = v.id_venta),
+                        0
+                    ) AS total_quantity
                 FROM ventas v
                 LEFT JOIN employees e ON v.id_empleado = e.id
                 LEFT JOIN branches b ON v.branch_id = b.id
@@ -1480,7 +1500,9 @@ module.exports = (pool) => {
                     amount_paid: parseFloat(s.amount_paid || 0),
                     status: s.status,
                     employee_name: s.employee_name,
-                    branch_name: s.branch_name
+                    branch_name: s.branch_name,
+                    items: s.items || [],
+                    total_quantity: parseFloat(s.total_quantity || 0)
                 })),
                 summary: {
                     total_sales: parseFloat(stats.total_sales || 0),
