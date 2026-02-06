@@ -653,8 +653,9 @@ module.exports = (pool) => {
             console.log(`[Customers/WithBalance] 📊 Obteniendo clientes con saldo para tenant ${tenantId}`);
 
             let query = `
-                SELECT 
+                SELECT
                     c.id,
+                    c.global_id,
                     c.nombre AS name,
                     c.saldo_deudor AS current_balance,
                     c.telefono AS phone,
@@ -682,6 +683,7 @@ module.exports = (pool) => {
                 count: result.rows.length,
                 customers: result.rows.map(c => ({
                     id: c.id,
+                    global_id: c.global_id,
                     name: c.name,
                     current_balance: parseFloat(c.current_balance || 0),
                     phone: c.phone,
@@ -715,9 +717,15 @@ module.exports = (pool) => {
 
             console.log(`[Customers/AccountStatement] 📄 Generando estado de cuenta para cliente ${id}`);
 
-            // 1. Datos del cliente
+            // 🔄 RESOLVER ID: puede ser numérico o GlobalId (UUID)
+            let customerId;
+            let customerResult;
+
+            // Verificar si es UUID (contiene guiones y tiene longitud de UUID)
+            const isUuid = id.includes('-') && id.length >= 32;
+
             const customerQuery = `
-                SELECT 
+                SELECT
                     c.id,
                     c.nombre AS name,
                     c.saldo_deudor AS current_balance,
@@ -728,11 +736,12 @@ module.exports = (pool) => {
                     c.credito_limite AS credit_limit,
                     c.tenant_id
                 FROM customers c
-                WHERE c.id = $1 AND c.tenant_id = $2
+                WHERE ${isUuid ? 'c.global_id = $1' : 'c.id = $1'} AND c.tenant_id = $2
             `;
-            const customerResult = await pool.query(customerQuery, [id, tenantId]);
+            customerResult = await pool.query(customerQuery, [id, tenantId]);
 
             if (customerResult.rows.length === 0) {
+                console.log(`[Customers/AccountStatement] ❌ Cliente no encontrado: ${id}`);
                 return res.status(404).json({
                     success: false,
                     message: 'Cliente no encontrado'
@@ -740,6 +749,7 @@ module.exports = (pool) => {
             }
 
             const customer = customerResult.rows[0];
+            customerId = customer.id; // ID numérico resuelto
 
             // 2. Datos del Tenant y Branch
             const tenantQuery = `
@@ -801,7 +811,7 @@ module.exports = (pool) => {
                 GROUP BY v.id_venta, v.ticket_number, v.fecha_venta_utc, v.total, v.monto_pagado, v.notas, v.tipo_pago_id, v.credito_original
                 ORDER BY v.fecha_venta_utc DESC
             `;
-            const salesResult = await pool.query(salesQuery, [id, tenantId]);
+            const salesResult = await pool.query(salesQuery, [customerId, tenantId]);
 
             // 4. Pagos recibidos
             const paymentsQuery = `
@@ -819,7 +829,7 @@ module.exports = (pool) => {
                 ORDER BY cp.payment_date DESC
                 LIMIT 50
             `;
-            const paymentsResult = await pool.query(paymentsQuery, [id, tenantId]);
+            const paymentsResult = await pool.query(paymentsQuery, [customerId, tenantId]);
 
             // 5. Calcular totales
             const totalPendingSales = salesResult.rows.reduce((sum, sale) => sum + parseFloat(sale.pending_amount || 0), 0);
@@ -906,13 +916,36 @@ module.exports = (pool) => {
 
             console.log(`[Customers/Movements] 📊 Obteniendo movimientos para cliente ${id}, limit: ${limit}, startDate: ${startDate}, endDate: ${endDate}`);
 
-            // Verificar que el cliente existe y pertenece al tenant
-            const customerCheck = await pool.query(
-                'SELECT id, nombre, saldo_deudor FROM customers WHERE id = $1 AND tenant_id = $2',
-                [id, tenantId]
-            );
+            // 🔄 RESOLVER ID: puede ser numérico o GlobalId (UUID)
+            let customerId;
+            let customerCheck;
 
-            if (customerCheck.rows.length === 0) {
+            // Verificar si es UUID (contiene guiones y tiene longitud de UUID)
+            const isUuid = id.includes('-') && id.length >= 32;
+
+            if (isUuid) {
+                // Buscar por global_id
+                customerCheck = await pool.query(
+                    'SELECT id, nombre, saldo_deudor FROM customers WHERE global_id = $1 AND tenant_id = $2',
+                    [id, tenantId]
+                );
+                if (customerCheck.rows.length > 0) {
+                    customerId = customerCheck.rows[0].id;
+                }
+                console.log(`[Customers/Movements] 🔐 Resolviendo GlobalId ${id} → ID: ${customerId}`);
+            } else {
+                // Buscar por ID numérico
+                customerCheck = await pool.query(
+                    'SELECT id, nombre, saldo_deudor FROM customers WHERE id = $1 AND tenant_id = $2',
+                    [id, tenantId]
+                );
+                if (customerCheck.rows.length > 0) {
+                    customerId = customerCheck.rows[0].id;
+                }
+            }
+
+            if (!customerId || customerCheck.rows.length === 0) {
+                console.log(`[Customers/Movements] ❌ Cliente no encontrado: ${id}`);
                 return res.status(404).json({
                     success: false,
                     message: 'Cliente no encontrado'
@@ -1103,8 +1136,8 @@ module.exports = (pool) => {
                 LIMIT $3
             `;
 
-            // Construir array de parámetros (incluyendo fechas opcionales)
-            const queryParams = [id, tenantId, limit];
+            // Construir array de parámetros (usando customerId resuelto)
+            const queryParams = [customerId, tenantId, limit];
             if (hasDateFilter) {
                 queryParams.push(startDate || null);  // $4
                 queryParams.push(endDate || null);    // $5
@@ -1162,7 +1195,7 @@ module.exports = (pool) => {
                 FROM ventas
                 WHERE id_cliente = $1 AND tenant_id = $2
             `;
-            const salesStats = await pool.query(statsQuery, [id, tenantId]);
+            const salesStats = await pool.query(statsQuery, [customerId, tenantId]);
 
             const paymentStatsQuery = `
                 SELECT
@@ -1171,7 +1204,7 @@ module.exports = (pool) => {
                 FROM credit_payments
                 WHERE customer_id = $1 AND tenant_id = $2
             `;
-            const paymentStats = await pool.query(paymentStatsQuery, [id, tenantId]);
+            const paymentStats = await pool.query(paymentStatsQuery, [customerId, tenantId]);
 
             // Estadísticas de NC solo si la tabla existe
             let ncStats = { rows: [{ total_credit_notes: 0, credit_notes_count: 0 }] };
@@ -1183,7 +1216,7 @@ module.exports = (pool) => {
                     FROM notas_credito
                     WHERE cliente_id = $1 AND tenant_id = $2 AND estado = 'Aplicada' AND monto_credito > 0
                 `;
-                ncStats = await pool.query(ncStatsQuery, [id, tenantId]);
+                ncStats = await pool.query(ncStatsQuery, [customerId, tenantId]);
             }
 
             // ✅ Calcular estadísticas filtradas por período (si hay filtro de fecha)
@@ -1191,7 +1224,7 @@ module.exports = (pool) => {
             if (hasDateFilter) {
                 // Construir condición de fecha para SQL
                 let dateCondition = '';
-                const periodParams = [id, tenantId];
+                const periodParams = [customerId, tenantId];
                 if (startDate && endDate) {
                     dateCondition = 'AND fecha_venta_utc >= $3::DATE AND fecha_venta_utc < ($4::DATE + INTERVAL \'1 day\')';
                     periodParams.push(startDate, endDate);
