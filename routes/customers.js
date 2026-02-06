@@ -1423,7 +1423,6 @@ module.exports = (pool) => {
                             json_build_object(
                                 'product_name', vd.descripcion_producto,
                                 'quantity', vd.cantidad,
-                                'unit', COALESCE(vd.unidad_medida, 'kg'),
                                 'unit_price', vd.precio_unitario,
                                 'subtotal', vd.total_linea
                             ) ORDER BY vd.id_venta_detalle
