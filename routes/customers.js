@@ -78,7 +78,7 @@ module.exports = (pool) => {
             const { include_generic = 'false' } = req.query;
 
             let query = `
-                SELECT id, tenant_id, nombre as name, telefono as phone, correo as email, direccion as address,
+                SELECT id, global_id, tenant_id, nombre as name, telefono as phone, correo as email, direccion as address,
                        credito_limite as credit_limit, saldo_deudor as current_balance, nota as notes, is_system_generic,
                        created_at, updated_at
                 FROM customers
