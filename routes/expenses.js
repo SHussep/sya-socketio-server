@@ -951,6 +951,9 @@ module.exports = (pool, io) => {
                 e.created_local_utc,
                 e.device_event_raw,
                 e.created_at,
+                e.edit_reason,
+                e.edited_at,
+                CONCAT(editor.first_name, ' ', editor.last_name) as edited_by_name,
                 -- Imagen del comprobante (Cloudinary URL o indicador)
                 CASE
                     WHEN e.receipt_image IS NOT NULL AND e.receipt_image LIKE 'http%' THEN e.receipt_image
@@ -964,6 +967,7 @@ module.exports = (pool, io) => {
             LEFT JOIN employees emp ON e.employee_id = emp.id
             LEFT JOIN global_expense_categories gcat ON e.global_category_id = gcat.id
             LEFT JOIN shifts s ON e.id_turno = s.id
+            LEFT JOIN employees editor ON e.edited_by_employee_id = editor.id
             WHERE e.employee_id = $1
               AND e.reviewed_by_desktop = false
               AND e.is_active = true
