@@ -4,7 +4,7 @@
 
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
-const { notifyExpenseCreated } = require('../utils/notificationHelper');
+const { notifyExpenseCreated, sendNotificationToEmployee } = require('../utils/notificationHelper');
 const cloudinaryService = require('../services/cloudinaryService');
 const { createAuthMiddleware } = require('../middleware/auth');
 
@@ -969,9 +969,11 @@ module.exports = (pool, io) => {
             // Validar que el gasto existe y pertenece al tenant
             const checkResult = await pool.query(
                 `SELECT e.id, e.branch_id, e.employee_id, e.amount, e.description,
-                        gcat.name as category_name
+                        gcat.name as category_name,
+                        emp.global_id as employee_global_id
                  FROM expenses e
                  LEFT JOIN global_expense_categories gcat ON e.global_category_id = gcat.id
+                 LEFT JOIN employees emp ON e.employee_id = emp.id
                  WHERE e.global_id = $1 AND e.tenant_id = $2`,
                 [global_id, tenant_id]
             );
@@ -1039,6 +1041,16 @@ module.exports = (pool, io) => {
                 console.log(`[Expenses/Approve] 📡 Emitido 'expense_approved' a ${branchRoom}`);
             }
 
+            // FCM push notification al repartidor
+            if (expenseInfo.employee_global_id) {
+                const amount = parseFloat(expenseInfo.amount);
+                sendNotificationToEmployee(expenseInfo.employee_global_id, {
+                    title: '✅ Gasto Aprobado',
+                    body: `Tu gasto de $${amount.toFixed(2)} (${expenseInfo.category_name || 'Sin categoría'}) fue aprobado`,
+                    data: { type: 'expense_approved', globalId: global_id }
+                }).catch(err => console.error('[Expenses/Approve] Error FCM:', err.message));
+            }
+
             res.json({
                 success: true,
                 message: 'Gasto aprobado correctamente',
@@ -1075,9 +1087,11 @@ module.exports = (pool, io) => {
             // Validar que el gasto existe y pertenece al tenant
             const checkResult = await pool.query(
                 `SELECT e.id, e.description, e.amount, e.global_category_id, e.branch_id, e.employee_id,
-                        gcat.name as category_name
+                        gcat.name as category_name,
+                        emp.global_id as employee_global_id
                  FROM expenses e
                  LEFT JOIN global_expense_categories gcat ON e.global_category_id = gcat.id
+                 LEFT JOIN employees emp ON e.employee_id = emp.id
                  WHERE e.global_id = $1 AND e.tenant_id = $2`,
                 [global_id, tenant_id]
             );
@@ -1180,6 +1194,16 @@ module.exports = (pool, io) => {
                 const branchRoom = `branch_${currentExpense.branch_id}`;
                 io.to(branchRoom).emit('expense_edited', payload);
                 console.log(`[Expenses/Edit] 📡 Emitido 'expense_edited' a ${branchRoom}`);
+            }
+
+            // FCM push notification al repartidor
+            if (currentExpense.employee_global_id) {
+                const newAmt = parseFloat(updateResult.rows[0].amount);
+                sendNotificationToEmployee(currentExpense.employee_global_id, {
+                    title: '✏️ Gasto Editado',
+                    body: `Tu gasto fue editado a $${newAmt.toFixed(2)}`,
+                    data: { type: 'expense_edited', globalId: global_id }
+                }).catch(err => console.error('[Expenses/Edit] Error FCM:', err.message));
             }
 
             res.json({
@@ -1485,9 +1509,11 @@ module.exports = (pool, io) => {
             const checkResult = await pool.query(
                 `SELECT e.id, e.receipt_image, e.reviewed_by_desktop, e.employee_id,
                         e.branch_id, e.amount, e.description,
-                        gcat.name as category_name
+                        gcat.name as category_name,
+                        emp.global_id as employee_global_id
                  FROM expenses e
                  LEFT JOIN global_expense_categories gcat ON e.global_category_id = gcat.id
+                 LEFT JOIN employees emp ON e.employee_id = emp.id
                  WHERE e.global_id = $1 AND e.tenant_id = $2`,
                 [global_id, tenantId]
             );
@@ -1551,6 +1577,16 @@ module.exports = (pool, io) => {
                 const branchRoom = `branch_${expense.branch_id}`;
                 io.to(branchRoom).emit('expense_rejected', payload);
                 console.log(`[Expenses/Delete] 📡 Emitido 'expense_rejected' a ${branchRoom}`);
+            }
+
+            // FCM push notification al repartidor
+            if (expense.employee_global_id) {
+                const amount = parseFloat(expense.amount);
+                sendNotificationToEmployee(expense.employee_global_id, {
+                    title: '❌ Gasto Rechazado',
+                    body: `Tu gasto de $${amount.toFixed(2)} (${expense.category_name || 'Sin categoría'}) fue rechazado`,
+                    data: { type: 'expense_rejected', globalId: global_id }
+                }).catch(err => console.error('[Expenses/Delete] Error FCM:', err.message));
             }
 
             res.json({
