@@ -1259,6 +1259,32 @@ io.on('connection', (socket) => {
     });
 
     // ═══════════════════════════════════════════════════════════════
+    // ASSIGNMENT REAL-TIME UPDATES (Edit, Cancel, Liquidate)
+    // Broadcast to all devices in the branch for instant UI updates
+    // ═══════════════════════════════════════════════════════════════
+
+    socket.on('assignment_edited', (data) => {
+        stats.totalEvents++;
+        const roomName = `branch_${data.branchId}`;
+        console.log(`[ASSIGNMENT] ✏️ Asignación editada en sucursal ${data.branchId}: ${data.productName} (${data.oldQuantity} → ${data.newQuantity})`);
+        io.to(roomName).emit('assignment_edited', { ...data, receivedAt: new Date().toISOString() });
+    });
+
+    socket.on('assignment_cancelled', (data) => {
+        stats.totalEvents++;
+        const roomName = `branch_${data.branchId}`;
+        console.log(`[ASSIGNMENT] ❌ Asignación cancelada en sucursal ${data.branchId}: ${data.productName} - Razón: ${data.reason}`);
+        io.to(roomName).emit('assignment_cancelled', { ...data, receivedAt: new Date().toISOString() });
+    });
+
+    socket.on('assignment_liquidated', (data) => {
+        stats.totalEvents++;
+        const roomName = `branch_${data.branchId}`;
+        console.log(`[ASSIGNMENT] ✅ Liquidación en sucursal ${data.branchId}: ${data.itemCount} items por ${data.employeeName}`);
+        io.to(roomName).emit('assignment_liquidated', { ...data, receivedAt: new Date().toISOString() });
+    });
+
+    // ═══════════════════════════════════════════════════════════════
     // DESKTOP → MOBILE BROADCASTING (Notifications from Desktop to Mobile)
     // ═══════════════════════════════════════════════════════════════
 
