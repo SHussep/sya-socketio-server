@@ -13,7 +13,7 @@ const router = express.Router();
 // Registra un dispositivo para recibir notificaciones
 // ═══════════════════════════════════════════════════════════════
 router.post('/register-device', async (req, res) => {
-    const { employeeId, branchId, deviceToken, platform, deviceName, deviceId, email } = req.body;
+    const { employeeId, branchId, tenantId, deviceToken, platform, deviceName, deviceId, email } = req.body;
 
     // Validaciones
     if (!employeeId || !branchId || !deviceToken || !platform) {
@@ -89,18 +89,32 @@ router.post('/register-device', async (req, res) => {
             }
         }
 
+        // Obtener tenant_id: usar el proporcionado, o inferirlo del empleado
+        let resolvedTenantId = tenantId;
+        if (!resolvedTenantId) {
+            const tenantLookup = await pool.query(
+                'SELECT tenant_id FROM employees WHERE id = $1',
+                [employeeId]
+            );
+            if (tenantLookup.rows.length > 0) {
+                resolvedTenantId = tenantLookup.rows[0].tenant_id;
+                console.log(`[Notifications] 🔍 TenantId inferido del empleado: ${resolvedTenantId}`);
+            }
+        }
+
         // Insertar o actualizar el device token
         const query = `
-            INSERT INTO device_tokens (employee_id, branch_id, device_token, platform, device_name, device_id, email, is_active, last_used_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, true, CURRENT_TIMESTAMP)
+            INSERT INTO device_tokens (employee_id, branch_id, tenant_id, device_token, platform, device_name, device_id, email, is_active, last_used_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, CURRENT_TIMESTAMP)
             ON CONFLICT (device_token)
             DO UPDATE SET
                 employee_id = $1,
                 branch_id = $2,
-                platform = $4,
-                device_name = $5,
-                device_id = $6,
-                email = $7,
+                tenant_id = $3,
+                platform = $5,
+                device_name = $6,
+                device_id = $7,
+                email = $8,
                 is_active = true,
                 last_used_at = CURRENT_TIMESTAMP,
                 updated_at = CURRENT_TIMESTAMP
@@ -110,6 +124,7 @@ router.post('/register-device', async (req, res) => {
         const result = await pool.query(query, [
             employeeId,
             branchId,
+            resolvedTenantId || null,
             deviceToken,
             platform,
             deviceName || `Device-${new Date().getTime()}`,
@@ -117,7 +132,7 @@ router.post('/register-device', async (req, res) => {
             email || null
         ]);
 
-        console.log(`[Notifications] ✅ Device registered: Employee ${employeeId} - ${platform} - ${email || 'no-email'} - ${result.rows[0].device_token.substring(0, 20)}...`);
+        console.log(`[Notifications] ✅ Device registered: Tenant ${resolvedTenantId || 'unknown'} - Employee ${employeeId} - Branch ${branchId} - ${platform} - ${email || 'no-email'}`);
 
         res.json({
             success: true,
