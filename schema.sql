@@ -225,6 +225,16 @@ CREATE TABLE IF NOT EXISTS expenses (
     reviewed_by_employee_id INTEGER REFERENCES employees(id) ON DELETE SET NULL,  -- Quién aprobó el gasto
     reviewed_at TIMESTAMP,  -- Cuándo se aprobó
 
+    -- Rejection tracking
+    rejection_reason TEXT,
+    rejected_by_employee_id INTEGER REFERENCES employees(id) ON DELETE SET NULL,
+    rejected_at TIMESTAMP,
+
+    -- Edit tracking (when Desktop edits a mobile expense)
+    edit_reason TEXT,
+    edited_by_employee_id INTEGER REFERENCES employees(id) ON DELETE SET NULL,
+    edited_at TIMESTAMP,
+
     -- Soft delete (legacy - usar status='deleted' preferiblemente)
     is_active BOOLEAN DEFAULT TRUE,
     deleted_at TIMESTAMP,
@@ -1108,3 +1118,13 @@ COMMENT ON TABLE credit_payments IS 'Pagos de clientes con crédito';
 COMMENT ON TABLE suspicious_weighing_logs IS 'Guardian: Eventos sospechosos detectados por la báscula';
 COMMENT ON TABLE scale_disconnection_logs IS 'Guardian: Eventos de desconexión/reconexión de báscula';
 COMMENT ON TABLE backup_metadata IS 'Metadatos de respaldos en Dropbox';
+
+-- ═══════════════════════════════════════════════════════════════
+-- MIGRATION: Add rejection/edit reason columns to expenses
+-- ═══════════════════════════════════════════════════════════════
+ALTER TABLE expenses ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
+ALTER TABLE expenses ADD COLUMN IF NOT EXISTS rejected_by_employee_id INTEGER REFERENCES employees(id) ON DELETE SET NULL;
+ALTER TABLE expenses ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMP;
+ALTER TABLE expenses ADD COLUMN IF NOT EXISTS edit_reason TEXT;
+ALTER TABLE expenses ADD COLUMN IF NOT EXISTS edited_by_employee_id INTEGER REFERENCES employees(id) ON DELETE SET NULL;
+ALTER TABLE expenses ADD COLUMN IF NOT EXISTS edited_at TIMESTAMP;

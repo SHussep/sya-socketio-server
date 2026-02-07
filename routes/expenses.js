@@ -729,9 +729,10 @@ module.exports = (pool, io) => {
     router.patch('/:global_id/deactivate', async (req, res) => {
         try {
             const { global_id } = req.params;
-            const { tenant_id, last_modified_local_utc } = req.body;
+            const { tenant_id, last_modified_local_utc, reason, rejected_by_employee_global_id } = req.body;
 
             console.log(`[Expenses/Deactivate] 🗑️ Desactivando gasto ${global_id} - Tenant: ${tenant_id}`);
+            if (reason) console.log(`[Expenses/Deactivate] 📝 Razón: ${reason}`);
 
             // Validar que el gasto existe y pertenece al tenant
             // NOTA: global_id es VARCHAR, no UUID - no usar ::uuid cast
@@ -757,15 +758,33 @@ module.exports = (pool, io) => {
             const expenseInfo = checkResult.rows[0];
             const employeeGlobalId = expenseInfo.employee_global_id;
 
-            // Soft delete: marcar como inactivo
+            // Resolver quién rechazó (rejected_by_employee_global_id → ID + nombre)
+            let rejectedByEmployeeId = null;
+            let rejectedByEmployeeName = '';
+            if (rejected_by_employee_global_id) {
+                const rejectorResult = await pool.query(
+                    'SELECT id, first_name, last_name FROM employees WHERE global_id = $1 AND tenant_id = $2',
+                    [rejected_by_employee_global_id, tenant_id]
+                );
+                if (rejectorResult.rows.length > 0) {
+                    rejectedByEmployeeId = rejectorResult.rows[0].id;
+                    rejectedByEmployeeName = `${rejectorResult.rows[0].first_name || ''} ${rejectorResult.rows[0].last_name || ''}`.trim();
+                    console.log(`[Expenses/Deactivate] 👤 Rechazado por: ${rejectedByEmployeeName} (ID: ${rejectedByEmployeeId})`);
+                }
+            }
+
+            // Soft delete: marcar como inactivo + guardar razón y quién rechazó
             const result = await pool.query(
                 `UPDATE expenses
                  SET is_active = false,
                      deleted_at = NOW(),
+                     rejection_reason = $3,
+                     rejected_by_employee_id = $4,
+                     rejected_at = NOW(),
                      updated_at = NOW()
                  WHERE global_id = $1 AND tenant_id = $2
                  RETURNING *`,
-                [global_id, tenant_id]
+                [global_id, tenant_id, reason || null, rejectedByEmployeeId]
             );
 
             console.log(`[Expenses/Deactivate] ✅ Gasto ${global_id} desactivado exitosamente`);
@@ -795,6 +814,8 @@ module.exports = (pool, io) => {
                     amount: parseFloat(expenseInfo.amount),
                     category: expenseInfo.category_name || '',
                     description: expenseInfo.description || '',
+                    reason: reason || '',
+                    rejectedByEmployeeName: rejectedByEmployeeName,
                     timestamp: new Date().toISOString()
                 };
                 io.to(branchRoom).emit('expense_rejected', rejectedPayload);
@@ -804,9 +825,11 @@ module.exports = (pool, io) => {
             // FCM push notification al repartidor
             if (employeeGlobalId) {
                 const amount = parseFloat(expenseInfo.amount);
+                const reasonText = reason ? `: "${reason}"` : '';
+                const byText = rejectedByEmployeeName ? ` por ${rejectedByEmployeeName}` : '';
                 sendNotificationToEmployee(employeeGlobalId, {
                     title: '❌ Gasto Rechazado',
-                    body: `Tu gasto de $${amount.toFixed(2)} (${expenseInfo.category_name || 'Sin categoría'}) fue rechazado`,
+                    body: `Tu gasto de $${amount.toFixed(2)} (${expenseInfo.category_name || 'Sin categoría'}) fue rechazado${byText}${reasonText}`,
                     data: { type: 'expense_rejected', globalId: global_id }
                 }).catch(err => console.error('[Expenses/Deactivate] Error FCM:', err.message));
             }
@@ -1091,9 +1114,10 @@ module.exports = (pool, io) => {
     router.patch('/:global_id', async (req, res) => {
         try {
             const { global_id } = req.params;
-            const { tenant_id, category, description, amount } = req.body;
+            const { tenant_id, category, description, amount, edit_reason, edited_by_employee_global_id } = req.body;
 
             console.log(`[Expenses/Edit] ✏️ Editando gasto ${global_id} - Tenant: ${tenant_id}`);
+            if (edit_reason) console.log(`[Expenses/Edit] 📝 Razón: ${edit_reason}`);
 
             if (!tenant_id) {
                 return res.status(400).json({
@@ -1123,6 +1147,21 @@ module.exports = (pool, io) => {
             }
 
             const currentExpense = checkResult.rows[0];
+
+            // Resolver quién editó (edited_by_employee_global_id → ID + nombre)
+            let editedByEmployeeId = null;
+            let editedByEmployeeName = '';
+            if (edited_by_employee_global_id) {
+                const editorResult = await pool.query(
+                    'SELECT id, first_name, last_name FROM employees WHERE global_id = $1 AND tenant_id = $2',
+                    [edited_by_employee_global_id, tenant_id]
+                );
+                if (editorResult.rows.length > 0) {
+                    editedByEmployeeId = editorResult.rows[0].id;
+                    editedByEmployeeName = `${editorResult.rows[0].first_name || ''} ${editorResult.rows[0].last_name || ''}`.trim();
+                    console.log(`[Expenses/Edit] 👤 Editado por: ${editedByEmployeeName} (ID: ${editedByEmployeeId})`);
+                }
+            }
 
             // Construir campos a actualizar
             const updates = [];
@@ -1164,6 +1203,19 @@ module.exports = (pool, io) => {
                     data: currentExpense
                 });
             }
+
+            // Guardar razón de edición y quién editó
+            if (edit_reason) {
+                updates.push(`edit_reason = $${paramIndex}`);
+                values.push(edit_reason);
+                paramIndex++;
+            }
+            if (editedByEmployeeId) {
+                updates.push(`edited_by_employee_id = $${paramIndex}`);
+                values.push(editedByEmployeeId);
+                paramIndex++;
+            }
+            updates.push(`edited_at = NOW()`);
 
             // Agregar updated_at
             updates.push(`updated_at = NOW()`);
@@ -1207,6 +1259,8 @@ module.exports = (pool, io) => {
                     newDescription: updatedData.description || '',
                     oldCategory: currentExpense.category_name || '',
                     newCategory: newCategoryName || '',
+                    reason: edit_reason || '',
+                    editedByEmployeeName: editedByEmployeeName,
                     timestamp: new Date().toISOString()
                 };
                 const branchRoom = `branch_${currentExpense.branch_id}`;
@@ -1217,9 +1271,11 @@ module.exports = (pool, io) => {
             // FCM push notification al repartidor
             if (currentExpense.employee_global_id) {
                 const newAmt = parseFloat(updateResult.rows[0].amount);
+                const reasonText = edit_reason ? `: "${edit_reason}"` : '';
+                const byText = editedByEmployeeName ? ` por ${editedByEmployeeName}` : '';
                 sendNotificationToEmployee(currentExpense.employee_global_id, {
                     title: '✏️ Gasto Editado',
-                    body: `Tu gasto fue editado a $${newAmt.toFixed(2)}`,
+                    body: `Tu gasto fue editado a $${newAmt.toFixed(2)}${byText}${reasonText}`,
                     data: { type: 'expense_edited', globalId: global_id }
                 }).catch(err => console.error('[Expenses/Edit] Error FCM:', err.message));
             }
