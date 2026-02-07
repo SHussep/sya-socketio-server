@@ -968,7 +968,11 @@ module.exports = (pool, io) => {
 
             // Validar que el gasto existe y pertenece al tenant
             const checkResult = await pool.query(
-                'SELECT id FROM expenses WHERE global_id = $1 AND tenant_id = $2',
+                `SELECT e.id, e.branch_id, e.employee_id, e.amount, e.description,
+                        gcat.name as category_name
+                 FROM expenses e
+                 LEFT JOIN global_expense_categories gcat ON e.global_category_id = gcat.id
+                 WHERE e.global_id = $1 AND e.tenant_id = $2`,
                 [global_id, tenant_id]
             );
 
@@ -979,15 +983,27 @@ module.exports = (pool, io) => {
                 });
             }
 
+            const expenseInfo = checkResult.rows[0];
+
             // Resolver reviewer_employee_global_id → PostgreSQL ID si se proporciona
             let reviewerEmployeeId = reviewer_employee_id || null;
+            let reviewerName = '';
             if (reviewer_employee_global_id && !reviewer_employee_id) {
                 const empResult = await pool.query(
-                    'SELECT id FROM employees WHERE global_id = $1 AND tenant_id = $2',
+                    'SELECT id, first_name, last_name FROM employees WHERE global_id = $1 AND tenant_id = $2',
                     [reviewer_employee_global_id, tenant_id]
                 );
                 if (empResult.rows.length > 0) {
                     reviewerEmployeeId = empResult.rows[0].id;
+                    reviewerName = `${empResult.rows[0].first_name || ''} ${empResult.rows[0].last_name || ''}`.trim();
+                }
+            } else if (reviewer_employee_id) {
+                const empResult = await pool.query(
+                    'SELECT first_name, last_name FROM employees WHERE id = $1 AND tenant_id = $2',
+                    [reviewer_employee_id, tenant_id]
+                );
+                if (empResult.rows.length > 0) {
+                    reviewerName = `${empResult.rows[0].first_name || ''} ${empResult.rows[0].last_name || ''}`.trim();
                 }
             }
 
@@ -1004,6 +1020,24 @@ module.exports = (pool, io) => {
             );
 
             console.log(`[Expenses/Approve] ✅ Gasto ${global_id} aprobado por employee_id: ${reviewerEmployeeId}`);
+
+            // Notificación en tiempo real al repartidor
+            const io = req.app.get('io');
+            if (io && expenseInfo.branch_id) {
+                const payload = {
+                    globalId: global_id,
+                    branchId: expenseInfo.branch_id,
+                    employeeId: expenseInfo.employee_id,
+                    amount: parseFloat(expenseInfo.amount),
+                    category: expenseInfo.category_name || '',
+                    description: expenseInfo.description || '',
+                    approvedByEmployeeName: reviewerName,
+                    timestamp: new Date().toISOString()
+                };
+                const branchRoom = `branch_${expenseInfo.branch_id}`;
+                io.to(branchRoom).emit('expense_approved', payload);
+                console.log(`[Expenses/Approve] 📡 Emitido 'expense_approved' a ${branchRoom}`);
+            }
 
             res.json({
                 success: true,
@@ -1040,7 +1074,8 @@ module.exports = (pool, io) => {
 
             // Validar que el gasto existe y pertenece al tenant
             const checkResult = await pool.query(
-                `SELECT e.id, e.description, e.amount, e.global_category_id, gcat.name as category_name
+                `SELECT e.id, e.description, e.amount, e.global_category_id, e.branch_id, e.employee_id,
+                        gcat.name as category_name
                  FROM expenses e
                  LEFT JOIN global_expense_categories gcat ON e.global_category_id = gcat.id
                  WHERE e.global_id = $1 AND e.tenant_id = $2`,
@@ -1113,6 +1148,39 @@ module.exports = (pool, io) => {
             const updateResult = await pool.query(updateQuery, values);
 
             console.log(`[Expenses/Edit] ✅ Gasto editado: ${global_id}`);
+
+            // Notificación en tiempo real al repartidor
+            const io = req.app.get('io');
+            if (io && currentExpense.branch_id) {
+                const updatedData = updateResult.rows[0];
+                // Resolver nombre de nueva categoría si cambió
+                let newCategoryName = currentExpense.category_name;
+                if (updatedData.global_category_id !== currentExpense.global_category_id) {
+                    const catResult = await pool.query(
+                        'SELECT name FROM global_expense_categories WHERE id = $1',
+                        [updatedData.global_category_id]
+                    );
+                    if (catResult.rows.length > 0) {
+                        newCategoryName = catResult.rows[0].name;
+                    }
+                }
+
+                const payload = {
+                    globalId: global_id,
+                    branchId: currentExpense.branch_id,
+                    employeeId: currentExpense.employee_id,
+                    oldAmount: parseFloat(currentExpense.amount),
+                    newAmount: parseFloat(updatedData.amount),
+                    oldDescription: currentExpense.description || '',
+                    newDescription: updatedData.description || '',
+                    oldCategory: currentExpense.category_name || '',
+                    newCategory: newCategoryName || '',
+                    timestamp: new Date().toISOString()
+                };
+                const branchRoom = `branch_${currentExpense.branch_id}`;
+                io.to(branchRoom).emit('expense_edited', payload);
+                console.log(`[Expenses/Edit] 📡 Emitido 'expense_edited' a ${branchRoom}`);
+            }
 
             res.json({
                 success: true,
@@ -1415,7 +1483,12 @@ module.exports = (pool, io) => {
 
             // Obtener el gasto para verificar propiedad y obtener imagen
             const checkResult = await pool.query(
-                'SELECT id, receipt_image, reviewed_by_desktop, employee_id FROM expenses WHERE global_id = $1 AND tenant_id = $2',
+                `SELECT e.id, e.receipt_image, e.reviewed_by_desktop, e.employee_id,
+                        e.branch_id, e.amount, e.description,
+                        gcat.name as category_name
+                 FROM expenses e
+                 LEFT JOIN global_expense_categories gcat ON e.global_category_id = gcat.id
+                 WHERE e.global_id = $1 AND e.tenant_id = $2`,
                 [global_id, tenantId]
             );
 
@@ -1462,6 +1535,23 @@ module.exports = (pool, io) => {
             );
 
             console.log(`[Expenses/Delete] ✅ Gasto ${global_id} eliminado permanentemente`);
+
+            // Notificación en tiempo real al repartidor (gasto rechazado)
+            const io = req.app.get('io');
+            if (io && expense.branch_id) {
+                const payload = {
+                    globalId: global_id,
+                    branchId: expense.branch_id,
+                    employeeId: expense.employee_id,
+                    amount: parseFloat(expense.amount),
+                    category: expense.category_name || '',
+                    description: expense.description || '',
+                    timestamp: new Date().toISOString()
+                };
+                const branchRoom = `branch_${expense.branch_id}`;
+                io.to(branchRoom).emit('expense_rejected', payload);
+                console.log(`[Expenses/Delete] 📡 Emitido 'expense_rejected' a ${branchRoom}`);
+            }
 
             res.json({
                 success: true,
