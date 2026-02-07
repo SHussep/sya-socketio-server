@@ -737,9 +737,12 @@ module.exports = (pool, io) => {
             // NOTA: global_id es VARCHAR, no UUID - no usar ::uuid cast
             // ✅ JOIN con employees para obtener employee_global_id (no existe en expenses)
             const checkResult = await pool.query(
-                `SELECT e.id, e.branch_id, emp.global_id as employee_global_id
+                `SELECT e.id, e.branch_id, e.employee_id, e.amount, e.description,
+                        emp.global_id as employee_global_id,
+                        gcat.name as category_name
                  FROM expenses e
                  LEFT JOIN employees emp ON e.employee_id = emp.id
+                 LEFT JOIN global_expense_categories gcat ON e.global_category_id = gcat.id
                  WHERE e.global_id = $1 AND e.tenant_id = $2`,
                 [global_id, tenant_id]
             );
@@ -751,7 +754,8 @@ module.exports = (pool, io) => {
                 });
             }
 
-            const employeeGlobalId = checkResult.rows[0].employee_global_id;
+            const expenseInfo = checkResult.rows[0];
+            const employeeGlobalId = expenseInfo.employee_global_id;
 
             // Soft delete: marcar como inactivo
             const result = await pool.query(
@@ -767,31 +771,44 @@ module.exports = (pool, io) => {
             console.log(`[Expenses/Deactivate] ✅ Gasto ${global_id} desactivado exitosamente`);
 
             // ═══════════════════════════════════════════════════════════════
-            // NOTIFICACIÓN EN TIEMPO REAL: Avisar al móvil que el gasto fue eliminado
+            // NOTIFICACIÓN EN TIEMPO REAL: Avisar al móvil que el gasto fue rechazado
             // ═══════════════════════════════════════════════════════════════
             const io = req.app.get('io');
             const expenseData = result.rows[0];
-            if (io && expenseData) {
-                const payload = {
+            if (io && expenseData && expenseData.branch_id) {
+                const branchRoom = `branch_${expenseData.branch_id}`;
+
+                // Emitir expense_deleted (para compatibilidad con listeners existentes)
+                const deletedPayload = {
                     globalId: global_id,
                     tenantId: tenant_id,
                     employeeGlobalId: employeeGlobalId,
                     deletedAt: new Date().toISOString()
                 };
+                io.to(branchRoom).emit('expense_deleted', deletedPayload);
 
-                // Emitir a la room del branch (donde está conectado el móvil)
-                if (expenseData.branch_id) {
-                    const branchRoom = `branch_${expenseData.branch_id}`;
-                    io.to(branchRoom).emit('expense_deleted', payload);
-                    console.log(`[Expenses/Deactivate] 📡 Emitido 'expense_deleted' a ${branchRoom}`);
-                }
+                // Emitir expense_rejected (para notificación específica al repartidor)
+                const rejectedPayload = {
+                    globalId: global_id,
+                    branchId: expenseData.branch_id,
+                    employeeId: expenseInfo.employee_id,
+                    amount: parseFloat(expenseInfo.amount),
+                    category: expenseInfo.category_name || '',
+                    description: expenseInfo.description || '',
+                    timestamp: new Date().toISOString()
+                };
+                io.to(branchRoom).emit('expense_rejected', rejectedPayload);
+                console.log(`[Expenses/Deactivate] 📡 Emitido 'expense_deleted' + 'expense_rejected' a ${branchRoom}`);
+            }
 
-                // También emitir a la room del empleado específico (por si está conectado directamente)
-                if (employeeGlobalId) {
-                    const employeeRoom = `employee_${employeeGlobalId}`;
-                    io.to(employeeRoom).emit('expense_deleted', payload);
-                    console.log(`[Expenses/Deactivate] 📡 Emitido 'expense_deleted' a ${employeeRoom}`);
-                }
+            // FCM push notification al repartidor
+            if (employeeGlobalId) {
+                const amount = parseFloat(expenseInfo.amount);
+                sendNotificationToEmployee(employeeGlobalId, {
+                    title: '❌ Gasto Rechazado',
+                    body: `Tu gasto de $${amount.toFixed(2)} (${expenseInfo.category_name || 'Sin categoría'}) fue rechazado`,
+                    data: { type: 'expense_rejected', globalId: global_id }
+                }).catch(err => console.error('[Expenses/Deactivate] Error FCM:', err.message));
             }
 
             res.json({
@@ -926,6 +943,7 @@ module.exports = (pool, io) => {
             LEFT JOIN shifts s ON e.id_turno = s.id
             WHERE e.employee_id = $1
               AND e.reviewed_by_desktop = false
+              AND e.is_active = true
               AND (e.local_op_seq IS NULL OR e.local_op_seq = 0)
               AND s.is_cash_cut_open = true
               ${tenant_id ? 'AND e.tenant_id = $2' : ''}
