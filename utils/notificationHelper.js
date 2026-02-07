@@ -786,33 +786,15 @@ async function notifyScaleConnection(branchId, { message }) {
 /**
  * Envía notificación cuando se registra un gasto para un empleado/repartidor
  * Notifica a:
- * 1. El empleado/repartidor que registró el gasto (personalizada)
- * 2. Los administradores y encargados de la sucursal
- * @param {string} employeeGlobalId - GlobalId (UUID) del empleado/repartidor
+ * Los administradores y encargados de la sucursal (NO al empleado que lo creó)
+ * @param {string} employeeGlobalId - GlobalId (UUID) del empleado/repartidor (se excluye de la notificación)
  * @param {object} params - Datos del gasto
  */
 async function notifyExpenseCreated(employeeGlobalId, { expenseId, amount, description, category, branchId, branchName, employeeName }) {
     try {
-        console.log(`[NotificationHelper] 💸 Iniciando notificación de gasto para empleado ${employeeName} (global_id: ${employeeGlobalId})`);
+        console.log(`[NotificationHelper] 💸 Iniciando notificación de gasto de ${employeeName} a admins de sucursal ${branchId}`);
 
-        // 1️⃣ Notificar al empleado/repartidor (notificación personalizada)
-        const employeeResult = await sendNotificationToEmployee(employeeGlobalId, {
-            title: '✏️ Gasto Registrado',
-            body: `$${amount.toFixed(2)} - ${description || category}`,
-            data: {
-                type: 'expense_created_self',
-                expenseId: expenseId.toString(),
-                amount: amount.toString(),
-                description,
-                category
-            }
-        });
-
-        console.log(`[NotificationHelper] ✅ Notificación PERSONAL de gasto enviada al empleado ${employeeName} (global_id: ${employeeGlobalId}): ${employeeResult.sent}/${employeeResult.total || employeeResult.sent} dispositivos`);
-
-        // 2️⃣ Notificar a administradores/encargados
-        // EXCLUIR al empleado que ya recibió su notificación personal (evita duplicados)
-        console.log(`[NotificationHelper] 📤 Enviando notificación a admins de sucursal ${branchId}, EXCLUYENDO a ${employeeGlobalId}...`);
+        // Notificar solo a administradores/encargados (excluir al empleado que creó el gasto)
         const adminResult = await sendNotificationToAdminsInBranch(branchId, {
             title: '💸 Gasto Registrado',
             body: `${employeeName} registró $${amount.toFixed(2)} - ${description || category}`,
@@ -826,7 +808,7 @@ async function notifyExpenseCreated(employeeGlobalId, { expenseId, amount, descr
             }
         }, { excludeEmployeeGlobalId: employeeGlobalId, notificationType: 'notify_expense_created' });
 
-        console.log(`[NotificationHelper] ✅ Notificaciones de gasto enviadas a ADMINS/ENCARGADOS de sucursal ${branchId}: ${adminResult.sent}/${adminResult.total || adminResult.sent} dispositivos (empleado ${employeeGlobalId} EXCLUIDO)`);
+        console.log(`[NotificationHelper] ✅ Notificaciones de gasto enviadas a ADMINS/ENCARGADOS de sucursal ${branchId}: ${adminResult.sent}/${adminResult.total || adminResult.sent} dispositivos`);
 
         // Guardar en historial de notificaciones (campana)
         const tenantResult = await pool.query('SELECT tenant_id FROM branches WHERE id = $1', [branchId]);
@@ -847,13 +829,12 @@ async function notifyExpenseCreated(employeeGlobalId, { expenseId, amount, descr
         }
 
         return {
-            employee: employeeResult,
             admins: adminResult,
-            totalSent: (employeeResult.sent || 0) + (adminResult.sent || 0)
+            totalSent: adminResult.sent || 0
         };
     } catch (error) {
         console.error('[NotificationHelper] ❌ Error enviando notificaciones de gasto:', error.message);
-        return { employee: { sent: 0, failed: 0 }, admins: { sent: 0, failed: 0 }, error: error.message };
+        return { admins: { sent: 0, failed: 0 }, error: error.message };
     }
 }
 
