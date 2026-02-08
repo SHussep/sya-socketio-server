@@ -189,7 +189,8 @@ class LoginController {
                         roleId: employee.role_id,
                         mainBranchId: employee.main_branch_id,
                         globalId: employee.global_id,
-                        isOwner: employee.is_owner
+                        isOwner: employee.is_owner,
+                        profilePhotoUrl: employee.profile_photo_url || null
                     },
                     tenant: {
                         id: tenant.id,
@@ -375,7 +376,8 @@ class LoginController {
                         roleName: employee.role_name,
                         mobileAccessType: employee.mobile_access_type,
                         globalId: employee.global_id,
-                        isOwner: employee.is_owner
+                        isOwner: employee.is_owner,
+                        profilePhotoUrl: employee.profile_photo_url || null
                     },
                     tenant: {
                         id: tenant.id,

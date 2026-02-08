@@ -628,6 +628,13 @@ async function initializeDatabase() {
             console.log('[DB] ⚠️ employees.verification_expires_at:', error.message);
         }
 
+        try {
+            await client.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS profile_photo_url TEXT`);
+            console.log('[DB] ✅ Columna employees.profile_photo_url verificada/agregada');
+        } catch (error) {
+            console.log('[DB] ⚠️ employees.profile_photo_url:', error.message);
+        }
+
         console.log('[DB] ✅ Database schema initialized successfully');
     } catch (error) {
         console.error('[DB] ❌ Error initializing database:', error);

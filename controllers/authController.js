@@ -1090,8 +1090,9 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
             const payload = ticket.getPayload();
             const email = payload.email;
             const googleName = payload.name;
+            const googlePictureUrl = payload.picture || null;
 
-            console.log(`[Google Login] Token verificado. Email: ${email}`);
+            console.log(`[Google Login] Token verificado. Email: ${email}, Picture: ${googlePictureUrl ? 'yes' : 'no'}`);
 
             // Buscar en TENANTS (fuente de verdad del email de registro)
             const tenantResult = await this.pool.query(
@@ -1125,6 +1126,19 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
             );
 
             const employee = employeeResult.rows[0] || null;
+
+            // Guardar foto de perfil de Google si está disponible
+            if (employee && googlePictureUrl) {
+                try {
+                    await this.pool.query(
+                        `UPDATE employees SET profile_photo_url = $1 WHERE id = $2`,
+                        [googlePictureUrl, employee.id]
+                    );
+                    console.log(`[Google Login] 📸 Foto de perfil guardada para employee ${employee.id}`);
+                } catch (photoError) {
+                    console.log(`[Google Login] ⚠️ Error guardando foto: ${photoError.message}`);
+                }
+            }
 
             const branchesResult = await this.pool.query(`
                 SELECT b.id, b.branch_code, b.name, b.address, b.timezone
