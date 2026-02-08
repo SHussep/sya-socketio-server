@@ -2611,6 +2611,27 @@ async function runMigrations() {
                 console.error(`[Schema] ⚠️ device_tokens migration error: ${dtErr.message}`);
             }
 
+            // ═══════════════════════════════════════════════════════════════
+            // Migration 022: beta_enrollments - registro de interés en app móvil beta
+            // ═══════════════════════════════════════════════════════════════
+            console.log('[Schema] 🔍 Checking beta_enrollments table (Migration 022)...');
+            try {
+                await client.query(`
+                    CREATE TABLE IF NOT EXISTS beta_enrollments (
+                        id SERIAL PRIMARY KEY,
+                        tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                        employee_id INTEGER,
+                        email VARCHAR(255) NOT NULL,
+                        business_name VARCHAR(255),
+                        enrolled_at TIMESTAMPTZ DEFAULT NOW(),
+                        UNIQUE(tenant_id)
+                    )
+                `);
+                console.log('[Schema] ✅ beta_enrollments table ready');
+            } catch (beErr) {
+                console.error(`[Schema] ⚠️ beta_enrollments migration error: ${beErr.message}`);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {

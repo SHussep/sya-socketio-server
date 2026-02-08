@@ -102,6 +102,7 @@ const passwordResetRoutes = require('./routes/passwordReset'); // Recuperación 
 const devicesRoutes = require('./routes/devices'); // Gestión de dispositivos (Primary/Auxiliar)
 const notasCreditoRoutes = require('./routes/notas_credito'); // Notas de crédito (devoluciones)
 const preparationModeRoutes = require('./routes/preparation_mode'); // Logs de Modo Preparación (auditoría Guardian)
+const betaEnrollmentRoutes = require('./routes/beta_enrollment'); // Registro de interés en app móvil beta
 
 // Inicializar Firebase para notificaciones push
 initializeFirebase();
@@ -428,6 +429,7 @@ app.use('/api/employee-metrics', employeeMetricsRoutes(pool)); // Rutas de métr
 app.use('/api/repartidores', repartidoresRoutes(pool)); // Rutas de resumen y detalles de repartidores
 app.use('/api/notas-credito', notasCreditoRoutes(pool)); // Notas de crédito (devoluciones)
 app.use('/api/preparation-mode', preparationModeRoutes(pool, io)); // Logs de Modo Preparación (auditoría Guardian)
+app.use('/api/beta-enrollment', betaEnrollmentRoutes(pool)); // Registro de interés en app móvil beta
 
 // FASE 1: Cash Management Routes (Deposits, Withdrawals)
 app.use('/api/deposits', depositsRoutes(pool));
