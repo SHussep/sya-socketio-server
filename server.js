@@ -1483,6 +1483,19 @@ io.on('connection', (socket) => {
         }
     });
 
+    // EVENT: Mobile sends announcement to Desktop POS
+    socket.on('branch:announcement', (data) => {
+        console.log(`[ANNOUNCEMENT] 📢 Mobile envió anuncio - Branch: ${data.branchId}, From: ${data.senderName}`);
+
+        const branchRoom = `branch_${data.branchId}`;
+        io.to(branchRoom).emit('branch:announcement', {
+            message: data.message,
+            senderName: data.senderName,
+            branchId: data.branchId,
+            sentAt: new Date().toISOString()
+        });
+    });
+
     // ═══════════════════════════════════════════════════════════════
     // END MOBILE LISTENERS
     // ═══════════════════════════════════════════════════════════════
