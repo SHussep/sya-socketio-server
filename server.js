@@ -1496,6 +1496,22 @@ io.on('connection', (socket) => {
         });
     });
 
+    // EVENT: Desktop syncs Google profile photo on startup
+    socket.on('employee:update-photo', async (data) => {
+        try {
+            const { employeeId, profilePhotoUrl } = data;
+            if (!employeeId || !profilePhotoUrl) return;
+
+            await pool.query(
+                'UPDATE employees SET profile_photo_url = $1 WHERE id = $2',
+                [profilePhotoUrl, employeeId]
+            );
+            console.log(`[PHOTO] 📸 Profile photo updated for employee ${employeeId}`);
+        } catch (error) {
+            console.error(`[PHOTO] ❌ Error updating profile photo:`, error.message);
+        }
+    });
+
     // ═══════════════════════════════════════════════════════════════
     // END MOBILE LISTENERS
     // ═══════════════════════════════════════════════════════════════
