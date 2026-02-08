@@ -1216,6 +1216,7 @@ module.exports = (pool) => {
             // JOIN con roles para obtener mobile_access_type directamente de la tabla roles
             const result = await client.query(
                 `SELECT e.id, e.email, e.first_name, e.last_name, e.role_id, e.can_use_mobile_app,
+                        e.is_owner, e.profile_photo_url,
                         r.mobile_access_type as role_mobile_access_type
                  FROM employees e
                  LEFT JOIN roles r ON e.role_id = r.id AND e.tenant_id = r.tenant_id
@@ -1247,6 +1248,8 @@ module.exports = (pool) => {
                     canUseMobileApp: employee.can_use_mobile_app,
                     mobileAccessType: accessType,
                     hasMobileAccess: hasMobileAccess,
+                    isOwner: employee.is_owner || false,
+                    profilePhotoUrl: employee.profile_photo_url || null,
                     message: hasMobileAccess
                         ? `Acceso aprobado como ${accessType === 'admin' ? 'Administrador' : 'Repartidor'}`
                         : 'No tiene acceso a la aplicación móvil'
