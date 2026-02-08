@@ -146,6 +146,50 @@ app.get('/health', async (req, res) => {
     }
 });
 
+// 🔍 Diagnostic: show active socket rooms and clients
+app.get('/api/debug/rooms', (req, res) => {
+    const rooms = {};
+    io.sockets.adapter.rooms.forEach((sockets, roomName) => {
+        if (roomName.startsWith('branch_')) {
+            const clients = [];
+            sockets.forEach(socketId => {
+                const s = io.sockets.sockets.get(socketId);
+                clients.push({ id: socketId, type: s?.clientType || 'unknown' });
+            });
+            rooms[roomName] = { count: sockets.size, clients };
+        }
+    });
+    res.json({ totalConnected: io.sockets.sockets.size, rooms });
+});
+
+// 🔍 Diagnostic: emit a test sale_completed event to a branch room
+app.post('/api/debug/test-sale', (req, res) => {
+    const branchId = req.body.branchId || 32;
+    const roomName = `branch_${branchId}`;
+    const roomSockets = io.sockets.adapter.rooms.get(roomName);
+    const clientCount = roomSockets ? roomSockets.size : 0;
+
+    const testSale = {
+        branchId,
+        saleId: 99999,
+        ticketNumber: 9999,
+        total: 77.77,
+        paymentMethod: 'cash',
+        completedAt: new Date().toISOString(),
+        employeeName: 'TEST DIAGNOSTIC',
+    };
+
+    console.log(`[DEBUG] Emitiendo sale_completed de prueba a ${roomName} (${clientCount} clientes)`);
+    io.to(roomName).emit('sale_completed', { ...testSale, receivedAt: new Date().toISOString() });
+
+    res.json({
+        sent: true,
+        room: roomName,
+        clientsInRoom: clientCount,
+        payload: testSale,
+    });
+});
+
 // 🔍 Diagnostic endpoint to verify timezone configuration
 app.get('/timezone-diagnostic', (req, res) => {
     try {
