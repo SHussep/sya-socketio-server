@@ -134,6 +134,7 @@ app.get('/health', async (req, res) => {
 
         res.json({
             status: 'ok',
+            version: '2026-02-08a',
             timestamp: new Date().toISOString(),
             database: 'connected',
             stats: {
