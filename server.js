@@ -163,8 +163,8 @@ app.get('/api/debug/rooms', (req, res) => {
 });
 
 // 🔍 Diagnostic: emit a test sale_completed event to a branch room
-app.post('/api/debug/test-sale', (req, res) => {
-    const branchId = req.body.branchId || 32;
+app.get('/api/debug/test-sale', (req, res) => {
+    const branchId = parseInt(req.query.branchId) || 32;
     const roomName = `branch_${branchId}`;
     const roomSockets = io.sockets.adapter.rooms.get(roomName);
     const clientCount = roomSockets ? roomSockets.size : 0;
