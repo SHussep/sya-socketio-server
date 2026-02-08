@@ -114,6 +114,20 @@ module.exports = (pool, io) => {
             const shift = result.rows[0];
             console.log(`[Shifts] 🔒 Turno cerrado: ID ${shift.id} - Empleado ${employeeId}`);
 
+            // 🔌 EMIT Socket.IO para actualizar app móvil en tiempo real
+            if (io) {
+                const roomName = `branch_${branchId}`;
+                console.log(`[Shifts] 📡 Emitiendo 'shift_ended' a ${roomName}`);
+                io.to(roomName).emit('shift_ended', {
+                    shiftId: shift.id,
+                    employeeId: employeeId,
+                    branchId: branchId,
+                    endTime: shift.end_time ? new Date(shift.end_time).toISOString() : new Date().toISOString(),
+                    finalAmount: parseFloat(shift.final_amount || 0),
+                    source: 'post_close'
+                });
+            }
+
             // Format timestamps as ISO strings in UTC
             const formattedShift = {
                 ...shift,
@@ -938,6 +952,35 @@ module.exports = (pool, io) => {
 
             console.log(`[Sync/Shifts] ✅ Turno sincronizado: ID ${shift.id} (LocalShiftId: ${local_shift_id}) - Employee ${resolvedEmployeeId}`);
 
+            // 🔌 EMIT Socket.IO para actualizar app móvil en tiempo real
+            if (io) {
+                const roomName = `branch_${branch_id}`;
+                if (is_cash_cut_open === false && end_time) {
+                    // Turno cerrado
+                    console.log(`[Sync/Shifts] 📡 Emitiendo 'shift_ended' a ${roomName} (sync general)`);
+                    io.to(roomName).emit('shift_ended', {
+                        shiftId: shift.id,
+                        globalId: shift.global_id,
+                        employeeId: resolvedEmployeeId,
+                        branchId: branch_id,
+                        endTime: end_time,
+                        finalAmount: parseFloat(final_amount || 0),
+                        source: 'rest_sync'
+                    });
+                } else if (is_cash_cut_open !== false) {
+                    // Turno abierto
+                    console.log(`[Sync/Shifts] 📡 Emitiendo 'shift_started' a ${roomName} (sync general)`);
+                    io.to(roomName).emit('shift_started', {
+                        shiftId: shift.id,
+                        employeeId: resolvedEmployeeId,
+                        branchId: branch_id,
+                        initialAmount: parseFloat(initial_amount || 0),
+                        startTime: start_time || new Date().toISOString(),
+                        source: 'rest_sync'
+                    });
+                }
+            }
+
             // 🔔 ENVIAR NOTIFICACIONES FCM SI ES CIERRE DE TURNO
             if (is_cash_cut_open === false && end_time) {
                 console.log(`[Sync/Shifts] 📨 Detectado cierre de turno - Enviando notificaciones FCM`);
@@ -1387,10 +1430,24 @@ module.exports = (pool, io) => {
 
             console.log(`[Shifts/Close] ✅ Turno ${id} cerrado exitosamente`);
 
+            // 🔌 EMIT Socket.IO para actualizar app móvil en tiempo real
+            const closedShift = result.rows[0];
+            if (io && closedShift.branch_id) {
+                const roomName = `branch_${closedShift.branch_id}`;
+                console.log(`[Shifts/Close] 📡 Emitiendo 'shift_ended' a ${roomName}`);
+                io.to(roomName).emit('shift_ended', {
+                    shiftId: closedShift.id,
+                    employeeId: closedShift.employee_id,
+                    branchId: closedShift.branch_id,
+                    endTime: closeTime,
+                    source: 'put_close'
+                });
+            }
+
             res.json({
                 success: true,
                 message: 'Turno cerrado exitosamente',
-                data: result.rows[0]
+                data: closedShift
             });
 
         } catch (error) {
