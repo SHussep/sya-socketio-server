@@ -1457,6 +1457,32 @@ io.on('connection', (socket) => {
         });
     });
 
+    // EVENT: Mobile requests backup from Desktop POS
+    socket.on('backup:request', (data) => {
+        console.log(`[BACKUP] 📱 Mobile solicitó respaldo - Branch: ${data.branchId}, Tenant: ${data.tenantId}`);
+
+        const branchRoom = `branch_${data.branchId}`;
+        io.to(branchRoom).emit('backup:request', {
+            tenantId: data.tenantId,
+            branchId: data.branchId,
+            mobileSocketId: socket.id,
+            requestedAt: new Date().toISOString()
+        });
+    });
+
+    // EVENT: Desktop sends backup result back to Mobile
+    socket.on('backup:result', (data) => {
+        console.log(`[BACKUP] 💻 Desktop respondió respaldo - Success: ${data.success}, Target: ${data.mobileSocketId}`);
+
+        if (data.mobileSocketId) {
+            io.to(data.mobileSocketId).emit('backup:result', {
+                success: data.success,
+                message: data.message,
+                completedAt: new Date().toISOString()
+            });
+        }
+    });
+
     // ═══════════════════════════════════════════════════════════════
     // END MOBILE LISTENERS
     // ═══════════════════════════════════════════════════════════════
