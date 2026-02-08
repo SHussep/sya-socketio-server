@@ -115,7 +115,60 @@ async function sendPasswordResetEmail({ to, recipientName, temporaryPassword, is
     return await sendEmail({ to, subject, html });
 }
 
+/**
+ * Email de verificación para acceso móvil
+ */
+async function sendVerificationEmail({ to, recipientName, code }) {
+    const subject = 'Código de Verificación - SYA Tortillerías';
+
+    const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+                .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+                .header { background: #2196F3; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+                .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 8px 8px; }
+                .code-box { background: white; padding: 20px; border-left: 4px solid #2196F3; margin: 20px 0; text-align: center; border-radius: 4px; }
+                .code { font-size: 36px; font-weight: bold; letter-spacing: 8px; color: #2196F3; font-family: monospace; }
+                .footer { text-align: center; margin-top: 30px; color: #666; font-size: 12px; }
+                .warning { color: #f44336; font-size: 14px; margin-top: 20px; background: #ffebee; padding: 10px; border-radius: 4px; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1 style="margin: 0;">Verificación de Email</h1>
+                </div>
+                <div class="content">
+                    <p>Hola, <strong>${recipientName}</strong>.</p>
+                    <p>Se ha registrado tu correo electrónico para acceder a la aplicación móvil de SYA Tortillerías.</p>
+
+                    <div class="code-box">
+                        <p style="margin-bottom: 10px; color: #666;">Tu código de verificación es:</p>
+                        <p class="code">${code}</p>
+                    </div>
+
+                    <p>Ingresa este código en la aplicación para verificar tu email y activar tu acceso móvil.</p>
+
+                    <p class="warning">⚠️ Este código expira en 24 horas. Si no solicitaste este registro, ignora este mensaje.</p>
+                </div>
+
+                <div class="footer">
+                    <p>SYA Tortillerías | Sistema de Gestión para Tortillerías</p>
+                    <p>Este email fue enviado a ${to}</p>
+                </div>
+            </div>
+        </body>
+        </html>
+    `;
+
+    return await sendEmail({ to, subject, html });
+}
+
 module.exports = {
     sendEmail,
-    sendPasswordResetEmail
+    sendPasswordResetEmail,
+    sendVerificationEmail
 };

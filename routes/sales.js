@@ -70,7 +70,7 @@ module.exports = (pool, io) => {
                        (SELECT ra.id FROM repartidor_assignments ra
                         WHERE ra.venta_id = v.id_venta
                         ORDER BY ra.created_at DESC LIMIT 1) as assignment_id,
-                       (v.fecha_venta_utc AT TIME ZONE '${userTimezone}') as sale_date_display,
+                       (CASE WHEN v.estado_venta_id = 5 THEN COALESCE(v.fecha_liquidacion_utc, v.fecha_venta_utc) ELSE v.fecha_venta_utc END AT TIME ZONE '${userTimezone}') as sale_date_display,
                        -- Items summary: quantities grouped by unit of measure
                        items_agg.items_summary
                 FROM ventas v
@@ -110,20 +110,24 @@ module.exports = (pool, io) => {
             }
 
             // Filtrar por rango de fechas si se proporciona (en timezone del usuario)
+            // ✅ FIX: Para ventas liquidadas (estado 5), usar fecha_liquidacion_utc
+            // Esto mantiene consistencia con /api/dashboard/summary que usa la misma logica
             if (startDate || endDate) {
+                const effectiveDateExpr = `CASE WHEN v.estado_venta_id = 5 THEN COALESCE(v.fecha_liquidacion_utc, v.fecha_venta_utc) ELSE v.fecha_venta_utc END`;
                 if (startDate) {
-                    query += ` AND (v.fecha_venta_utc AT TIME ZONE '${userTimezone}')::date >= $${paramIndex}::date`;
+                    query += ` AND (${effectiveDateExpr} AT TIME ZONE '${userTimezone}')::date >= $${paramIndex}::date`;
                     params.push(startDate);
                     paramIndex++;
                 }
                 if (endDate) {
-                    query += ` AND (v.fecha_venta_utc AT TIME ZONE '${userTimezone}')::date <= $${paramIndex}::date`;
+                    query += ` AND (${effectiveDateExpr} AT TIME ZONE '${userTimezone}')::date <= $${paramIndex}::date`;
                     params.push(endDate);
                     paramIndex++;
                 }
             }
 
-            query += ` ORDER BY v.fecha_venta_utc DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+            // ✅ Ordenar por fecha efectiva (liquidacion para estado 5, venta para el resto)
+            query += ` ORDER BY CASE WHEN v.estado_venta_id = 5 THEN COALESCE(v.fecha_liquidacion_utc, v.fecha_venta_utc) ELSE v.fecha_venta_utc END DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
             params.push(limit, offset);
 
             console.log(`[Sales] Fetching sales - Tenant: ${tenantId}, Branch: ${targetBranchId}, Shift: ${shift_id || 'ALL'}, Timezone: ${userTimezone}, all_branches: ${all_branches}`);

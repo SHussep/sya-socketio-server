@@ -4,7 +4,9 @@
 
 const express = require('express');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const { createTenantValidationMiddleware } = require('../middleware/deviceAuth');
+const { sendVerificationEmail } = require('../utils/emailService');
 
 module.exports = (pool) => {
     const router = express.Router();
@@ -52,20 +54,20 @@ module.exports = (pool) => {
 
     // ═════════════════════════════════════════════════════════════
     // HELPER: Check email uniqueness GLOBALLY (across all tenants)
-    // Owners (is_owner=true) are excluded because they share the
-    // tenant registration email and are unique per tenant.
+    // Strictly checks ALL employees (including owners) to prevent
+    // any duplicate emails in the entire system.
     // ═════════════════════════════════════════════════════════════
     const checkEmailUniqueness = async (client, tenantId, email, excludeEmployeeId = null) => {
         if (!email) return null; // NULL emails are always allowed
 
         let query, params;
         if (excludeEmployeeId) {
-            query = `SELECT id, first_name, last_name, tenant_id FROM employees
-                     WHERE LOWER(email) = LOWER($1) AND id != $2 AND is_active = true AND is_owner = false`;
+            query = `SELECT id, first_name, last_name, tenant_id, is_owner FROM employees
+                     WHERE LOWER(email) = LOWER($1) AND id != $2 AND is_active = true`;
             params = [email.trim(), excludeEmployeeId];
         } else {
-            query = `SELECT id, first_name, last_name, tenant_id FROM employees
-                     WHERE LOWER(email) = LOWER($1) AND is_active = true AND is_owner = false`;
+            query = `SELECT id, first_name, last_name, tenant_id, is_owner FROM employees
+                     WHERE LOWER(email) = LOWER($1) AND is_active = true`;
             params = [email.trim()];
         }
 
@@ -80,6 +82,30 @@ module.exports = (pool) => {
             };
         }
         return null;
+    };
+
+    // ═════════════════════════════════════════════════════════════
+    // HELPER: Generate 6-digit verification code, save to DB, send email
+    // ═════════════════════════════════════════════════════════════
+    const generateAndSendVerificationCode = async (client, employeeId, tenantId, email, recipientName) => {
+        try {
+            const code = crypto.randomInt(100000, 999999).toString();
+            const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+
+            await client.query(
+                `UPDATE employees
+                 SET verification_code = $1, verification_expires_at = $2, email_verified = false, updated_at = NOW()
+                 WHERE id = $3 AND tenant_id = $4`,
+                [code, expiresAt, employeeId, tenantId]
+            );
+
+            const sent = await sendVerificationEmail({ to: email, recipientName, code });
+            console.log(`[Employees/Verification] ${sent ? '✅' : '❌'} Email de verificación ${sent ? 'enviado' : 'falló'} para ${email} (código: ${code})`);
+            return sent;
+        } catch (err) {
+            console.error(`[Employees/Verification] ❌ Error enviando verificación:`, err.message);
+            return false;
+        }
     };
 
     // POST /api/employees - Sync employee from Desktop or Mobile app
@@ -363,11 +389,8 @@ module.exports = (pool) => {
             try {
                 await client.query('BEGIN');
 
-                // ✅ Empleados creados desde móvil: auto-verificar email (no tienen acceso a Gmail)
-                const emailVerified = isFromMobile ? true : false;
-                if (isFromMobile) {
-                    console.log(`[Employees/Sync] 📧 Email auto-verificado para empleado creado desde móvil`);
-                }
+                // Email starts unverified - verification code will be sent if canUseMobileApp=true
+                const emailVerified = false;
 
                 const insertResult = await client.query(
                     `INSERT INTO employees
@@ -466,6 +489,14 @@ module.exports = (pool) => {
                     }
                 }
 
+                // Send verification email if employee has mobile access and email
+                let verificationEmailSent = false;
+                if (canUseMobileApp && email && isFromMobile) {
+                    verificationEmailSent = await generateAndSendVerificationCode(
+                        client, employee.id, tenantId, email, fullName
+                    );
+                }
+
                 return res.json({
                     success: true,
                     data: employee,
@@ -473,7 +504,8 @@ module.exports = (pool) => {
                     employeeId: employee.id,
                     remoteId: employee.id,
                     role: roleData,
-                    synced: true  // Desktop can now mark as Sincronizado
+                    synced: true,
+                    verificationEmailSent
                 });
 
             } catch (txError) {
@@ -1494,6 +1526,17 @@ module.exports = (pool) => {
 
                 console.log(`[Employees/Update] ✅ Empleado actualizado: ${updatedFullName} (ID: ${employeeId}) - Cambios: ${changes.join(', ')}`);
 
+                // Send verification email if mobile access was enabled or email changed
+                let verificationEmailSent = false;
+                const emailChanged = email !== undefined && email !== employee.email;
+                const mobileAccessEnabled = canUseMobileApp === true && employee.can_use_mobile_app === false;
+
+                if (updatedEmployee.can_use_mobile_app && updatedEmployee.email && (emailChanged || mobileAccessEnabled)) {
+                    verificationEmailSent = await generateAndSendVerificationCode(
+                        client, updatedEmployee.id, tenantId, updatedEmployee.email, updatedFullName
+                    );
+                }
+
                 return res.json({
                     success: true,
                     message: 'Empleado actualizado exitosamente',
@@ -1506,7 +1549,8 @@ module.exports = (pool) => {
                         mobileAccessType: accessType,
                         isActive: updatedEmployee.is_active,
                         updatedAt: updatedEmployee.updated_at
-                    }
+                    },
+                    verificationEmailSent
                 });
             } else {
                 return res.status(500).json({
