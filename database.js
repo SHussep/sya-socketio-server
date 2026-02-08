@@ -2623,9 +2623,14 @@ async function runMigrations() {
                         employee_id INTEGER,
                         email VARCHAR(255) NOT NULL,
                         business_name VARCHAR(255),
+                        platform VARCHAR(20) DEFAULT 'both',
                         enrolled_at TIMESTAMPTZ DEFAULT NOW(),
                         UNIQUE(tenant_id)
                     )
+                `);
+                // Add platform column if table already existed without it
+                await client.query(`
+                    ALTER TABLE beta_enrollments ADD COLUMN IF NOT EXISTS platform VARCHAR(20) DEFAULT 'both'
                 `);
                 console.log('[Schema] ✅ beta_enrollments table ready');
             } catch (beErr) {

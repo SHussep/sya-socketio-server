@@ -10,7 +10,7 @@ module.exports = (pool) => {
     // POST /api/beta-enrollment - Registrar interés en la beta
     router.post('/', async (req, res) => {
         try {
-            const { tenant_id, employee_id, email, business_name } = req.body;
+            const { tenant_id, employee_id, email, business_name, platform } = req.body;
 
             if (!tenant_id || !email) {
                 return res.status(400).json({
@@ -19,18 +19,19 @@ module.exports = (pool) => {
                 });
             }
 
-            console.log(`[BetaEnrollment] 📱 Nuevo registro: ${email} (tenant: ${tenant_id}, negocio: ${business_name})`);
+            console.log(`[BetaEnrollment] 📱 Nuevo registro: ${email} (tenant: ${tenant_id}, negocio: ${business_name}, platform: ${platform || 'both'})`);
 
             const result = await pool.query(
-                `INSERT INTO beta_enrollments (tenant_id, employee_id, email, business_name)
-                 VALUES ($1, $2, $3, $4)
+                `INSERT INTO beta_enrollments (tenant_id, employee_id, email, business_name, platform)
+                 VALUES ($1, $2, $3, $4, $5)
                  ON CONFLICT (tenant_id)
                  DO UPDATE SET
                     email = EXCLUDED.email,
                     business_name = EXCLUDED.business_name,
+                    platform = EXCLUDED.platform,
                     enrolled_at = NOW()
                  RETURNING *`,
-                [tenant_id, employee_id || null, email, business_name || null]
+                [tenant_id, employee_id || null, email, business_name || null, platform || 'both']
             );
 
             console.log(`[BetaEnrollment] ✅ Registrado: ${email}`);
