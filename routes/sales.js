@@ -24,7 +24,7 @@ function authenticateToken(req, res, next) {
     });
 }
 
-module.exports = (pool) => {
+module.exports = (pool, io) => {
     const router = express.Router();
 
     // GET /api/sales - Lista de ventas (con soporte de timezone)
@@ -534,6 +534,25 @@ module.exports = (pool) => {
                 }
 
                 console.log(`[Sync/Sales] ✅ ${detallesSincronizados}/${detalles.length} detalles sincronizados`);
+            }
+
+            // 🔌 EMIT sale_completed via Socket.IO para actualizar app móvil en tiempo real
+            // Esto es más confiable que depender del socket del Desktop
+            if (io) {
+                const roomName = `branch_${branch_id}`;
+                const saleEvent = {
+                    branchId: branch_id,
+                    saleId: insertedVenta.id_venta,
+                    ticketNumber: insertedVenta.ticket_number,
+                    total: parseFloat(insertedVenta.total),
+                    paymentMethod: tipo_pago_id === 2 ? 'card' : tipo_pago_id === 3 ? 'credit' : 'cash',
+                    completedAt: insertedVenta.fecha_venta_utc || new Date().toISOString(),
+                    employeeName: 'Desktop POS',
+                    source: 'rest_sync',
+                    receivedAt: new Date().toISOString(),
+                };
+                io.to(roomName).emit('sale_completed', saleEvent);
+                console.log(`[Sync/Sales] 🔌 Socket.IO: sale_completed emitido a ${roomName} (Ticket #${insertedVenta.ticket_number})`);
             }
 
             // Formatear respuesta (Desktop espera "data.id_venta")

@@ -404,8 +404,8 @@ app.use('/api/employee-debts', employeeDebtsRoutes);
 
 // Registrar nuevas rutas modulares
 // Note: Mount routes under their respective base paths to avoid conflicts
-app.use('/api/sales', salesRoutes(pool)); // Sync desde Desktop (POST /api/sales/sync)
-app.use('/api/sales-items', salesRoutes(pool));
+app.use('/api/sales', salesRoutes(pool, io)); // Sync desde Desktop (POST /api/sales/sync) + Socket.IO emit
+app.use('/api/sales-items', salesRoutes(pool, io));
 app.use('/api/ventas', ventasRoutes); // Consultas desde App Móvil (GET)
 app.use('/api/expenses', expensesRoutes(pool, io));
 app.use('/api/shifts', shiftsRoutes(pool, io));
