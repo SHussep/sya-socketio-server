@@ -548,6 +548,27 @@ module.exports = (pool) => {
         }
     });
 
+    // GET /api/employees/check-email - Check if email is already in use
+    router.get('/check-email', async (req, res) => {
+        const client = await pool.connect();
+        try {
+            const { email, excludeId } = req.query;
+            if (!email) {
+                return res.json({ exists: false });
+            }
+            const conflict = await checkEmailUniqueness(client, null, email, excludeId ? parseInt(excludeId) : null);
+            if (conflict) {
+                return res.json({ exists: true, employeeName: conflict.employeeName });
+            }
+            return res.json({ exists: false });
+        } catch (error) {
+            console.error('[Employees/CheckEmail] Error:', error.message);
+            res.status(500).json({ exists: false, error: error.message });
+        } finally {
+            client.release();
+        }
+    });
+
     // GET /api/employees - Get all ACTIVE employees for a tenant
     // Parámetro opcional: includeInactive=true para admins que necesitan ver todos
     router.get('/', async (req, res) => {
