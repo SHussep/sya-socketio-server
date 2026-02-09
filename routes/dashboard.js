@@ -125,10 +125,29 @@ module.exports = (pool) => {
                     -- Mostrador: puede ser estado 3 (completada) o 5 (liquidada desde móvil)
                     COALESCE(SUM(CASE WHEN v.venta_tipo_id = 1 AND v.estado_venta_id IN (3, 5) THEN v.total ELSE 0 END), 0) as mostrador_total,
                     COALESCE(SUM(CASE WHEN v.venta_tipo_id = 2 AND v.estado_venta_id = 5 THEN v.total ELSE 0 END), 0) as repartidor_liquidado,
-                    -- Por método de pago: usar las columnas directas de ventas
-                    COALESCE(SUM(CASE WHEN v.estado_venta_id IN (3, 5) THEN COALESCE(v.cash_amount, 0) ELSE 0 END), 0) as efectivo_total,
-                    COALESCE(SUM(CASE WHEN v.estado_venta_id IN (3, 5) THEN COALESCE(v.card_amount, 0) ELSE 0 END), 0) as tarjeta_total,
-                    COALESCE(SUM(CASE WHEN v.estado_venta_id IN (3, 5) THEN COALESCE(v.credit_amount, 0) ELSE 0 END), 0) as credito_total,
+                    -- Por método de pago: usar columnas directas, con fallback a total según tipo_pago_id
+                    -- (ventas antiguas o de Desktop pueden tener cash_amount/card_amount/credit_amount NULL)
+                    COALESCE(SUM(CASE WHEN v.estado_venta_id IN (3, 5) THEN
+                        CASE
+                            WHEN v.cash_amount IS NOT NULL THEN v.cash_amount
+                            WHEN v.tipo_pago_id = 1 THEN v.total
+                            ELSE 0
+                        END
+                    ELSE 0 END), 0) as efectivo_total,
+                    COALESCE(SUM(CASE WHEN v.estado_venta_id IN (3, 5) THEN
+                        CASE
+                            WHEN v.card_amount IS NOT NULL THEN v.card_amount
+                            WHEN v.tipo_pago_id = 2 THEN v.total
+                            ELSE 0
+                        END
+                    ELSE 0 END), 0) as tarjeta_total,
+                    COALESCE(SUM(CASE WHEN v.estado_venta_id IN (3, 5) THEN
+                        CASE
+                            WHEN v.credit_amount IS NOT NULL THEN v.credit_amount
+                            WHEN v.tipo_pago_id = 3 THEN v.total
+                            ELSE 0
+                        END
+                    ELSE 0 END), 0) as credito_total,
                     -- Conteos
                     COUNT(CASE WHEN v.venta_tipo_id = 1 AND v.estado_venta_id IN (3, 5) THEN 1 END) as mostrador_count,
                     COUNT(CASE WHEN v.venta_tipo_id = 2 AND v.estado_venta_id = 5 THEN 1 END) as repartidor_count
