@@ -924,7 +924,7 @@ CREATE TABLE IF NOT EXISTS suspicious_weighing_logs (
     -- Event Data
     timestamp TIMESTAMPTZ NOT NULL,
     event_type VARCHAR(100) NOT NULL,
-    weight_detected DECIMAL(10,3),
+    weight_detected DECIMAL(16,3),
     details TEXT,
 
     -- Analysis Fields
@@ -933,10 +933,10 @@ CREATE TABLE IF NOT EXISTS suspicious_weighing_logs (
     scenario_code VARCHAR(100),
     risk_score INTEGER,
     points_assigned INTEGER,
-    employee_score_after_event DECIMAL(10,2),
+    employee_score_after_event DECIMAL(16,2),
     employee_score_band VARCHAR(50),
     page_context VARCHAR(100),
-    trust_score DECIMAL(10,2),
+    trust_score DECIMAL(16,2),
     additional_data_json TEXT,
 
     -- Review Fields
@@ -950,9 +950,9 @@ CREATE TABLE IF NOT EXISTS suspicious_weighing_logs (
 
     -- Pattern Metadata
     similar_events_in_session INTEGER,
-    cycle_duration_seconds DECIMAL(10,2),
-    max_weight_in_cycle DECIMAL(10,3),
-    discrepancy_amount DECIMAL(10,3),
+    cycle_duration_seconds DECIMAL(16,2),
+    max_weight_in_cycle DECIMAL(16,3),
+    discrepancy_amount DECIMAL(16,3),
 
     -- Correlation
     related_product_id INTEGER,
@@ -1128,14 +1128,3 @@ ALTER TABLE expenses ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMP;
 ALTER TABLE expenses ADD COLUMN IF NOT EXISTS edit_reason TEXT;
 ALTER TABLE expenses ADD COLUMN IF NOT EXISTS edited_by_employee_id INTEGER REFERENCES employees(id) ON DELETE SET NULL;
 ALTER TABLE expenses ADD COLUMN IF NOT EXISTS edited_at TIMESTAMP;
-
--- ═══════════════════════════════════════════════════════════════
--- MIGRATION: Widen DECIMAL columns in suspicious_weighing_logs
--- to prevent "numeric field overflow" from Desktop Guardian data
--- ═══════════════════════════════════════════════════════════════
-ALTER TABLE suspicious_weighing_logs ALTER COLUMN weight_detected TYPE DECIMAL(16,3);
-ALTER TABLE suspicious_weighing_logs ALTER COLUMN employee_score_after_event TYPE DECIMAL(16,2);
-ALTER TABLE suspicious_weighing_logs ALTER COLUMN trust_score TYPE DECIMAL(16,2);
-ALTER TABLE suspicious_weighing_logs ALTER COLUMN cycle_duration_seconds TYPE DECIMAL(16,2);
-ALTER TABLE suspicious_weighing_logs ALTER COLUMN max_weight_in_cycle TYPE DECIMAL(16,3);
-ALTER TABLE suspicious_weighing_logs ALTER COLUMN discrepancy_amount TYPE DECIMAL(16,3);

@@ -1217,6 +1217,30 @@ async function runMigrations() {
                 console.log('[Schema] ✅ telemetry_events table created successfully');
             }
 
+            // Patch: Widen DECIMAL columns in suspicious_weighing_logs to prevent "numeric field overflow"
+            if (checkSuspiciousTable.rows[0].exists) {
+                const checkColPrecision = await client.query(`
+                    SELECT numeric_precision
+                    FROM information_schema.columns
+                    WHERE table_name = 'suspicious_weighing_logs'
+                    AND column_name = 'weight_detected'
+                `);
+                const currentPrecision = checkColPrecision.rows.length > 0 ? checkColPrecision.rows[0].numeric_precision : 0;
+                if (currentPrecision < 16) {
+                    console.log(`[Schema] 📝 Widening DECIMAL columns in suspicious_weighing_logs (current precision: ${currentPrecision})...`);
+                    await client.query(`
+                        ALTER TABLE suspicious_weighing_logs
+                            ALTER COLUMN weight_detected TYPE DECIMAL(16,3),
+                            ALTER COLUMN employee_score_after_event TYPE DECIMAL(16,2),
+                            ALTER COLUMN trust_score TYPE DECIMAL(16,2),
+                            ALTER COLUMN cycle_duration_seconds TYPE DECIMAL(16,2),
+                            ALTER COLUMN max_weight_in_cycle TYPE DECIMAL(16,3),
+                            ALTER COLUMN discrepancy_amount TYPE DECIMAL(16,3)
+                    `);
+                    console.log('[Schema] ✅ suspicious_weighing_logs DECIMAL columns widened to (16,x)');
+                }
+            }
+
             // 2.5. Clean user data if requested (for testing)
             console.log(`[Schema] 🔍 CLEAN_DATABASE_ON_START = "${process.env.CLEAN_DATABASE_ON_START}"`);
 
