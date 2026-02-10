@@ -62,23 +62,25 @@ module.exports = (pool) => {
 
         let query, params;
         if (excludeEmployeeId) {
-            query = `SELECT id, first_name, last_name, tenant_id, is_owner FROM employees
-                     WHERE LOWER(email) = LOWER($1) AND id != $2 AND is_active = true`;
+            query = `SELECT id, first_name, last_name, tenant_id, is_owner, is_active FROM employees
+                     WHERE LOWER(TRIM(email)) = LOWER(TRIM($1)) AND id != $2`;
             params = [email.trim(), excludeEmployeeId];
         } else {
-            query = `SELECT id, first_name, last_name, tenant_id, is_owner FROM employees
-                     WHERE LOWER(email) = LOWER($1) AND is_active = true`;
+            query = `SELECT id, first_name, last_name, tenant_id, is_owner, is_active FROM employees
+                     WHERE LOWER(TRIM(email)) = LOWER(TRIM($1))`;
             params = [email.trim()];
         }
 
         const result = await client.query(query, params);
         if (result.rows.length > 0) {
             const conflicting = result.rows[0];
+            const name = `${conflicting.first_name || ''} ${conflicting.last_name || ''}`.trim();
             return {
                 exists: true,
-                employeeName: `${conflicting.first_name || ''} ${conflicting.last_name || ''}`.trim(),
+                employeeName: conflicting.is_active ? name : `${name} (desactivado)`,
                 employeeId: conflicting.id,
-                tenantId: conflicting.tenant_id
+                tenantId: conflicting.tenant_id,
+                isActive: conflicting.is_active
             };
         }
         return null;
