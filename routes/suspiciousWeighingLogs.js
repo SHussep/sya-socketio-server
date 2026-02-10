@@ -102,6 +102,22 @@ module.exports = (pool, io) => {
 
             console.log(`[Sync/GuardianLogs] 🔍 Sincronizando log Guardian - Tenant: ${tenant_id}, Employee: ${employee_id} (${employee_global_id}), EventType: ${event_type}, GlobalId: ${global_id}`);
 
+            // Sanitizar valores numéricos para evitar "numeric field overflow"
+            const MAX_DECIMAL = 9999999999999.99; // DECIMAL(16,2) max
+            const MAX_DECIMAL3 = 9999999999999.999; // DECIMAL(16,3) max
+            const safeNum = (val, max, fallback = 0) => {
+                const n = parseFloat(val);
+                if (isNaN(n) || !isFinite(n)) return fallback;
+                return Math.min(Math.max(n, -max), max);
+            };
+
+            const safe_weight_detected = safeNum(weight_detected, MAX_DECIMAL3, null);
+            const safe_employee_score = safeNum(employee_score_after_event, MAX_DECIMAL);
+            const safe_trust_score = safeNum(trust_score, MAX_DECIMAL);
+            const safe_cycle_duration = safeNum(cycle_duration_seconds, MAX_DECIMAL);
+            const safe_max_weight = safeNum(max_weight_in_cycle, MAX_DECIMAL3);
+            const safe_discrepancy = safeNum(discrepancy_amount, MAX_DECIMAL3);
+
             // ✅ IDEMPOTENTE: INSERT con ON CONFLICT (global_id) DO UPDATE
             const result = await pool.query(
                 `INSERT INTO suspicious_weighing_logs (
@@ -132,13 +148,13 @@ module.exports = (pool, io) => {
                  RETURNING id, global_id, created_at`,
                 [
                     tenant_id, branch_id, shift_id, employee_id,
-                    timestamp, event_type, weight_detected, details,
+                    timestamp, event_type, safe_weight_detected, details,
                     severity, suspicion_level, scenario_code, risk_score,
-                    points_assigned, employee_score_after_event, employee_score_band,
-                    page_context, trust_score, additional_data_json,
+                    points_assigned, safe_employee_score, employee_score_band,
+                    page_context, safe_trust_score, additional_data_json,
                     was_reviewed || false, review_notes, reviewed_at, reviewed_by_employee_id,
-                    similar_events_in_session || 0, cycle_duration_seconds || 0,
-                    max_weight_in_cycle || 0, discrepancy_amount || 0,
+                    similar_events_in_session || 0, safe_cycle_duration,
+                    safe_max_weight, safe_discrepancy,
                     related_product_id, related_sale_id,
                     global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw
                 ]

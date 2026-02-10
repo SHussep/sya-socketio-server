@@ -1128,3 +1128,14 @@ ALTER TABLE expenses ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMP;
 ALTER TABLE expenses ADD COLUMN IF NOT EXISTS edit_reason TEXT;
 ALTER TABLE expenses ADD COLUMN IF NOT EXISTS edited_by_employee_id INTEGER REFERENCES employees(id) ON DELETE SET NULL;
 ALTER TABLE expenses ADD COLUMN IF NOT EXISTS edited_at TIMESTAMP;
+
+-- ═══════════════════════════════════════════════════════════════
+-- MIGRATION: Widen DECIMAL columns in suspicious_weighing_logs
+-- to prevent "numeric field overflow" from Desktop Guardian data
+-- ═══════════════════════════════════════════════════════════════
+ALTER TABLE suspicious_weighing_logs ALTER COLUMN weight_detected TYPE DECIMAL(16,3);
+ALTER TABLE suspicious_weighing_logs ALTER COLUMN employee_score_after_event TYPE DECIMAL(16,2);
+ALTER TABLE suspicious_weighing_logs ALTER COLUMN trust_score TYPE DECIMAL(16,2);
+ALTER TABLE suspicious_weighing_logs ALTER COLUMN cycle_duration_seconds TYPE DECIMAL(16,2);
+ALTER TABLE suspicious_weighing_logs ALTER COLUMN max_weight_in_cycle TYPE DECIMAL(16,3);
+ALTER TABLE suspicious_weighing_logs ALTER COLUMN discrepancy_amount TYPE DECIMAL(16,3);
