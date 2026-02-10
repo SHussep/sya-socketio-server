@@ -7,6 +7,7 @@ const { v4: uuidv4 } = require('uuid');
 const { notifyExpenseCreated, sendNotificationToEmployee } = require('../utils/notificationHelper');
 const cloudinaryService = require('../services/cloudinaryService');
 const { createAuthMiddleware } = require('../middleware/auth');
+const { safeTimezone, safeDateString } = require('../utils/sanitize');
 
 module.exports = (pool, io) => {
     const router = express.Router();
@@ -87,29 +88,33 @@ module.exports = (pool, io) => {
                 WHERE ${whereConditions.join(' AND ')}
             `;
 
-            // ✅ Usar timezone del cliente para filtrar fechas correctamente
-            // Si el cliente envía timezone (IANA name como 'Australia/Sydney'),
-            // convertimos expense_date a ese timezone antes de comparar
-            const userTimezone = timezone || 'UTC';
+            // ✅ SECURITY: Validate timezone against whitelist to prevent SQL injection
+            const userTimezone = safeTimezone(timezone);
             console.log(`[Expenses/GET] 🕐 Using timezone: ${userTimezone}`);
 
             // Filtro por rango de fechas usando AT TIME ZONE
             // expense_date es ahora 'timestamp with time zone' (timestamptz)
+            // ✅ SECURITY: Validate date strings to prevent SQL injection
             if (startDate && endDate) {
-                // Extraer solo la parte de fecha para comparar en el timezone del cliente
-                const startDateOnly = startDate.split('T')[0];
-                const endDateOnly = endDate.split('T')[0];
+                const startDateOnly = safeDateString(startDate);
+                const endDateOnly = safeDateString(endDate);
 
-                console.log(`[Expenses/GET] 📅 Date range in ${userTimezone}: ${startDateOnly} to ${endDateOnly}`);
+                if (startDateOnly && endDateOnly) {
+                    console.log(`[Expenses/GET] 📅 Date range in ${userTimezone}: ${startDateOnly} to ${endDateOnly}`);
 
-                query += ` AND (e.expense_date AT TIME ZONE '${userTimezone}')::date >= '${startDateOnly}'::date`;
-                query += ` AND (e.expense_date AT TIME ZONE '${userTimezone}')::date <= '${endDateOnly}'::date`;
+                    query += ` AND (e.expense_date AT TIME ZONE '${userTimezone}')::date >= '${startDateOnly}'::date`;
+                    query += ` AND (e.expense_date AT TIME ZONE '${userTimezone}')::date <= '${endDateOnly}'::date`;
+                }
             } else if (startDate) {
-                const startDateOnly = startDate.split('T')[0];
-                query += ` AND (e.expense_date AT TIME ZONE '${userTimezone}')::date >= '${startDateOnly}'::date`;
+                const startDateOnly = safeDateString(startDate);
+                if (startDateOnly) {
+                    query += ` AND (e.expense_date AT TIME ZONE '${userTimezone}')::date >= '${startDateOnly}'::date`;
+                }
             } else if (endDate) {
-                const endDateOnly = endDate.split('T')[0];
-                query += ` AND (e.expense_date AT TIME ZONE '${userTimezone}')::date <= '${endDateOnly}'::date`;
+                const endDateOnly = safeDateString(endDate);
+                if (endDateOnly) {
+                    query += ` AND (e.expense_date AT TIME ZONE '${userTimezone}')::date <= '${endDateOnly}'::date`;
+                }
             }
 
             // Filtro por empleado

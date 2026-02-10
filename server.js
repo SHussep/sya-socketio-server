@@ -13,6 +13,7 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
+const helmet = require('helmet');
 const bodyParser = require('body-parser');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
@@ -43,10 +44,28 @@ const ALLOWED_ORIGINS = [
 const app = express();
 const server = http.createServer(app);
 
-// Middleware
-app.use(cors());
-app.use(bodyParser.json({ limit: '10mb' }));  // Aumentado para soportar imágenes Base64 de productos
-app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
+// ✅ SECURITY: Helmet adds secure HTTP headers (XSS protection, clickjacking, etc.)
+app.use(helmet());
+
+// ✅ SECURITY: CORS restricted to known origins (was app.use(cors()) — allowed everything)
+app.use(cors({
+    origin: function (origin, callback) {
+        // Allow requests with no origin (mobile apps, curl, server-to-server)
+        if (!origin) return callback(null, true);
+        if (ALLOWED_ORIGINS.includes(origin)) {
+            return callback(null, true);
+        }
+        // Allow localhost with any port for development
+        if (origin.startsWith('http://localhost')) {
+            return callback(null, true);
+        }
+        console.warn(`[Security] CORS blocked origin: ${origin}`);
+        return callback(null, false);
+    },
+    credentials: true
+}));
+app.use(bodyParser.json({ limit: '5mb' }));  // ✅ SECURITY: Reduced from 10mb (was DoS risk)
+app.use(bodyParser.urlencoded({ extended: true, limit: '5mb' }));
 
 // ═══════════════════════════════════════════════════════════════
 // REST API ENDPOINTS
@@ -128,28 +147,23 @@ app.get('/', (req, res) => {
 
 app.get('/health', async (req, res) => {
     try {
-        const tenants = await pool.query('SELECT COUNT(*) FROM tenants');
-        const employees = await pool.query('SELECT COUNT(*) FROM employees');
-        const devices = await pool.query('SELECT COUNT(*) FROM devices');
+        // ✅ SECURITY: Simple connectivity check, no stats exposed publicly
+        await pool.query('SELECT 1');
 
         res.json({
             status: 'ok',
             version: '2026-02-08a',
             timestamp: new Date().toISOString(),
-            database: 'connected',
-            stats: {
-                tenants: parseInt(tenants.rows[0].count),
-                employees: parseInt(employees.rows[0].count),
-                devices: parseInt(devices.rows[0].count),
-            }
+            database: 'connected'
         });
     } catch (error) {
-        res.status(500).json({ status: 'error', message: error.message });
+        res.status(500).json({ status: 'error', database: 'disconnected' });
     }
 });
 
 // 🔍 Diagnostic: show active socket rooms and clients
-app.get('/api/debug/rooms', (req, res) => {
+// ✅ SECURITY: Protected with admin credentials
+app.get('/api/debug/rooms', requireAdminCredentials, (req, res) => {
     const rooms = {};
     io.sockets.adapter.rooms.forEach((sockets, roomName) => {
         if (roomName.startsWith('branch_')) {
@@ -165,7 +179,8 @@ app.get('/api/debug/rooms', (req, res) => {
 });
 
 // 🔍 Diagnostic: emit a test sale_completed event to a branch room
-app.get('/api/debug/test-sale', (req, res) => {
+// ✅ SECURITY: Protected with admin credentials
+app.get('/api/debug/test-sale', requireAdminCredentials, (req, res) => {
     const branchId = parseInt(req.query.branchId) || 32;
     const roomName = `branch_${branchId}`;
     const roomSockets = io.sockets.adapter.rooms.get(roomName);
@@ -193,7 +208,8 @@ app.get('/api/debug/test-sale', (req, res) => {
 });
 
 // 🔍 Diagnostic endpoint to verify timezone configuration
-app.get('/timezone-diagnostic', (req, res) => {
+// ✅ SECURITY: Protected with admin credentials
+app.get('/timezone-diagnostic', requireAdminCredentials, (req, res) => {
     try {
         const now = new Date();
         const tzEnvVar = process.env.TZ;
@@ -230,7 +246,7 @@ app.get('/timezone-diagnostic', (req, res) => {
             }
         });
     } catch (error) {
-        res.status(500).json({ status: 'error', message: error.message, stack: error.stack });
+        res.status(500).json({ status: 'error', message: error.message });
     }
 });
 
@@ -879,7 +895,7 @@ app.post('/api/telemetry', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════
 // GET /api/telemetry/stats - Obtener estadísticas de telemetría (admin)
 // ═══════════════════════════════════════════════════════════════
-app.get('/api/telemetry/stats', async (req, res) => {
+app.get('/api/telemetry/stats', requireAdminCredentials, async (req, res) => {
     try {
         // Total de aperturas de app por tenant/branch
         const appOpens = await pool.query(`

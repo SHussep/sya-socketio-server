@@ -4,6 +4,7 @@
 
 const express = require('express');
 const jwt = require('jsonwebtoken');
+const { safeTimezone } = require('../utils/sanitize');
 const JWT_SECRET = process.env.JWT_SECRET;
 
 // Middleware: Autenticación JWT
@@ -39,8 +40,8 @@ module.exports = (pool, io) => {
             // Prioridad: 1. branch_id del query, 2. branchId del JWT
             const targetBranchId = branch_id ? parseInt(branch_id) : userBranchId;
 
-            // Usar timezone si viene en query, sino usar UTC por defecto
-            const userTimezone = timezone || 'UTC';
+            // ✅ SECURITY: Validate timezone against whitelist to prevent SQL injection
+            const userTimezone = safeTimezone(timezone);
 
             // ✅ FILTRO DE ESTADOS:
             // - Por defecto: solo ventas COBRADAS (3=Completada, 5=Liquidada)

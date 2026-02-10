@@ -4,6 +4,7 @@
 
 const express = require('express');
 const jwt = require('jsonwebtoken');
+const { safeTimezone, safeDateString } = require('../utils/sanitize');
 const JWT_SECRET = process.env.JWT_SECRET;
 
 // Middleware: Autenticación JWT
@@ -53,7 +54,8 @@ module.exports = (pool) => {
             }
 
             // Usar timezone del cliente si está disponible, sino del branch
-            const effectiveTimezone = userTimezone || branchTimezone;
+            // ✅ SECURITY: Validate timezone against whitelist to prevent SQL injection
+            const effectiveTimezone = safeTimezone(userTimezone || branchTimezone);
 
             console.log(`[Dashboard Summary] Client timezone: ${timezone}, Branch timezone: ${branchTimezone}, Using: ${effectiveTimezone}`);
             console.log(`[Dashboard Summary] Date filters - start_date: ${start_date}, end_date: ${end_date}`);
@@ -68,17 +70,19 @@ module.exports = (pool) => {
 
             if (start_date && end_date) {
                 // El cliente envía fechas locales (ej: 2025-12-16T00:00:00.000 = medianoche en SU timezone)
-                // Extraemos solo la parte de fecha para comparar en el timezone del cliente
-                const startDateOnly = start_date.split('T')[0]; // "2025-12-16"
-                const endDateOnly = end_date.split('T')[0];     // "2025-12-16"
+                // ✅ SECURITY: Validate date strings to prevent SQL injection
+                const startDateOnly = safeDateString(start_date);
+                const endDateOnly = safeDateString(end_date);
 
-                console.log(`[Dashboard Summary] Using date range in ${effectiveTimezone}: ${startDateOnly} to ${endDateOnly}`);
+                if (startDateOnly && endDateOnly) {
+                    console.log(`[Dashboard Summary] Using date range in ${effectiveTimezone}: ${startDateOnly} to ${endDateOnly}`);
 
-                // Comparar las fechas en el timezone del cliente usando AT TIME ZONE
-                dateFilter = `(fecha_venta_utc AT TIME ZONE '${effectiveTimezone}')::date >= '${startDateOnly}'::date AND (fecha_venta_utc AT TIME ZONE '${effectiveTimezone}')::date <= '${endDateOnly}'::date`;
-                expenseDateFilter = `(expense_date AT TIME ZONE '${effectiveTimezone}')::date >= '${startDateOnly}'::date AND (expense_date AT TIME ZONE '${effectiveTimezone}')::date <= '${endDateOnly}'::date`;
-                assignmentDateFilter = `(fecha_asignacion AT TIME ZONE '${effectiveTimezone}')::date >= '${startDateOnly}'::date AND (fecha_asignacion AT TIME ZONE '${effectiveTimezone}')::date <= '${endDateOnly}'::date`;
-                guardianDateFilter = `(event_date AT TIME ZONE '${effectiveTimezone}')::date >= '${startDateOnly}'::date AND (event_date AT TIME ZONE '${effectiveTimezone}')::date <= '${endDateOnly}'::date`;
+                    // Comparar las fechas en el timezone del cliente usando AT TIME ZONE
+                    dateFilter = `(fecha_venta_utc AT TIME ZONE '${effectiveTimezone}')::date >= '${startDateOnly}'::date AND (fecha_venta_utc AT TIME ZONE '${effectiveTimezone}')::date <= '${endDateOnly}'::date`;
+                    expenseDateFilter = `(expense_date AT TIME ZONE '${effectiveTimezone}')::date >= '${startDateOnly}'::date AND (expense_date AT TIME ZONE '${effectiveTimezone}')::date <= '${endDateOnly}'::date`;
+                    assignmentDateFilter = `(fecha_asignacion AT TIME ZONE '${effectiveTimezone}')::date >= '${startDateOnly}'::date AND (fecha_asignacion AT TIME ZONE '${effectiveTimezone}')::date <= '${endDateOnly}'::date`;
+                    guardianDateFilter = `(event_date AT TIME ZONE '${effectiveTimezone}')::date >= '${startDateOnly}'::date AND (event_date AT TIME ZONE '${effectiveTimezone}')::date <= '${endDateOnly}'::date`;
+                }
             }
 
             // Total de ventas

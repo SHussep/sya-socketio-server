@@ -10,15 +10,17 @@
 // ═══════════════════════════════════════════════════════════════
 
 const express = require('express');
+const { createAuthMiddleware } = require('../middleware/auth');
 
 module.exports = (pool) => {
     const router = express.Router();
+    const authenticateToken = createAuthMiddleware(pool);
 
     // ============================================================================
     // GET /api/guardian/events
     // Get all Guardian events (suspicious + disconnections) with filters
     // ============================================================================
-    router.get('/events', async (req, res) => {
+    router.get('/events', authenticateToken, async (req, res) => {
         try {
             const {
                 tenant_id,
@@ -246,7 +248,7 @@ module.exports = (pool) => {
     // GET /api/guardian/summary
     // Get summary statistics for Guardian events (for dashboard cards)
     // ============================================================================
-    router.get('/summary', async (req, res) => {
+    router.get('/summary', authenticateToken, async (req, res) => {
         try {
             const {
                 tenant_id,
@@ -358,7 +360,7 @@ module.exports = (pool) => {
     // GET /api/guardian/employees-ranking
     // Get employees ranked by Guardian events (for employee list)
     // ============================================================================
-    router.get('/employees-ranking', async (req, res) => {
+    router.get('/employees-ranking', authenticateToken, async (req, res) => {
         try {
             const {
                 tenant_id,
@@ -446,7 +448,7 @@ module.exports = (pool) => {
     // DELETE /api/guardian/events/:id
     // Delete a Guardian event permanently
     // ============================================================================
-    router.delete('/events/:id', async (req, res) => {
+    router.delete('/events/:id', authenticateToken, async (req, res) => {
         try {
             const { id } = req.params;
             const { event_category, tenant_id } = req.body;
@@ -458,12 +460,13 @@ module.exports = (pool) => {
                 });
             }
 
-            let table;
-            if (event_category === 'suspicious') {
-                table = 'suspicious_weighing_logs';
-            } else if (event_category === 'disconnection') {
-                table = 'scale_disconnection_logs';
-            } else {
+            // ✅ SECURITY: Validate table name against whitelist (not user input)
+            const ALLOWED_TABLES = {
+                'suspicious': 'suspicious_weighing_logs',
+                'disconnection': 'scale_disconnection_logs'
+            };
+            const table = ALLOWED_TABLES[event_category];
+            if (!table) {
                 return res.status(400).json({
                     success: false,
                     message: 'event_category debe ser "suspicious" o "disconnection"'
@@ -508,7 +511,7 @@ module.exports = (pool) => {
     // (Changed from DELETE to POST: DELETE with body is unreliable on some
     //  HTTP clients/Android - the body gets stripped silently)
     // ============================================================================
-    router.post('/events/delete-all', async (req, res) => {
+    router.post('/events/delete-all', authenticateToken, async (req, res) => {
         try {
             const { tenant_id, branch_id, start_date, end_date } = req.body;
 

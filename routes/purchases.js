@@ -4,6 +4,7 @@
 
 const express = require('express');
 const jwt = require('jsonwebtoken');
+const { safeTimezone } = require('../utils/sanitize');
 const JWT_SECRET = process.env.JWT_SECRET;
 
 // Middleware: Autenticación JWT
@@ -33,8 +34,8 @@ module.exports = (pool) => {
             const { tenantId, branchId } = req.user;
             const { start_date, end_date, all_branches = 'false', timezone } = req.query;
 
-            // ✅ Usar timezone del cliente para filtrar fechas correctamente
-            const userTimezone = timezone || 'UTC';
+            // ✅ SECURITY: Validate timezone against whitelist to prevent SQL injection
+            const userTimezone = safeTimezone(timezone);
             console.log(`[Purchases/Summary] 🕐 Using timezone: ${userTimezone}`);
 
             let whereClause = 'WHERE p.tenant_id = $1';
@@ -125,8 +126,8 @@ module.exports = (pool) => {
             const { tenantId, branchId } = req.user;
             const { limit = 50, offset = 0, all_branches = 'false', start_date, end_date, timezone } = req.query;
 
-            // ✅ Usar timezone del cliente para filtrar fechas correctamente
-            const userTimezone = timezone || 'UTC';
+            // ✅ SECURITY: Validate timezone against whitelist to prevent SQL injection
+            const userTimezone = safeTimezone(timezone);
             console.log(`[Purchases/GET] 🕐 Using timezone: ${userTimezone}`);
 
             let whereClause = 'WHERE p.tenant_id = $1';
