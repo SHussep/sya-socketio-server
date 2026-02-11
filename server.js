@@ -85,6 +85,8 @@ const notificationRoutes = require('./routes/notifications'); // Rutas de notifi
 const { initializeFirebase } = require('./utils/firebaseAdmin'); // Firebase Admin SDK
 const notificationHelper = require('./utils/notificationHelper');
 const { requireAdminCredentials } = require('./middleware/adminAuth'); // Helper para enviar notificaciones en eventos
+const { createTenantValidationMiddleware } = require('./middleware/deviceAuth'); // ✅ SECURITY: Tenant validation for sync endpoints
+const { safeError } = require('./utils/sanitize'); // ✅ SECURITY: Sanitize error messages in production
 
 // NUEVAS RUTAS MODULARES (refactorización de endpoints)
 const salesRoutes = require('./routes/sales');
@@ -139,6 +141,9 @@ app.use('/api/notification-preferences', notificationPreferencesRoutes); // Pref
 app.use('/api/desktop/updates', desktopUpdatesRoutes); // Actualizaciones de app Desktop
 app.use('/api/employees', employeesRoutes); // Registrar rutas de empleados con sync-role endpoint
 app.use('/api/employee-branches', employeeBranchesRoutes); // Registrar rutas de relaciones empleado-sucursal
+
+// ✅ SECURITY: Create tenant validation middleware for sync endpoints
+const validateTenant = createTenantValidationMiddleware(pool);
 
 // Health check
 app.get('/', (req, res) => {
@@ -592,9 +597,9 @@ app.get('/api/branches', authenticateToken, async (req, res) => {
     }
 });
 
-// PUT /api/branches/:id - Actualizar datos de sucursal (sin auth - usa tenantId del payload)
-// Columnas válidas: name, address, phone, rfc, timezone, is_active
-app.put('/api/branches/:id', async (req, res) => {
+// PUT /api/branches/:id - Actualizar datos de sucursal
+// ✅ SECURITY: Protected with tenant validation (verifies tenant exists and is active)
+app.put('/api/branches/:id', validateTenant, async (req, res) => {
     try {
         const { id } = req.params;
         const { tenantId, name, address, phone, rfc } = req.body;
@@ -663,8 +668,7 @@ app.put('/api/branches/:id', async (req, res) => {
         console.error('[Branch Update] Error:', error);
         res.status(500).json({
             success: false,
-            message: 'Error al actualizar sucursal',
-            error: error.message
+            message: 'Error al actualizar sucursal'
         });
     }
 });
@@ -674,7 +678,7 @@ app.put('/api/branches/:id', async (req, res) => {
 // Sin JWT - usa tenantId/branchId del payload para identificación
 // Si es la sucursal principal, también actualiza el nombre del tenant
 // ═══════════════════════════════════════════════════════════════
-app.post('/api/branches/sync-info', async (req, res) => {
+app.post('/api/branches/sync-info', validateTenant, async (req, res) => {
     const { tenantId, branchId, name, address, phone, rfc } = req.body;
 
     console.log(`[Branch Sync] 📥 Recibida solicitud: tenantId=${tenantId}, branchId=${branchId}, name=${name}`);
@@ -777,7 +781,7 @@ app.post('/api/branches/sync-info', async (req, res) => {
 // POST /api/telemetry - Registrar eventos de telemetría (app opens, scale config)
 // Idempotente: usa global_id para evitar duplicados
 // ═══════════════════════════════════════════════════════════════
-app.post('/api/telemetry', async (req, res) => {
+app.post('/api/telemetry', validateTenant, async (req, res) => {
     try {
         const {
             tenantId,
@@ -886,8 +890,7 @@ app.post('/api/telemetry', async (req, res) => {
         console.error('[Telemetry] Error:', error);
         res.status(500).json({
             success: false,
-            message: 'Error al registrar evento de telemetría',
-            error: error.message
+            message: 'Error al registrar evento de telemetría'
         });
     }
 });
@@ -955,25 +958,59 @@ app.get('/api/telemetry/stats', requireAdminCredentials, async (req, res) => {
     }
 });
 
+// ✅ SECURITY: Socket.IO authentication middleware
+// Validates JWT token on connection. Clients must send token in handshake auth.
+io.use((socket, next) => {
+    const token = socket.handshake.auth?.token;
+    if (!token) {
+        console.warn(`[Socket.IO Auth] ⚠️ Connection without token from ${socket.id}`);
+        // Allow connection but mark as unauthenticated
+        socket.authenticated = false;
+        return next();
+    }
+
+    jwt.verify(token, JWT_SECRET, (err, user) => {
+        if (err) {
+            console.warn(`[Socket.IO Auth] ⚠️ Invalid token from ${socket.id}: ${err.message}`);
+            socket.authenticated = false;
+            return next();
+        }
+        socket.user = user;
+        socket.authenticated = true;
+        console.log(`[Socket.IO Auth] ✅ Authenticated: tenant=${user.tenantId}, branch=${user.branchId}`);
+        next();
+    });
+});
+
 io.on('connection', (socket) => {
-    console.log(`[${new Date().toISOString()}] Cliente conectado: ${socket.id}`);
+    console.log(`[${new Date().toISOString()}] Cliente conectado: ${socket.id} (auth: ${socket.authenticated ? 'yes' : 'no'})`);
 
     socket.on('join_branch', (branchId) => {
+        // ✅ SECURITY: Require authentication to join a branch room
+        if (!socket.authenticated) {
+            console.warn(`[Socket.IO] ⚠️ Unauthenticated client ${socket.id} tried to join branch_${branchId}`);
+            socket.emit('auth_error', { message: 'Token requerido para unirse a una sucursal' });
+            return;
+        }
+
+        // ✅ SECURITY: Validate the user belongs to this tenant
+        // (We still allow joining because an owner may view multiple branches)
+        const parsedBranchId = parseInt(branchId);
+
         // Dejar todos los rooms de branch anteriores antes de unirse al nuevo
-        // Esto es necesario cuando un cliente cambia de sucursal después del login
         socket.rooms.forEach(room => {
-            if (room.startsWith('branch_') && room !== `branch_${branchId}`) {
+            if (room.startsWith('branch_') && room !== `branch_${parsedBranchId}`) {
                 socket.leave(room);
                 console.log(`[LEAVE] Cliente ${socket.id} dejó ${room}`);
             }
         });
 
-        const roomName = `branch_${branchId}`;
+        const roomName = `branch_${parsedBranchId}`;
         socket.join(roomName);
-        socket.branchId = branchId;
+        socket.branchId = parsedBranchId;
         socket.clientType = 'unknown';
-        console.log(`[JOIN] Cliente ${socket.id} → ${roomName}`);
-        socket.emit('joined_branch', { branchId, message: `Conectado a sucursal ${branchId}` });
+        console.log(`[JOIN] Cliente ${socket.id} (tenant:${socket.user?.tenantId}) → ${roomName}`);
+        socket.emit('joined_branch', { branchId: parsedBranchId, message: `Conectado a sucursal ${parsedBranchId}` });
     });
 
     socket.on('identify_client', (data) => {

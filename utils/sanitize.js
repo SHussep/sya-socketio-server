@@ -72,9 +72,27 @@ function safeDateString(dateStr) {
     return null;
 }
 
+/**
+ * Returns a safe error message for API responses.
+ * In production: returns generic message (no internal details).
+ * In development: includes the actual error message for debugging.
+ * @param {string} publicMessage - Generic message shown to users
+ * @param {Error} error - The actual error object
+ * @returns {object} Safe error response object
+ */
+function safeError(publicMessage, error) {
+    // Always log the full error server-side
+    console.error(`[Error] ${publicMessage}:`, error?.message || error);
+    if (process.env.NODE_ENV === 'production') {
+        return { success: false, message: publicMessage };
+    }
+    return { success: false, message: publicMessage, error: error?.message };
+}
+
 module.exports = {
     safeTimezone,
     safeDateString,
+    safeError,
     VALID_TIMEZONES,
     DEFAULT_TIMEZONE,
 };

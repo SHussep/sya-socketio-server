@@ -245,9 +245,14 @@ router.get('/database-snapshot', authenticate, async (req, res) => {
             console.log(`[Restore] ⚠️ No se pudo obtener guardian_events: ${error.message}`);
         }
 
-        // EMPLEADOS de la sucursal (incluir password hasheada para restauración local)
+        // EMPLEADOS de la sucursal
+        // ✅ SECURITY: Exclude password hash — Desktop should not need it for restore
+        // Desktop uses its own local auth; server auth uses JWT
         const employeesResult = await pool.query(
-            `SELECT e.* FROM employees e
+            `SELECT e.id, e.global_id, e.tenant_id, e.first_name, e.last_name,
+                    e.email, e.phone, e.role_id, e.is_active, e.is_owner,
+                    e.admin_password, e.created_at, e.updated_at
+             FROM employees e
              INNER JOIN employee_branches eb ON e.id = eb.employee_id
              WHERE e.tenant_id = $1 AND eb.branch_id = $2`,
             [tenantId, branchId]
