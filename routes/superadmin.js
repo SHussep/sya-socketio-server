@@ -191,7 +191,8 @@ module.exports = function(pool, io) {
                     (SELECT COUNT(*) FROM ventas WHERE tenant_id = t.id) as total_sales,
                     (SELECT COALESCE(SUM(total), 0) FROM ventas WHERE tenant_id = t.id) as total_revenue,
                     (SELECT MAX(event_timestamp) FROM telemetry_events WHERE tenant_id = t.id) as last_activity,
-                    (SELECT app_version FROM telemetry_events WHERE tenant_id = t.id AND app_version IS NOT NULL ORDER BY event_timestamp DESC LIMIT 1) as app_version
+                    (SELECT app_version FROM telemetry_events WHERE tenant_id = t.id AND app_version IS NOT NULL ORDER BY event_timestamp DESC LIMIT 1) as app_version,
+                    (SELECT theme_name FROM telemetry_events WHERE tenant_id = t.id AND theme_name IS NOT NULL ORDER BY event_timestamp DESC LIMIT 1) as theme_name
                 FROM tenants t
                 JOIN subscriptions s ON t.subscription_id = s.id
                 WHERE 1=1
@@ -255,6 +256,7 @@ module.exports = function(pool, io) {
                     },
                     lastActivity: tenant.last_activity,
                     appVersion: tenant.app_version,
+                    themeName: tenant.theme_name,
                     isActive: tenant.is_active,
                     createdAt: tenant.created_at
                 };
@@ -355,6 +357,24 @@ module.exports = function(pool, io) {
                 WHERE tenant_id = $1
             `, [id]);
 
+            // Versión de app más reciente
+            const appVersionResult = await pool.query(`
+                SELECT app_version
+                FROM telemetry_events
+                WHERE tenant_id = $1 AND app_version IS NOT NULL
+                ORDER BY event_timestamp DESC
+                LIMIT 1
+            `, [id]);
+
+            // Tema más reciente del tenant
+            const themeResult = await pool.query(`
+                SELECT theme_name
+                FROM telemetry_events
+                WHERE tenant_id = $1 AND theme_name IS NOT NULL
+                ORDER BY event_timestamp DESC
+                LIMIT 1
+            `, [id]);
+
             // Actividad por día (últimos 30 días)
             const activityResult = await pool.query(`
                 SELECT
@@ -390,7 +410,9 @@ module.exports = function(pool, io) {
                         email: tenant.email,
                         phoneNumber: tenant.phone_number,
                         isActive: tenant.is_active,
-                        createdAt: tenant.created_at
+                        createdAt: tenant.created_at,
+                        appVersion: appVersionResult.rows[0]?.app_version || null,
+                        themeName: themeResult.rows[0]?.theme_name || null
                     },
                     subscription: {
                         id: tenant.subscription_id,
