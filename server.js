@@ -23,11 +23,15 @@ require('dotenv').config();
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET;
 
-// Validación de seguridad: JWT_SECRET es obligatorio en producción
+// Validación de seguridad: Variables obligatorias en producción
 if (!JWT_SECRET) {
     console.error('❌ FATAL ERROR: JWT_SECRET no está configurado en las variables de entorno');
     console.error('Por favor, configura JWT_SECRET en Render Dashboard > Environment');
     process.exit(1);
+}
+
+if (!process.env.ADMIN_PASSWORD) {
+    console.error('⚠️ WARNING: ADMIN_PASSWORD no está configurado. Endpoints admin no funcionarán.');
 }
 
 const ALLOWED_ORIGINS = [
@@ -467,7 +471,7 @@ app.use('/api/sync-diagnostics', syncDiagnosticsRoutes(pool)); // Diagnóstico d
 
 // Alias routes for backwards compatibility with Desktop client
 // Desktop expects /api/sync/cash-cuts but we have /api/cash-cuts/sync
-app.post('/api/sync/cash-cuts', (req, res) => {
+app.post('/api/sync/cash-cuts', validateTenant, (req, res) => {
     // Forward to the correct endpoint
     req.url = '/sync';
     req.baseUrl = '/api/cash-cuts';
@@ -475,13 +479,13 @@ app.post('/api/sync/cash-cuts', (req, res) => {
 });
 
 // Alias routes for FASE 1 cash management endpoints
-app.post('/api/deposits/sync', (req, res) => {
+app.post('/api/deposits/sync', validateTenant, (req, res) => {
     req.url = '/sync';
     req.baseUrl = '/api/deposits';
     depositsRoutes(pool)(req, res);
 });
 
-app.post('/api/withdrawals/sync', (req, res) => {
+app.post('/api/withdrawals/sync', validateTenant, (req, res) => {
     req.url = '/sync';
     req.baseUrl = '/api/withdrawals';
     withdrawalsRoutes(pool)(req, res);
@@ -965,17 +969,14 @@ app.get('/api/telemetry/stats', requireAdminCredentials, async (req, res) => {
 io.use((socket, next) => {
     const token = socket.handshake.auth?.token;
     if (!token) {
-        console.warn(`[Socket.IO Auth] ⚠️ Connection without token from ${socket.id}`);
-        // Allow connection but mark as unauthenticated
-        socket.authenticated = false;
-        return next();
+        console.warn(`[Socket.IO Auth] ❌ Connection rejected: no token from ${socket.id}`);
+        return next(new Error('Token requerido'));
     }
 
     jwt.verify(token, JWT_SECRET, (err, user) => {
         if (err) {
-            console.warn(`[Socket.IO Auth] ⚠️ Invalid token from ${socket.id}: ${err.message}`);
-            socket.authenticated = false;
-            return next();
+            console.warn(`[Socket.IO Auth] ❌ Connection rejected: invalid token from ${socket.id}`);
+            return next(new Error('Token inválido o expirado'));
         }
         socket.user = user;
         socket.authenticated = true;

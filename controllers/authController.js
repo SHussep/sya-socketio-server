@@ -69,7 +69,7 @@ class AuthController {
             res.status(500).json({
                 success: false,
                 message: 'Error al generar URL de autenticación',
-                error: error.message
+                ...(process.env.NODE_ENV !== 'production' && { error: error.message })
             });
         }
     }
@@ -168,7 +168,7 @@ class AuthController {
             res.status(500).json({
                 success: false,
                 message: 'Error al intercambiar código de autorización',
-                error: error.message
+                ...(process.env.NODE_ENV !== 'production' && { error: error.message })
             });
         }
     }
@@ -215,7 +215,7 @@ class AuthController {
             res.status(401).json({
                 success: false,
                 message: 'Error al refrescar access token. El refresh token puede ser inválido o expirado.',
-                error: error.message
+                ...(process.env.NODE_ENV !== 'production' && { error: error.message })
             });
         }
     }
@@ -477,7 +477,7 @@ class AuthController {
             res.status(500).json({
                 success: false,
                 message: 'Error en el servidor',
-                error: error.message
+                ...(process.env.NODE_ENV !== 'production' && { error: error.message })
             });
         }
     }
@@ -697,7 +697,7 @@ class AuthController {
             return res.status(500).json({
                 success: false,
                 message: 'Error del servidor',
-                error: error.message
+                ...(process.env.NODE_ENV !== 'production' && { error: error.message })
             });
         }
     }
@@ -760,7 +760,7 @@ class AuthController {
             res.status(500).json({
                 success: false,
                 message: 'Error al renovar token',
-                error: error.message
+                ...(process.env.NODE_ENV !== 'production' && { error: error.message })
             });
         }
     }
@@ -1052,7 +1052,7 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
             res.status(500).json({
                 success: false,
                 message: 'Error al registrar usuario',
-                error: error.message
+                ...(process.env.NODE_ENV !== 'production' && { error: error.message })
             });
         } finally {
             client.release();
@@ -1212,7 +1212,7 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
             res.status(500).json({
                 success: false,
                 message: 'Error en el servidor',
-                error: error.message
+                ...(process.env.NODE_ENV !== 'production' && { error: error.message })
             });
         }
     }
@@ -1591,7 +1591,7 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
             res.status(500).json({
                 success: false,
                 message: 'Error al sobrescribir tenant',
-                error: error.message
+                ...(process.env.NODE_ENV !== 'production' && { error: error.message })
             });
         } finally {
             client.release();
@@ -1765,7 +1765,7 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
             res.status(500).json({
                 success: false,
                 message: 'Error al limpiar sucursal',
-                error: error.message
+                ...(process.env.NODE_ENV !== 'production' && { error: error.message })
             });
         } finally {
             client.release();
@@ -1877,7 +1877,7 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
             res.status(500).json({
                 success: false,
                 message: 'Error al limpiar sucursal',
-                error: error.message
+                ...(process.env.NODE_ENV !== 'production' && { error: error.message })
             });
         } finally {
             client.release();
@@ -1909,7 +1909,7 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
             res.status(500).json({
                 success: false,
                 message: 'Error al verificar email',
-                error: error.message
+                ...(process.env.NODE_ENV !== 'production' && { error: error.message })
             });
         }
     }
@@ -1947,7 +1947,7 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener sucursales',
-                error: error.message
+                ...(process.env.NODE_ENV !== 'production' && { error: error.message })
             });
         }
     }
@@ -2062,7 +2062,7 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
             res.status(500).json({
                 success: false,
                 message: 'Error al crear sucursal',
-                error: error.message
+                ...(process.env.NODE_ENV !== 'production' && { error: error.message })
             });
         } finally {
             client.release();
@@ -2150,7 +2150,7 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
             res.status(500).json({
                 success: false,
                 message: 'Error al unirse a la sucursal',
-                error: error.message
+                ...(process.env.NODE_ENV !== 'production' && { error: error.message })
             });
         }
     }
@@ -2302,7 +2302,7 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
             res.status(500).json({
                 success: false,
                 message: 'Error en sincronización inicial',
-                error: error.message
+                ...(process.env.NODE_ENV !== 'production' && { error: error.message })
             });
         }
     }
@@ -2382,7 +2382,7 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener empleado principal',
-                error: error.message
+                ...(process.env.NODE_ENV !== 'production' && { error: error.message })
             });
         }
     }
@@ -2462,7 +2462,7 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
             res.status(500).json({
                 success: false,
                 message: 'Error al verificar contraseña',
-                error: error.message
+                ...(process.env.NODE_ENV !== 'production' && { error: error.message })
             });
         }
     }
