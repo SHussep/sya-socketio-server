@@ -4,6 +4,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
 
 // PIN hasheado (SHA256) - OBLIGATORIO via variable de entorno
 const SUPER_ADMIN_PIN_HASH = process.env.SUPER_ADMIN_PIN_HASH;
@@ -903,6 +904,128 @@ module.exports = function(pool, io) {
             res.status(500).json({
                 success: false,
                 message: 'Error al activar suscripción',
+                error: undefined
+            });
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
+    // GET /api/superadmin/master-credentials
+    // Obtener username de credenciales maestras (id=1)
+    // ─────────────────────────────────────────────────────────
+    router.get('/master-credentials', async (req, res) => {
+        try {
+            const result = await pool.query(
+                'SELECT id, username, is_active, created_at, updated_at FROM master_credentials WHERE id = 1'
+            );
+
+            if (result.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Credenciales maestras no encontradas'
+                });
+            }
+
+            res.json({
+                success: true,
+                data: {
+                    id: result.rows[0].id,
+                    username: result.rows[0].username,
+                    isActive: result.rows[0].is_active,
+                    createdAt: result.rows[0].created_at,
+                    updatedAt: result.rows[0].updated_at
+                }
+            });
+        } catch (error) {
+            console.error('[SuperAdmin Master Credentials] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al obtener credenciales maestras',
+                error: undefined
+            });
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
+    // PUT /api/superadmin/master-credentials
+    // Actualizar username/password de credenciales maestras (id=1)
+    // ─────────────────────────────────────────────────────────
+    router.put('/master-credentials', async (req, res) => {
+        try {
+            const { username, password } = req.body;
+
+            if (!username && !password) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Se requiere al menos username o password'
+                });
+            }
+
+            const updates = [];
+            const values = [];
+            let paramCount = 0;
+
+            if (username !== undefined && username.trim() !== '') {
+                paramCount++;
+                updates.push(`username = $${paramCount}`);
+                values.push(username.trim());
+            }
+
+            if (password !== undefined && password.trim() !== '') {
+                const passwordHash = await bcrypt.hash(password, 12);
+                paramCount++;
+                updates.push(`password_hash = $${paramCount}`);
+                values.push(passwordHash);
+            }
+
+            if (updates.length === 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'No hay campos validos para actualizar'
+                });
+            }
+
+            paramCount++;
+            updates.push(`updated_at = $${paramCount}`);
+            values.push(new Date());
+
+            const result = await pool.query(`
+                UPDATE master_credentials
+                SET ${updates.join(', ')}
+                WHERE id = 1
+                RETURNING id, username, is_active, updated_at
+            `, values);
+
+            if (result.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Credenciales maestras no encontradas'
+                });
+            }
+
+            console.log(`[SuperAdmin] Master credentials actualizadas: username=${username ? 'changed' : 'unchanged'}, password=${password ? 'changed' : 'unchanged'}`);
+
+            res.json({
+                success: true,
+                message: 'Credenciales maestras actualizadas correctamente',
+                data: {
+                    id: result.rows[0].id,
+                    username: result.rows[0].username,
+                    isActive: result.rows[0].is_active,
+                    updatedAt: result.rows[0].updated_at
+                }
+            });
+        } catch (error) {
+            if (error.code === '23505') {
+                return res.status(409).json({
+                    success: false,
+                    message: 'Ese username ya existe'
+                });
+            }
+            console.error('[SuperAdmin Update Master Credentials] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al actualizar credenciales maestras',
                 error: undefined
             });
         }
