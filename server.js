@@ -119,6 +119,7 @@ const notificationHistoryRoutes = require('./routes/notification-history'); // R
 const notificationPreferencesRoutes = require('./routes/notificationPreferences'); // Preferencias de notificaciones por empleado
 const desktopUpdatesRoutes = require('./routes/desktopUpdates'); // Actualizaciones de app Desktop
 const superadminRoutes = require('./routes/superadmin'); // Panel de Super Admin (licencias, telemetría)
+const masterAuthRoutes = require('./routes/masterAuth'); // Login maestro (Superusuario)
 const passwordResetRoutes = require('./routes/passwordReset'); // Recuperación de contraseña por email
 const devicesRoutes = require('./routes/devices'); // Gestión de dispositivos (Primary/Auxiliar)
 const notasCreditoRoutes = require('./routes/notas_credito'); // Notas de crédito (devoluciones)
@@ -132,6 +133,7 @@ initializeFirebase();
 app.use('/api/restore', restoreRoutes);
 app.use('/api/backup', backupRoutes);
 app.use('/api/auth', authRoutes); // Registrar rutas de autenticación
+app.use('/api/auth', masterAuthRoutes(pool)); // Login maestro (Superusuario)
 app.use('/api/password-reset', passwordResetRoutes); // Recuperación de contraseña por email
 app.use('/api/devices', devicesRoutes(pool)); // Gestión de dispositivos (Primary/Auxiliar)
 // tenantsRoutes se registra después de crear io
