@@ -22,7 +22,7 @@ function authenticateSuperAdmin(req, res, next) {
 
     const pinHash = crypto.createHash('sha256').update(authHeader).digest('hex');
 
-    if (pinHash !== SUPER_ADMIN_PIN_HASH) {
+    if (!crypto.timingSafeEqual(Buffer.from(pinHash), Buffer.from(SUPER_ADMIN_PIN_HASH))) {
         return res.status(403).json({
             success: false,
             message: 'PIN incorrecto'
@@ -36,7 +36,7 @@ module.exports = function(pool, io) {
     const router = require('express').Router();
 
     // Aplicar autenticación a todas las rutas
-    // DESACTIVADO: router.use(authenticateSuperAdmin);
+    router.use(authenticateSuperAdmin);
 
     // ─────────────────────────────────────────────────────────
     // GET /api/superadmin/dashboard
@@ -144,7 +144,7 @@ module.exports = function(pool, io) {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener dashboard',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -261,7 +261,7 @@ module.exports = function(pool, io) {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener tenants',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -434,7 +434,7 @@ module.exports = function(pool, io) {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener detalles del tenant',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -561,7 +561,7 @@ module.exports = function(pool, io) {
             res.status(500).json({
                 success: false,
                 message: 'Error al actualizar tenant',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -596,7 +596,7 @@ module.exports = function(pool, io) {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener suscripciones',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -690,7 +690,7 @@ module.exports = function(pool, io) {
             res.status(500).json({
                 success: false,
                 message: 'Error al actualizar suscripción',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -773,7 +773,7 @@ module.exports = function(pool, io) {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener estadísticas de telemetría',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -834,7 +834,7 @@ module.exports = function(pool, io) {
             res.status(500).json({
                 success: false,
                 message: 'Error al extender trial',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -894,7 +894,7 @@ module.exports = function(pool, io) {
             res.status(500).json({
                 success: false,
                 message: 'Error al activar suscripción',
-                error: error.message
+                error: undefined
             });
         }
     });

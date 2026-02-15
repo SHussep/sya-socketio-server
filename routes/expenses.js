@@ -189,7 +189,7 @@ module.exports = (pool, io) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener gastos',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -717,7 +717,7 @@ module.exports = (pool, io) => {
             });
         } catch (error) {
             console.error('[Sync/Expenses] Error:', error);
-            res.status(500).json({ success: false, message: 'Error al sincronizar gasto', error: error.message });
+            res.status(500).json({ success: false, message: 'Error al sincronizar gasto', error: undefined });
         }
     });
 
@@ -849,7 +849,7 @@ module.exports = (pool, io) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al desactivar gasto',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -884,7 +884,7 @@ module.exports = (pool, io) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener categorías de gastos',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -1003,7 +1003,7 @@ module.exports = (pool, io) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener gastos pendientes',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -1111,7 +1111,7 @@ module.exports = (pool, io) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al aprobar gasto',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -1300,7 +1300,7 @@ module.exports = (pool, io) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al editar gasto',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -1430,7 +1430,7 @@ module.exports = (pool, io) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener gastos pendientes del turno',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -1511,7 +1511,7 @@ module.exports = (pool, io) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al rechazar gastos huérfanos',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -1567,7 +1567,7 @@ module.exports = (pool, io) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener imagen del recibo',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -1682,7 +1682,7 @@ module.exports = (pool, io) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al eliminar gasto',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -1850,7 +1850,7 @@ module.exports = (pool, io) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al actualizar gasto',
-                error: error.message
+                error: undefined
             });
         }
     });

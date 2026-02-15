@@ -179,7 +179,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error durante la limpieza',
-                error: error.message
+                error: undefined
             });
         } finally {
             client.release();

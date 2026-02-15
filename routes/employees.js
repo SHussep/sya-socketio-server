@@ -543,7 +543,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al sincronizar empleado',
-                error: error.message
+                error: undefined
             });
         } finally {
             client.release();
@@ -565,7 +565,7 @@ module.exports = (pool) => {
             return res.json({ exists: false });
         } catch (error) {
             console.error('[Employees/CheckEmail] Error:', error.message);
-            res.status(500).json({ exists: false, error: error.message });
+            res.status(500).json({ exists: false, error: undefined });
         } finally {
             client.release();
         }
@@ -702,7 +702,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al descargar empleados',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -784,7 +784,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al sincronizar contraseña',
-                error: error.message
+                error: undefined
             });
         } finally {
             client.release();
@@ -851,7 +851,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener roles',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -997,7 +997,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al sincronizar rol',
-                error: error.message
+                error: undefined
             });
         } finally {
             client.release();
@@ -1076,7 +1076,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al actualizar rol',
-                error: error.message
+                error: undefined
             });
         } finally {
             client.release();
@@ -1156,7 +1156,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al eliminar rol',
-                error: error.message
+                error: undefined
             });
         } finally {
             client.release();
@@ -1246,7 +1246,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al eliminar empleado',
-                error: error.message
+                error: undefined
             });
         } finally {
             client.release();
@@ -1316,7 +1316,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al verificar acceso móvil',
-                error: error.message
+                error: undefined
             });
         } finally {
             client.release();
@@ -1594,7 +1594,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al actualizar empleado',
-                error: error.message
+                error: undefined
             });
         } finally {
             client.release();
@@ -1665,7 +1665,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al actualizar contraseña',
-                error: error.message
+                error: undefined
             });
         } finally {
             client.release();
@@ -1728,7 +1728,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al guardar código de verificación',
-                error: error.message
+                error: undefined
             });
         } finally {
             client.release();
@@ -1806,7 +1806,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al verificar email',
-                error: error.message
+                error: undefined
             });
         } finally {
             client.release();
@@ -1861,7 +1861,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener estado de verificación',
-                error: error.message
+                error: undefined
             });
         }
     });

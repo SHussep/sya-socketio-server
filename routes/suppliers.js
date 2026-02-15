@@ -155,7 +155,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al sincronizar proveedor',
-                error: error.message
+                error: undefined
             });
         } finally {
             client.release();
@@ -216,7 +216,7 @@ module.exports = (pool) => {
 
         } catch (error) {
             console.error('[Suppliers/Update] ❌ Error:', error);
-            res.status(500).json({ success: false, message: 'Error al actualizar proveedor', error: error.message });
+            res.status(500).json({ success: false, message: 'Error al actualizar proveedor', error: undefined });
         }
     });
 
@@ -250,7 +250,7 @@ module.exports = (pool) => {
 
         } catch (error) {
             console.error('[Suppliers/Delete] ❌ Error:', error);
-            res.status(500).json({ success: false, message: 'Error al eliminar proveedor', error: error.message });
+            res.status(500).json({ success: false, message: 'Error al eliminar proveedor', error: undefined });
         }
     });
 

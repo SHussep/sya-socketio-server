@@ -145,7 +145,7 @@ router.post('/register-device', async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Error registering device',
-            error: error.message
+            error: undefined
         });
     }
 });
@@ -182,7 +182,7 @@ router.post('/unregister-device', async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Error unregistering device',
-            error: error.message
+            error: undefined
         });
     }
 });
@@ -257,7 +257,7 @@ router.post('/send-to-branch', async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Error sending notifications',
-            error: error.message
+            error: undefined
         });
     }
 });
@@ -316,7 +316,7 @@ router.post('/send-to-employee', async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Error sending notifications',
-            error: error.message
+            error: undefined
         });
     }
 });
@@ -476,7 +476,7 @@ router.post('/send-event', async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Failed to send notification',
-            error: error.message,
+            error: undefined,
             isSynced: false
         });
     }

@@ -522,7 +522,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al sincronizar compra',
-                error: error.message
+                error: undefined
             });
         } finally {
             client.release();
@@ -559,7 +559,7 @@ module.exports = (pool) => {
 
         } catch (error) {
             console.error('[Purchases/Cancel] ❌ Error:', error);
-            res.status(500).json({ success: false, message: 'Error al cancelar compra', error: error.message });
+            res.status(500).json({ success: false, message: 'Error al cancelar compra', error: undefined });
         }
     });
 
@@ -600,7 +600,7 @@ module.exports = (pool) => {
 
         } catch (error) {
             console.error('[Purchases/Update] ❌ Error:', error);
-            res.status(500).json({ success: false, message: 'Error al actualizar compra', error: error.message });
+            res.status(500).json({ success: false, message: 'Error al actualizar compra', error: undefined });
         }
     });
 

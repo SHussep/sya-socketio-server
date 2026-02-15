@@ -237,7 +237,7 @@ function createRepartidorReturnRoutes(io) {
       res.status(500).json({
         success: false,
         message: 'Error al sincronizar devolución',
-        error: error.message
+        error: undefined
       });
     }
   });
@@ -294,7 +294,7 @@ function createRepartidorReturnRoutes(io) {
       console.error('[RepartidorReturns] ❌ Error obteniendo devoluciones:', error.message);
       res.status(500).json({
         success: false,
-        error: error.message
+        error: undefined
       });
     }
   });
@@ -355,7 +355,7 @@ function createRepartidorReturnRoutes(io) {
       console.error('[RepartidorReturns] ❌ Error obteniendo devoluciones por empleado:', error.message);
       res.status(500).json({
         success: false,
-        error: error.message
+        error: undefined
       });
     }
   });

@@ -99,7 +99,7 @@ module.exports = function(pool) {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener ventas',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -190,7 +190,7 @@ module.exports = function(pool) {
 
         } catch (error) {
             console.error('[Ventas/Pull] ❌ Error:', error);
-            res.status(500).json({ success: false, message: 'Error al descargar ventas', error: error.message });
+            res.status(500).json({ success: false, message: 'Error al descargar ventas', error: undefined });
         }
     });
 
@@ -286,7 +286,7 @@ module.exports = function(pool) {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener venta',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -339,7 +339,7 @@ module.exports = function(pool) {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener ventas del turno',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -588,7 +588,7 @@ module.exports = function(pool) {
             res.status(500).json({
                 success: false,
                 message: 'Error al crear venta',
-                error: error.message
+                error: undefined
             });
         }
     });

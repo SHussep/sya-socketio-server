@@ -102,7 +102,7 @@ module.exports = (pool) => {
             });
         } catch (error) {
             console.error('[Customers] ❌ Error:', error.message);
-            res.status(500).json({ success: false, message: 'Error al obtener clientes', error: error.message });
+            res.status(500).json({ success: false, message: 'Error al obtener clientes', error: undefined });
         }
     });
 
@@ -176,7 +176,7 @@ module.exports = (pool) => {
             });
         } catch (error) {
             console.error('[Customers/Pull] ❌ Error:', error.message);
-            res.status(500).json({ success: false, message: 'Error al descargar clientes', error: error.message });
+            res.status(500).json({ success: false, message: 'Error al descargar clientes', error: undefined });
         }
     });
 
@@ -285,7 +285,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al sincronizar cliente',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -315,7 +315,7 @@ module.exports = (pool) => {
             });
         } catch (error) {
             console.error('[Customers] ❌ Error obteniendo genérico:', error.message);
-            res.status(500).json({ success: false, message: 'Error al obtener cliente genérico', error: error.message });
+            res.status(500).json({ success: false, message: 'Error al obtener cliente genérico', error: undefined });
         }
     });
 
@@ -446,7 +446,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al actualizar cliente',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -543,7 +543,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al actualizar saldo de cliente',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -629,7 +629,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al desactivar cliente',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -700,7 +700,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener clientes con saldo deudor',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -895,7 +895,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al generar estado de cuenta',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -1316,7 +1316,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener movimientos del cliente',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -1523,7 +1523,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener historial de ventas',
-                error: error.message
+                error: undefined
             });
         }
     });

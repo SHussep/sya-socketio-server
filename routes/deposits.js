@@ -83,7 +83,7 @@ module.exports = (pool) => {
             });
         } catch (error) {
             console.error('[Deposits] ❌ Error:', error.message);
-            res.status(500).json({ success: false, message: 'Error al obtener depósitos', error: error.message });
+            res.status(500).json({ success: false, message: 'Error al obtener depósitos', error: undefined });
         }
     });
 
@@ -123,7 +123,7 @@ module.exports = (pool) => {
             });
         } catch (error) {
             console.error('[Deposits] ❌ Error creating deposit:', error.message);
-            res.status(500).json({ success: false, message: 'Error al crear depósito', error: error.message });
+            res.status(500).json({ success: false, message: 'Error al crear depósito', error: undefined });
         }
     });
 
@@ -217,7 +217,7 @@ module.exports = (pool) => {
                     results.push({ success: true, data: result.rows[0] });
                     console.log(`[Deposits/Sync] ✅ Deposit synced: $${numericAmount} (global_id: ${global_id})`);
                 } catch (error) {
-                    results.push({ success: false, error: error.message, global_id: deposit.global_id });
+                    results.push({ success: false, error: undefined, global_id: deposit.global_id });
                     console.error(`[Deposits/Sync] ❌ Error:`, error.message);
                 }
             }
@@ -230,7 +230,7 @@ module.exports = (pool) => {
             });
         } catch (error) {
             console.error('[Deposits/Sync] ❌ Error:', error.message);
-            res.status(500).json({ success: false, message: 'Error syncing deposits', error: error.message });
+            res.status(500).json({ success: false, message: 'Error syncing deposits', error: undefined });
         }
     });
 

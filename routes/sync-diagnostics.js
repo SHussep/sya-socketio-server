@@ -17,57 +17,64 @@ module.exports = (pool) => {
     router.get('/counts/:tenantId/:branchId', async (req, res) => {
         const { tenantId, branchId } = req.params;
 
+        // Validar que tenantId y branchId sean enteros positivos
+        const parsedTenantId = parseInt(tenantId, 10);
+        const parsedBranchId = parseInt(branchId, 10);
+        if (isNaN(parsedTenantId) || parsedTenantId <= 0 || isNaN(parsedBranchId) || parsedBranchId <= 0) {
+            return res.status(400).json({ success: false, message: 'tenantId y branchId deben ser enteros positivos' });
+        }
+
         try {
-            console.log(`[SyncDiagnostics] 📊 Obteniendo conteos para tenant=${tenantId}, branch=${branchId}`);
+            console.log(`[SyncDiagnostics] 📊 Obteniendo conteos para tenant=${parsedTenantId}, branch=${parsedBranchId}`);
 
             const counts = {};
 
             // Ventas (solo de esta sucursal)
             const salesResult = await pool.query(
                 'SELECT COUNT(*) as count FROM ventas WHERE tenant_id = $1 AND branch_id = $2',
-                [tenantId, branchId]
+                [parsedTenantId, parsedBranchId]
             );
             counts.sales = parseInt(salesResult.rows[0].count);
 
             // Gastos (solo de esta sucursal)
             const expensesResult = await pool.query(
                 'SELECT COUNT(*) as count FROM expenses WHERE tenant_id = $1 AND branch_id = $2',
-                [tenantId, branchId]
+                [parsedTenantId, parsedBranchId]
             );
             counts.expenses = parseInt(expensesResult.rows[0].count);
 
             // Cortes de caja (solo de esta sucursal)
             const cashCutsResult = await pool.query(
                 'SELECT COUNT(*) as count FROM cash_cuts WHERE tenant_id = $1 AND branch_id = $2',
-                [tenantId, branchId]
+                [parsedTenantId, parsedBranchId]
             );
             counts.cashCuts = parseInt(cashCutsResult.rows[0].count);
 
             // Depósitos (solo de esta sucursal)
             const depositsResult = await pool.query(
                 'SELECT COUNT(*) as count FROM deposits WHERE tenant_id = $1 AND branch_id = $2',
-                [tenantId, branchId]
+                [parsedTenantId, parsedBranchId]
             );
             counts.deposits = parseInt(depositsResult.rows[0].count);
 
             // Retiros (solo de esta sucursal)
             const withdrawalsResult = await pool.query(
                 'SELECT COUNT(*) as count FROM withdrawals WHERE tenant_id = $1 AND branch_id = $2',
-                [tenantId, branchId]
+                [parsedTenantId, parsedBranchId]
             );
             counts.withdrawals = parseInt(withdrawalsResult.rows[0].count);
 
             // Turnos (solo de esta sucursal)
             const shiftsResult = await pool.query(
                 'SELECT COUNT(*) as count FROM shifts WHERE tenant_id = $1 AND branch_id = $2',
-                [tenantId, branchId]
+                [parsedTenantId, parsedBranchId]
             );
             counts.shifts = parseInt(shiftsResult.rows[0].count);
 
             // Pagos de crédito (solo de esta sucursal)
             const creditPaymentsResult = await pool.query(
                 'SELECT COUNT(*) as count FROM credit_payments WHERE tenant_id = $1 AND branch_id = $2',
-                [tenantId, branchId]
+                [parsedTenantId, parsedBranchId]
             );
             counts.creditPayments = parseInt(creditPaymentsResult.rows[0].count);
 
@@ -75,49 +82,49 @@ module.exports = (pool) => {
             // Excluir cliente genérico del sistema (is_system_generic = TRUE)
             const customersResult = await pool.query(
                 'SELECT COUNT(*) as count FROM customers WHERE tenant_id = $1 AND (is_system_generic = FALSE OR is_system_generic IS NULL)',
-                [tenantId]
+                [parsedTenantId]
             );
             counts.customers = parseInt(customersResult.rows[0].count);
 
             // Empleados (todo el tenant)
             const employeesResult = await pool.query(
                 'SELECT COUNT(*) as count FROM employees WHERE tenant_id = $1',
-                [tenantId]
+                [parsedTenantId]
             );
             counts.employees = parseInt(employeesResult.rows[0].count);
 
             // Asignaciones de repartidor (solo de esta sucursal)
             const assignmentsResult = await pool.query(
                 'SELECT COUNT(*) as count FROM repartidor_assignments WHERE tenant_id = $1 AND branch_id = $2',
-                [tenantId, branchId]
+                [parsedTenantId, parsedBranchId]
             );
             counts.repartidorAssignments = parseInt(assignmentsResult.rows[0].count);
 
             // Devoluciones de repartidor (solo de esta sucursal)
             const returnsResult = await pool.query(
                 'SELECT COUNT(*) as count FROM repartidor_returns WHERE tenant_id = $1 AND branch_id = $2',
-                [tenantId, branchId]
+                [parsedTenantId, parsedBranchId]
             );
             counts.repartidorReturns = parseInt(returnsResult.rows[0].count);
 
             // Guardian logs (solo de esta sucursal)
             const guardianLogsResult = await pool.query(
                 'SELECT COUNT(*) as count FROM suspicious_weighing_logs WHERE tenant_id = $1 AND branch_id = $2',
-                [tenantId, branchId]
+                [parsedTenantId, parsedBranchId]
             );
             counts.guardianLogs = parseInt(guardianLogsResult.rows[0].count);
 
             // Scale disconnection logs (solo de esta sucursal)
             const scaleLogsResult = await pool.query(
                 'SELECT COUNT(*) as count FROM scale_disconnection_logs WHERE tenant_id = $1 AND branch_id = $2',
-                [tenantId, branchId]
+                [parsedTenantId, parsedBranchId]
             );
             counts.scaleDisconnectionLogs = parseInt(scaleLogsResult.rows[0].count);
 
             // Cancelaciones (solo de esta sucursal)
             const cancelacionesResult = await pool.query(
                 'SELECT COUNT(*) as count FROM cancelaciones_bitacora WHERE tenant_id = $1 AND branch_id = $2',
-                [tenantId, branchId]
+                [parsedTenantId, parsedBranchId]
             );
             counts.cancelaciones = parseInt(cancelacionesResult.rows[0].count);
 

@@ -56,7 +56,7 @@ router.get('/:employeeGlobalId', async (req, res) => {
 
     } catch (error) {
         console.error('[NotificationPreferences] Error obteniendo preferencias:', error.message);
-        res.status(500).json({ error: error.message });
+        res.status(500).json({ error: undefined });
     }
 });
 
@@ -142,7 +142,7 @@ router.post('/', async (req, res) => {
 
     } catch (error) {
         console.error('[NotificationPreferences] Error guardando preferencias:', error.message);
-        res.status(500).json({ error: error.message });
+        res.status(500).json({ error: undefined });
     }
 });
 

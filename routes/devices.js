@@ -167,7 +167,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al reclamar rol Principal',
-                error: error.message
+                error: undefined
             });
         } finally {
             client.release();
@@ -225,7 +225,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al registrar dispositivo',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -266,7 +266,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al listar dispositivos',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -312,7 +312,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error en heartbeat',
-                error: error.message
+                error: undefined
             });
         }
     });

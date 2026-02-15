@@ -46,7 +46,7 @@ module.exports = function(pool, authenticateToken) {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener sucursales',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -109,7 +109,7 @@ module.exports = function(pool, authenticateToken) {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener sucursal',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -215,7 +215,7 @@ module.exports = function(pool, authenticateToken) {
             res.status(500).json({
                 success: false,
                 message: 'Error al crear sucursal',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -322,7 +322,7 @@ module.exports = function(pool, authenticateToken) {
             res.status(500).json({
                 success: false,
                 message: 'Error al actualizar sucursal',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -419,7 +419,7 @@ module.exports = function(pool, authenticateToken) {
             res.status(500).json({
                 success: false,
                 message: 'Error al sincronizar sucursal',
-                error: error.message
+                error: undefined
             });
         }
     });

@@ -356,7 +356,7 @@ module.exports = (pool) => {
             });
         } catch (error) {
             console.error('[Repartidores Summary] Error:', error);
-            res.status(500).json({ success: false, message: 'Error al obtener resumen de repartidores', error: error.message });
+            res.status(500).json({ success: false, message: 'Error al obtener resumen de repartidores', error: undefined });
         }
     });
 
@@ -584,7 +584,7 @@ module.exports = (pool) => {
             });
         } catch (error) {
             console.error('[Repartidor Assignments] Error:', error);
-            res.status(500).json({ success: false, message: 'Error al obtener asignaciones', error: error.message });
+            res.status(500).json({ success: false, message: 'Error al obtener asignaciones', error: undefined });
         }
     });
 
@@ -657,7 +657,7 @@ module.exports = (pool) => {
             });
         } catch (error) {
             console.error('[Repartidor Returns] Error:', error);
-            res.status(500).json({ success: false, message: 'Error al obtener devoluciones', error: error.message });
+            res.status(500).json({ success: false, message: 'Error al obtener devoluciones', error: undefined });
         }
     });
 
@@ -878,7 +878,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al procesar devolución',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -954,7 +954,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener devoluciones',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -1011,7 +1011,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al eliminar devolución',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -1145,7 +1145,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener cash snapshot',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -1400,7 +1400,7 @@ module.exports = (pool) => {
 
         } catch (error) {
             console.error('[Repartidor Shifts] Error:', error);
-            res.status(500).json({ success: false, message: 'Error al obtener turnos', error: error.message });
+            res.status(500).json({ success: false, message: 'Error al obtener turnos', error: undefined });
         }
     });
 
@@ -1456,7 +1456,7 @@ module.exports = (pool) => {
 
         } catch (error) {
             console.error('[Repartidor Shortage] Error:', error);
-            res.status(500).json({ success: false, message: 'Error al registrar faltante', error: error.message });
+            res.status(500).json({ success: false, message: 'Error al registrar faltante', error: undefined });
         }
     });
 
@@ -1555,7 +1555,7 @@ module.exports = (pool) => {
 
         } catch (error) {
             console.error('[Repartidor Debts] Error:', error);
-            res.status(500).json({ success: false, message: 'Error al obtener deudas', error: error.message });
+            res.status(500).json({ success: false, message: 'Error al obtener deudas', error: undefined });
         }
     });
 

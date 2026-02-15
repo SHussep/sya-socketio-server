@@ -274,7 +274,7 @@ app.get('/api/database/view', requireAdminCredentials, async (req, res) => {
             }
         });
     } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
+        res.status(500).json({ success: false, error: undefined });
     }
 });
 
@@ -300,7 +300,7 @@ app.post('/api/database/fix-old-tenants', requireAdminCredentials, async (req, r
             updated: result.rows
         });
     } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
+        res.status(500).json({ success: false, error: undefined });
     }
 });
 
@@ -371,7 +371,7 @@ app.post('/api/database/delete-tenant-by-email', requireAdminCredentials, async 
 
     } catch (error) {
         console.error('[Delete Tenant] Error:', error);
-        res.status(500).json({ success: false, error: error.message });
+        res.status(500).json({ success: false, error: undefined });
     }
 });
 
@@ -772,7 +772,7 @@ app.post('/api/branches/sync-info', validateTenant, async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Error al sincronizar sucursal',
-            error: error.message
+            error: undefined
         });
     }
 });
@@ -953,7 +953,7 @@ app.get('/api/telemetry/stats', requireAdminCredentials, async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Error al obtener estadísticas',
-            error: error.message
+            error: undefined
         });
     }
 });

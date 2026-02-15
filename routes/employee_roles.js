@@ -11,11 +11,14 @@
 const express = require('express');
 const router = express.Router();
 const { Pool } = require('pg');
+const { createTenantValidationMiddleware } = require('../middleware/deviceAuth');
 
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false }
 });
+
+const validateTenant = createTenantValidationMiddleware(pool);
 
 // ─────────────────────────────────────────────────────────────────────────
 // PUT /api/employees/:id/role
@@ -28,7 +31,7 @@ const pool = new Pool({
 // }
 // ─────────────────────────────────────────────────────────────────────────
 
-router.put('/:id/role', async (req, res) => {
+router.put('/:id/role', validateTenant, async (req, res) => {
     console.log(`[Employee Roles] PUT /api/employees/${req.params.id}/role`);
 
     const { id } = req.params;
@@ -142,7 +145,7 @@ router.put('/:id/role', async (req, res) => {
         return res.status(500).json({
             success: false,
             message: 'Error al actualizar rol del empleado',
-            error: error.message
+            error: undefined
         });
     } finally {
         client.release();
@@ -209,7 +212,7 @@ router.get('/:id/permissions', async (req, res) => {
         return res.status(500).json({
             success: false,
             message: 'Error al obtener permisos del empleado',
-            error: error.message
+            error: undefined
         });
     }
 });
@@ -256,7 +259,7 @@ router.get('/by-tenant/:tenantId', async (req, res) => {
         return res.status(500).json({
             success: false,
             message: 'Error al obtener roles',
-            error: error.message
+            error: undefined
         });
     }
 });
@@ -291,7 +294,7 @@ router.get('/system/all', async (req, res) => {
         return res.status(500).json({
             success: false,
             message: 'Error al obtener permisos del sistema',
-            error: error.message
+            error: undefined
         });
     }
 });
@@ -310,7 +313,7 @@ router.get('/system/all', async (req, res) => {
 // }
 // ─────────────────────────────────────────────────────────────────────────
 
-router.post('/sync-role', async (req, res) => {
+router.post('/sync-role', validateTenant, async (req, res) => {
     console.log('[Employee Roles] POST /api/employees/sync-role');
 
     const { tenantId, employeeId, desktopRole, hasMobileAppAccess } = req.body;
@@ -406,7 +409,7 @@ router.post('/sync-role', async (req, res) => {
         return res.status(500).json({
             success: false,
             message: 'Error al sincronizar rol del empleado',
-            error: error.message
+            error: undefined
         });
     } finally {
         client.release();
@@ -483,7 +486,7 @@ router.get('/by-uuid/:globalId/role', async (req, res) => {
         return res.status(500).json({
             success: false,
             message: 'Error al obtener rol del empleado',
-            error: error.message
+            error: undefined
         });
     }
 });
@@ -500,7 +503,7 @@ router.get('/by-uuid/:globalId/role', async (req, res) => {
 // }
 // ─────────────────────────────────────────────────────────────────────────
 
-router.put('/by-uuid/:globalId/role', async (req, res) => {
+router.put('/by-uuid/:globalId/role', validateTenant, async (req, res) => {
     const { globalId } = req.params;
     const { tenantId, newRoleId } = req.body;
 
@@ -637,7 +640,7 @@ router.put('/by-uuid/:globalId/role', async (req, res) => {
         return res.status(500).json({
             success: false,
             message: 'Error al actualizar rol del empleado',
-            error: error.message
+            error: undefined
         });
     } finally {
         client.release();
@@ -656,7 +659,7 @@ router.put('/by-uuid/:globalId/role', async (req, res) => {
 // }
 // ─────────────────────────────────────────────────────────────────────────
 
-router.put('/roles/:roleId/permissions', async (req, res) => {
+router.put('/roles/:roleId/permissions', validateTenant, async (req, res) => {
     const { roleId } = req.params;
     const { tenantId, permissionCodes } = req.body;
 
@@ -751,7 +754,7 @@ router.put('/roles/:roleId/permissions', async (req, res) => {
         return res.status(500).json({
             success: false,
             message: 'Error al sincronizar permisos del rol',
-            error: error.message
+            error: undefined
         });
     } finally {
         client.release();

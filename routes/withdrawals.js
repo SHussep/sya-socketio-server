@@ -82,7 +82,7 @@ module.exports = (pool) => {
             });
         } catch (error) {
             console.error('[Withdrawals] ❌ Error:', error.message);
-            res.status(500).json({ success: false, message: 'Error al obtener retiros', error: error.message });
+            res.status(500).json({ success: false, message: 'Error al obtener retiros', error: undefined });
         }
     });
 
@@ -122,7 +122,7 @@ module.exports = (pool) => {
             });
         } catch (error) {
             console.error('[Withdrawals] ❌ Error creating withdrawal:', error.message);
-            res.status(500).json({ success: false, message: 'Error al crear retiro', error: error.message });
+            res.status(500).json({ success: false, message: 'Error al crear retiro', error: undefined });
         }
     });
 
@@ -213,7 +213,7 @@ module.exports = (pool) => {
                     results.push({ success: true, data: result.rows[0] });
                     console.log(`[Withdrawals/Sync] ✅ Withdrawal synced: $${numericAmount} (global_id: ${global_id})`);
                 } catch (error) {
-                    results.push({ success: false, error: error.message, global_id: withdrawal.global_id });
+                    results.push({ success: false, error: undefined, global_id: withdrawal.global_id });
                     console.error(`[Withdrawals/Sync] ❌ Error:`, error.message);
                 }
             }
@@ -226,7 +226,7 @@ module.exports = (pool) => {
             });
         } catch (error) {
             console.error('[Withdrawals/Sync] ❌ Error:', error.message);
-            res.status(500).json({ success: false, message: 'Error syncing withdrawals', error: error.message });
+            res.status(500).json({ success: false, message: 'Error syncing withdrawals', error: undefined });
         }
     });
 

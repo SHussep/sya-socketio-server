@@ -89,7 +89,7 @@ module.exports = (pool) => {
             });
         } catch (error) {
             console.error('[CreditPayments] ❌ Error:', error.message);
-            res.status(500).json({ success: false, message: 'Error al obtener pagos de crédito', error: error.message });
+            res.status(500).json({ success: false, message: 'Error al obtener pagos de crédito', error: undefined });
         }
     });
 
@@ -202,7 +202,7 @@ module.exports = (pool) => {
                     results.push({ success: true, data: result.rows[0] });
                     console.log(`[CreditPayments/Sync] ✅ Payment synced: $${numericAmount} from customer ${finalCustomerId} (global_id: ${global_id})`);
                 } catch (error) {
-                    results.push({ success: false, error: error.message, global_id: payment.global_id });
+                    results.push({ success: false, error: undefined, global_id: payment.global_id });
                     console.error(`[CreditPayments/Sync] ❌ Error:`, error.message);
                 }
             }
@@ -215,7 +215,7 @@ module.exports = (pool) => {
             });
         } catch (error) {
             console.error('[CreditPayments/Sync] ❌ Error:', error.message);
-            res.status(500).json({ success: false, message: 'Error syncing credit payments', error: error.message });
+            res.status(500).json({ success: false, message: 'Error syncing credit payments', error: undefined });
         }
     });
 
@@ -344,7 +344,7 @@ module.exports = (pool) => {
             });
         } catch (error) {
             console.error('[CreditPayments] ❌ Error:', error.message);
-            res.status(500).json({ success: false, message: 'Error al obtener historial', error: error.message });
+            res.status(500).json({ success: false, message: 'Error al obtener historial', error: undefined });
         }
     });
 
@@ -394,7 +394,7 @@ module.exports = (pool) => {
             });
         } catch (error) {
             console.error('[CreditPayments] ❌ Error:', error.message);
-            res.status(500).json({ success: false, message: 'Error al obtener resumen', error: error.message });
+            res.status(500).json({ success: false, message: 'Error al obtener resumen', error: undefined });
         }
     });
 

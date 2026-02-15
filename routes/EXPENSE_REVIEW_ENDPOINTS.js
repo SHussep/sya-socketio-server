@@ -68,7 +68,7 @@ router.get('/pending-review', async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Error al obtener gastos pendientes',
-            error: error.message
+            error: undefined
         });
     }
 });
@@ -116,7 +116,7 @@ router.patch('/:global_id/approve', async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Error al aprobar gasto',
-            error: error.message
+            error: undefined
         });
     }
 });
@@ -169,7 +169,7 @@ router.delete('/:global_id', async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Error al eliminar gasto',
-            error: error.message
+            error: undefined
         });
     }
 });

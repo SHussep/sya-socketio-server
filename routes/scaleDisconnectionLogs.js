@@ -126,7 +126,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al sincronizar log de desconexión de báscula',
-                error: error.message
+                error: undefined
             });
         }
     });

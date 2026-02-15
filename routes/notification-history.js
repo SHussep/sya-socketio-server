@@ -3,29 +3,23 @@ const express = require("express");
 const jwt = require("jsonwebtoken");
 const JWT_SECRET = process.env.JWT_SECRET;
 
-// Middleware que extrae datos del token SIN verificar expiración
-// (La app móvil maneja refresh tokens por separado)
+// Middleware que verifica el token JWT con firma
 function authenticateToken(req, res, next) {
-    console.log(`[NotificationHistory/Auth] 🔑 Procesando autenticación...`);
     const authHeader = req.headers["authorization"];
     const token = authHeader && authHeader.split(" ")[1];
     if (!token) {
-        console.log(`[NotificationHistory/Auth] ❌ No hay token`);
         return res.status(401).json({ success: false, message: "Token no proporcionado" });
     }
     try {
-        // Decodificar sin verificar - solo extraemos los datos
-        const decoded = jwt.decode(token);
-        console.log(`[NotificationHistory/Auth] 🔍 Token decodificado:`, decoded ? `tenantId=${decoded.tenantId}` : 'NULL');
+        // Verificar firma del token (ignoreExpiration para compatibilidad con app móvil que maneja refresh por separado)
+        const decoded = jwt.verify(token, JWT_SECRET, { ignoreExpiration: true });
         if (!decoded || !decoded.tenantId) {
-            console.log(`[NotificationHistory/Auth] ❌ Token sin tenantId`);
             return res.status(403).json({ success: false, message: "Token inválido" });
         }
         req.user = decoded;
-        console.log(`[NotificationHistory/Auth] ✅ Auth OK - tenantId=${decoded.tenantId}`);
         next();
     } catch (err) {
-        console.log(`[NotificationHistory/Auth] ❌ Error:`, err.message);
+        console.log(`[NotificationHistory/Auth] ❌ Token inválido:`, err.message);
         return res.status(403).json({ success: false, message: "Token inválido" });
     }
 }
@@ -56,7 +50,7 @@ module.exports = (pool) => {
             const result = await pool.query(query, params);
             res.json({ success: true, data: result.rows });
         } catch (error) {
-            res.status(500).json({ success: false, message: error.message });
+            console.error('[NotificationHistory] Error:', error.message); res.status(500).json({ success: false, message: 'Error interno del servidor' });
         }
     });
 
@@ -72,7 +66,7 @@ module.exports = (pool) => {
             for (const row of result.rows) { counts[row.category] = parseInt(row.count); counts.total += parseInt(row.count); }
             res.json({ success: true, data: counts });
         } catch (error) {
-            res.status(500).json({ success: false, message: error.message });
+            console.error('[NotificationHistory] Error:', error.message); res.status(500).json({ success: false, message: 'Error interno del servidor' });
         }
     });
 
@@ -83,7 +77,7 @@ module.exports = (pool) => {
             const result = await pool.query("INSERT INTO notifications (tenant_id, branch_id, employee_id, category, event_type, title, body, data) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *", [tenant_id, branch_id, employee_id, category, event_type, title, body, data]);
             res.json({ success: true, data: result.rows[0] });
         } catch (error) {
-            res.status(500).json({ success: false, message: error.message });
+            console.error('[NotificationHistory] Error:', error.message); res.status(500).json({ success: false, message: 'Error interno del servidor' });
         }
     });
 
@@ -95,7 +89,7 @@ module.exports = (pool) => {
             if (result.rows.length === 0) return res.status(404).json({ success: false, message: "No encontrada" });
             res.json({ success: true, data: result.rows[0] });
         } catch (error) {
-            res.status(500).json({ success: false, message: error.message });
+            console.error('[NotificationHistory] Error:', error.message); res.status(500).json({ success: false, message: 'Error interno del servidor' });
         }
     });
 
@@ -111,7 +105,7 @@ module.exports = (pool) => {
             const result = await pool.query(query, params);
             res.json({ success: true, data: { count: result.rowCount } });
         } catch (error) {
-            res.status(500).json({ success: false, message: error.message });
+            console.error('[NotificationHistory] Error:', error.message); res.status(500).json({ success: false, message: 'Error interno del servidor' });
         }
     });
 
@@ -123,7 +117,7 @@ module.exports = (pool) => {
             if (result.rows.length === 0) return res.status(404).json({ success: false, message: "No encontrada" });
             res.json({ success: true, data: result.rows[0] });
         } catch (error) {
-            res.status(500).json({ success: false, message: error.message });
+            console.error('[NotificationHistory] Error:', error.message); res.status(500).json({ success: false, message: 'Error interno del servidor' });
         }
     });
 
@@ -143,7 +137,7 @@ module.exports = (pool) => {
             if (result.rows.length === 0) return res.status(404).json({ success: false, message: "No encontrada" });
             res.json({ success: true, data: result.rows[0] });
         } catch (error) {
-            res.status(500).json({ success: false, message: error.message });
+            console.error('[NotificationHistory] Error:', error.message); res.status(500).json({ success: false, message: 'Error interno del servidor' });
         }
     });
 
@@ -164,7 +158,7 @@ module.exports = (pool) => {
             const result = await pool.query(query, params);
             res.json({ success: true, data: { count: result.rowCount } });
         } catch (error) {
-            res.status(500).json({ success: false, message: error.message });
+            console.error('[NotificationHistory] Error:', error.message); res.status(500).json({ success: false, message: 'Error interno del servidor' });
         }
     });
 
@@ -216,8 +210,7 @@ module.exports = (pool) => {
             return res.json({ success: true, data: { count: result.rowCount, deleted: true } });
         } catch (error) {
             console.error(`[NotificationHistory/DeleteAll] ❌ Error:`, error.message);
-            console.error(`[NotificationHistory/DeleteAll] ❌ Stack:`, error.stack);
-            return res.status(500).json({ success: false, message: error.message });
+            return res.status(500).json({ success: false, message: 'Error interno del servidor' });
         }
     });
 
@@ -245,7 +238,7 @@ module.exports = (pool) => {
             const result = await pool.query(query, params);
             res.json({ success: true, data: { count: result.rowCount, deleted: true } });
         } catch (error) {
-            res.status(500).json({ success: false, message: error.message });
+            console.error('[NotificationHistory] Error:', error.message); res.status(500).json({ success: false, message: 'Error interno del servidor' });
         }
     });
 
@@ -264,7 +257,7 @@ module.exports = (pool) => {
             }
             res.json({ success: true, data: { id: result.rows[0].id, deleted: true } });
         } catch (error) {
-            res.status(500).json({ success: false, message: error.message });
+            console.error('[NotificationHistory] Error:', error.message); res.status(500).json({ success: false, message: 'Error interno del servidor' });
         }
     });
 

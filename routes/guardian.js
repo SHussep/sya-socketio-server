@@ -239,7 +239,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener eventos Guardian',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -351,7 +351,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener resumen Guardian',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -439,7 +439,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener ranking de empleados',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -500,7 +500,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al eliminar evento',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -577,7 +577,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al eliminar eventos',
-                error: error.message
+                error: undefined
             });
         }
     });

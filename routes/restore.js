@@ -172,7 +172,7 @@ router.post('/login', async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Error interno del servidor',
-            error: error.message
+            error: undefined
         });
     }
 });
@@ -301,7 +301,7 @@ router.get('/database-snapshot', authenticate, async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Error generando snapshot',
-            error: error.message
+            error: undefined
         });
     }
 });
@@ -335,7 +335,7 @@ router.get('/available-branches', authenticate, async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Error obteniendo sucursales',
-            error: error.message
+            error: undefined
         });
     }
 });
@@ -396,7 +396,7 @@ router.post('/verify-account', async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Error verificando cuenta',
-            error: error.message
+            error: undefined
         });
     }
 });
@@ -472,7 +472,7 @@ router.get('/download-backup/:branchId', authenticate, async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Error al descargar backup',
-            error: error.message
+            error: undefined
         });
     }
 });

@@ -176,7 +176,7 @@ module.exports = (pool, io) => {
             console.error('[Sales] ❌ Error:', error.message);
             console.error('[Sales] SQL Error Code:', error.code);
             console.error('[Sales] Full error:', error);
-            res.status(500).json({ success: false, message: 'Error al obtener ventas', error: error.message });
+            res.status(500).json({ success: false, message: 'Error al obtener ventas', error: undefined });
         }
     });
 
@@ -586,7 +586,7 @@ module.exports = (pool, io) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al sincronizar venta',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -642,7 +642,7 @@ module.exports = (pool, io) => {
             res.json({ success: true, data: insertedItems });
         } catch (error) {
             console.error('[Sync/SalesItems] Error:', error);
-            res.status(500).json({ success: false, message: 'Error al sincronizar líneas de venta', error: error.message });
+            res.status(500).json({ success: false, message: 'Error al sincronizar líneas de venta', error: undefined });
         }
     });
     */
@@ -708,7 +708,7 @@ module.exports = (pool, io) => {
             res.json({ data: items });
         } catch (error) {
             console.error('[SalesItems/GetBySale] Error:', error);
-            res.status(500).json({ success: false, message: 'Error al obtener artículos de venta', error: error.message });
+            res.status(500).json({ success: false, message: 'Error al obtener artículos de venta', error: undefined });
         }
     });
 
@@ -766,7 +766,7 @@ module.exports = (pool, io) => {
             res.json({ data: items });
         } catch (error) {
             console.error('[SalesItems/GetByBranch] Error:', error);
-            res.status(500).json({ success: false, message: 'Error al obtener artículos por sucursal', error: error.message });
+            res.status(500).json({ success: false, message: 'Error al obtener artículos por sucursal', error: undefined });
         }
     });
 
@@ -843,7 +843,7 @@ module.exports = (pool, io) => {
             res.json({ data: items });
         } catch (error) {
             console.error('[SalesItems/GetByType] Error:', error);
-            res.status(500).json({ success: false, message: 'Error al obtener artículos por tipo de venta', error: error.message });
+            res.status(500).json({ success: false, message: 'Error al obtener artículos por tipo de venta', error: undefined });
         }
     });
 
@@ -922,7 +922,7 @@ module.exports = (pool, io) => {
             res.json({ data: items });
         } catch (error) {
             console.error('[SalesItems/GetByPayment] Error:', error);
-            res.status(500).json({ success: false, message: 'Error al obtener artículos por tipo de pago', error: error.message });
+            res.status(500).json({ success: false, message: 'Error al obtener artículos por tipo de pago', error: undefined });
         }
     });
 
@@ -969,7 +969,7 @@ module.exports = (pool, io) => {
             res.json(formattedStats);
         } catch (error) {
             console.error('[SalesItems/GetStats] Error:', error);
-            res.status(500).json({ success: false, message: 'Error al obtener estadísticas', error: error.message });
+            res.status(500).json({ success: false, message: 'Error al obtener estadísticas', error: undefined });
         }
     });
 
@@ -1135,7 +1135,7 @@ module.exports = (pool, io) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al actualizar venta',
-                error: error.message
+                error: undefined
             });
         }
     });

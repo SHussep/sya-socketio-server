@@ -297,7 +297,7 @@ module.exports = function(pool, io) {
             res.status(500).json({
                 success: false,
                 message: 'Error al sincronizar logs de Modo Preparación',
-                error: error.message
+                error: undefined
             });
         } finally {
             client.release();
@@ -449,7 +449,7 @@ module.exports = function(pool, io) {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener logs de Modo Preparación',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -564,7 +564,7 @@ module.exports = function(pool, io) {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener resumen de Modo Preparación',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -610,7 +610,7 @@ module.exports = function(pool, io) {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener sesiones activas',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -666,7 +666,7 @@ module.exports = function(pool, io) {
             res.status(500).json({
                 success: false,
                 message: 'Error al marcar como revisado',
-                error: error.message
+                error: undefined
             });
         }
     });

@@ -448,6 +448,17 @@ module.exports = (pool, io) => {
                       AND ra.fecha_liquidacion IS NULL
                 `, [shift.id]);
 
+                // 7. Obtener liquidaciones consolidadas del cash_cut (si existen)
+                const liquidacionesResult = await pool.query(`
+                    SELECT
+                        COALESCE(total_liquidaciones_efectivo, 0) as total_liquidaciones_efectivo,
+                        COALESCE(total_liquidaciones_tarjeta, 0) as total_liquidaciones_tarjeta,
+                        COALESCE(total_liquidaciones_credito, 0) as total_liquidaciones_credito
+                    FROM cash_cuts
+                    WHERE shift_id = $1 AND is_closed = true
+                    ORDER BY id DESC LIMIT 1
+                `, [shift.id]);
+
                 enrichedShifts.push({
                     ...shift,
                     start_time: shift.start_time ? new Date(shift.start_time).toISOString() : null,
@@ -481,6 +492,10 @@ module.exports = (pool, io) => {
                     // 🚚 Asignaciones de repartidor (DOS contadores diferentes)
                     created_assignments: parseInt(createdAssignmentsResult.rows[0]?.created_assignments || 0),
                     received_assignments: parseInt(receivedAssignmentsResult.rows[0]?.received_assignments || 0),
+                    // 💰 Liquidaciones consolidadas (solo cuando modo cajero consolida está activo)
+                    total_liquidaciones_efectivo: parseFloat(liquidacionesResult.rows[0]?.total_liquidaciones_efectivo || 0),
+                    total_liquidaciones_tarjeta: parseFloat(liquidacionesResult.rows[0]?.total_liquidaciones_tarjeta || 0),
+                    total_liquidaciones_credito: parseFloat(liquidacionesResult.rows[0]?.total_liquidaciones_credito || 0),
                 });
             }
 
@@ -696,7 +711,7 @@ module.exports = (pool, io) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al verificar turno activo',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -851,7 +866,7 @@ module.exports = (pool, io) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al abrir turno',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -1094,7 +1109,7 @@ module.exports = (pool, io) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al sincronizar turno',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -1223,7 +1238,7 @@ module.exports = (pool, io) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al cerrar turno',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -1364,7 +1379,7 @@ module.exports = (pool, io) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al verificar estado del turno',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -1455,7 +1470,7 @@ module.exports = (pool, io) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al cerrar turno',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -1717,7 +1732,7 @@ module.exports = (pool, io) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al calcular snapshots de caja',
-                error: error.message
+                error: undefined
             });
         }
     });

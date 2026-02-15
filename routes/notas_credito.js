@@ -237,7 +237,7 @@ module.exports = function(pool) {
             res.status(500).json({
                 success: false,
                 message: 'Error al sincronizar notas de crédito',
-                error: error.message
+                error: undefined
             });
         } finally {
             client.release();
@@ -325,7 +325,7 @@ module.exports = function(pool) {
             res.status(500).json({
                 success: false,
                 message: 'Error al descargar notas de crédito',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -402,7 +402,7 @@ module.exports = function(pool) {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener notas de crédito',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -458,7 +458,7 @@ module.exports = function(pool) {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener notas de crédito de la venta',
-                error: error.message
+                error: undefined
             });
         }
     });

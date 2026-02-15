@@ -280,7 +280,7 @@ module.exports = function(pool, io) {
             res.status(500).json({
                 success: false,
                 message: 'Error al registrar negocio',
-                error: error.message,
+                error: undefined,
                 errorCode: error.code,
                 errorDetail: error.detail
             });
@@ -321,7 +321,7 @@ module.exports = function(pool, io) {
             res.status(500).json({
                 success: false,
                 message: 'Error al eliminar tenants',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -412,7 +412,7 @@ module.exports = function(pool, io) {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener tenant',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -481,7 +481,7 @@ module.exports = function(pool, io) {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener tenant',
-                error: error.message
+                error: undefined
             });
         }
     });

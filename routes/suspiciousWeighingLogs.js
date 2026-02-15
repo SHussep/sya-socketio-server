@@ -231,7 +231,7 @@ module.exports = (pool, io) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al sincronizar log Guardian',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -281,7 +281,7 @@ module.exports = (pool, io) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener logs Guardian',
-                error: error.message
+                error: undefined
             });
         }
     });

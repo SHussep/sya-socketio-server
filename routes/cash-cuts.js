@@ -107,7 +107,7 @@ module.exports = (pool) => {
             });
         } catch (error) {
             console.error('[CashCuts] ❌ Error:', error.message);
-            res.status(500).json({ success: false, message: 'Error al obtener cortes de caja', error: error.message });
+            res.status(500).json({ success: false, message: 'Error al obtener cortes de caja', error: undefined });
         }
     });
 
@@ -310,7 +310,7 @@ module.exports = (pool) => {
         } catch (error) {
             await client.query('ROLLBACK');
             console.error('[CashCuts] ❌ Error creating cash cut:', error.message);
-            res.status(500).json({ success: false, message: 'Error al crear corte de caja', error: error.message });
+            res.status(500).json({ success: false, message: 'Error al crear corte de caja', error: undefined });
         } finally {
             client.release();
         }
@@ -343,6 +343,8 @@ module.exports = (pool) => {
                         expectedCashInDrawer, countedCash, difference,
                         unregisteredWeightEvents = 0, scaleConnectionEvents = 0, cancelledSales = 0,
                         notes, isClosed = true,
+                        // Liquidaciones consolidadas de repartidores
+                        totalLiquidacionesEfectivo = 0, totalLiquidacionesTarjeta = 0, totalLiquidacionesCredito = 0,
                         // Campos offline-first para idempotencia
                         global_id, terminal_id, local_op_seq, device_event_raw, created_local_utc
                     } = cashCut;
@@ -396,17 +398,21 @@ module.exports = (pool) => {
                             total_cash_sales, total_card_sales, total_credit_sales,
                             total_cash_payments, total_card_payments,
                             total_expenses, total_deposits, total_withdrawals,
+                            total_liquidaciones_efectivo, total_liquidaciones_tarjeta, total_liquidaciones_credito,
                             expected_cash_in_drawer, counted_cash, difference,
                             unregistered_weight_events, scale_connection_events, cancelled_sales,
                             notes, is_closed,
                             global_id, terminal_id, local_op_seq, device_event_raw, created_local_utc
                         )
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)
                         ON CONFLICT (global_id)
                         DO UPDATE SET
                             counted_cash = EXCLUDED.counted_cash,
                             difference = EXCLUDED.difference,
-                            notes = EXCLUDED.notes
+                            notes = EXCLUDED.notes,
+                            total_liquidaciones_efectivo = EXCLUDED.total_liquidaciones_efectivo,
+                            total_liquidaciones_tarjeta = EXCLUDED.total_liquidaciones_tarjeta,
+                            total_liquidaciones_credito = EXCLUDED.total_liquidaciones_credito
                         RETURNING *`,
                         [
                             effectiveTenantId, branchId, resolvedShiftId, shiftEmployeeId, // ✅ Usar el ID resuelto del shift
@@ -420,6 +426,9 @@ module.exports = (pool) => {
                             parseFloat(totalExpenses || 0),
                             parseFloat(totalDeposits || 0),
                             parseFloat(totalWithdrawals || 0),
+                            parseFloat(totalLiquidacionesEfectivo || 0),
+                            parseFloat(totalLiquidacionesTarjeta || 0),
+                            parseFloat(totalLiquidacionesCredito || 0),
                             parseFloat(expectedCashInDrawer || 0),
                             parseFloat(countedCash),
                             parseFloat(difference || 0),
@@ -488,7 +497,7 @@ module.exports = (pool) => {
                     }
                 } catch (error) {
                     await client.query('ROLLBACK');
-                    results.push({ success: false, error: error.message });
+                    results.push({ success: false, error: undefined });
                     console.error(`[CashCuts/Sync] ❌ Error:`, error.message);
                 } finally {
                     client.release();
@@ -503,7 +512,7 @@ module.exports = (pool) => {
             });
         } catch (error) {
             console.error('[CashCuts/Sync] ❌ Error:', error.message);
-            res.status(500).json({ success: false, message: 'Error syncing cash cuts', error: error.message });
+            res.status(500).json({ success: false, message: 'Error syncing cash cuts', error: undefined });
         }
     });
 

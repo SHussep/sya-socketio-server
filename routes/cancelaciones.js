@@ -172,7 +172,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al sincronizar cancelación',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -305,7 +305,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al sincronizar lote de cancelaciones',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -377,7 +377,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener cancelaciones',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -405,7 +405,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener razones de cancelación',
-                error: error.message
+                error: undefined
             });
         }
     });

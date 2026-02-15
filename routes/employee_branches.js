@@ -128,7 +128,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al sincronizar relación empleado-sucursal',
-                error: error.message
+                error: undefined
             });
         } finally {
             client.release();
@@ -244,7 +244,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al remover empleado de sucursal',
-                error: error.message
+                error: undefined
             });
         } finally {
             client.release();

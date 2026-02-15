@@ -712,7 +712,7 @@ function createRepartidorAssignmentRoutes(io) {
       res.status(500).json({
         success: false,
         message: 'Error al sincronizar asignación de repartidor',
-        error: error.message
+        error: undefined
       });
     }
   });
@@ -862,7 +862,7 @@ function createRepartidorAssignmentRoutes(io) {
       console.error('❌ Error liquidando asignación:', error.message);
       res.status(500).json({
         success: false,
-        error: error.message
+        error: undefined
       });
     } finally {
       client.release();
@@ -984,7 +984,7 @@ function createRepartidorAssignmentRoutes(io) {
       console.error('❌ Error obteniendo asignaciones:', error.message);
       res.status(500).json({
         success: false,
-        error: error.message
+        error: undefined
       });
     }
   });
@@ -1090,7 +1090,7 @@ function createRepartidorAssignmentRoutes(io) {
       console.error('❌ Error obteniendo asignaciones por global_id:', error.message);
       res.status(500).json({
         success: false,
-        error: error.message
+        error: undefined
       });
     }
   });
@@ -1164,7 +1164,7 @@ function createRepartidorAssignmentRoutes(io) {
       console.error('❌ Error obteniendo liquidaciones:', error.message);
       res.status(500).json({
         success: false,
-        error: error.message
+        error: undefined
       });
     }
   });
@@ -1243,7 +1243,7 @@ function createRepartidorAssignmentRoutes(io) {
       console.error('❌ Error obteniendo resumen:', error.message);
       res.status(500).json({
         success: false,
-        error: error.message
+        error: undefined
       });
     }
   });
@@ -1313,7 +1313,7 @@ function createRepartidorAssignmentRoutes(io) {
       console.error('❌ Error obteniendo resumen de asignaciones:', error.message);
       res.status(500).json({
         success: false,
-        error: error.message
+        error: undefined
       });
     }
   });

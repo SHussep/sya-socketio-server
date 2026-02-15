@@ -81,7 +81,7 @@ function createRepartidorDebtsRoutes(io) {
       console.error('❌ Error obteniendo deudas:', error.message);
       res.status(500).json({
         success: false,
-        error: error.message
+        error: undefined
       });
     }
   });
@@ -154,7 +154,7 @@ function createRepartidorDebtsRoutes(io) {
       console.error('❌ Error obteniendo resumen de deudas:', error.message);
       res.status(500).json({
         success: false,
-        error: error.message
+        error: undefined
       });
     }
   });

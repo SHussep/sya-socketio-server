@@ -152,7 +152,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener productos',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -248,7 +248,7 @@ module.exports = (pool) => {
             });
         } catch (error) {
             console.error('[Productos/Pull] ❌ Error:', error.message);
-            res.status(500).json({ success: false, message: 'Error al descargar productos', error: error.message });
+            res.status(500).json({ success: false, message: 'Error al descargar productos', error: undefined });
         }
     });
 
@@ -412,7 +412,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al sincronizar producto',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -562,7 +562,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al sincronizar productos',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -614,7 +614,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al eliminar producto',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -717,7 +717,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al sincronizar precio de sucursal',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -860,7 +860,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al limpiar duplicados',
-                error: error.message
+                error: undefined
             });
         } finally {
             client.release();
@@ -933,7 +933,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al subir imagen',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -1037,7 +1037,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al eliminar imagen',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -1283,7 +1283,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error en sincronización agresiva',
-                error: error.message
+                error: undefined
             });
         } finally {
             client.release();
@@ -1351,7 +1351,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error verificando código',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -1421,7 +1421,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error verificando duplicados',
-                error: error.message
+                error: undefined
             });
         }
     });
@@ -1452,7 +1452,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener categorías',
-                error: error.message
+                error: undefined
             });
         }
     });

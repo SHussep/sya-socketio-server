@@ -136,7 +136,7 @@ function createEmployeeDebtsRoutes(io) {
           console.log(`[EmployeeDebts/Sync] ✅ Deuda sincronizada: $${monto_deuda} empleado ${finalEmployeeId} (global_id: ${global_id})`);
 
         } catch (error) {
-          results.push({ success: false, error: error.message, global_id: debt.global_id });
+          results.push({ success: false, error: undefined, global_id: debt.global_id });
           console.error(`[EmployeeDebts/Sync] ❌ Error:`, error.message);
         }
       }
@@ -150,7 +150,7 @@ function createEmployeeDebtsRoutes(io) {
 
     } catch (error) {
       console.error('[EmployeeDebts/Sync] ❌ Error:', error.message);
-      res.status(500).json({ success: false, message: 'Error syncing employee debts', error: error.message });
+      res.status(500).json({ success: false, message: 'Error syncing employee debts', error: undefined });
     }
   });
 
@@ -219,7 +219,7 @@ function createEmployeeDebtsRoutes(io) {
 
     } catch (error) {
       console.error('[EmployeeDebts] ❌ Error:', error.message);
-      res.status(500).json({ success: false, error: error.message });
+      res.status(500).json({ success: false, error: undefined });
     }
   });
 
@@ -283,7 +283,7 @@ function createEmployeeDebtsRoutes(io) {
 
     } catch (error) {
       console.error('[EmployeeDebts] ❌ Error:', error.message);
-      res.status(500).json({ success: false, error: error.message });
+      res.status(500).json({ success: false, error: undefined });
     }
   });
 
