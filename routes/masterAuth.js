@@ -94,18 +94,26 @@ module.exports = function (pool) {
 
         try {
             // Validar campos requeridos
-            if (!username || !password) {
+            if (!password) {
                 return res.status(400).json({
                     success: false,
-                    message: 'Usuario y contraseña son requeridos'
+                    message: 'Contraseña es requerida'
                 });
             }
 
             // Buscar credencial maestra
-            const credResult = await pool.query(
-                'SELECT id, username, password_hash FROM master_credentials WHERE username = $1 AND is_active = true',
-                [username]
-            );
+            // Si viene username, buscar por username. Si no (mobile), usar la primera activa.
+            let credResult;
+            if (username) {
+                credResult = await pool.query(
+                    'SELECT id, username, password_hash FROM master_credentials WHERE username = $1 AND is_active = true',
+                    [username]
+                );
+            } else {
+                credResult = await pool.query(
+                    'SELECT id, username, password_hash FROM master_credentials WHERE is_active = true ORDER BY id ASC LIMIT 1'
+                );
+            }
 
             if (credResult.rows.length === 0) {
                 // Registrar intento fallido
