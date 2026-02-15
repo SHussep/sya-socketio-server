@@ -2661,6 +2661,33 @@ async function runMigrations() {
                 console.error(`[Schema] ⚠️ beta_enrollments migration error: ${beErr.message}`);
             }
 
+            // Patch: Add liquidaciones columns to cash_cuts (for consolidated repartidor liquidations in cash cuts)
+            console.log('[Schema] 🔍 Checking cash_cuts liquidaciones columns...');
+            const checkCashCutsTable = await client.query(`
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'cash_cuts'
+                )
+            `);
+            if (checkCashCutsTable.rows[0].exists) {
+                const checkLiquidacionesCol = await client.query(`
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'cash_cuts'
+                    AND column_name = 'total_liquidaciones_efectivo'
+                `);
+                if (checkLiquidacionesCol.rows.length === 0) {
+                    console.log('[Schema] 📝 Adding liquidaciones columns to cash_cuts...');
+                    await client.query(`
+                        ALTER TABLE cash_cuts
+                        ADD COLUMN IF NOT EXISTS total_liquidaciones_efectivo DECIMAL(12, 2) DEFAULT 0,
+                        ADD COLUMN IF NOT EXISTS total_liquidaciones_tarjeta DECIMAL(12, 2) DEFAULT 0,
+                        ADD COLUMN IF NOT EXISTS total_liquidaciones_credito DECIMAL(12, 2) DEFAULT 0
+                    `);
+                    console.log('[Schema] ✅ cash_cuts liquidaciones columns added successfully');
+                }
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {
