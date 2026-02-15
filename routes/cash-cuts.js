@@ -42,6 +42,9 @@ module.exports = (pool) => {
                        cc.initial_amount, cc.total_cash_sales, cc.total_card_sales, cc.total_credit_sales,
                        cc.total_cash_payments, cc.total_card_payments,
                        cc.total_expenses, cc.total_deposits, cc.total_withdrawals,
+                       COALESCE(cc.total_liquidaciones_efectivo, 0) as total_liquidaciones_efectivo,
+                       COALESCE(cc.total_liquidaciones_tarjeta, 0) as total_liquidaciones_tarjeta,
+                       COALESCE(cc.total_liquidaciones_credito, 0) as total_liquidaciones_credito,
                        cc.expected_cash_in_drawer, cc.counted_cash, cc.difference,
                        cc.unregistered_weight_events, cc.scale_connection_events, cc.cancelled_sales,
                        cc.notes, cc.is_closed, cc.created_at, cc.updated_at,
@@ -91,6 +94,9 @@ module.exports = (pool) => {
                 total_expenses: parseFloat(row.total_expenses),
                 total_deposits: parseFloat(row.total_deposits),
                 total_withdrawals: parseFloat(row.total_withdrawals),
+                total_liquidaciones_efectivo: parseFloat(row.total_liquidaciones_efectivo || 0),
+                total_liquidaciones_tarjeta: parseFloat(row.total_liquidaciones_tarjeta || 0),
+                total_liquidaciones_credito: parseFloat(row.total_liquidaciones_credito || 0),
                 expected_cash_in_drawer: parseFloat(row.expected_cash_in_drawer),
                 counted_cash: parseFloat(row.counted_cash),
                 difference: parseFloat(row.difference),
@@ -116,7 +122,7 @@ module.exports = (pool) => {
         const client = await pool.connect();
         try {
             const { tenantId, branchId: userBranchId, id: employeeId } = req.user;
-            const { shiftId, branchId, initialAmount = 0, countedCash, notes, unregisteredWeightEvents = 0, scaleConnectionEvents = 0, cancelledSales = 0 } = req.body;
+            const { shiftId, branchId, initialAmount = 0, countedCash, notes, unregisteredWeightEvents = 0, scaleConnectionEvents = 0, cancelledSales = 0, totalLiquidacionesEfectivo = 0, totalLiquidacionesTarjeta = 0, totalLiquidacionesCredito = 0 } = req.body;
 
             const targetBranchId = branchId || userBranchId;
 
@@ -261,11 +267,12 @@ module.exports = (pool) => {
                     total_cash_sales, total_card_sales, total_credit_sales,
                     total_cash_payments, total_card_payments,
                     total_expenses, total_deposits, total_withdrawals,
+                    total_liquidaciones_efectivo, total_liquidaciones_tarjeta, total_liquidaciones_credito,
                     expected_cash_in_drawer, counted_cash, difference,
                     unregistered_weight_events, scale_connection_events, cancelled_sales,
                     notes, is_closed
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
                 RETURNING *`,
                 [
                     tenantId, targetBranchId, shiftId, employeeId,
@@ -274,6 +281,7 @@ module.exports = (pool) => {
                     totalCashSales, totalCardSales, totalCreditSales,
                     totalCashPayments, totalCardPayments,
                     totalExpenses, totalDeposits, totalWithdrawals,
+                    parseFloat(totalLiquidacionesEfectivo), parseFloat(totalLiquidacionesTarjeta), parseFloat(totalLiquidacionesCredito),
                     expectedCashInDrawer, numericCountedCash, difference,
                     unregisteredWeightEvents, scaleConnectionEvents, cancelledSales,
                     notes || null, true
