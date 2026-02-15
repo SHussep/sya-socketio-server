@@ -2688,6 +2688,22 @@ async function runMigrations() {
                     `);
                     console.log('[Schema] ✅ cash_cuts liquidaciones columns added successfully');
                 }
+
+                // Agregar columna de gastos de repartidores a cash_cuts
+                const checkRepExpCol = await client.query(`
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'cash_cuts'
+                    AND column_name = 'total_repartidor_expenses'
+                `);
+                if (checkRepExpCol.rows.length === 0) {
+                    console.log('[Schema] 📝 Adding total_repartidor_expenses column to cash_cuts...');
+                    await client.query(`
+                        ALTER TABLE cash_cuts
+                        ADD COLUMN IF NOT EXISTS total_repartidor_expenses DECIMAL(12, 2) DEFAULT 0
+                    `);
+                    console.log('[Schema] ✅ cash_cuts total_repartidor_expenses column added successfully');
+                }
             }
 
             console.log('[Schema] ✅ Database initialization complete');

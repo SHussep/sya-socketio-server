@@ -45,6 +45,7 @@ module.exports = (pool) => {
                        COALESCE(cc.total_liquidaciones_efectivo, 0) as total_liquidaciones_efectivo,
                        COALESCE(cc.total_liquidaciones_tarjeta, 0) as total_liquidaciones_tarjeta,
                        COALESCE(cc.total_liquidaciones_credito, 0) as total_liquidaciones_credito,
+                       COALESCE(cc.total_repartidor_expenses, 0) as total_repartidor_expenses,
                        cc.expected_cash_in_drawer, cc.counted_cash, cc.difference,
                        cc.unregistered_weight_events, cc.scale_connection_events, cc.cancelled_sales,
                        cc.notes, cc.is_closed, cc.created_at, cc.updated_at,
@@ -97,6 +98,7 @@ module.exports = (pool) => {
                 total_liquidaciones_efectivo: parseFloat(row.total_liquidaciones_efectivo || 0),
                 total_liquidaciones_tarjeta: parseFloat(row.total_liquidaciones_tarjeta || 0),
                 total_liquidaciones_credito: parseFloat(row.total_liquidaciones_credito || 0),
+                total_repartidor_expenses: parseFloat(row.total_repartidor_expenses || 0),
                 expected_cash_in_drawer: parseFloat(row.expected_cash_in_drawer),
                 counted_cash: parseFloat(row.counted_cash),
                 difference: parseFloat(row.difference),
@@ -122,7 +124,7 @@ module.exports = (pool) => {
         const client = await pool.connect();
         try {
             const { tenantId, branchId: userBranchId, id: employeeId } = req.user;
-            const { shiftId, branchId, initialAmount = 0, countedCash, notes, unregisteredWeightEvents = 0, scaleConnectionEvents = 0, cancelledSales = 0, totalLiquidacionesEfectivo = 0, totalLiquidacionesTarjeta = 0, totalLiquidacionesCredito = 0 } = req.body;
+            const { shiftId, branchId, initialAmount = 0, countedCash, notes, unregisteredWeightEvents = 0, scaleConnectionEvents = 0, cancelledSales = 0, totalLiquidacionesEfectivo = 0, totalLiquidacionesTarjeta = 0, totalLiquidacionesCredito = 0, totalRepartidorExpenses = 0 } = req.body;
 
             const targetBranchId = branchId || userBranchId;
 
@@ -268,11 +270,12 @@ module.exports = (pool) => {
                     total_cash_payments, total_card_payments,
                     total_expenses, total_deposits, total_withdrawals,
                     total_liquidaciones_efectivo, total_liquidaciones_tarjeta, total_liquidaciones_credito,
+                    total_repartidor_expenses,
                     expected_cash_in_drawer, counted_cash, difference,
                     unregistered_weight_events, scale_connection_events, cancelled_sales,
                     notes, is_closed
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
                 RETURNING *`,
                 [
                     tenantId, targetBranchId, shiftId, employeeId,
@@ -282,6 +285,7 @@ module.exports = (pool) => {
                     totalCashPayments, totalCardPayments,
                     totalExpenses, totalDeposits, totalWithdrawals,
                     parseFloat(totalLiquidacionesEfectivo), parseFloat(totalLiquidacionesTarjeta), parseFloat(totalLiquidacionesCredito),
+                    parseFloat(totalRepartidorExpenses),
                     expectedCashInDrawer, numericCountedCash, difference,
                     unregisteredWeightEvents, scaleConnectionEvents, cancelledSales,
                     notes || null, true
@@ -353,6 +357,8 @@ module.exports = (pool) => {
                         notes, isClosed = true,
                         // Liquidaciones consolidadas de repartidores
                         totalLiquidacionesEfectivo = 0, totalLiquidacionesTarjeta = 0, totalLiquidacionesCredito = 0,
+                        // Gastos de repartidores
+                        totalRepartidorExpenses = 0,
                         // Campos offline-first para idempotencia
                         global_id, terminal_id, local_op_seq, device_event_raw, created_local_utc
                     } = cashCut;
@@ -407,12 +413,13 @@ module.exports = (pool) => {
                             total_cash_payments, total_card_payments,
                             total_expenses, total_deposits, total_withdrawals,
                             total_liquidaciones_efectivo, total_liquidaciones_tarjeta, total_liquidaciones_credito,
+                            total_repartidor_expenses,
                             expected_cash_in_drawer, counted_cash, difference,
                             unregistered_weight_events, scale_connection_events, cancelled_sales,
                             notes, is_closed,
                             global_id, terminal_id, local_op_seq, device_event_raw, created_local_utc
                         )
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32)
                         ON CONFLICT (global_id)
                         DO UPDATE SET
                             counted_cash = EXCLUDED.counted_cash,
@@ -420,7 +427,8 @@ module.exports = (pool) => {
                             notes = EXCLUDED.notes,
                             total_liquidaciones_efectivo = EXCLUDED.total_liquidaciones_efectivo,
                             total_liquidaciones_tarjeta = EXCLUDED.total_liquidaciones_tarjeta,
-                            total_liquidaciones_credito = EXCLUDED.total_liquidaciones_credito
+                            total_liquidaciones_credito = EXCLUDED.total_liquidaciones_credito,
+                            total_repartidor_expenses = EXCLUDED.total_repartidor_expenses
                         RETURNING *`,
                         [
                             effectiveTenantId, branchId, resolvedShiftId, shiftEmployeeId, // ✅ Usar el ID resuelto del shift
@@ -437,6 +445,7 @@ module.exports = (pool) => {
                             parseFloat(totalLiquidacionesEfectivo || 0),
                             parseFloat(totalLiquidacionesTarjeta || 0),
                             parseFloat(totalLiquidacionesCredito || 0),
+                            parseFloat(totalRepartidorExpenses || 0),
                             parseFloat(expectedCashInDrawer || 0),
                             parseFloat(countedCash),
                             parseFloat(difference || 0),
