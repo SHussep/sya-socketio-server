@@ -215,23 +215,24 @@ module.exports = (pool) => {
                     continue;
                 }
 
-                // Limitar a 500 por entidad para evitar queries muy grandes
+                // Limitar a 10000 por entidad (UUIDs son ~36 chars, 10000 x 36 = ~360KB - aceptable)
                 // Filtrar solo strings válidos (UUIDs/GlobalIds) - rechazar valores no-string
                 const sanitizedIds = globalIds
                     .filter(id => typeof id === 'string' && id.length > 0 && id.length <= 50)
-                    .slice(0, 500);
+                    .slice(0, 10000);
 
                 if (sanitizedIds.length === 0) continue;
 
                 try {
                     // Query: buscar cuáles de estos global_ids existen
                     // Nota: config.table viene del whitelist entityConfig, nunca del input del usuario
+                    // Usar global_id::text para compatibilidad con columnas tipo uuid o text
                     let query, params;
                     if (config.useBranch && parsedBranchId) {
-                        query = `SELECT global_id FROM ${config.table} WHERE tenant_id = $1 AND branch_id = $2 AND global_id = ANY($3::text[])`;
+                        query = `SELECT global_id::text FROM ${config.table} WHERE tenant_id = $1 AND branch_id = $2 AND global_id::text = ANY($3::text[])`;
                         params = [parsedTenantId, parsedBranchId, sanitizedIds];
                     } else {
-                        query = `SELECT global_id FROM ${config.table} WHERE tenant_id = $1 AND global_id = ANY($2::text[])`;
+                        query = `SELECT global_id::text FROM ${config.table} WHERE tenant_id = $1 AND global_id::text = ANY($2::text[])`;
                         params = [parsedTenantId, sanitizedIds];
                     }
 
