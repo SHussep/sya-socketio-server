@@ -1,11 +1,8 @@
+require('dotenv').config();
 const { Pool } = require('pg');
 
 const pool = new Pool({
-  host: 'dpg-d3i8dv3e5dus738tm5rg-a.oregon-postgres.render.com',
-  user: 'sya_admin',
-  password: 'qJ1haIaPp7m7OFMyicWSplPlGoNL1GpF',
-  database: 'sya_db_oe4v',
-  port: 5432,
+  connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false }
 });
 

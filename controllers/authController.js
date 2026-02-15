@@ -140,8 +140,8 @@ class AuthController {
 
             console.log('[Gmail Callback] ✅ Tokens obtenidos exitosamente');
             console.log('[Gmail Callback] 📊 Tokens recibidos de Google:');
-            console.log('[Gmail Callback]    - access_token:', tokens.access_token ? `${tokens.access_token.substring(0, 20)}...` : 'NO');
-            console.log('[Gmail Callback]    - refresh_token:', tokens.refresh_token ? `${tokens.refresh_token.substring(0, 20)}...` : '❌ NO PRESENTE');
+            console.log('[Gmail Callback]    - access_token:', tokens.access_token ? 'PRESENTE' : 'NO');
+            console.log('[Gmail Callback]    - refresh_token:', tokens.refresh_token ? 'PRESENTE' : '❌ NO PRESENTE');
             console.log('[Gmail Callback]    - id_token:', tokens.id_token ? 'Sí' : 'NO');
             console.log('[Gmail Callback]    - expiry_date:', tokens.expiry_date);
 
@@ -1522,6 +1522,19 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                 return res.status(403).json({
                     success: false,
                     message: 'No autorizado para modificar este tenant'
+                });
+            }
+
+            // Verificar que el usuario sea owner o admin (role_id = 1)
+            const employeeCheck = await this.pool.query(
+                'SELECT role_id, is_owner FROM employees WHERE id = $1 AND tenant_id = $2 AND is_active = true',
+                [decoded.employeeId, tenantId]
+            );
+
+            if (employeeCheck.rows.length === 0 || (!employeeCheck.rows[0].is_owner && employeeCheck.rows[0].role_id !== 1)) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Solo el propietario o administrador puede sobrescribir el tenant'
                 });
             }
 

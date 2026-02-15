@@ -5,12 +5,21 @@
 
 const crypto = require('crypto');
 
-// PIN hasheado (SHA256) - Cambiar en producción
-// Default PIN: 147258 (cambiar por el tuyo)
-const SUPER_ADMIN_PIN_HASH = process.env.SUPER_ADMIN_PIN_HASH || crypto.createHash('sha256').update('147258').digest('hex');
+// PIN hasheado (SHA256) - OBLIGATORIO via variable de entorno
+const SUPER_ADMIN_PIN_HASH = process.env.SUPER_ADMIN_PIN_HASH;
+if (!SUPER_ADMIN_PIN_HASH) {
+    console.error('⚠️ SECURITY WARNING: SUPER_ADMIN_PIN_HASH no está configurado. Panel de superadmin deshabilitado.');
+}
 
 // Middleware de autenticación Super Admin
 function authenticateSuperAdmin(req, res, next) {
+    if (!SUPER_ADMIN_PIN_HASH) {
+        return res.status(503).json({
+            success: false,
+            message: 'Panel de superadmin no configurado'
+        });
+    }
+
     const authHeader = req.headers['x-admin-pin'];
 
     if (!authHeader) {

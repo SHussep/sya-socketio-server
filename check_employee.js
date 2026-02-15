@@ -36,7 +36,7 @@ async function checkEmployee(email) {
 
             if (emp.password_hash) {
                 console.log(`   Password length: ${emp.password_hash.length}`);
-                console.log(`   Password preview: ${emp.password_hash.substring(0, 20)}...`);
+                console.log(`   Password format: ${emp.password_hash.startsWith('$2') ? 'bcrypt ✅' : 'unknown ⚠️'}`);
             }
         });
 
