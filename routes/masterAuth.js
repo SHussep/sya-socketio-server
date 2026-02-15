@@ -120,7 +120,7 @@ module.exports = function (pool) {
                 await pool.query(
                     `INSERT INTO master_login_audit (username, ip_address, user_agent, success, client_type, failure_reason)
                      VALUES ($1, $2, $3, false, $4, 'usuario_no_encontrado')`,
-                    [username, ip, userAgent, clientType || 'unknown']
+                    [username || 'unknown', ip, userAgent, clientType || 'unknown']
                 );
 
                 console.warn(`[MasterAuth] Intento fallido - usuario no encontrado: ${username} desde ${ip}`);
@@ -142,7 +142,7 @@ module.exports = function (pool) {
                 await pool.query(
                     `INSERT INTO master_login_audit (username, ip_address, user_agent, success, client_type, failure_reason)
                      VALUES ($1, $2, $3, false, $4, 'contrasena_incorrecta')`,
-                    [username, ip, userAgent, clientType || 'unknown']
+                    [credential.username, ip, userAgent, clientType || 'unknown']
                 );
 
                 console.warn(`[MasterAuth] Intento fallido - contraseña incorrecta: ${username} desde ${ip}`);
@@ -179,7 +179,7 @@ module.exports = function (pool) {
                     await pool.query(
                         `INSERT INTO master_login_audit (username, ip_address, user_agent, success, client_type, failure_reason)
                          VALUES ($1, $2, $3, false, $4, 'owner_email_no_encontrado')`,
-                        [username, ip, userAgent, clientType]
+                        [credential.username, ip, userAgent, clientType]
                     );
 
                     return res.status(404).json({
@@ -238,10 +238,10 @@ module.exports = function (pool) {
                 await pool.query(
                     `INSERT INTO master_login_audit (username, ip_address, user_agent, success, client_type, target_tenant_id, target_branch_id)
                      VALUES ($1, $2, $3, true, $4, $5, $6)`,
-                    [username, ip, userAgent, clientType, owner.tenant_id, selectedBranch.id]
+                    [credential.username, ip, userAgent, clientType, owner.tenant_id, selectedBranch.id]
                 );
 
-                console.log(`[MasterAuth] Login maestro EXITOSO (mobile): ${username} → tenant ${owner.tenant_id} (${owner.business_name})`);
+                console.log(`[MasterAuth] Login maestro EXITOSO (mobile): ${credential.username} → tenant ${owner.tenant_id} (${owner.business_name})`);
 
                 return res.json({
                     success: true,
