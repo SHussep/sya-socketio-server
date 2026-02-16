@@ -478,7 +478,7 @@ module.exports = (pool, io) => {
                                 ELSE 0
                             END), 0) as total_liquidaciones_credito
                         FROM ventas v
-                        INNER JOIN repartidor_assignments ra ON ra.sale_id = v.id_venta
+                        INNER JOIN repartidor_assignments ra ON ra.venta_id = v.id_venta
                         WHERE ra.status = 'liquidated'
                           AND ra.fecha_liquidacion >= $1
                           AND v.branch_id = $2
@@ -1685,7 +1685,7 @@ module.exports = (pool, io) => {
                                     ELSE 0
                                 END), 0) as total_liquidaciones_credito
                             FROM ventas v
-                            INNER JOIN repartidor_assignments ra ON ra.sale_id = v.id_venta
+                            INNER JOIN repartidor_assignments ra ON ra.venta_id = v.id_venta
                             WHERE ra.status = 'liquidated'
                               AND ra.fecha_liquidacion >= $1
                               AND v.branch_id = $2
