@@ -1608,8 +1608,34 @@ module.exports = (pool, io) => {
                     const cashPayments = parseFloat(payments.cash_payments || 0);
                     const cardPayments = parseFloat(payments.card_payments || 0);
 
-                    // Efectivo esperado = inicial + ventas efectivo + pagos efectivo + depósitos - gastos - retiros
-                    const expectedCash = initialAmount + cashSales + cashPayments + totalDeposits - totalExpenses - totalWithdrawals;
+                    // 6. Calcular liquidaciones de repartidores recibidas durante este turno (solo para cajeros)
+                    let liquidacionesEfectivo = 0;
+                    let hasConsolidatedLiquidaciones = false;
+                    let consolidatedRepartidorNames = null;
+
+                    if (!isRepartidor) {
+                        const liquidacionesQuery = await pool.query(`
+                            SELECT
+                                COALESCE(SUM(rl.neto_a_entregar), 0) as total_liquidaciones,
+                                STRING_AGG(DISTINCT CONCAT(e.first_name, ' ', e.last_name), ', ') as repartidor_names,
+                                COUNT(*) as liquidation_count
+                            FROM repartidor_liquidations rl
+                            LEFT JOIN employees e ON e.id = rl.employee_id
+                            WHERE rl.branch_id = $1
+                              AND rl.tenant_id = $2
+                              AND rl.fecha_liquidacion >= $3
+                        `, [shift.branch_id, shift.tenant_id, shift.start_time]);
+
+                        const liqData = liquidacionesQuery.rows[0];
+                        liquidacionesEfectivo = parseFloat(liqData.total_liquidaciones || 0);
+                        if (liquidacionesEfectivo > 0) {
+                            hasConsolidatedLiquidaciones = true;
+                            consolidatedRepartidorNames = liqData.repartidor_names;
+                        }
+                    }
+
+                    // Efectivo esperado = inicial + ventas efectivo + pagos efectivo + liquidaciones efectivo + depósitos - gastos - retiros
+                    const expectedCash = initialAmount + cashSales + cashPayments + liquidacionesEfectivo + totalDeposits - totalExpenses - totalWithdrawals;
 
                     let snapshotData = {
                         // Info del turno
@@ -1632,6 +1658,9 @@ module.exports = (pool, io) => {
                         expenses: totalExpenses,
                         deposits: totalDeposits,
                         withdrawals: totalWithdrawals,
+                        liquidaciones_efectivo: liquidacionesEfectivo,
+                        has_consolidated_liquidaciones: hasConsolidatedLiquidaciones,
+                        consolidated_repartidor_names: consolidatedRepartidorNames,
                         expected_cash: expectedCash,
 
                         // Contadores básicos
