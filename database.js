@@ -2704,6 +2704,23 @@ async function runMigrations() {
                     `);
                     console.log('[Schema] ✅ cash_cuts total_repartidor_expenses column added successfully');
                 }
+
+                // Patch: Indicadores de consolidación CajeroConsolida (para app móvil)
+                const checkConsolidaCol = await client.query(`
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'cash_cuts'
+                    AND column_name = 'has_consolidated_liquidaciones'
+                `);
+                if (checkConsolidaCol.rows.length === 0) {
+                    console.log('[Schema] 📝 Adding consolidation indicator columns to cash_cuts...');
+                    await client.query(`
+                        ALTER TABLE cash_cuts
+                        ADD COLUMN IF NOT EXISTS has_consolidated_liquidaciones BOOLEAN DEFAULT FALSE,
+                        ADD COLUMN IF NOT EXISTS consolidated_repartidor_names TEXT
+                    `);
+                    console.log('[Schema] ✅ cash_cuts consolidation columns added successfully');
+                }
             }
 
             console.log('[Schema] ✅ Database initialization complete');
