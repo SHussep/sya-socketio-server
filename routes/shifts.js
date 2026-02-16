@@ -448,16 +448,64 @@ module.exports = (pool, io) => {
                       AND ra.fecha_liquidacion IS NULL
                 `, [shift.id]);
 
-                // 7. Obtener liquidaciones consolidadas del cash_cut (si existen)
-                const liquidacionesResult = await pool.query(`
-                    SELECT
-                        COALESCE(total_liquidaciones_efectivo, 0) as total_liquidaciones_efectivo,
-                        COALESCE(total_liquidaciones_tarjeta, 0) as total_liquidaciones_tarjeta,
-                        COALESCE(total_liquidaciones_credito, 0) as total_liquidaciones_credito
-                    FROM cash_cuts
-                    WHERE shift_id = $1 AND is_closed = true
-                    ORDER BY id DESC LIMIT 1
-                `, [shift.id]);
+                // 7. Obtener liquidaciones consolidadas
+                // Para turnos ABIERTOS: calcular desde ventas de repartidores liquidadas (mismo enfoque que Desktop)
+                // Para turnos CERRADOS: usar datos almacenados en cash_cuts (ya sincronizados desde Desktop)
+                let totalLiquidacionesEfectivo = 0;
+                let totalLiquidacionesTarjeta = 0;
+                let totalLiquidacionesCredito = 0;
+
+                const isRepartidor = shift.employee_role?.toLowerCase() === 'repartidor';
+
+                if (shift.is_cash_cut_open && !isRepartidor) {
+                    // Turno ABIERTO de cajero: calcular desde ventas de repartidores liquidadas
+                    // Usa desglose por tipo de pago para coincidir con el cálculo del Desktop
+                    const liquidacionesResult = await pool.query(`
+                        SELECT
+                            COALESCE(SUM(CASE
+                                WHEN v.tipo_pago_id = 4 THEN COALESCE(v.cash_amount, 0)
+                                WHEN v.tipo_pago_id = 1 THEN v.total
+                                ELSE 0
+                            END), 0) as total_liquidaciones_efectivo,
+                            COALESCE(SUM(CASE
+                                WHEN v.tipo_pago_id = 4 THEN COALESCE(v.card_amount, 0)
+                                WHEN v.tipo_pago_id = 2 THEN v.total
+                                ELSE 0
+                            END), 0) as total_liquidaciones_tarjeta,
+                            COALESCE(SUM(CASE
+                                WHEN v.tipo_pago_id = 4 THEN COALESCE(v.credit_amount, 0)
+                                WHEN v.tipo_pago_id = 3 THEN v.total
+                                ELSE 0
+                            END), 0) as total_liquidaciones_credito
+                        FROM ventas v
+                        INNER JOIN repartidor_assignments ra ON ra.sale_id = v.id_venta
+                        WHERE ra.status = 'liquidated'
+                          AND ra.fecha_liquidacion >= $1
+                          AND v.branch_id = $2
+                          AND v.tenant_id = $3
+                    `, [shift.start_time, shift.branch_id, shift.tenant_id]);
+
+                    totalLiquidacionesEfectivo = parseFloat(liquidacionesResult.rows[0]?.total_liquidaciones_efectivo || 0);
+                    totalLiquidacionesTarjeta = parseFloat(liquidacionesResult.rows[0]?.total_liquidaciones_tarjeta || 0);
+                    totalLiquidacionesCredito = parseFloat(liquidacionesResult.rows[0]?.total_liquidaciones_credito || 0);
+                } else {
+                    // Turno CERRADO o repartidor: usar datos del cash_cut sincronizado
+                    const liquidacionesResult = await pool.query(`
+                        SELECT
+                            COALESCE(total_liquidaciones_efectivo, 0) as total_liquidaciones_efectivo,
+                            COALESCE(total_liquidaciones_tarjeta, 0) as total_liquidaciones_tarjeta,
+                            COALESCE(total_liquidaciones_credito, 0) as total_liquidaciones_credito
+                        FROM cash_cuts
+                        WHERE shift_id = $1 AND is_closed = true
+                        ORDER BY id DESC LIMIT 1
+                    `, [shift.id]);
+
+                    if (liquidacionesResult.rows.length > 0) {
+                        totalLiquidacionesEfectivo = parseFloat(liquidacionesResult.rows[0].total_liquidaciones_efectivo || 0);
+                        totalLiquidacionesTarjeta = parseFloat(liquidacionesResult.rows[0].total_liquidaciones_tarjeta || 0);
+                        totalLiquidacionesCredito = parseFloat(liquidacionesResult.rows[0].total_liquidaciones_credito || 0);
+                    }
+                }
 
                 enrichedShifts.push({
                     ...shift,
@@ -492,10 +540,10 @@ module.exports = (pool, io) => {
                     // 🚚 Asignaciones de repartidor (DOS contadores diferentes)
                     created_assignments: parseInt(createdAssignmentsResult.rows[0]?.created_assignments || 0),
                     received_assignments: parseInt(receivedAssignmentsResult.rows[0]?.received_assignments || 0),
-                    // 💰 Liquidaciones consolidadas (solo cuando modo cajero consolida está activo)
-                    total_liquidaciones_efectivo: parseFloat(liquidacionesResult.rows[0]?.total_liquidaciones_efectivo || 0),
-                    total_liquidaciones_tarjeta: parseFloat(liquidacionesResult.rows[0]?.total_liquidaciones_tarjeta || 0),
-                    total_liquidaciones_credito: parseFloat(liquidacionesResult.rows[0]?.total_liquidaciones_credito || 0),
+                    // 💰 Liquidaciones consolidadas (calculadas desde ventas para turnos abiertos, desde cash_cuts para cerrados)
+                    total_liquidaciones_efectivo: totalLiquidacionesEfectivo,
+                    total_liquidaciones_tarjeta: totalLiquidacionesTarjeta,
+                    total_liquidaciones_credito: totalLiquidacionesCredito,
                 });
             }
 
@@ -1609,28 +1657,57 @@ module.exports = (pool, io) => {
                     const cardPayments = parseFloat(payments.card_payments || 0);
 
                     // 6. Calcular liquidaciones de repartidores recibidas durante este turno (solo para cajeros)
+                    // IMPORTANTE: Usar desglose por tipo de pago desde ventas (no neto_a_entregar)
+                    // para coincidir con el cálculo del Desktop (LiquidacionEfectivo = monto bruto de ventas en efectivo)
                     let liquidacionesEfectivo = 0;
+                    let liquidacionesTarjeta = 0;
+                    let liquidacionesCredito = 0;
                     let hasConsolidatedLiquidaciones = false;
                     let consolidatedRepartidorNames = null;
 
                     if (!isRepartidor) {
+                        // Obtener desglose de ventas de repartidores liquidadas por tipo de pago
                         const liquidacionesQuery = await pool.query(`
                             SELECT
-                                COALESCE(SUM(rl.neto_a_entregar), 0) as total_liquidaciones,
-                                STRING_AGG(DISTINCT CONCAT(e.first_name, ' ', e.last_name), ', ') as repartidor_names,
-                                COUNT(*) as liquidation_count
-                            FROM repartidor_liquidations rl
-                            LEFT JOIN employees e ON e.id = rl.employee_id
-                            WHERE rl.branch_id = $1
-                              AND rl.tenant_id = $2
-                              AND rl.fecha_liquidacion >= $3
-                        `, [shift.branch_id, shift.tenant_id, shift.start_time]);
+                                COALESCE(SUM(CASE
+                                    WHEN v.tipo_pago_id = 4 THEN COALESCE(v.cash_amount, 0)
+                                    WHEN v.tipo_pago_id = 1 THEN v.total
+                                    ELSE 0
+                                END), 0) as total_liquidaciones_efectivo,
+                                COALESCE(SUM(CASE
+                                    WHEN v.tipo_pago_id = 4 THEN COALESCE(v.card_amount, 0)
+                                    WHEN v.tipo_pago_id = 2 THEN v.total
+                                    ELSE 0
+                                END), 0) as total_liquidaciones_tarjeta,
+                                COALESCE(SUM(CASE
+                                    WHEN v.tipo_pago_id = 4 THEN COALESCE(v.credit_amount, 0)
+                                    WHEN v.tipo_pago_id = 3 THEN v.total
+                                    ELSE 0
+                                END), 0) as total_liquidaciones_credito
+                            FROM ventas v
+                            INNER JOIN repartidor_assignments ra ON ra.sale_id = v.id_venta
+                            WHERE ra.status = 'liquidated'
+                              AND ra.fecha_liquidacion >= $1
+                              AND v.branch_id = $2
+                              AND v.tenant_id = $3
+                        `, [shift.start_time, shift.branch_id, shift.tenant_id]);
 
-                        const liqData = liquidacionesQuery.rows[0];
-                        liquidacionesEfectivo = parseFloat(liqData.total_liquidaciones || 0);
-                        if (liquidacionesEfectivo > 0) {
+                        liquidacionesEfectivo = parseFloat(liquidacionesQuery.rows[0]?.total_liquidaciones_efectivo || 0);
+                        liquidacionesTarjeta = parseFloat(liquidacionesQuery.rows[0]?.total_liquidaciones_tarjeta || 0);
+                        liquidacionesCredito = parseFloat(liquidacionesQuery.rows[0]?.total_liquidaciones_credito || 0);
+
+                        // Obtener nombres de repartidores para UI
+                        if (liquidacionesEfectivo > 0 || liquidacionesTarjeta > 0 || liquidacionesCredito > 0) {
                             hasConsolidatedLiquidaciones = true;
-                            consolidatedRepartidorNames = liqData.repartidor_names;
+                            const namesQuery = await pool.query(`
+                                SELECT STRING_AGG(DISTINCT CONCAT(e.first_name, ' ', e.last_name), ', ') as repartidor_names
+                                FROM repartidor_liquidations rl
+                                LEFT JOIN employees e ON e.id = rl.employee_id
+                                WHERE rl.branch_id = $1
+                                  AND rl.tenant_id = $2
+                                  AND rl.fecha_liquidacion >= $3
+                            `, [shift.branch_id, shift.tenant_id, shift.start_time]);
+                            consolidatedRepartidorNames = namesQuery.rows[0]?.repartidor_names || null;
                         }
                     }
 
