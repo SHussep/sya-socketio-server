@@ -478,9 +478,13 @@ module.exports = (pool, io) => {
                                 ELSE 0
                             END), 0) as total_liquidaciones_credito
                         FROM ventas v
-                        INNER JOIN repartidor_assignments ra ON ra.venta_id = v.id_venta
-                        WHERE ra.status = 'liquidated'
-                          AND ra.fecha_liquidacion >= $1
+                        WHERE v.id_venta IN (
+                            SELECT DISTINCT ra.venta_id
+                            FROM repartidor_assignments ra
+                            WHERE ra.status = 'liquidated'
+                              AND ra.fecha_liquidacion >= $1
+                              AND ra.venta_id IS NOT NULL
+                        )
                           AND v.branch_id = $2
                           AND v.tenant_id = $3
                     `, [shift.start_time, shift.branch_id, shift.tenant_id]);
