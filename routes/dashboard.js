@@ -128,7 +128,7 @@ module.exports = (pool) => {
                     -- Por tipo de venta (1=Mostrador, 2=Repartidor)
                     -- Mostrador: puede ser estado 3 (completada) o 5 (liquidada desde móvil)
                     COALESCE(SUM(CASE WHEN v.venta_tipo_id = 1 AND v.estado_venta_id IN (3, 5) THEN v.total ELSE 0 END), 0) as mostrador_total,
-                    COALESCE(SUM(CASE WHEN v.venta_tipo_id = 2 AND v.estado_venta_id = 5 THEN v.total ELSE 0 END), 0) as repartidor_liquidado,
+                    COALESCE(SUM(CASE WHEN v.venta_tipo_id = 2 AND v.estado_venta_id IN (3, 5) THEN v.total ELSE 0 END), 0) as repartidor_liquidado,
                     -- Por método de pago: derivar de tipo_pago_id para pagos simples, usar columnas para mixtos
                     -- tipo_pago_id: 1=Efectivo, 2=Tarjeta, 3=Crédito, 4=Mixto
                     COALESCE(SUM(CASE WHEN v.estado_venta_id IN (3, 5) THEN
@@ -154,7 +154,7 @@ module.exports = (pool) => {
                     ELSE 0 END), 0) as credito_total,
                     -- Conteos
                     COUNT(CASE WHEN v.venta_tipo_id = 1 AND v.estado_venta_id IN (3, 5) THEN 1 END) as mostrador_count,
-                    COUNT(CASE WHEN v.venta_tipo_id = 2 AND v.estado_venta_id = 5 THEN 1 END) as repartidor_count
+                    COUNT(CASE WHEN v.venta_tipo_id = 2 AND v.estado_venta_id IN (3, 5) THEN 1 END) as repartidor_count
                 FROM ventas v
                 WHERE v.tenant_id = $1 AND (
                     (v.estado_venta_id = 3 AND ${dateFilter.replace(/fecha_venta_utc/g, 'v.fecha_venta_utc')})
