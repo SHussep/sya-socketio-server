@@ -229,7 +229,7 @@ async function initializeDatabase() {
                 id SERIAL PRIMARY KEY,
                 tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
                 employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
-                device_id VARCHAR(255) REFERENCES devices(id) ON DELETE CASCADE,
+                device_id INTEGER REFERENCES devices(id) ON DELETE CASCADE,
                 access_token TEXT NOT NULL,
                 refresh_token TEXT NOT NULL,
                 expires_at TIMESTAMP NOT NULL,
