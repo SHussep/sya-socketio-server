@@ -24,8 +24,99 @@ function authenticateToken(req, res, next) {
     });
 }
 
+// Middleware: Autenticación JWT opcional (para Desktop sin login)
+function optionalAuthenticateToken(req, res, next) {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+
+    if (!token) {
+        req.user = null;
+        return next();
+    }
+
+    jwt.verify(token, JWT_SECRET, (err, user) => {
+        if (err) {
+            req.user = null;
+        } else {
+            req.user = user;
+        }
+        next();
+    });
+}
+
 module.exports = (pool) => {
     const router = express.Router();
+
+    // ═══════════════════════════════════════════════════════════════
+    // GET /api/suppliers/pull - Descargar proveedores para Desktop sync
+    // Soporta: since (ISO timestamp) para sync incremental
+    // ═══════════════════════════════════════════════════════════════
+    router.get('/pull', optionalAuthenticateToken, async (req, res) => {
+        try {
+            const tenantId = req.user?.tenantId || req.query.tenantId;
+            const since = req.query.since; // ISO timestamp para sync incremental
+
+            if (!tenantId) {
+                return res.status(400).json({ success: false, message: 'Se requiere tenantId' });
+            }
+
+            console.log(`[Suppliers/Pull] 📥 Descargando proveedores - Tenant: ${tenantId}, Since: ${since || 'ALL'}`);
+
+            let query = `
+                SELECT
+                    id,
+                    global_id,
+                    tenant_id,
+                    name,
+                    contact_person,
+                    phone_number,
+                    email,
+                    address,
+                    is_active,
+                    is_undeletable,
+                    is_deleted,
+                    deleted_at,
+                    terminal_id,
+                    created_at,
+                    updated_at
+                FROM suppliers
+                WHERE tenant_id = $1
+            `;
+
+            const params = [tenantId];
+
+            // Filtrar por fecha si se proporciona 'since'
+            if (since) {
+                query += ` AND updated_at > $2`;
+                params.push(since);
+            }
+
+            query += ` ORDER BY updated_at ASC`;
+
+            const result = await pool.query(query, params);
+
+            // Obtener timestamp más reciente para próximo pull
+            let lastSync = null;
+            if (result.rows.length > 0) {
+                const lastRow = result.rows[result.rows.length - 1];
+                lastSync = lastRow.updated_at;
+            }
+
+            console.log(`[Suppliers/Pull] ✅ ${result.rows.length} proveedores encontrados`);
+
+            res.json({
+                success: true,
+                data: {
+                    suppliers: result.rows,
+                    last_sync: lastSync
+                },
+                count: result.rows.length
+            });
+        } catch (error) {
+            console.error('[Suppliers/Pull] ❌ Error:', error.message);
+            res.status(500).json({ success: false, message: 'Error al descargar proveedores', error: undefined });
+        }
+    });
 
     // GET /api/suppliers - Lista de proveedores
     router.get('/', authenticateToken, async (req, res) => {
