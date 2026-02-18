@@ -161,8 +161,9 @@ module.exports = (pool, io) => {
                 credit_amount: row.credit_amount ? parseFloat(row.credit_amount) : null,
                 // Ensure sale_date is always sent as ISO string in UTC (Z suffix)
                 sale_date: row.sale_date ? new Date(row.sale_date).toISOString() : null,
-                // Convert sale_date_display to ISO string as well
-                sale_date_display: row.sale_date_display ? new Date(row.sale_date_display).toISOString() : null,
+                // sale_date_display is already in user's local timezone (from AT TIME ZONE),
+                // so remove the Z suffix to prevent mobile from treating it as UTC
+                sale_date_display: row.sale_date_display ? new Date(row.sale_date_display).toISOString().slice(0, -1) : null,
                 // Customer name and items summary
                 customer_name: row.customer_name || null,
                 items_summary: row.items_summary || []
