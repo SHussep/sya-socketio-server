@@ -274,6 +274,7 @@ module.exports = (pool) => {
                 inventario,
                 proveedor_id,          // ID local (legacy)
                 proveedor_global_id,   // ✅ GlobalId del proveedor
+                categoria_global_id,   // ✅ GlobalId de la categoría
                 unidad_medida_id,
                 eliminado,
                 bascula,
@@ -321,10 +322,25 @@ module.exports = (pool) => {
                 }
             }
 
+            // ✅ Resolver categoria_id desde categoria_global_id (opcional, no rompe si no existe)
+            let resolvedCategoriaId = null;
+            if (categoria_global_id) {
+                const catResult = await pool.query(
+                    'SELECT id FROM categorias_productos WHERE global_id = $1 AND tenant_id = $2',
+                    [categoria_global_id, tenant_id]
+                );
+                if (catResult.rows.length > 0) {
+                    resolvedCategoriaId = catResult.rows[0].id;
+                    console.log(`[Productos/Sync] ✅ Categoría resuelta: GlobalId=${categoria_global_id} -> PostgresID=${resolvedCategoriaId}`);
+                } else {
+                    console.log(`[Productos/Sync] ⚠️ Categoría no encontrada por GlobalId: ${categoria_global_id} (se guardará solo el ID local)`);
+                }
+            }
+
             // ✅ IDEMPOTENTE: INSERT con ON CONFLICT (global_id) DO UPDATE
             const result = await pool.query(
                 `INSERT INTO productos (
-                    tenant_id, id_producto, descripcion, categoria,
+                    tenant_id, id_producto, descripcion, categoria, categoria_global_id,
                     precio_compra, precio_venta, produccion, inventariar,
                     tipos_de_salida_id, notificar, minimo, inventario,
                     proveedor_id, unidad_medida_id, eliminado, bascula, is_pos_shortcut,
@@ -336,11 +352,12 @@ module.exports = (pool) => {
                 VALUES (
                     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
                     $11, $12, $13, $14, $15, $16, $17, $18, $19,
-                    $20, $21, $22, $23, FALSE, $24, $25, NOW(), NOW()
+                    $20, $21, $22, $23, $24, FALSE, $25, $26, NOW(), NOW()
                 )
                 ON CONFLICT (global_id) DO UPDATE
                 SET descripcion = EXCLUDED.descripcion,
                     categoria = EXCLUDED.categoria,
+                    categoria_global_id = COALESCE(EXCLUDED.categoria_global_id, productos.categoria_global_id),
                     precio_compra = EXCLUDED.precio_compra,
                     precio_venta = EXCLUDED.precio_venta,
                     produccion = EXCLUDED.produccion,
@@ -366,6 +383,7 @@ module.exports = (pool) => {
                     id_producto || null,
                     descripcion,
                     categoria || null,
+                    categoria_global_id || null,  // $5 - GlobalId de la categoría
                     precio_compra || 0,
                     precio_venta || 0,
                     produccion || false,
@@ -386,7 +404,7 @@ module.exports = (pool) => {
                     device_event_raw || null,
                     last_modified_local_utc || null,
                     needs_delete || false,
-                    image_url || null  // $25
+                    image_url || null  // $26
                 ]
             );
 
@@ -463,7 +481,7 @@ module.exports = (pool) => {
 
                         const result = await client.query(
                             `INSERT INTO productos (
-                                tenant_id, id_producto, descripcion, categoria,
+                                tenant_id, id_producto, descripcion, categoria, categoria_global_id,
                                 precio_compra, precio_venta, produccion, inventariar,
                                 tipos_de_salida_id, notificar, minimo, inventario,
                                 proveedor_id, unidad_medida_id, eliminado, bascula, is_pos_shortcut,
@@ -475,11 +493,12 @@ module.exports = (pool) => {
                             VALUES (
                                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
                                 $11, $12, $13, $14, $15, $16, $17, $18, $19,
-                                $20, $21, $22, $23, FALSE, $24, $25, NOW(), NOW()
+                                $20, $21, $22, $23, $24, FALSE, $25, $26, NOW(), NOW()
                             )
                             ON CONFLICT (global_id) DO UPDATE
                             SET descripcion = EXCLUDED.descripcion,
                                 categoria = EXCLUDED.categoria,
+                                categoria_global_id = COALESCE(EXCLUDED.categoria_global_id, productos.categoria_global_id),
                                 precio_compra = EXCLUDED.precio_compra,
                                 precio_venta = EXCLUDED.precio_venta,
                                 produccion = EXCLUDED.produccion,
@@ -504,6 +523,7 @@ module.exports = (pool) => {
                                 prod.id_producto || null,
                                 prod.descripcion,
                                 prod.categoria || null,
+                                prod.categoria_global_id || null,  // $5
                                 prod.precio_compra || 0,
                                 prod.precio_venta || 0,
                                 prod.produccion || false,
@@ -524,7 +544,7 @@ module.exports = (pool) => {
                                 prod.device_event_raw || null,
                                 prod.last_modified_local_utc || null,
                                 prod.needs_delete || false,
-                                prod.image_url || null  // $25
+                                prod.image_url || null  // $26
                             ]
                         );
 
@@ -1184,7 +1204,7 @@ module.exports = (pool) => {
                 try {
                     const result = await client.query(
                         `INSERT INTO productos (
-                            tenant_id, id_producto, descripcion, categoria,
+                            tenant_id, id_producto, descripcion, categoria, categoria_global_id,
                             precio_compra, precio_venta, produccion, inventariar,
                             tipos_de_salida_id, notificar, minimo, inventario,
                             proveedor_id, unidad_medida_id, eliminado, bascula, is_pos_shortcut,
@@ -1196,11 +1216,12 @@ module.exports = (pool) => {
                         VALUES (
                             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
                             $11, $12, $13, $14, $15, $16, $17, $18, $19,
-                            $20, $21, $22, $23, FALSE, FALSE, $24, NOW(), NOW()
+                            $20, $21, $22, $23, $24, FALSE, FALSE, $25, NOW(), NOW()
                         )
                         ON CONFLICT (global_id) DO UPDATE
                         SET descripcion = EXCLUDED.descripcion,
                             categoria = EXCLUDED.categoria,
+                            categoria_global_id = COALESCE(EXCLUDED.categoria_global_id, productos.categoria_global_id),
                             precio_compra = EXCLUDED.precio_compra,
                             precio_venta = EXCLUDED.precio_venta,
                             produccion = EXCLUDED.produccion,
@@ -1226,6 +1247,7 @@ module.exports = (pool) => {
                             localProd.id_producto || null,
                             localProd.descripcion,
                             localProd.categoria || null,
+                            localProd.categoria_global_id || null,  // $5
                             localProd.precio_compra || 0,
                             localProd.precio_venta || 0,
                             localProd.produccion || false,
@@ -1245,7 +1267,7 @@ module.exports = (pool) => {
                             localProd.created_local_utc || null,
                             localProd.device_event_raw || null,
                             localProd.last_modified_local_utc || null,
-                            localProd.image_url || null
+                            localProd.image_url || null  // $25
                         ]
                     );
 

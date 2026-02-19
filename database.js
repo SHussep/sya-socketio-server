@@ -1714,6 +1714,14 @@ async function runMigrations() {
                 console.log('[Schema] ⚠️ productos.image_url:', error.message);
             }
 
+            // Patch: Add categoria_global_id column to productos table (relaciona con categorias_productos)
+            try {
+                await client.query(`ALTER TABLE productos ADD COLUMN IF NOT EXISTS categoria_global_id VARCHAR(255)`);
+                console.log('[Schema] ✅ Productos categoria_global_id column added');
+            } catch (error) {
+                console.log('[Schema] ⚠️ productos.categoria_global_id:', error.message);
+            }
+
             // Patch: Create units_of_measure table if missing
             console.log('[Schema] 🔍 Checking units_of_measure table...');
             const checkUnitsTable = await client.query(`
