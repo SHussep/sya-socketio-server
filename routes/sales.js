@@ -63,7 +63,8 @@ module.exports = (pool, io) => {
                        v.has_nota_credito,
                        -- Payment breakdown for mixed payments
                        v.cash_amount, v.card_amount, v.credit_amount,
-                       CONCAT(e.first_name, ' ', e.last_name) as employee_name,
+                       -- Para delivery: mostrar repartidor; para mostrador: mostrar operador POS
+                       CONCAT(emp.first_name, ' ', emp.last_name) as employee_name,
                        r.name as employee_role,
                        b.name as branch_name, b.id as "branchId",
                        -- Customer name
@@ -75,6 +76,10 @@ module.exports = (pool, io) => {
                        -- Items summary: quantities grouped by unit of measure
                        items_agg.items_summary
                 FROM ventas v
+                LEFT JOIN employees emp ON emp.id = CASE
+                    WHEN v.venta_tipo_id = 2 AND v.id_repartidor_asignado IS NOT NULL THEN v.id_repartidor_asignado
+                    ELSE v.id_empleado
+                END
                 LEFT JOIN employees e ON v.id_empleado = e.id
                 LEFT JOIN roles r ON e.role_id = r.id
                 LEFT JOIN branches b ON v.branch_id = b.id

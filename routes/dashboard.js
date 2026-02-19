@@ -553,13 +553,18 @@ module.exports = (pool) => {
             console.log(`[Dashboard Summary] ✅ Top customers:`, JSON.stringify(topCustomers));
 
             // ═══════════════════════════════════════════════════════════════
-            // TOP EMPLEADO - Empleado con más ventas
+            // TOP 5 EMPLEADOS - Empleados con más ventas
+            // Para ventas de mostrador: usa id_empleado (operador POS)
+            // Para ventas de repartidor: usa id_repartidor_asignado (quien entregó y cobró)
             // ═══════════════════════════════════════════════════════════════
             let topEmployeeQuery = `
                 SELECT CONCAT(e.first_name, ' ', e.last_name) as employee_name,
                        SUM(v.total) as total_amount, COUNT(*) as sale_count
                 FROM ventas v
-                JOIN employees e ON v.id_empleado = e.id
+                JOIN employees e ON e.id = CASE
+                    WHEN v.venta_tipo_id = 2 AND v.id_repartidor_asignado IS NOT NULL THEN v.id_repartidor_asignado
+                    ELSE v.id_empleado
+                END
                 WHERE v.tenant_id = $1
                 AND (
                     (v.estado_venta_id = 3 AND ${dateFilter.replace(/fecha_venta_utc/g, 'v.fecha_venta_utc')})
@@ -581,7 +586,7 @@ module.exports = (pool) => {
                 topEmpParamIndex++;
             }
 
-            topEmployeeQuery += ` GROUP BY e.id, e.first_name, e.last_name ORDER BY total_amount DESC LIMIT 3`;
+            topEmployeeQuery += ` GROUP BY e.id, e.first_name, e.last_name ORDER BY total_amount DESC LIMIT 5`;
 
             const topEmployeeResult = await pool.query(topEmployeeQuery, topEmployeeParams);
             const topEmployees = topEmployeeResult.rows.map(row => ({
