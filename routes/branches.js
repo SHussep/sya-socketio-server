@@ -4,6 +4,7 @@
 
 module.exports = function(pool, authenticateToken) {
     const router = require('express').Router();
+    const cloudinaryService = require('../services/cloudinaryService');
 
     // ─────────────────────────────────────────────────────────
     // GET /api/branches
@@ -334,9 +335,9 @@ module.exports = function(pool, authenticateToken) {
     // Si es la sucursal principal, también actualiza el tenant
     // ─────────────────────────────────────────────────────────
     router.post('/sync-info', async (req, res) => {
-        const { tenantId, branchId, name, address, phone, rfc } = req.body;
+        const { tenantId, branchId, name, address, phone, rfc, logo_base64, existing_logo_url } = req.body;
 
-        console.log(`[Branch Sync] 📥 Recibida solicitud de sync: tenantId=${tenantId}, branchId=${branchId}`);
+        console.log(`[Branch Sync] 📥 Recibida solicitud de sync: tenantId=${tenantId}, branchId=${branchId}, hasLogo=${!!logo_base64}`);
 
         if (!tenantId || !branchId) {
             return res.status(400).json({
@@ -348,7 +349,7 @@ module.exports = function(pool, authenticateToken) {
         try {
             // Verificar que la sucursal pertenece al tenant
             const existing = await pool.query(
-                'SELECT id, name FROM branches WHERE id = $1 AND tenant_id = $2',
+                'SELECT id, name, logo_url FROM branches WHERE id = $1 AND tenant_id = $2',
                 [branchId, tenantId]
             );
 
@@ -362,39 +363,80 @@ module.exports = function(pool, authenticateToken) {
 
             const oldName = existing.rows[0].name;
 
-            // Actualizar sucursal
+            // Subir logo a Cloudinary si viene en base64
+            let logoUrl = existing.rows[0].logo_url || existing_logo_url || null;
+            if (logo_base64) {
+                try {
+                    if (cloudinaryService.isConfigured()) {
+                        console.log(`[Branch Sync] 📤 Subiendo logo a Cloudinary...`);
+                        const uploadResult = await cloudinaryService.uploadBusinessLogo(logo_base64, {
+                            tenantId,
+                            branchId,
+                        });
+                        logoUrl = uploadResult.url;
+                        console.log(`[Branch Sync] ✅ Logo subido: ${logoUrl}`);
+                    } else {
+                        console.log(`[Branch Sync] ⚠️ Cloudinary no configurado, logo no subido`);
+                    }
+                } catch (logoError) {
+                    console.error(`[Branch Sync] ⚠️ Error subiendo logo (continuando sin logo):`, logoError.message);
+                }
+            }
+
+            // Actualizar sucursal (incluye logo_url)
             const result = await pool.query(`
                 UPDATE branches
                 SET name = COALESCE($1, name),
                     address = COALESCE($2, address),
                     phone_number = COALESCE($3, phone_number),
                     rfc = COALESCE($4, rfc),
+                    logo_url = COALESCE($7, logo_url),
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = $5 AND tenant_id = $6
                 RETURNING *
-            `, [name, address, phone, rfc, branchId, tenantId]);
+            `, [name, address, phone, rfc, branchId, tenantId, logoUrl]);
 
             const branch = result.rows[0];
-            console.log(`[Branch Sync] ✅ Sucursal actualizada: ${branch.name} (RFC: ${branch.rfc || 'N/A'})`);
+            console.log(`[Branch Sync] ✅ Sucursal actualizada: ${branch.name} (RFC: ${branch.rfc || 'N/A'}, Logo: ${branch.logo_url ? 'Sí' : 'No'})`);
 
-            // Si es la sucursal principal y se cambió el nombre, también actualizar el tenant
+            // Si es la sucursal principal y se cambió el nombre o logo, también actualizar el tenant
             let tenantUpdated = false;
-            if (name && name !== oldName) {
-                const primaryBranch = await pool.query(
-                    `SELECT id FROM branches
-                     WHERE tenant_id = $1
-                     ORDER BY created_at ASC
-                     LIMIT 1`,
-                    [tenantId]
-                );
+            const isPrimaryCheck = await pool.query(
+                `SELECT id FROM branches
+                 WHERE tenant_id = $1
+                 ORDER BY created_at ASC
+                 LIMIT 1`,
+                [tenantId]
+            );
 
-                if (primaryBranch.rows.length > 0 && primaryBranch.rows[0].id === branchId) {
+            const isPrimary = isPrimaryCheck.rows.length > 0 && isPrimaryCheck.rows[0].id === branchId;
+
+            if (isPrimary) {
+                const updateFields = [];
+                const updateValues = [];
+                let paramIndex = 1;
+
+                if (name && name !== oldName) {
+                    updateFields.push(`name = $${paramIndex}`);
+                    updateValues.push(name);
+                    paramIndex++;
+                }
+
+                if (logoUrl) {
+                    updateFields.push(`logo_url = $${paramIndex}`);
+                    updateValues.push(logoUrl);
+                    paramIndex++;
+                }
+
+                if (updateFields.length > 0) {
+                    updateFields.push(`updated_at = CURRENT_TIMESTAMP`);
+                    updateValues.push(tenantId);
                     await pool.query(
-                        `UPDATE tenants SET name = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
-                        [name, tenantId]
+                        `UPDATE tenants SET ${updateFields.join(', ')} WHERE id = $${paramIndex}`,
+                        updateValues
                     );
                     tenantUpdated = true;
-                    console.log(`[Branch Sync] ✅ Tenant también actualizado con nombre: ${name}`);
+                    console.log(`[Branch Sync] ✅ Tenant también actualizado (nombre: ${name || 'sin cambio'}, logo: ${logoUrl ? 'Sí' : 'No'})`);
                 }
             }
 
@@ -409,6 +451,7 @@ module.exports = function(pool, authenticateToken) {
                     address: branch.address,
                     phone: branch.phone_number,
                     rfc: branch.rfc,
+                    logo_url: branch.logo_url,
                     tenantUpdated: tenantUpdated,
                     updatedAt: branch.updated_at
                 }

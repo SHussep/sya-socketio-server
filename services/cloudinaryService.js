@@ -280,6 +280,69 @@ async function deleteProductImage(publicId) {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// LOGO DE NEGOCIO
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Sube el logo del negocio a Cloudinary
+ * @param {string} base64Image - Imagen en Base64
+ * @param {object} options - Opciones
+ * @param {number} options.tenantId - ID del tenant
+ * @param {number} options.branchId - ID de la sucursal
+ * @returns {Promise<{url: string, publicId: string}>}
+ */
+async function uploadBusinessLogo(base64Image, options) {
+  const { tenantId, branchId } = options;
+
+  if (!isConfigured()) {
+    console.error('[Cloudinary] ❌ Variables de entorno no configuradas');
+    throw new Error('Cloudinary no está configurado');
+  }
+
+  let imageData = base64Image;
+  if (!base64Image.startsWith('data:')) {
+    imageData = `data:image/png;base64,${base64Image}`;
+  }
+
+  // Un solo logo por tenant: sya-logos/tenant_{id}/logo
+  const folder = `sya-logos/tenant_${tenantId}`;
+  const publicId = `${folder}/logo`;
+
+  console.log(`[Cloudinary] 📤 Subiendo logo de negocio a ${publicId}...`);
+  const startTime = Date.now();
+
+  try {
+    const result = await cloudinary.uploader.upload(imageData, {
+      public_id: publicId,
+      overwrite: true,
+      resource_type: 'image',
+      transformation: [
+        { width: 500, height: 500, crop: 'limit' },
+        { quality: 'auto:good' },
+        { fetch_format: 'auto' },
+      ],
+      tags: [`tenant_${tenantId}`, 'business-logo'],
+      context: {
+        tenant_id: String(tenantId),
+        branch_id: String(branchId),
+      },
+    });
+
+    const elapsed = Date.now() - startTime;
+    console.log(`[Cloudinary] ✅ Logo subido en ${elapsed}ms`);
+    console.log(`[Cloudinary] URL: ${result.secure_url}`);
+
+    return {
+      url: result.secure_url,
+      publicId: result.public_id,
+    };
+  } catch (error) {
+    console.error('[Cloudinary] ❌ Error subiendo logo:', error.message);
+    throw error;
+  }
+}
+
 module.exports = {
   // Receipts (gastos)
   uploadReceiptImage,
@@ -292,4 +355,6 @@ module.exports = {
   getSeedProductImageUrl,
   isSeedProduct,
   SEED_PRODUCT_IMAGES,
+  // Logo de negocio
+  uploadBusinessLogo,
 };
