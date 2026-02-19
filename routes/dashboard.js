@@ -736,10 +736,10 @@ module.exports = (pool) => {
             // Query 2: Gas LP y Gasolina (gastos del periodo)
             // ═══════════════════════════════════════════════════════════════
             let fuelQuery = `
-                SELECT category, SUM(amount) as total_spent, SUM(COALESCE(quantity, 0)) as total_liters
+                SELECT global_category_id, SUM(amount) as total_spent, SUM(COALESCE(quantity, 0)) as total_liters
                 FROM expenses
                 WHERE tenant_id = $1 AND is_active = true
-                AND category IN ('Gas LP', 'Combustible Vehículos')
+                AND global_category_id IN (2, 3)
                 AND ${expenseDateFilter}
             `;
             let fuelParams = [tenantId];
@@ -751,11 +751,11 @@ module.exports = (pool) => {
                 fIdx++;
             }
 
-            fuelQuery += ` GROUP BY category`;
+            fuelQuery += ` GROUP BY global_category_id`;
 
             const fuelResult = await pool.query(fuelQuery, fuelParams);
-            const gasLP = fuelResult.rows.find(r => r.category === 'Gas LP');
-            const gasoline = fuelResult.rows.find(r => r.category === 'Combustible Vehículos');
+            const gasLP = fuelResult.rows.find(r => r.global_category_id === 2);
+            const gasoline = fuelResult.rows.find(r => r.global_category_id === 3);
 
             const fuel = {
                 gasLP: {
@@ -815,7 +815,7 @@ module.exports = (pool) => {
                 FROM expenses ex
                 JOIN employees e ON ex.employee_id = e.id
                 WHERE ex.tenant_id = $1 AND ex.is_active = true
-                AND ex.category = 'Combustible Vehículos'
+                AND ex.global_category_id = 3
                 AND ${expenseDateFilter.replace(/expense_date/g, 'ex.expense_date')}
             `;
             let rgParams = [tenantId];
