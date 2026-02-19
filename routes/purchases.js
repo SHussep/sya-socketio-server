@@ -399,8 +399,30 @@ module.exports = (pool) => {
                     supplierId = proveedor_id;
                     console.log(`[Purchases/Sync] ⚠️ Usando proveedor_id directo (legacy): ${proveedor_id}`);
                 } else {
-                    console.log(`[Purchases/Sync] ⚠️ proveedor_id ${proveedor_id} no existe en PostgreSQL - solo se guardará nombre`);
+                    console.log(`[Purchases/Sync] ⚠️ proveedor_id ${proveedor_id} no existe en PostgreSQL`);
                 }
+            }
+
+            // Último fallback: auto-crear proveedor si no se pudo resolver (supplier_id es NOT NULL)
+            if (!supplierId && proveedor_name) {
+                const autoCreateResult = await client.query(
+                    `INSERT INTO suppliers (tenant_id, name, global_id, is_active)
+                     VALUES ($1, $2, $3, true)
+                     ON CONFLICT (global_id) WHERE global_id IS NOT NULL DO UPDATE SET name = EXCLUDED.name
+                     RETURNING id`,
+                    [tenantId, proveedor_name, proveedor_global_id || null]
+                );
+                supplierId = autoCreateResult.rows[0].id;
+                console.log(`[Purchases/Sync] 🔧 Proveedor auto-creado: "${proveedor_name}" → ID ${supplierId}`);
+            }
+
+            if (!supplierId) {
+                await client.query('ROLLBACK');
+                console.log(`[Purchases/Sync] ❌ No se pudo resolver ni crear el proveedor`);
+                return res.status(400).json({
+                    success: false,
+                    message: 'No se pudo resolver el proveedor. Envíe proveedor_global_id o proveedor_name.'
+                });
             }
 
             // Mapear status_id a payment_status
@@ -518,11 +540,13 @@ module.exports = (pool) => {
 
         } catch (error) {
             await client.query('ROLLBACK');
-            console.error('[Purchases/Sync] ❌ Error:', error);
+            console.error('[Purchases/Sync] ❌ Error:', error.message, error.detail || '', error.hint || '');
             res.status(500).json({
                 success: false,
                 message: 'Error al sincronizar compra',
-                error: undefined
+                error: error.message,
+                detail: error.detail || null,
+                hint: error.hint || null
             });
         } finally {
             client.release();

@@ -1339,7 +1339,8 @@ module.exports = (pool) => {
                 email,
                 password_hash,        // ✅ Nuevo: para sincronizar cambios de contraseña
                 passwordUpdatedAt,    // ✅ Nuevo: timestamp del cambio de contraseña
-                emailVerified         // ✅ Nuevo: sincronizar estado de verificación de email
+                emailVerified,        // ✅ Nuevo: sincronizar estado de verificación de email
+                profilePhotoUrl       // ✅ Nuevo: actualizar foto de perfil desde mobile/desktop
             } = req.body;
 
             console.log(`[Employees/Update] 🔄 [UPDATE RECIBIDO] Actualizando empleado ID: ${employeeId}`);
@@ -1507,6 +1508,14 @@ module.exports = (pool) => {
             // ✅ Sincronizar email_verified desde Desktop (solo permite poner en true, nunca revertir)
             if (emailVerified === true) {
                 updates.push(`email_verified = true`);
+            }
+
+            // ✅ Actualizar foto de perfil (desde mobile con Google Sign-In o desktop)
+            if (profilePhotoUrl !== undefined) {
+                updates.push(`profile_photo_url = $${paramIndex}`);
+                params.push(profilePhotoUrl);
+                paramIndex++;
+                console.log(`[Employees/Update] 📷 Actualizando profile_photo_url para empleado ${employeeId}`);
             }
 
             // Always update timestamp

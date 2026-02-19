@@ -454,6 +454,7 @@ module.exports = (pool, io) => {
                 let totalLiquidacionesEfectivo = 0;
                 let totalLiquidacionesTarjeta = 0;
                 let totalLiquidacionesCredito = 0;
+                let totalRepartidorExpenses = 0;
 
                 const isRepartidor = shift.employee_role?.toLowerCase() === 'repartidor';
 
@@ -492,13 +493,25 @@ module.exports = (pool, io) => {
                     totalLiquidacionesEfectivo = parseFloat(liquidacionesResult.rows[0]?.total_liquidaciones_efectivo || 0);
                     totalLiquidacionesTarjeta = parseFloat(liquidacionesResult.rows[0]?.total_liquidaciones_tarjeta || 0);
                     totalLiquidacionesCredito = parseFloat(liquidacionesResult.rows[0]?.total_liquidaciones_credito || 0);
+
+                    // Gastos de repartidores desde repartidor_liquidations.total_gastos
+                    const repartidorExpensesResult = await pool.query(`
+                        SELECT COALESCE(SUM(total_gastos), 0) as total_repartidor_expenses
+                        FROM repartidor_liquidations
+                        WHERE branch_id = $1
+                          AND tenant_id = $2
+                          AND fecha_liquidacion >= $3
+                    `, [shift.branch_id, shift.tenant_id, shift.start_time]);
+
+                    totalRepartidorExpenses = parseFloat(repartidorExpensesResult.rows[0]?.total_repartidor_expenses || 0);
                 } else {
                     // Turno CERRADO o repartidor: usar datos del cash_cut sincronizado
                     const liquidacionesResult = await pool.query(`
                         SELECT
                             COALESCE(total_liquidaciones_efectivo, 0) as total_liquidaciones_efectivo,
                             COALESCE(total_liquidaciones_tarjeta, 0) as total_liquidaciones_tarjeta,
-                            COALESCE(total_liquidaciones_credito, 0) as total_liquidaciones_credito
+                            COALESCE(total_liquidaciones_credito, 0) as total_liquidaciones_credito,
+                            COALESCE(total_repartidor_expenses, 0) as total_repartidor_expenses
                         FROM cash_cuts
                         WHERE shift_id = $1 AND is_closed = true
                         ORDER BY id DESC LIMIT 1
@@ -508,6 +521,7 @@ module.exports = (pool, io) => {
                         totalLiquidacionesEfectivo = parseFloat(liquidacionesResult.rows[0].total_liquidaciones_efectivo || 0);
                         totalLiquidacionesTarjeta = parseFloat(liquidacionesResult.rows[0].total_liquidaciones_tarjeta || 0);
                         totalLiquidacionesCredito = parseFloat(liquidacionesResult.rows[0].total_liquidaciones_credito || 0);
+                        totalRepartidorExpenses = parseFloat(liquidacionesResult.rows[0].total_repartidor_expenses || 0);
                     }
                 }
 
@@ -548,6 +562,8 @@ module.exports = (pool, io) => {
                     total_liquidaciones_efectivo: totalLiquidacionesEfectivo,
                     total_liquidaciones_tarjeta: totalLiquidacionesTarjeta,
                     total_liquidaciones_credito: totalLiquidacionesCredito,
+                    // 💸 Gastos de repartidores (separados de gastos del cajero)
+                    total_repartidor_expenses: totalRepartidorExpenses,
                 });
             }
 
@@ -1666,11 +1682,14 @@ module.exports = (pool, io) => {
                     let liquidacionesEfectivo = 0;
                     let liquidacionesTarjeta = 0;
                     let liquidacionesCredito = 0;
+                    let totalRepartidorExpenses = 0;
                     let hasConsolidatedLiquidaciones = false;
                     let consolidatedRepartidorNames = null;
 
                     if (!isRepartidor) {
                         // Obtener desglose de ventas de repartidores liquidadas por tipo de pago
+                        // IMPORTANTE: Usar subquery con DISTINCT para evitar contar duplicados
+                        // (una venta puede tener múltiples repartidor_assignments, uno por producto)
                         const liquidacionesQuery = await pool.query(`
                             SELECT
                                 COALESCE(SUM(CASE
@@ -1689,9 +1708,13 @@ module.exports = (pool, io) => {
                                     ELSE 0
                                 END), 0) as total_liquidaciones_credito
                             FROM ventas v
-                            INNER JOIN repartidor_assignments ra ON ra.venta_id = v.id_venta
-                            WHERE ra.status = 'liquidated'
-                              AND ra.fecha_liquidacion >= $1
+                            WHERE v.id_venta IN (
+                                SELECT DISTINCT ra.venta_id
+                                FROM repartidor_assignments ra
+                                WHERE ra.status = 'liquidated'
+                                  AND ra.fecha_liquidacion >= $1
+                                  AND ra.venta_id IS NOT NULL
+                            )
                               AND v.branch_id = $2
                               AND v.tenant_id = $3
                         `, [shift.start_time, shift.branch_id, shift.tenant_id]);
@@ -1699,6 +1722,17 @@ module.exports = (pool, io) => {
                         liquidacionesEfectivo = parseFloat(liquidacionesQuery.rows[0]?.total_liquidaciones_efectivo || 0);
                         liquidacionesTarjeta = parseFloat(liquidacionesQuery.rows[0]?.total_liquidaciones_tarjeta || 0);
                         liquidacionesCredito = parseFloat(liquidacionesQuery.rows[0]?.total_liquidaciones_credito || 0);
+
+                        // Gastos de repartidores desde repartidor_liquidations.total_gastos
+                        const repartidorExpensesQuery = await pool.query(`
+                            SELECT COALESCE(SUM(total_gastos), 0) as total_repartidor_expenses
+                            FROM repartidor_liquidations
+                            WHERE branch_id = $1
+                              AND tenant_id = $2
+                              AND fecha_liquidacion >= $3
+                        `, [shift.branch_id, shift.tenant_id, shift.start_time]);
+
+                        totalRepartidorExpenses = parseFloat(repartidorExpensesQuery.rows[0]?.total_repartidor_expenses || 0);
 
                         // Obtener nombres de repartidores para UI
                         if (liquidacionesEfectivo > 0 || liquidacionesTarjeta > 0 || liquidacionesCredito > 0) {
@@ -1715,8 +1749,8 @@ module.exports = (pool, io) => {
                         }
                     }
 
-                    // Efectivo esperado = inicial + ventas efectivo + pagos efectivo + liquidaciones efectivo + depósitos - gastos - retiros
-                    const expectedCash = initialAmount + cashSales + cashPayments + liquidacionesEfectivo + totalDeposits - totalExpenses - totalWithdrawals;
+                    // Efectivo esperado = inicial + ventas efectivo + pagos efectivo + liquidaciones efectivo + depósitos - gastos - retiros - gastos repartidores
+                    const expectedCash = initialAmount + cashSales + cashPayments + liquidacionesEfectivo + totalDeposits - totalExpenses - totalWithdrawals - totalRepartidorExpenses;
 
                     let snapshotData = {
                         // Info del turno
@@ -1740,6 +1774,7 @@ module.exports = (pool, io) => {
                         deposits: totalDeposits,
                         withdrawals: totalWithdrawals,
                         liquidaciones_efectivo: liquidacionesEfectivo,
+                        total_repartidor_expenses: totalRepartidorExpenses,
                         has_consolidated_liquidaciones: hasConsolidatedLiquidaciones,
                         consolidated_repartidor_names: consolidatedRepartidorNames,
                         expected_cash: expectedCash,
