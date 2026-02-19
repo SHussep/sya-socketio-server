@@ -588,6 +588,8 @@ module.exports = (pool, io) => {
                     total_liquidaciones_credito: totalLiquidacionesCredito,
                     // 💸 Gastos de repartidores (separados de gastos del cajero)
                     total_repartidor_expenses: totalRepartidorExpenses,
+                    // ⚙️ Setting de consolidación para que mobile sepa el modo activo
+                    cajero_consolida_liquidaciones: cajeroConsolida,
                 });
             }
 
@@ -1812,6 +1814,7 @@ module.exports = (pool, io) => {
                         total_repartidor_expenses: totalRepartidorExpenses,
                         has_consolidated_liquidaciones: hasConsolidatedLiquidaciones,
                         consolidated_repartidor_names: consolidatedRepartidorNames,
+                        cajero_consolida_liquidaciones: cajeroConsolidaSnapshot,
                         expected_cash: expectedCash,
 
                         // Contadores básicos
