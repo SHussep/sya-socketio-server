@@ -412,8 +412,8 @@ async function runPartialCleanup(tenantId, selectedTenant, branchId = null) {
     console.log('');
 
     // Confirmacion
-    const confirm = await ask('Escribe "CONFIRMAR" para proceder:');
-    if (confirm !== 'CONFIRMAR') {
+    const confirm = await ask('Continuar? (s/n):');
+    if (confirm.toLowerCase() !== 's' && confirm.toLowerCase() !== 'si') {
         log('\nOperacion cancelada', 'yellow');
         return;
     }
@@ -465,15 +465,7 @@ async function runFullCleanup(tenantId, selectedTenant) {
     log('  - El tenant mismo', 'red');
     console.log('');
 
-    // Preguntar si mantener tenant/branches
-    const keepAnswer = await ask('Deseas MANTENER el tenant y sucursales? (s/n):');
-    const keepTenant = keepAnswer.toLowerCase() === 's' || keepAnswer.toLowerCase() === 'si';
-
     let tablesToDelete = [...FULL_CLEANUP_TABLES];
-    if (keepTenant) {
-        tablesToDelete = tablesToDelete.filter(t => t.name !== 'tenants' && t.name !== 'branches');
-        info('Se mantendra el tenant y las sucursales');
-    }
 
     console.log('');
     console.log(`  ${colors.bright}Tenant:${colors.reset} ${selectedTenant.business_name} (ID: ${tenantId})`);
@@ -515,27 +507,10 @@ async function runFullCleanup(tenantId, selectedTenant) {
     danger(`TOTAL: ${totalRecords} registros seran ELIMINADOS PERMANENTEMENTE`);
     console.log('');
 
-    // Triple confirmacion
-    dangerHeader('CONFIRMACION REQUERIDA');
-
-    log('Para proceder, debes confirmar:', 'yellow');
-    console.log('');
-
-    const confirmCode = await ask(`1. Escribe el codigo del tenant (${selectedTenant.tenant_code || selectedTenant.id}):`);
-    if (confirmCode !== (selectedTenant.tenant_code || String(selectedTenant.id))) {
-        error('Codigo incorrecto. Operacion cancelada.');
-        return;
-    }
-
-    const confirmWord = await ask('2. Escribe "ELIMINAR":');
+    // Confirmacion
+    const confirmWord = await ask('Escribe "ELIMINAR" para proceder:');
     if (confirmWord !== 'ELIMINAR') {
         error('Confirmacion incorrecta. Operacion cancelada.');
-        return;
-    }
-
-    const finalConfirm = await ask('3. Escribe "PROCEDER" para ejecutar:');
-    if (finalConfirm !== 'PROCEDER') {
-        log('\nOperacion cancelada', 'yellow');
         return;
     }
 
@@ -569,11 +544,7 @@ async function runFullCleanup(tenantId, selectedTenant) {
     const errors = results.filter(r => r.error);
 
     console.log('');
-    if (keepTenant) {
-        success(`Datos eliminados. Tenant y sucursales mantenidos. ${totalDeleted} registros eliminados.`);
-    } else {
-        success(`TENANT ELIMINADO COMPLETAMENTE. ${totalDeleted} registros eliminados.`);
-    }
+    success(`TENANT ELIMINADO COMPLETAMENTE. ${totalDeleted} registros eliminados.`);
 
     if (errors.length > 0) {
         warning(`${errors.length} errores encontrados`);
