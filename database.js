@@ -284,6 +284,37 @@ async function initializeDatabase() {
             )
         `);
 
+        // Tabla: categorias_productos (categorías de productos)
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS categorias_productos (
+                id SERIAL PRIMARY KEY,
+                tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                nombre VARCHAR(255) NOT NULL,
+                is_available BOOLEAN DEFAULT TRUE,
+                is_system_category BOOLEAN DEFAULT FALSE,
+                is_deleted BOOLEAN DEFAULT FALSE,
+                deleted_at TIMESTAMPTZ,
+                global_id VARCHAR(255),
+                terminal_id VARCHAR(255),
+                local_op_seq INTEGER DEFAULT 0,
+                created_local_utc TEXT,
+                last_modified_local_utc TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE(tenant_id, global_id)
+            )
+        `);
+
+        await client.query(`
+            CREATE INDEX IF NOT EXISTS idx_categorias_productos_global_id
+            ON categorias_productos(global_id) WHERE global_id IS NOT NULL
+        `);
+
+        await client.query(`
+            CREATE INDEX IF NOT EXISTS idx_categorias_productos_tenant
+            ON categorias_productos(tenant_id) WHERE is_deleted = FALSE
+        `);
+
         // Tabla: purchases (compras)
         await client.query(`
             CREATE TABLE IF NOT EXISTS purchases (
@@ -1852,6 +1883,50 @@ async function runMigrations() {
                         console.log('[Schema] ✅ suppliers.terminal_id column size increased');
                     }
                 }
+            }
+
+            // Patch: Create categorias_productos table if not exists
+            console.log('[Schema] 🔍 Checking categorias_productos table...');
+            const checkCategoriasTable = await client.query(`
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'categorias_productos'
+                )
+            `);
+
+            if (!checkCategoriasTable.rows[0].exists) {
+                console.log('[Schema] 📝 Creating categorias_productos table...');
+                await client.query(`
+                    CREATE TABLE IF NOT EXISTS categorias_productos (
+                        id SERIAL PRIMARY KEY,
+                        tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                        nombre VARCHAR(255) NOT NULL,
+                        is_available BOOLEAN DEFAULT TRUE,
+                        is_system_category BOOLEAN DEFAULT FALSE,
+                        is_deleted BOOLEAN DEFAULT FALSE,
+                        deleted_at TIMESTAMPTZ,
+                        global_id VARCHAR(255),
+                        terminal_id VARCHAR(255),
+                        local_op_seq INTEGER DEFAULT 0,
+                        created_local_utc TEXT,
+                        last_modified_local_utc TEXT,
+                        created_at TIMESTAMPTZ DEFAULT NOW(),
+                        updated_at TIMESTAMPTZ DEFAULT NOW(),
+                        UNIQUE(tenant_id, global_id)
+                    )
+                `);
+
+                await client.query(`
+                    CREATE INDEX IF NOT EXISTS idx_categorias_productos_global_id
+                    ON categorias_productos(global_id) WHERE global_id IS NOT NULL
+                `);
+
+                await client.query(`
+                    CREATE INDEX IF NOT EXISTS idx_categorias_productos_tenant
+                    ON categorias_productos(tenant_id) WHERE is_deleted = FALSE
+                `);
+
+                console.log('[Schema] ✅ categorias_productos table created');
             }
 
             // Patch: Create branch_devices table for Primary/Auxiliar device management
