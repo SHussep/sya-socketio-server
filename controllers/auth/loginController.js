@@ -197,7 +197,8 @@ class LoginController {
                         tenantCode: tenant.tenant_code,
                         businessName: tenant.business_name,
                         subscriptionName: tenant.subscription_name,
-                        trialEndsAt: tenant.trial_ends_at
+                        trialEndsAt: tenant.trial_ends_at,
+                        logoUrl: tenant.logo_url || null
                     },
                     branches,
                     currentBranch: selectedBranch
@@ -382,7 +383,8 @@ class LoginController {
                     tenant: {
                         id: tenant.id,
                         businessName: tenant.business_name,
-                        tenantCode: tenant.tenant_code
+                        tenantCode: tenant.tenant_code,
+                        logoUrl: tenant.logo_url || null
                     },
                     branches,
                     currentBranch: selectedBranch

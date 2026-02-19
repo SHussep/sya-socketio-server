@@ -682,6 +682,43 @@ app.put('/api/branches/:id', validateTenant, async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+// GET /api/branches/:branchId/business-info - Obtener info del negocio para una sucursal
+// ═══════════════════════════════════════════════════════════════
+app.get('/api/branches/:branchId/business-info', async (req, res) => {
+    const { branchId } = req.params;
+    const { tenantId } = req.query;
+
+    if (!tenantId || !branchId) {
+        return res.status(400).json({ success: false, message: 'tenantId y branchId son requeridos' });
+    }
+
+    try {
+        const result = await pool.query(
+            'SELECT id, name, address, phone, rfc, logo_url FROM branches WHERE id = $1 AND tenant_id = $2',
+            [branchId, tenantId]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ success: false, message: 'Sucursal no encontrada' });
+        }
+
+        const branch = result.rows[0];
+        res.json({
+            success: true,
+            data: {
+                name: branch.name,
+                address: branch.address,
+                phone: branch.phone,
+                rfc: branch.rfc,
+                logo_url: branch.logo_url
+            }
+        });
+    } catch (error) {
+        console.error('[Branch Info] Error:', error);
+        res.status(500).json({ success: false, message: 'Error del servidor' });
+    }
+});
+
 // POST /api/branches/sync-info - Sincronizar info de sucursal desde Desktop
 // Sin JWT - usa tenantId/branchId del payload para identificación
 // Si es la sucursal principal, también actualiza el nombre del tenant

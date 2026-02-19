@@ -402,6 +402,7 @@ module.exports = function(pool, io) {
                         branches: parseInt(branchCount.rows[0].count),
                         employees: parseInt(employeeCount.rows[0].count)
                     },
+                    logoUrl: tenant.logo_url || null,
                     isActive: tenant.is_active && trialStatus.isActive,
                     createdAt: tenant.created_at
                 }

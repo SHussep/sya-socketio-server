@@ -316,11 +316,12 @@ async function uploadBusinessLogo(base64Image, options) {
     const result = await cloudinary.uploader.upload(imageData, {
       public_id: publicId,
       overwrite: true,
+      invalidate: true,
       resource_type: 'image',
       transformation: [
-        { width: 500, height: 500, crop: 'limit' },
+        { width: 500, height: 500, crop: 'pad', background: 'transparent' },
         { quality: 'auto:good' },
-        { fetch_format: 'auto' },
+        { fetch_format: 'png' },
       ],
       tags: [`tenant_${tenantId}`, 'business-logo'],
       context: {
