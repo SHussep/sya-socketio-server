@@ -687,9 +687,10 @@ app.put('/api/branches/:id', validateTenant, async (req, res) => {
 // Si es la sucursal principal, también actualiza el nombre del tenant
 // ═══════════════════════════════════════════════════════════════
 app.post('/api/branches/sync-info', validateTenant, async (req, res) => {
-    const { tenantId, branchId, name, address, phone, rfc } = req.body;
+    const { tenantId, branchId, name, address, phone, rfc, logo_base64, existing_logo_url } = req.body;
+    const cloudinaryService = require('./services/cloudinaryService');
 
-    console.log(`[Branch Sync] 📥 Recibida solicitud: tenantId=${tenantId}, branchId=${branchId}, name=${name}`);
+    console.log(`[Branch Sync] 📥 Recibida solicitud: tenantId=${tenantId}, branchId=${branchId}, name=${name}, hasLogo=${!!logo_base64}`);
 
     if (!tenantId || !branchId) {
         return res.status(400).json({
@@ -701,7 +702,7 @@ app.post('/api/branches/sync-info', validateTenant, async (req, res) => {
     try {
         // Verificar que la sucursal pertenece al tenant
         const existing = await pool.query(
-            'SELECT id, name FROM branches WHERE id = $1 AND tenant_id = $2',
+            'SELECT id, name, logo_url FROM branches WHERE id = $1 AND tenant_id = $2',
             [branchId, tenantId]
         );
 
@@ -715,48 +716,83 @@ app.post('/api/branches/sync-info', validateTenant, async (req, res) => {
 
         const oldName = existing.rows[0].name;
 
-        // Actualizar sucursal (columna es 'phone', no 'phone_number')
+        // Subir logo a Cloudinary si viene en base64
+        let logoUrl = existing.rows[0].logo_url || existing_logo_url || null;
+        if (logo_base64) {
+            try {
+                if (cloudinaryService.isConfigured()) {
+                    console.log(`[Branch Sync] 📤 Subiendo logo a Cloudinary...`);
+                    const uploadResult = await cloudinaryService.uploadBusinessLogo(logo_base64, {
+                        tenantId,
+                        branchId,
+                    });
+                    logoUrl = uploadResult.url;
+                    console.log(`[Branch Sync] ✅ Logo subido: ${logoUrl}`);
+                } else {
+                    console.log(`[Branch Sync] ⚠️ Cloudinary no configurado, logo no subido`);
+                }
+            } catch (logoError) {
+                console.error(`[Branch Sync] ⚠️ Error subiendo logo (continuando sin logo):`, logoError.message);
+            }
+        }
+
+        // Actualizar sucursal (incluye logo_url)
         const result = await pool.query(`
             UPDATE branches
             SET name = COALESCE($1, name),
                 address = COALESCE($2, address),
                 phone = COALESCE($3, phone),
                 rfc = COALESCE($4, rfc),
+                logo_url = COALESCE($7, logo_url),
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = $5 AND tenant_id = $6
             RETURNING *
-        `, [name, address, phone, rfc, branchId, tenantId]);
+        `, [name, address, phone, rfc, branchId, tenantId, logoUrl]);
 
         const branch = result.rows[0];
-        console.log(`[Branch Sync] ✅ Sucursal actualizada: ${branch.name} (RFC: ${branch.rfc || 'N/A'})`);
+        console.log(`[Branch Sync] ✅ Sucursal actualizada: ${branch.name} (RFC: ${branch.rfc || 'N/A'}, Logo: ${branch.logo_url ? 'Sí' : 'No'})`);
 
-        // Si es la sucursal principal y se cambió el nombre, también actualizar el tenant
+        // Si es la sucursal principal, actualizar tenant (nombre y/o logo)
         let tenantUpdated = false;
         const branchIdInt = parseInt(branchId);
 
-        if (name && name !== oldName) {
-            const primaryBranch = await pool.query(
-                `SELECT id FROM branches
-                 WHERE tenant_id = $1
-                 ORDER BY created_at ASC
-                 LIMIT 1`,
-                [tenantId]
-            );
+        const primaryBranch = await pool.query(
+            `SELECT id FROM branches
+             WHERE tenant_id = $1
+             ORDER BY created_at ASC
+             LIMIT 1`,
+            [tenantId]
+        );
 
-            console.log(`[Branch Sync] 🔍 Primary branch check: primaryId=${primaryBranch.rows[0]?.id}, currentBranchId=${branchIdInt}`);
+        const isPrimary = primaryBranch.rows.length > 0 && primaryBranch.rows[0].id === branchIdInt;
 
-            if (primaryBranch.rows.length > 0 && primaryBranch.rows[0].id === branchIdInt) {
+        if (isPrimary) {
+            const updateFields = [];
+            const updateValues = [];
+            let paramIndex = 1;
+
+            if (name && name !== oldName) {
+                updateFields.push(`business_name = $${paramIndex}`);
+                updateValues.push(name);
+                paramIndex++;
+            }
+
+            if (logoUrl) {
+                updateFields.push(`logo_url = $${paramIndex}`);
+                updateValues.push(logoUrl);
+                paramIndex++;
+            }
+
+            if (updateFields.length > 0) {
+                updateFields.push(`updated_at = CURRENT_TIMESTAMP`);
+                updateValues.push(tenantId);
                 await pool.query(
-                    `UPDATE tenants SET business_name = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
-                    [name, tenantId]
+                    `UPDATE tenants SET ${updateFields.join(', ')} WHERE id = $${paramIndex}`,
+                    updateValues
                 );
                 tenantUpdated = true;
-                console.log(`[Branch Sync] ✅ Tenant también actualizado con business_name: ${name}`);
-            } else {
-                console.log(`[Branch Sync] ℹ️ No es sucursal principal, solo se actualizó la sucursal`);
+                console.log(`[Branch Sync] ✅ Tenant actualizado (nombre: ${name || 'sin cambio'}, logo: ${logoUrl ? 'Sí' : 'No'})`);
             }
-        } else {
-            console.log(`[Branch Sync] ℹ️ Nombre no cambió (old: ${oldName}, new: ${name})`);
         }
 
         res.json({
@@ -770,6 +806,7 @@ app.post('/api/branches/sync-info', validateTenant, async (req, res) => {
                 address: branch.address,
                 phone: branch.phone,
                 rfc: branch.rfc,
+                logo_url: branch.logo_url,
                 tenantUpdated: tenantUpdated,
                 updatedAt: branch.updated_at
             }
