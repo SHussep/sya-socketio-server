@@ -790,13 +790,28 @@ module.exports = function(pool, io) {
                 ORDER BY tenants_count DESC
             `);
 
+            // Temas en uso
+            const themes = await pool.query(`
+                SELECT
+                    theme_name,
+                    COUNT(DISTINCT tenant_id) as tenants_count,
+                    COUNT(*) as total_opens
+                FROM telemetry_events
+                WHERE event_type = 'theme_changed'
+                AND theme_name IS NOT NULL
+                AND event_timestamp >= NOW() - INTERVAL '${parseInt(days)} days'
+                GROUP BY theme_name
+                ORDER BY tenants_count DESC
+            `);
+
             res.json({
                 success: true,
                 data: {
                     dailyActivity: dailyOpens.rows,
                     topTenants: topTenants.rows,
                     appVersions: appVersions.rows,
-                    scaleModels: scaleModels.rows
+                    scaleModels: scaleModels.rows,
+                    themes: themes.rows
                 }
             });
 
