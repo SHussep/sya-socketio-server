@@ -460,68 +460,79 @@ module.exports = (pool, io) => {
 
                 if (shift.is_cash_cut_open && !isRepartidor) {
                     // Turno ABIERTO de cajero: calcular desde ventas de repartidores liquidadas
-                    // Usa desglose por tipo de pago para coincidir con el cálculo del Desktop
-                    const liquidacionesResult = await pool.query(`
-                        SELECT
-                            COALESCE(SUM(CASE
-                                WHEN v.tipo_pago_id = 4 THEN COALESCE(v.cash_amount, 0)
-                                WHEN v.tipo_pago_id = 1 THEN v.total
-                                ELSE 0
-                            END), 0) as total_liquidaciones_efectivo,
-                            COALESCE(SUM(CASE
-                                WHEN v.tipo_pago_id = 4 THEN COALESCE(v.card_amount, 0)
-                                WHEN v.tipo_pago_id = 2 THEN v.total
-                                ELSE 0
-                            END), 0) as total_liquidaciones_tarjeta,
-                            COALESCE(SUM(CASE
-                                WHEN v.tipo_pago_id = 4 THEN COALESCE(v.credit_amount, 0)
-                                WHEN v.tipo_pago_id = 3 THEN v.total
-                                ELSE 0
-                            END), 0) as total_liquidaciones_credito
-                        FROM ventas v
-                        WHERE v.id_venta IN (
-                            SELECT DISTINCT ra.venta_id
-                            FROM repartidor_assignments ra
-                            WHERE ra.status = 'liquidated'
-                              AND ra.fecha_liquidacion >= $1
-                              AND ra.venta_id IS NOT NULL
-                        )
-                          AND v.branch_id = $2
-                          AND v.tenant_id = $3
-                    `, [shift.start_time, shift.branch_id, shift.tenant_id]);
+                    try {
+                        const liquidacionesResult = await pool.query(`
+                            SELECT
+                                COALESCE(SUM(CASE
+                                    WHEN v.tipo_pago_id = 4 THEN COALESCE(v.cash_amount, 0)
+                                    WHEN v.tipo_pago_id = 1 THEN v.total
+                                    ELSE 0
+                                END), 0) as total_liquidaciones_efectivo,
+                                COALESCE(SUM(CASE
+                                    WHEN v.tipo_pago_id = 4 THEN COALESCE(v.card_amount, 0)
+                                    WHEN v.tipo_pago_id = 2 THEN v.total
+                                    ELSE 0
+                                END), 0) as total_liquidaciones_tarjeta,
+                                COALESCE(SUM(CASE
+                                    WHEN v.tipo_pago_id = 4 THEN COALESCE(v.credit_amount, 0)
+                                    WHEN v.tipo_pago_id = 3 THEN v.total
+                                    ELSE 0
+                                END), 0) as total_liquidaciones_credito
+                            FROM ventas v
+                            WHERE v.id_venta IN (
+                                SELECT DISTINCT ra.venta_id
+                                FROM repartidor_assignments ra
+                                WHERE ra.status = 'liquidated'
+                                  AND ra.fecha_liquidacion >= $1
+                                  AND ra.venta_id IS NOT NULL
+                            )
+                              AND v.branch_id = $2
+                              AND v.tenant_id = $3
+                        `, [shift.start_time, shift.branch_id, shift.tenant_id]);
 
-                    totalLiquidacionesEfectivo = parseFloat(liquidacionesResult.rows[0]?.total_liquidaciones_efectivo || 0);
-                    totalLiquidacionesTarjeta = parseFloat(liquidacionesResult.rows[0]?.total_liquidaciones_tarjeta || 0);
-                    totalLiquidacionesCredito = parseFloat(liquidacionesResult.rows[0]?.total_liquidaciones_credito || 0);
+                        totalLiquidacionesEfectivo = parseFloat(liquidacionesResult.rows[0]?.total_liquidaciones_efectivo || 0);
+                        totalLiquidacionesTarjeta = parseFloat(liquidacionesResult.rows[0]?.total_liquidaciones_tarjeta || 0);
+                        totalLiquidacionesCredito = parseFloat(liquidacionesResult.rows[0]?.total_liquidaciones_credito || 0);
+                    } catch (liqErr) {
+                        console.warn(`[Shifts/History] ⚠️ Error calculando liquidaciones para turno ${shift.id}: ${liqErr.message}`);
+                    }
 
                     // Gastos de repartidores desde repartidor_liquidations.total_gastos
-                    const repartidorExpensesResult = await pool.query(`
-                        SELECT COALESCE(SUM(total_gastos), 0) as total_repartidor_expenses
-                        FROM repartidor_liquidations
-                        WHERE branch_id = $1
-                          AND tenant_id = $2
-                          AND fecha_liquidacion >= $3
-                    `, [shift.branch_id, shift.tenant_id, shift.start_time]);
+                    try {
+                        const repartidorExpensesResult = await pool.query(`
+                            SELECT COALESCE(SUM(total_gastos), 0) as total_repartidor_expenses
+                            FROM repartidor_liquidations
+                            WHERE branch_id = $1
+                              AND tenant_id = $2
+                              AND fecha_liquidacion >= $3
+                        `, [shift.branch_id, shift.tenant_id, shift.start_time]);
 
-                    totalRepartidorExpenses = parseFloat(repartidorExpensesResult.rows[0]?.total_repartidor_expenses || 0);
+                        totalRepartidorExpenses = parseFloat(repartidorExpensesResult.rows[0]?.total_repartidor_expenses || 0);
+                    } catch (repErr) {
+                        console.warn(`[Shifts/History] ⚠️ Tabla repartidor_liquidations no disponible: ${repErr.message}`);
+                    }
                 } else {
                     // Turno CERRADO o repartidor: usar datos del cash_cut sincronizado
-                    const liquidacionesResult = await pool.query(`
-                        SELECT
-                            COALESCE(total_liquidaciones_efectivo, 0) as total_liquidaciones_efectivo,
-                            COALESCE(total_liquidaciones_tarjeta, 0) as total_liquidaciones_tarjeta,
-                            COALESCE(total_liquidaciones_credito, 0) as total_liquidaciones_credito,
-                            COALESCE(total_repartidor_expenses, 0) as total_repartidor_expenses
-                        FROM cash_cuts
-                        WHERE shift_id = $1 AND is_closed = true
-                        ORDER BY id DESC LIMIT 1
-                    `, [shift.id]);
+                    try {
+                        const liquidacionesResult = await pool.query(`
+                            SELECT
+                                COALESCE(total_liquidaciones_efectivo, 0) as total_liquidaciones_efectivo,
+                                COALESCE(total_liquidaciones_tarjeta, 0) as total_liquidaciones_tarjeta,
+                                COALESCE(total_liquidaciones_credito, 0) as total_liquidaciones_credito,
+                                COALESCE(total_repartidor_expenses, 0) as total_repartidor_expenses
+                            FROM cash_cuts
+                            WHERE shift_id = $1 AND is_closed = true
+                            ORDER BY id DESC LIMIT 1
+                        `, [shift.id]);
 
-                    if (liquidacionesResult.rows.length > 0) {
-                        totalLiquidacionesEfectivo = parseFloat(liquidacionesResult.rows[0].total_liquidaciones_efectivo || 0);
-                        totalLiquidacionesTarjeta = parseFloat(liquidacionesResult.rows[0].total_liquidaciones_tarjeta || 0);
-                        totalLiquidacionesCredito = parseFloat(liquidacionesResult.rows[0].total_liquidaciones_credito || 0);
-                        totalRepartidorExpenses = parseFloat(liquidacionesResult.rows[0].total_repartidor_expenses || 0);
+                        if (liquidacionesResult.rows.length > 0) {
+                            totalLiquidacionesEfectivo = parseFloat(liquidacionesResult.rows[0].total_liquidaciones_efectivo || 0);
+                            totalLiquidacionesTarjeta = parseFloat(liquidacionesResult.rows[0].total_liquidaciones_tarjeta || 0);
+                            totalLiquidacionesCredito = parseFloat(liquidacionesResult.rows[0].total_liquidaciones_credito || 0);
+                            totalRepartidorExpenses = parseFloat(liquidacionesResult.rows[0].total_repartidor_expenses || 0);
+                        }
+                    } catch (cashCutErr) {
+                        console.warn(`[Shifts/History] ⚠️ Error leyendo cash_cuts para turno ${shift.id}: ${cashCutErr.message}`);
                     }
                 }
 
@@ -574,7 +585,7 @@ module.exports = (pool, io) => {
 
         } catch (error) {
             console.error('[Shifts] Error al obtener historial:', error);
-            res.status(500).json({ success: false, message: 'Error al obtener historial de turnos' });
+            res.status(500).json({ success: false, message: 'Error al obtener historial de turnos', error: error.message });
         }
     });
 
