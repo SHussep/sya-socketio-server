@@ -647,5 +647,230 @@ module.exports = (pool) => {
         }
     });
 
+    // ═══════════════════════════════════════════════════════════════
+    // GET /api/dashboard/production-analytics
+    // Análisis de rendimiento: Derivados de maíz, Gas LP, Gasolina
+    // ═══════════════════════════════════════════════════════════════
+    router.get('/production-analytics', authenticateToken, async (req, res) => {
+        try {
+            const { tenantId, branchId: userBranchId } = req.user;
+            const { branch_id, start_date, end_date, all_branches = 'false', timezone } = req.query;
+
+            const targetBranchId = branch_id ? parseInt(branch_id) : userBranchId;
+            const shouldFilterByBranch = all_branches !== 'true' && targetBranchId;
+
+            // Timezone
+            let branchTimezone = 'America/Mexico_City';
+            if (targetBranchId) {
+                const branchInfo = await pool.query('SELECT timezone FROM branches WHERE id = $1', [targetBranchId]);
+                if (branchInfo.rows.length > 0 && branchInfo.rows[0].timezone) {
+                    branchTimezone = branchInfo.rows[0].timezone;
+                }
+            }
+            const effectiveTimezone = safeTimezone(timezone || branchTimezone);
+
+            // Filtros de fecha para ventas (misma lógica que summary)
+            let dateFilter = `DATE(v.fecha_venta_utc AT TIME ZONE '${effectiveTimezone}') = DATE(NOW() AT TIME ZONE '${effectiveTimezone}')`;
+            let expenseDateFilter = `DATE(expense_date AT TIME ZONE '${effectiveTimezone}') = DATE(NOW() AT TIME ZONE '${effectiveTimezone}')`;
+
+            if (start_date && end_date) {
+                const startDateOnly = safeDateString(start_date);
+                const endDateOnly = safeDateString(end_date);
+                if (startDateOnly && endDateOnly) {
+                    dateFilter = `(CASE WHEN v.estado_venta_id = 5 THEN COALESCE(v.fecha_liquidacion_utc, v.fecha_venta_utc) ELSE v.fecha_venta_utc END AT TIME ZONE '${effectiveTimezone}')::date >= '${startDateOnly}'::date AND (CASE WHEN v.estado_venta_id = 5 THEN COALESCE(v.fecha_liquidacion_utc, v.fecha_venta_utc) ELSE v.fecha_venta_utc END AT TIME ZONE '${effectiveTimezone}')::date <= '${endDateOnly}'::date`;
+                    expenseDateFilter = `(expense_date AT TIME ZONE '${effectiveTimezone}')::date >= '${startDateOnly}'::date AND (expense_date AT TIME ZONE '${effectiveTimezone}')::date <= '${endDateOnly}'::date`;
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════════════
+            // Query 1: Productos de "Derivados de maíz" vendidos
+            // ═══════════════════════════════════════════════════════════════
+            let productsQuery = `
+                SELECT
+                    p.descripcion as product_name,
+                    COALESCE(um.abbreviation, 'kg') as unit,
+                    SUM(vd.cantidad) as total_qty,
+                    SUM(vd.total_linea) as total_revenue,
+                    SUM(CASE WHEN v.venta_tipo_id = 1 THEN vd.cantidad ELSE 0 END) as qty_mostrador,
+                    SUM(CASE WHEN v.venta_tipo_id = 2 THEN vd.cantidad ELSE 0 END) as qty_repartidor
+                FROM ventas v
+                JOIN ventas_detalle vd ON vd.id_venta = v.id_venta
+                JOIN productos p ON vd.id_producto = p.id AND p.tenant_id = v.tenant_id
+                LEFT JOIN units_of_measure um ON p.unidad_medida_id = um.id
+                LEFT JOIN categorias_productos cp ON p.categoria_global_id = cp.global_id AND cp.tenant_id = v.tenant_id
+                WHERE v.tenant_id = $1
+                AND v.estado_venta_id IN (3, 5)
+                AND cp.nombre ILIKE '%derivados%maíz%'
+                AND ${dateFilter}
+            `;
+            let productsParams = [tenantId];
+            let pIdx = 2;
+
+            if (shouldFilterByBranch) {
+                productsQuery += ` AND v.branch_id = $${pIdx}`;
+                productsParams.push(targetBranchId);
+                pIdx++;
+            }
+
+            productsQuery += ` GROUP BY p.id, p.descripcion, um.abbreviation ORDER BY total_qty DESC`;
+
+            const productsResult = await pool.query(productsQuery, productsParams);
+            const products = productsResult.rows.map(r => ({
+                name: r.product_name,
+                unit: r.unit,
+                totalQty: parseFloat(r.total_qty),
+                totalRevenue: parseFloat(r.total_revenue),
+                qtyMostrador: parseFloat(r.qty_mostrador),
+                qtyRepartidor: parseFloat(r.qty_repartidor)
+            }));
+
+            // Totales
+            const totalKgDerivados = products.filter(p => p.unit === 'kg').reduce((s, p) => s + p.totalQty, 0);
+            const totalKgMostrador = products.filter(p => p.unit === 'kg').reduce((s, p) => s + p.qtyMostrador, 0);
+            const totalKgRepartidor = products.filter(p => p.unit === 'kg').reduce((s, p) => s + p.qtyRepartidor, 0);
+            const totalRevenue = products.reduce((s, p) => s + p.totalRevenue, 0);
+
+            console.log(`[Production Analytics] ✅ ${products.length} productos, ${totalKgDerivados.toFixed(1)} kg total`);
+
+            // ═══════════════════════════════════════════════════════════════
+            // Query 2: Gas LP y Gasolina (gastos del periodo)
+            // ═══════════════════════════════════════════════════════════════
+            let fuelQuery = `
+                SELECT category, SUM(amount) as total_spent, SUM(COALESCE(quantity, 0)) as total_liters
+                FROM expenses
+                WHERE tenant_id = $1 AND is_active = true
+                AND category IN ('Gas LP', 'Combustible Vehículos')
+                AND ${expenseDateFilter}
+            `;
+            let fuelParams = [tenantId];
+            let fIdx = 2;
+
+            if (shouldFilterByBranch) {
+                fuelQuery += ` AND branch_id = $${fIdx}`;
+                fuelParams.push(targetBranchId);
+                fIdx++;
+            }
+
+            fuelQuery += ` GROUP BY category`;
+
+            const fuelResult = await pool.query(fuelQuery, fuelParams);
+            const gasLP = fuelResult.rows.find(r => r.category === 'Gas LP');
+            const gasoline = fuelResult.rows.find(r => r.category === 'Combustible Vehículos');
+
+            const fuel = {
+                gasLP: {
+                    totalLiters: gasLP ? parseFloat(gasLP.total_liters) : 0,
+                    totalSpent: gasLP ? parseFloat(gasLP.total_spent) : 0
+                },
+                gasoline: {
+                    totalLiters: gasoline ? parseFloat(gasoline.total_liters) : 0,
+                    totalSpent: gasoline ? parseFloat(gasoline.total_spent) : 0
+                }
+            };
+
+            console.log(`[Production Analytics] ✅ Gas LP: ${fuel.gasLP.totalLiters}L, Gasolina: ${fuel.gasoline.totalLiters}L`);
+
+            // ═══════════════════════════════════════════════════════════════
+            // Query 3: Kg entregados por repartidor (solo "Derivados de maíz" en kg)
+            // ═══════════════════════════════════════════════════════════════
+            let repartidorKgQuery = `
+                SELECT
+                    CONCAT(e.first_name, ' ', e.last_name) as repartidor_name,
+                    e.id as repartidor_id,
+                    SUM(vd.cantidad) as total_kg_delivered
+                FROM ventas v
+                JOIN ventas_detalle vd ON vd.id_venta = v.id_venta
+                JOIN productos p ON vd.id_producto = p.id AND p.tenant_id = v.tenant_id
+                LEFT JOIN units_of_measure um ON p.unidad_medida_id = um.id
+                LEFT JOIN categorias_productos cp ON p.categoria_global_id = cp.global_id AND cp.tenant_id = v.tenant_id
+                JOIN employees e ON v.id_repartidor_asignado = e.id
+                WHERE v.tenant_id = $1
+                AND v.estado_venta_id IN (3, 5)
+                AND v.venta_tipo_id = 2
+                AND v.id_repartidor_asignado IS NOT NULL
+                AND cp.nombre ILIKE '%derivados%maíz%'
+                AND COALESCE(um.abbreviation, 'kg') = 'kg'
+                AND ${dateFilter}
+            `;
+            let rkParams = [tenantId];
+            let rkIdx = 2;
+
+            if (shouldFilterByBranch) {
+                repartidorKgQuery += ` AND v.branch_id = $${rkIdx}`;
+                rkParams.push(targetBranchId);
+                rkIdx++;
+            }
+
+            repartidorKgQuery += ` GROUP BY e.id, e.first_name, e.last_name ORDER BY total_kg_delivered DESC`;
+
+            const repartidorKgResult = await pool.query(repartidorKgQuery, rkParams);
+
+            // Query 4: Gasolina por repartidor
+            let repartidorGasQuery = `
+                SELECT
+                    CONCAT(e.first_name, ' ', e.last_name) as repartidor_name,
+                    e.id as employee_id,
+                    SUM(COALESCE(ex.quantity, 0)) as total_liters,
+                    SUM(ex.amount) as total_spent
+                FROM expenses ex
+                JOIN employees e ON ex.employee_id = e.id
+                WHERE ex.tenant_id = $1 AND ex.is_active = true
+                AND ex.category = 'Combustible Vehículos'
+                AND ${expenseDateFilter.replace(/expense_date/g, 'ex.expense_date')}
+            `;
+            let rgParams = [tenantId];
+            let rgIdx = 2;
+
+            if (shouldFilterByBranch) {
+                repartidorGasQuery += ` AND ex.branch_id = $${rgIdx}`;
+                rgParams.push(targetBranchId);
+                rgIdx++;
+            }
+
+            repartidorGasQuery += ` GROUP BY e.id, e.first_name, e.last_name`;
+
+            const repartidorGasResult = await pool.query(repartidorGasQuery, rgParams);
+
+            // Combinar kg entregados + gasolina por repartidor
+            const gasMap = {};
+            repartidorGasResult.rows.forEach(r => {
+                gasMap[r.employee_id] = { liters: parseFloat(r.total_liters), spent: parseFloat(r.total_spent) };
+            });
+
+            const repartidorEfficiency = repartidorKgResult.rows.map(r => {
+                const gas = gasMap[r.repartidor_id] || { liters: 0, spent: 0 };
+                const kgDelivered = parseFloat(r.total_kg_delivered);
+                return {
+                    name: r.repartidor_name,
+                    kgDelivered,
+                    gasolineLiters: gas.liters,
+                    gasolineSpent: gas.spent,
+                    kgPerLiter: gas.liters > 0 ? Math.round((kgDelivered / gas.liters) * 100) / 100 : 0
+                };
+            });
+
+            console.log(`[Production Analytics] ✅ ${repartidorEfficiency.length} repartidores`);
+
+            res.json({
+                success: true,
+                data: {
+                    products,
+                    totals: {
+                        totalKgDerivados: Math.round(totalKgDerivados * 100) / 100,
+                        totalKgMostrador: Math.round(totalKgMostrador * 100) / 100,
+                        totalKgRepartidor: Math.round(totalKgRepartidor * 100) / 100,
+                        totalRevenue: Math.round(totalRevenue * 100) / 100
+                    },
+                    fuel,
+                    repartidorEfficiency
+                }
+            });
+
+        } catch (error) {
+            console.error('[Production Analytics] Error:', error);
+            res.status(500).json({ success: false, message: 'Error al obtener analytics de producción' });
+        }
+    });
+
     return router;
 };
