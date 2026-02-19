@@ -451,6 +451,7 @@ module.exports = (pool, io) => {
                 // 7. Obtener liquidaciones consolidadas
                 // Para turnos ABIERTOS: calcular desde ventas de repartidores liquidadas (mismo enfoque que Desktop)
                 // Para turnos CERRADOS: usar datos almacenados en cash_cuts (ya sincronizados desde Desktop)
+                // IMPORTANTE: Solo incluir si cajero_consolida_liquidaciones = true en la sucursal
                 let totalLiquidacionesEfectivo = 0;
                 let totalLiquidacionesTarjeta = 0;
                 let totalLiquidacionesCredito = 0;
@@ -458,7 +459,19 @@ module.exports = (pool, io) => {
 
                 const isRepartidor = shift.employee_role?.toLowerCase() === 'repartidor';
 
-                if (shift.is_cash_cut_open && !isRepartidor) {
+                // Verificar si la sucursal tiene modo consolidación activo
+                let cajeroConsolida = false;
+                try {
+                    const branchSettingResult = await pool.query(
+                        'SELECT cajero_consolida_liquidaciones FROM branches WHERE id = $1',
+                        [shift.branch_id]
+                    );
+                    cajeroConsolida = branchSettingResult.rows[0]?.cajero_consolida_liquidaciones === true;
+                } catch (settingErr) {
+                    console.warn(`[Shifts/History] ⚠️ Error leyendo setting de branch: ${settingErr.message}`);
+                }
+
+                if (shift.is_cash_cut_open && !isRepartidor && cajeroConsolida) {
                     // Turno ABIERTO de cajero: calcular desde ventas de repartidores liquidadas
                     try {
                         const liquidacionesResult = await pool.query(`
@@ -1688,8 +1701,7 @@ module.exports = (pool, io) => {
                     const cardPayments = parseFloat(payments.card_payments || 0);
 
                     // 6. Calcular liquidaciones de repartidores recibidas durante este turno (solo para cajeros)
-                    // IMPORTANTE: Usar desglose por tipo de pago desde ventas (no neto_a_entregar)
-                    // para coincidir con el cálculo del Desktop (LiquidacionEfectivo = monto bruto de ventas en efectivo)
+                    // IMPORTANTE: Solo incluir si cajero_consolida_liquidaciones = true en la sucursal
                     let liquidacionesEfectivo = 0;
                     let liquidacionesTarjeta = 0;
                     let liquidacionesCredito = 0;
@@ -1697,7 +1709,19 @@ module.exports = (pool, io) => {
                     let hasConsolidatedLiquidaciones = false;
                     let consolidatedRepartidorNames = null;
 
-                    if (!isRepartidor) {
+                    // Verificar si la sucursal tiene modo consolidación activo
+                    let cajeroConsolidaSnapshot = false;
+                    try {
+                        const branchSettingSnap = await pool.query(
+                            'SELECT cajero_consolida_liquidaciones FROM branches WHERE id = $1',
+                            [shift.branch_id]
+                        );
+                        cajeroConsolidaSnapshot = branchSettingSnap.rows[0]?.cajero_consolida_liquidaciones === true;
+                    } catch (settingErr) {
+                        console.warn(`[Shifts/Snapshot] ⚠️ Error leyendo setting de branch: ${settingErr.message}`);
+                    }
+
+                    if (!isRepartidor && cajeroConsolidaSnapshot) {
                         // Obtener desglose de ventas de repartidores liquidadas por tipo de pago
                         // IMPORTANTE: Usar subquery con DISTINCT para evitar contar duplicados
                         // (una venta puede tener múltiples repartidor_assignments, uno por producto)

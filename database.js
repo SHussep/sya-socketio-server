@@ -1184,6 +1184,20 @@ async function runMigrations() {
                 console.log('[Schema] ✅ branches.rfc column added successfully');
             }
 
+            // Patch: Add cajero_consolida_liquidaciones column to branches
+            const checkBranchesCajeroConsolida = await client.query(`
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'branches' AND column_name = 'cajero_consolida_liquidaciones'
+            `);
+            if (checkBranchesCajeroConsolida.rows.length === 0) {
+                console.log('[Schema] 📝 Adding missing column: branches.cajero_consolida_liquidaciones');
+                await client.query(`
+                    ALTER TABLE branches
+                    ADD COLUMN IF NOT EXISTS cajero_consolida_liquidaciones BOOLEAN DEFAULT FALSE
+                `);
+                console.log('[Schema] ✅ branches.cajero_consolida_liquidaciones column added successfully');
+            }
+
             // Patch: Create telemetry_events table if not exists
             const checkTelemetryTable = await client.query(`
                 SELECT table_name FROM information_schema.tables
