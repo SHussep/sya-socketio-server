@@ -605,6 +605,47 @@ app.get('/api/branches', authenticateToken, async (req, res) => {
     }
 });
 
+// PUT /api/branches/:id/settings - Actualizar configuración de sucursal (cajero consolida, etc.)
+// Usado por Desktop para sincronizar CajeroConsolidaLiquidaciones
+app.put('/api/branches/:id/settings', async (req, res) => {
+    const { id } = req.params;
+    const { tenantId, cajero_consolida_liquidaciones } = req.body;
+
+    if (!tenantId) {
+        return res.status(400).json({ success: false, message: 'tenantId es requerido' });
+    }
+
+    try {
+        const result = await pool.query(`
+            UPDATE branches
+            SET cajero_consolida_liquidaciones = COALESCE($1, cajero_consolida_liquidaciones),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = $2 AND tenant_id = $3
+            RETURNING id, cajero_consolida_liquidaciones
+        `, [cajero_consolida_liquidaciones, id, tenantId]);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ success: false, message: 'Sucursal no encontrada' });
+        }
+
+        const newValue = result.rows[0].cajero_consolida_liquidaciones;
+        console.log(`[Branch Settings] ✅ cajero_consolida=${newValue} para branch ${id}`);
+
+        // Notificar via socket a todos los dispositivos de esta sucursal
+        const roomName = `branch_${id}`;
+        io.to(roomName).emit('branch_settings_changed', {
+            branchId: parseInt(id),
+            cajero_consolida_liquidaciones: newValue,
+            receivedAt: new Date().toISOString()
+        });
+
+        res.json({ success: true, data: result.rows[0] });
+    } catch (error) {
+        console.error('[Branch Settings] Error:', error);
+        res.status(500).json({ success: false, message: 'Error al actualizar configuración' });
+    }
+});
+
 // PUT /api/branches/:id - Actualizar datos de sucursal
 // ✅ SECURITY: Protected with tenant validation (verifies tenant exists and is active)
 app.put('/api/branches/:id', validateTenant, async (req, res) => {
