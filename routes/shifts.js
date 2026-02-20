@@ -510,19 +510,24 @@ module.exports = (pool, io) => {
                         console.warn(`[Shifts/History] ⚠️ Error calculando liquidaciones para turno ${shift.id}: ${liqErr.message}`);
                     }
 
-                    // Gastos de repartidores desde repartidor_liquidations.total_gastos
+                    // Gastos de repartidores: leer de tabla expenses de turnos repartidores
+                    // (repartidor_liquidations.total_gastos solo existe tras liquidación formal)
                     try {
                         const repartidorExpensesResult = await pool.query(`
-                            SELECT COALESCE(SUM(total_gastos), 0) as total_repartidor_expenses
-                            FROM repartidor_liquidations
-                            WHERE branch_id = $1
-                              AND tenant_id = $2
-                              AND fecha_liquidacion >= $3
+                            SELECT COALESCE(SUM(e.amount), 0) as total_repartidor_expenses
+                            FROM expenses e
+                            INNER JOIN shifts s ON e.id_turno = s.id
+                            INNER JOIN employees emp ON s.employee_id = emp.id
+                            INNER JOIN roles r ON emp.role_id = r.id
+                            WHERE LOWER(r.name) = 'repartidor'
+                              AND s.branch_id = $1
+                              AND s.tenant_id = $2
+                              AND s.start_time >= $3
                         `, [shift.branch_id, shift.tenant_id, shift.start_time]);
 
                         totalRepartidorExpenses = parseFloat(repartidorExpensesResult.rows[0]?.total_repartidor_expenses || 0);
                     } catch (repErr) {
-                        console.warn(`[Shifts/History] ⚠️ Tabla repartidor_liquidations no disponible: ${repErr.message}`);
+                        console.warn(`[Shifts/History] ⚠️ Error leyendo gastos repartidores: ${repErr.message}`);
                     }
                 } else {
                     // Turno CERRADO o repartidor: usar datos del cash_cut sincronizado
@@ -1760,13 +1765,17 @@ module.exports = (pool, io) => {
                         liquidacionesTarjeta = parseFloat(liquidacionesQuery.rows[0]?.total_liquidaciones_tarjeta || 0);
                         liquidacionesCredito = parseFloat(liquidacionesQuery.rows[0]?.total_liquidaciones_credito || 0);
 
-                        // Gastos de repartidores desde repartidor_liquidations.total_gastos
+                        // Gastos de repartidores: leer de tabla expenses de turnos repartidores
                         const repartidorExpensesQuery = await pool.query(`
-                            SELECT COALESCE(SUM(total_gastos), 0) as total_repartidor_expenses
-                            FROM repartidor_liquidations
-                            WHERE branch_id = $1
-                              AND tenant_id = $2
-                              AND fecha_liquidacion >= $3
+                            SELECT COALESCE(SUM(e.amount), 0) as total_repartidor_expenses
+                            FROM expenses e
+                            INNER JOIN shifts s ON e.id_turno = s.id
+                            INNER JOIN employees emp ON s.employee_id = emp.id
+                            INNER JOIN roles r ON emp.role_id = r.id
+                            WHERE LOWER(r.name) = 'repartidor'
+                              AND s.branch_id = $1
+                              AND s.tenant_id = $2
+                              AND s.start_time >= $3
                         `, [shift.branch_id, shift.tenant_id, shift.start_time]);
 
                         totalRepartidorExpenses = parseFloat(repartidorExpensesQuery.rows[0]?.total_repartidor_expenses || 0);
