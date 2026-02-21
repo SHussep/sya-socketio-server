@@ -790,7 +790,7 @@ module.exports = function(pool, io) {
                 ORDER BY tenants_count DESC
             `);
 
-            // Temas en uso
+            // Temas en uso (resumen)
             const themes = await pool.query(`
                 SELECT
                     theme_name,
@@ -804,6 +804,28 @@ module.exports = function(pool, io) {
                 ORDER BY tenants_count DESC
             `);
 
+            // Tenants por tema (desglose)
+            const themeTenantsResult = await pool.query(`
+                SELECT DISTINCT ON (te.tenant_id)
+                    te.theme_name,
+                    te.tenant_id,
+                    t.business_name
+                FROM telemetry_events te
+                JOIN tenants t ON te.tenant_id = t.id
+                WHERE te.event_type = 'theme_changed'
+                AND te.theme_name IS NOT NULL
+                AND te.event_timestamp >= NOW() - INTERVAL '${parseInt(days)} days'
+                ORDER BY te.tenant_id, te.event_timestamp DESC
+            `);
+
+            // Agrupar tenants por tema
+            const themesWithTenants = themes.rows.map(theme => ({
+                ...theme,
+                tenants: themeTenantsResult.rows
+                    .filter(t => t.theme_name === theme.theme_name)
+                    .map(t => ({ id: t.tenant_id, businessName: t.business_name }))
+            }));
+
             res.json({
                 success: true,
                 data: {
@@ -811,7 +833,7 @@ module.exports = function(pool, io) {
                     topTenants: topTenants.rows,
                     appVersions: appVersions.rows,
                     scaleModels: scaleModels.rows,
-                    themes: themes.rows
+                    themes: themesWithTenants
                 }
             });
 
@@ -845,17 +867,37 @@ module.exports = function(pool, io) {
     router.post('/extend-trial/:tenantId', async (req, res) => {
         try {
             const { tenantId } = req.params;
-            const { days = 30 } = req.body;
+            const { days, expiresAt } = req.body;
 
-            const result = await pool.query(`
-                UPDATE tenants
-                SET
-                    trial_ends_at = GREATEST(trial_ends_at, NOW()) + INTERVAL '${parseInt(days)} days',
-                    subscription_status = 'trial',
-                    updated_at = NOW()
-                WHERE id = $1
-                RETURNING id, business_name, trial_ends_at
-            `, [tenantId]);
+            let result;
+            let message;
+
+            if (expiresAt) {
+                // Fecha exacta proporcionada
+                result = await pool.query(`
+                    UPDATE tenants
+                    SET
+                        trial_ends_at = $1,
+                        subscription_status = 'trial',
+                        updated_at = NOW()
+                    WHERE id = $2
+                    RETURNING id, business_name, trial_ends_at
+                `, [new Date(expiresAt), tenantId]);
+                message = `Trial establecido hasta ${new Date(expiresAt).toISOString().split('T')[0]}`;
+            } else {
+                // Dias relativos (default 30)
+                const d = parseInt(days) || 30;
+                result = await pool.query(`
+                    UPDATE tenants
+                    SET
+                        trial_ends_at = GREATEST(trial_ends_at, NOW()) + INTERVAL '${d} days',
+                        subscription_status = 'trial',
+                        updated_at = NOW()
+                    WHERE id = $1
+                    RETURNING id, business_name, trial_ends_at
+                `, [tenantId]);
+                message = `Trial extendido ${d} días`;
+            }
 
             if (result.rows.length === 0) {
                 return res.status(404).json({
@@ -864,11 +906,11 @@ module.exports = function(pool, io) {
                 });
             }
 
-            console.log(`[SuperAdmin] Trial extendido ${days} días para tenant ${tenantId}`);
+            console.log(`[SuperAdmin] ${message} para tenant ${tenantId}`);
 
             res.json({
                 success: true,
-                message: `Trial extendido ${days} días`,
+                message,
                 data: {
                     tenantId: result.rows[0].id,
                     businessName: result.rows[0].business_name,
@@ -893,10 +935,15 @@ module.exports = function(pool, io) {
     router.post('/activate-subscription/:tenantId', async (req, res) => {
         try {
             const { tenantId } = req.params;
-            const { subscriptionId, months = 1 } = req.body;
+            const { subscriptionId, months = 1, expiresAt: exactDate } = req.body;
 
-            const expiresAt = new Date();
-            expiresAt.setMonth(expiresAt.getMonth() + parseInt(months));
+            let expiresAt;
+            if (exactDate) {
+                expiresAt = new Date(exactDate);
+            } else {
+                expiresAt = new Date();
+                expiresAt.setMonth(expiresAt.getMonth() + parseInt(months));
+            }
 
             const result = await pool.query(`
                 UPDATE tenants
