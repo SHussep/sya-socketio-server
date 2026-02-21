@@ -457,7 +457,16 @@ module.exports = (pool, io) => {
                 let totalLiquidacionesCredito = 0;
                 let totalRepartidorExpenses = 0;
 
-                const isRepartidor = shift.employee_role?.toLowerCase() === 'repartidor';
+                // Detectar si este turno actuó como repartidor por sus DATOS, no por rol del empleado
+                // (un Administrador puede salir a repartir y tener ventas de reparto)
+                const hasAssignmentSales = parseFloat(assignmentSalesResult.rows[0]?.total_cash_assignments || 0) > 0
+                    || parseFloat(assignmentSalesResult.rows[0]?.total_card_assignments || 0) > 0
+                    || parseFloat(assignmentSalesResult.rows[0]?.total_credit_assignments || 0) > 0;
+                const hasReceivedAny = await pool.query(
+                    'SELECT EXISTS(SELECT 1 FROM repartidor_assignments WHERE repartidor_shift_id = $1) as has_any',
+                    [shift.id]
+                );
+                const isRepartidorShift = hasAssignmentSales || hasReceivedAny.rows[0]?.has_any === true;
 
                 // Verificar si la sucursal tiene modo consolidación activo
                 let cajeroConsolida = false;
@@ -472,12 +481,12 @@ module.exports = (pool, io) => {
                 }
 
                 // 🔍 DEBUG: Trazar decisión de liquidaciones por turno
-                console.log(`[Shifts/History] 🔍 TURNO ${shift.id} (${shift.employee_name}): role="${shift.employee_role}", isRepartidor=${isRepartidor}, isOpen=${shift.is_cash_cut_open}, cajeroConsolida=${cajeroConsolida}`);
-                console.log(`[Shifts/History] 🔍 TURNO ${shift.id}: Guard (!isRepartidor && cajeroConsolida) = ${!isRepartidor && cajeroConsolida}`);
+                console.log(`[Shifts/History] 🔍 TURNO ${shift.id} (${shift.employee_name}): role="${shift.employee_role}", isRepartidorShift=${isRepartidorShift} (hasAssignmentSales=${hasAssignmentSales}, hasReceivedAny=${hasReceivedAny.rows[0]?.has_any}), isOpen=${shift.is_cash_cut_open}, cajeroConsolida=${cajeroConsolida}`);
+                console.log(`[Shifts/History] 🔍 TURNO ${shift.id}: Guard (!isRepartidorShift && cajeroConsolida) = ${!isRepartidorShift && cajeroConsolida}`);
 
-                // Liquidaciones y gastos repartidores: SOLO para cajero/mostrador con consolidación activa
-                // Repartidores NUNCA reciben estos valores (su dinero ya está en total_cash_assignments)
-                if (!isRepartidor && cajeroConsolida) {
+                // Liquidaciones y gastos repartidores: SOLO para turnos de mostrador/cajero con consolidación activa
+                // Turnos de repartidor NUNCA reciben estos valores (su dinero ya está en total_cash_assignments)
+                if (!isRepartidorShift && cajeroConsolida) {
                     if (shift.is_cash_cut_open) {
                         // Turno ABIERTO de cajero: calcular desde ventas de repartidores liquidadas
                         try {
@@ -607,6 +616,8 @@ module.exports = (pool, io) => {
                     total_repartidor_expenses: totalRepartidorExpenses,
                     // ⚙️ Setting de consolidación para que mobile sepa el modo activo
                     cajero_consolida_liquidaciones: cajeroConsolida,
+                    // 🚚 Indica si este turno actuó como repartidor (por datos, no por rol)
+                    is_repartidor_shift: isRepartidorShift,
                 });
 
                 // 🔍 DEBUG: Log valores finales enviados al cliente
