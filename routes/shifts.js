@@ -99,6 +99,39 @@ module.exports = (pool, io) => {
                 });
             }
 
+            // Validar consolidación: si está activa, no cerrar si hay otros turnos abiertos
+            try {
+                const branchSetting = await pool.query(
+                    'SELECT cajero_consolida_liquidaciones FROM branches WHERE id = $1',
+                    [branchId]
+                );
+                const cajeroConsolida = branchSetting.rows[0]?.cajero_consolida_liquidaciones === true;
+
+                if (cajeroConsolida) {
+                    const otherOpenShifts = await pool.query(`
+                        SELECT s.id,
+                               COALESCE(NULLIF(CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, '')), ' '), e.username, 'Sin nombre') as employee_name
+                        FROM shifts s
+                        LEFT JOIN employees e ON s.employee_id = e.id
+                        WHERE s.branch_id = $1
+                          AND s.tenant_id = $2
+                          AND s.is_cash_cut_open = true
+                          AND s.id != $3
+                    `, [branchId, tenantId, shiftId]);
+
+                    if (otherOpenShifts.rows.length > 0) {
+                        const nombres = otherOpenShifts.rows.map(s => s.employee_name).join(', ');
+                        console.log(`[Shifts] ⛔ Bloqueando cierre de turno ${shiftId} - consolidación activa y ${otherOpenShifts.rows.length} turno(s) abierto(s): ${nombres}`);
+                        return res.status(400).json({
+                            success: false,
+                            message: `No puedes cerrar este turno aún. La consolidación de liquidaciones está activa y hay ${otherOpenShifts.rows.length} turno(s) abierto(s): ${nombres}. Cierra primero los demás turnos.`
+                        });
+                    }
+                }
+            } catch (consolErr) {
+                console.warn(`[Shifts] ⚠️ Error verificando consolidación (continuando): ${consolErr.message}`);
+            }
+
             // Cerrar el turno
             const result = await pool.query(
                 `UPDATE shifts
