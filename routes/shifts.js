@@ -471,6 +471,10 @@ module.exports = (pool, io) => {
                     console.warn(`[Shifts/History] ⚠️ Error leyendo setting de branch: ${settingErr.message}`);
                 }
 
+                // 🔍 DEBUG: Trazar decisión de liquidaciones por turno
+                console.log(`[Shifts/History] 🔍 TURNO ${shift.id} (${shift.employee_name}): role="${shift.employee_role}", isRepartidor=${isRepartidor}, isOpen=${shift.is_cash_cut_open}, cajeroConsolida=${cajeroConsolida}`);
+                console.log(`[Shifts/History] 🔍 TURNO ${shift.id}: Guard (!isRepartidor && cajeroConsolida) = ${!isRepartidor && cajeroConsolida}`);
+
                 // Liquidaciones y gastos repartidores: SOLO para cajero/mostrador con consolidación activa
                 // Repartidores NUNCA reciben estos valores (su dinero ya está en total_cash_assignments)
                 if (!isRepartidor && cajeroConsolida) {
@@ -604,6 +608,10 @@ module.exports = (pool, io) => {
                     // ⚙️ Setting de consolidación para que mobile sepa el modo activo
                     cajero_consolida_liquidaciones: cajeroConsolida,
                 });
+
+                // 🔍 DEBUG: Log valores finales enviados al cliente
+                const lastShift = enrichedShifts[enrichedShifts.length - 1];
+                console.log(`[Shifts/History] 🔍 TURNO ${shift.id} RESPONSE: cash_sales=${lastShift.total_cash_sales}, cash_assignments=${lastShift.total_cash_assignments}, liq_efectivo=${lastShift.total_liquidaciones_efectivo}, liq_tarjeta=${lastShift.total_liquidaciones_tarjeta}, expenses=${lastShift.total_expenses}, rep_expenses=${lastShift.total_repartidor_expenses}, cajeroConsolida=${lastShift.cajero_consolida_liquidaciones}`);
             }
 
             res.json({
