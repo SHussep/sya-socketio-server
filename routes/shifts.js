@@ -471,93 +471,96 @@ module.exports = (pool, io) => {
                     console.warn(`[Shifts/History] ⚠️ Error leyendo setting de branch: ${settingErr.message}`);
                 }
 
-                if (shift.is_cash_cut_open && !isRepartidor && cajeroConsolida) {
-                    // Turno ABIERTO de cajero: calcular desde ventas de repartidores liquidadas
-                    try {
-                        const liquidacionesResult = await pool.query(`
-                            SELECT
-                                COALESCE(SUM(CASE
-                                    WHEN v.tipo_pago_id = 4 THEN COALESCE(v.cash_amount, 0)
-                                    WHEN v.tipo_pago_id = 1 THEN v.total
-                                    ELSE 0
-                                END), 0) as total_liquidaciones_efectivo,
-                                COALESCE(SUM(CASE
-                                    WHEN v.tipo_pago_id = 4 THEN COALESCE(v.card_amount, 0)
-                                    WHEN v.tipo_pago_id = 2 THEN v.total
-                                    ELSE 0
-                                END), 0) as total_liquidaciones_tarjeta,
-                                COALESCE(SUM(CASE
-                                    WHEN v.tipo_pago_id = 4 THEN COALESCE(v.credit_amount, 0)
-                                    WHEN v.tipo_pago_id = 3 THEN v.total
-                                    ELSE 0
-                                END), 0) as total_liquidaciones_credito
-                            FROM ventas v
-                            WHERE v.id_venta IN (
-                                SELECT DISTINCT ra.venta_id
-                                FROM repartidor_assignments ra
-                                WHERE ra.status = 'liquidated'
-                                  AND ra.fecha_liquidacion >= $1
-                                  AND ra.venta_id IS NOT NULL
-                            )
-                              AND v.branch_id = $2
-                              AND v.tenant_id = $3
-                        `, [shift.start_time, shift.branch_id, shift.tenant_id]);
+                // Liquidaciones y gastos repartidores: SOLO para cajero/mostrador con consolidación activa
+                // Repartidores NUNCA reciben estos valores (su dinero ya está en total_cash_assignments)
+                if (!isRepartidor && cajeroConsolida) {
+                    if (shift.is_cash_cut_open) {
+                        // Turno ABIERTO de cajero: calcular desde ventas de repartidores liquidadas
+                        try {
+                            const liquidacionesResult = await pool.query(`
+                                SELECT
+                                    COALESCE(SUM(CASE
+                                        WHEN v.tipo_pago_id = 4 THEN COALESCE(v.cash_amount, 0)
+                                        WHEN v.tipo_pago_id = 1 THEN v.total
+                                        ELSE 0
+                                    END), 0) as total_liquidaciones_efectivo,
+                                    COALESCE(SUM(CASE
+                                        WHEN v.tipo_pago_id = 4 THEN COALESCE(v.card_amount, 0)
+                                        WHEN v.tipo_pago_id = 2 THEN v.total
+                                        ELSE 0
+                                    END), 0) as total_liquidaciones_tarjeta,
+                                    COALESCE(SUM(CASE
+                                        WHEN v.tipo_pago_id = 4 THEN COALESCE(v.credit_amount, 0)
+                                        WHEN v.tipo_pago_id = 3 THEN v.total
+                                        ELSE 0
+                                    END), 0) as total_liquidaciones_credito
+                                FROM ventas v
+                                WHERE v.id_venta IN (
+                                    SELECT DISTINCT ra.venta_id
+                                    FROM repartidor_assignments ra
+                                    WHERE ra.status = 'liquidated'
+                                      AND ra.fecha_liquidacion >= $1
+                                      AND ra.venta_id IS NOT NULL
+                                )
+                                  AND v.branch_id = $2
+                                  AND v.tenant_id = $3
+                            `, [shift.start_time, shift.branch_id, shift.tenant_id]);
 
-                        totalLiquidacionesEfectivo = parseFloat(liquidacionesResult.rows[0]?.total_liquidaciones_efectivo || 0);
-                        totalLiquidacionesTarjeta = parseFloat(liquidacionesResult.rows[0]?.total_liquidaciones_tarjeta || 0);
-                        totalLiquidacionesCredito = parseFloat(liquidacionesResult.rows[0]?.total_liquidaciones_credito || 0);
-                    } catch (liqErr) {
-                        console.warn(`[Shifts/History] ⚠️ Error calculando liquidaciones para turno ${shift.id}: ${liqErr.message}`);
-                    }
-
-                    // Gastos de repartidores: leer de tabla expenses de turnos repartidores
-                    // Solo incluir gastos de repartidores que YA fueron liquidados en este turno
-                    // (mismo criterio que la query de liquidaciones: fecha_liquidacion >= cajero.start_time)
-                    try {
-                        const repartidorExpensesResult = await pool.query(`
-                            SELECT COALESCE(SUM(e.amount), 0) as total_repartidor_expenses
-                            FROM expenses e
-                            INNER JOIN shifts s ON e.id_turno = s.id
-                            WHERE e.is_active = true
-                              AND s.branch_id = $1
-                              AND s.tenant_id = $2
-                              AND s.id IN (
-                                SELECT DISTINCT ra2.repartidor_shift_id
-                                FROM repartidor_assignments ra2
-                                WHERE ra2.status = 'liquidated'
-                                  AND ra2.fecha_liquidacion >= $3
-                                  AND ra2.repartidor_shift_id IS NOT NULL
-                              )
-                        `, [shift.branch_id, shift.tenant_id, shift.start_time]);
-
-                        totalRepartidorExpenses = parseFloat(repartidorExpensesResult.rows[0]?.total_repartidor_expenses || 0);
-                    } catch (repErr) {
-                        console.warn(`[Shifts/History] ⚠️ Error leyendo gastos repartidores: ${repErr.message}`);
-                    }
-                } else {
-                    // Turno CERRADO o repartidor: usar datos del cash_cut sincronizado
-                    try {
-                        const liquidacionesResult = await pool.query(`
-                            SELECT
-                                COALESCE(total_liquidaciones_efectivo, 0) as total_liquidaciones_efectivo,
-                                COALESCE(total_liquidaciones_tarjeta, 0) as total_liquidaciones_tarjeta,
-                                COALESCE(total_liquidaciones_credito, 0) as total_liquidaciones_credito,
-                                COALESCE(total_repartidor_expenses, 0) as total_repartidor_expenses
-                            FROM cash_cuts
-                            WHERE shift_id = $1 AND is_closed = true
-                            ORDER BY id DESC LIMIT 1
-                        `, [shift.id]);
-
-                        if (liquidacionesResult.rows.length > 0) {
-                            totalLiquidacionesEfectivo = parseFloat(liquidacionesResult.rows[0].total_liquidaciones_efectivo || 0);
-                            totalLiquidacionesTarjeta = parseFloat(liquidacionesResult.rows[0].total_liquidaciones_tarjeta || 0);
-                            totalLiquidacionesCredito = parseFloat(liquidacionesResult.rows[0].total_liquidaciones_credito || 0);
-                            totalRepartidorExpenses = parseFloat(liquidacionesResult.rows[0].total_repartidor_expenses || 0);
+                            totalLiquidacionesEfectivo = parseFloat(liquidacionesResult.rows[0]?.total_liquidaciones_efectivo || 0);
+                            totalLiquidacionesTarjeta = parseFloat(liquidacionesResult.rows[0]?.total_liquidaciones_tarjeta || 0);
+                            totalLiquidacionesCredito = parseFloat(liquidacionesResult.rows[0]?.total_liquidaciones_credito || 0);
+                        } catch (liqErr) {
+                            console.warn(`[Shifts/History] ⚠️ Error calculando liquidaciones para turno ${shift.id}: ${liqErr.message}`);
                         }
-                    } catch (cashCutErr) {
-                        console.warn(`[Shifts/History] ⚠️ Error leyendo cash_cuts para turno ${shift.id}: ${cashCutErr.message}`);
+
+                        // Gastos de repartidores: solo de repartidores ya liquidados en este turno
+                        try {
+                            const repartidorExpensesResult = await pool.query(`
+                                SELECT COALESCE(SUM(e.amount), 0) as total_repartidor_expenses
+                                FROM expenses e
+                                INNER JOIN shifts s ON e.id_turno = s.id
+                                WHERE e.is_active = true
+                                  AND s.branch_id = $1
+                                  AND s.tenant_id = $2
+                                  AND s.id IN (
+                                    SELECT DISTINCT ra2.repartidor_shift_id
+                                    FROM repartidor_assignments ra2
+                                    WHERE ra2.status = 'liquidated'
+                                      AND ra2.fecha_liquidacion >= $3
+                                      AND ra2.repartidor_shift_id IS NOT NULL
+                                  )
+                            `, [shift.branch_id, shift.tenant_id, shift.start_time]);
+
+                            totalRepartidorExpenses = parseFloat(repartidorExpensesResult.rows[0]?.total_repartidor_expenses || 0);
+                        } catch (repErr) {
+                            console.warn(`[Shifts/History] ⚠️ Error leyendo gastos repartidores: ${repErr.message}`);
+                        }
+                    } else {
+                        // Turno CERRADO de cajero: usar datos del cash_cut sincronizado
+                        try {
+                            const liquidacionesResult = await pool.query(`
+                                SELECT
+                                    COALESCE(total_liquidaciones_efectivo, 0) as total_liquidaciones_efectivo,
+                                    COALESCE(total_liquidaciones_tarjeta, 0) as total_liquidaciones_tarjeta,
+                                    COALESCE(total_liquidaciones_credito, 0) as total_liquidaciones_credito,
+                                    COALESCE(total_repartidor_expenses, 0) as total_repartidor_expenses
+                                FROM cash_cuts
+                                WHERE shift_id = $1 AND is_closed = true
+                                ORDER BY id DESC LIMIT 1
+                            `, [shift.id]);
+
+                            if (liquidacionesResult.rows.length > 0) {
+                                totalLiquidacionesEfectivo = parseFloat(liquidacionesResult.rows[0].total_liquidaciones_efectivo || 0);
+                                totalLiquidacionesTarjeta = parseFloat(liquidacionesResult.rows[0].total_liquidaciones_tarjeta || 0);
+                                totalLiquidacionesCredito = parseFloat(liquidacionesResult.rows[0].total_liquidaciones_credito || 0);
+                                totalRepartidorExpenses = parseFloat(liquidacionesResult.rows[0].total_repartidor_expenses || 0);
+                            }
+                        } catch (cashCutErr) {
+                            console.warn(`[Shifts/History] ⚠️ Error leyendo cash_cuts para turno ${shift.id}: ${cashCutErr.message}`);
+                        }
                     }
                 }
+                // Para repartidores o sin consolidación: liquidaciones y gastos repartidores quedan en 0
 
                 enrichedShifts.push({
                     ...shift,
