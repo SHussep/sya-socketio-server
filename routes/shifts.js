@@ -511,18 +511,23 @@ module.exports = (pool, io) => {
                     }
 
                     // Gastos de repartidores: leer de tabla expenses de turnos repartidores
-                    // (repartidor_liquidations.total_gastos solo existe tras liquidación formal)
+                    // Solo incluir gastos de repartidores que YA fueron liquidados en este turno
+                    // (mismo criterio que la query de liquidaciones: fecha_liquidacion >= cajero.start_time)
                     try {
                         const repartidorExpensesResult = await pool.query(`
                             SELECT COALESCE(SUM(e.amount), 0) as total_repartidor_expenses
                             FROM expenses e
                             INNER JOIN shifts s ON e.id_turno = s.id
-                            INNER JOIN employees emp ON s.employee_id = emp.id
-                            INNER JOIN roles r ON emp.role_id = r.id
-                            WHERE LOWER(r.name) = 'repartidor'
+                            WHERE e.is_active = true
                               AND s.branch_id = $1
                               AND s.tenant_id = $2
-                              AND s.start_time >= $3
+                              AND s.id IN (
+                                SELECT DISTINCT ra2.repartidor_shift_id
+                                FROM repartidor_assignments ra2
+                                WHERE ra2.status = 'liquidated'
+                                  AND ra2.fecha_liquidacion >= $3
+                                  AND ra2.repartidor_shift_id IS NOT NULL
+                              )
                         `, [shift.branch_id, shift.tenant_id, shift.start_time]);
 
                         totalRepartidorExpenses = parseFloat(repartidorExpensesResult.rows[0]?.total_repartidor_expenses || 0);
