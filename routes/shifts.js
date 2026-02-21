@@ -480,13 +480,36 @@ module.exports = (pool, io) => {
                     console.warn(`[Shifts/History] ⚠️ Error leyendo setting de branch: ${settingErr.message}`);
                 }
 
-                // 🔍 DEBUG: Trazar decisión de liquidaciones por turno
-                console.log(`[Shifts/History] 🔍 TURNO ${shift.id} (${shift.employee_name}): role="${shift.employee_role}", isRepartidorShift=${isRepartidorShift} (hasAssignmentSales=${hasAssignmentSales}, hasReceivedAny=${hasReceivedAny.rows[0]?.has_any}), isOpen=${shift.is_cash_cut_open}, cajeroConsolida=${cajeroConsolida}`);
-                console.log(`[Shifts/History] 🔍 TURNO ${shift.id}: Guard (!isRepartidorShift && cajeroConsolida) = ${!isRepartidorShift && cajeroConsolida}`);
-
-                // Liquidaciones y gastos repartidores: SOLO para turnos de mostrador/cajero con consolidación activa
-                // Turnos de repartidor NUNCA reciben estos valores (su dinero ya está en total_cash_assignments)
+                // Determinar si este turno es el CONSOLIDADOR (el más antiguo abierto no-repartidor)
+                // Solo el turno consolidador recibe liquidaciones para evitar doble conteo
+                let isConsolidatorShift = false;
                 if (!isRepartidorShift && cajeroConsolida) {
+                    try {
+                        const oldestResult = await pool.query(`
+                            SELECT s.id
+                            FROM shifts s
+                            WHERE s.branch_id = $1
+                              AND s.tenant_id = $2
+                              AND s.is_cash_cut_open = true
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM repartidor_assignments ra
+                                  WHERE ra.repartidor_shift_id = s.id
+                              )
+                            ORDER BY s.start_time ASC
+                            LIMIT 1
+                        `, [shift.branch_id, shift.tenant_id]);
+                        isConsolidatorShift = oldestResult.rows[0]?.id === shift.id;
+                    } catch (oldestErr) {
+                        console.warn(`[Shifts/History] ⚠️ Error buscando turno consolidador: ${oldestErr.message}`);
+                    }
+                }
+
+                // 🔍 DEBUG: Trazar decisión de liquidaciones por turno
+                console.log(`[Shifts/History] 🔍 TURNO ${shift.id} (${shift.employee_name}): isRepartidorShift=${isRepartidorShift}, isConsolidatorShift=${isConsolidatorShift}, isOpen=${shift.is_cash_cut_open}, cajeroConsolida=${cajeroConsolida}`);
+
+                // Liquidaciones y gastos repartidores: SOLO para el turno consolidador
+                // (el más antiguo abierto que no sea repartidor en la sucursal)
+                if (isConsolidatorShift) {
                     if (shift.is_cash_cut_open) {
                         // Turno ABIERTO de cajero: calcular desde ventas de repartidores liquidadas
                         try {
@@ -618,11 +641,13 @@ module.exports = (pool, io) => {
                     cajero_consolida_liquidaciones: cajeroConsolida,
                     // 🚚 Indica si este turno actuó como repartidor (por datos, no por rol)
                     is_repartidor_shift: isRepartidorShift,
+                    // 🎯 Indica si este turno es el consolidador (más antiguo no-repartidor)
+                    is_consolidator_shift: isConsolidatorShift,
                 });
 
                 // 🔍 DEBUG: Log valores finales enviados al cliente
                 const lastShift = enrichedShifts[enrichedShifts.length - 1];
-                console.log(`[Shifts/History] 🔍 TURNO ${shift.id} RESPONSE: cash_sales=${lastShift.total_cash_sales}, cash_assignments=${lastShift.total_cash_assignments}, liq_efectivo=${lastShift.total_liquidaciones_efectivo}, liq_tarjeta=${lastShift.total_liquidaciones_tarjeta}, expenses=${lastShift.total_expenses}, rep_expenses=${lastShift.total_repartidor_expenses}, cajeroConsolida=${lastShift.cajero_consolida_liquidaciones}`);
+                console.log(`[Shifts/History] 🔍 TURNO ${shift.id} RESPONSE: cash_sales=${lastShift.total_cash_sales}, cash_assignments=${lastShift.total_cash_assignments}, liq_efectivo=${lastShift.total_liquidaciones_efectivo}, rep_expenses=${lastShift.total_repartidor_expenses}, isConsolidator=${lastShift.is_consolidator_shift}, isRepartidor=${lastShift.is_repartidor_shift}`);
             }
 
             res.json({
