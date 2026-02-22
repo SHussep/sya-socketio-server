@@ -765,10 +765,10 @@ app.get('/api/branches/:branchId/business-info', async (req, res) => {
 // Si es la sucursal principal, también actualiza el nombre del tenant
 // ═══════════════════════════════════════════════════════════════
 app.post('/api/branches/sync-info', validateTenant, async (req, res) => {
-    const { tenantId, branchId, name, address, phone, rfc, logo_base64, logo_url: directLogoUrl, existing_logo_url } = req.body;
+    const { tenantId, branchId, name, address, phone, rfc, logo_base64, existing_logo_url } = req.body;
     const cloudinaryService = require('./services/cloudinaryService');
 
-    console.log(`[Branch Sync] 📥 Recibida solicitud: tenantId=${tenantId}, branchId=${branchId}, name=${name}, hasLogo=${!!logo_base64}, hasDirectUrl=${!!directLogoUrl}`);
+    console.log(`[Branch Sync] 📥 Recibida solicitud: tenantId=${tenantId}, branchId=${branchId}, name=${name}, hasLogo=${!!logo_base64}`);
 
     if (!tenantId || !branchId) {
         return res.status(400).json({
@@ -794,8 +794,8 @@ app.post('/api/branches/sync-info', validateTenant, async (req, res) => {
 
         const oldName = existing.rows[0].name;
 
-        // Prioridad de logo: base64 upload > URL directa > DB existente > existing_logo_url
-        let logoUrl = directLogoUrl || existing.rows[0].logo_url || existing_logo_url || null;
+        // Subir logo a Cloudinary si viene en base64
+        let logoUrl = existing.rows[0].logo_url || existing_logo_url || null;
         if (logo_base64) {
             try {
                 if (cloudinaryService.isConfigured()) {
