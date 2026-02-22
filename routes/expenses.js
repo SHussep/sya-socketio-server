@@ -335,9 +335,13 @@ module.exports = (pool, io) => {
             const finalDeviceEventRaw = device_event_raw || Date.now();
 
             console.log(`[Sync/Expenses] 📥 Client Type: ${isDesktop ? 'DESKTOP (offline-first)' : 'MOBILE (online-only)'}`);
-            console.log(`[Sync/Expenses] 📦 Tenant: ${tenantId}, Branch: ${branchId}, Category: ${category}`);
-            console.log(`[Sync/Expenses] 💰 Amount: ${amount}, Quantity: ${quantity || 'N/A'}, Payment: ${payment_type_id}, Shift: ${id_turno || 'N/A'}`);
+            console.log(`[Sync/Expenses] 📦 Tenant: ${tenantId}, Branch: ${branchId}, Category: ${category}, GlobalCategoryId: ${global_category_id || 'N/A'}`);
+            console.log(`[Sync/Expenses] 💰 Amount: ${amount}, Quantity: ${quantity || 'N/A'} (type: ${typeof quantity}, raw: ${JSON.stringify(quantity)}), Payment: ${payment_type_id}, Shift: ${id_turno || 'N/A'}`);
             console.log(`[Sync/Expenses] 📊 Status: ${finalStatus}, NeedsUpdate: ${needs_update}`);
+            // 🔍 DEBUG: Alertar cuando categoría medible (Gas LP=2, Gasolina=3) viene sin quantity
+            if ((global_category_id == 2 || global_category_id == 3 || category === 'Gas LP' || category === 'Combustible Vehículos') && !quantity) {
+                console.warn(`[Sync/Expenses] ⚠️ ALERTA: Gasto de ${category} (global_category_id=${global_category_id}) SIN QUANTITY! Client: ${isDesktop ? 'DESKTOP' : 'MOBILE'}`);
+            }
             if (isDesktop) {
                 console.log(`[Sync/Expenses] 🔐 Desktop IDs - Global: ${global_id}, Terminal: ${terminal_id}, Seq: ${local_op_seq}`);
             } else {
