@@ -687,7 +687,7 @@ module.exports = (pool) => {
             // ═══════════════════════════════════════════════════════════════
             let productsQuery = `
                 SELECT
-                    p.descripcion as product_name,
+                    vd.descripcion_producto as product_name,
                     COALESCE(um.abbreviation, 'kg') as unit,
                     SUM(vd.cantidad) as total_qty,
                     SUM(vd.total_linea) as total_revenue,
@@ -695,7 +695,7 @@ module.exports = (pool) => {
                     SUM(CASE WHEN v.venta_tipo_id = 2 THEN vd.cantidad ELSE 0 END) as qty_repartidor
                 FROM ventas v
                 JOIN ventas_detalle vd ON vd.id_venta = v.id_venta
-                JOIN productos p ON vd.id_producto = p.id AND p.tenant_id = v.tenant_id
+                JOIN productos p ON vd.id_producto = p.id_producto AND p.tenant_id = v.tenant_id
                 LEFT JOIN units_of_measure um ON p.unidad_medida_id = um.id
                 LEFT JOIN categorias_productos cp ON p.categoria_global_id = cp.global_id AND cp.tenant_id = v.tenant_id
                 WHERE v.tenant_id = $1
@@ -712,7 +712,7 @@ module.exports = (pool) => {
                 pIdx++;
             }
 
-            productsQuery += ` GROUP BY p.id, p.descripcion, um.abbreviation ORDER BY total_qty DESC`;
+            productsQuery += ` GROUP BY vd.descripcion_producto, um.abbreviation ORDER BY total_qty DESC`;
 
             const productsResult = await pool.query(productsQuery, productsParams);
             const products = productsResult.rows.map(r => ({
@@ -780,7 +780,7 @@ module.exports = (pool) => {
                     SUM(vd.cantidad) as total_kg_delivered
                 FROM ventas v
                 JOIN ventas_detalle vd ON vd.id_venta = v.id_venta
-                JOIN productos p ON vd.id_producto = p.id AND p.tenant_id = v.tenant_id
+                JOIN productos p ON vd.id_producto = p.id_producto AND p.tenant_id = v.tenant_id
                 LEFT JOIN units_of_measure um ON p.unidad_medida_id = um.id
                 LEFT JOIN categorias_productos cp ON p.categoria_global_id = cp.global_id AND cp.tenant_id = v.tenant_id
                 JOIN employees e ON v.id_repartidor_asignado = e.id
