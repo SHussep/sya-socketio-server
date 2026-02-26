@@ -647,6 +647,7 @@ module.exports = (pool) => {
                     e.main_branch_id,
                     e.can_use_mobile_app as has_mobile_access,
                     e.is_owner,
+                    e.email_verified,
                     e.password_hash,
                     e.created_at,
                     e.updated_at
@@ -1481,6 +1482,15 @@ module.exports = (pool) => {
                 updates.push(`can_use_mobile_app = $${paramIndex}`);
                 params.push(canUseMobileApp);
                 paramIndex++;
+
+                // Al revocar acceso móvil, resetear verificación de email
+                // El empleado debe re-verificar si se le vuelve a dar acceso
+                if (canUseMobileApp === false) {
+                    updates.push(`email_verified = false`);
+                    updates.push(`verification_code = NULL`);
+                    updates.push(`verification_expires_at = NULL`);
+                    console.log(`[Employees/Update] 🔒 Acceso móvil revocado para empleado ${employeeId} - email_verified reseteado`);
+                }
             }
 
             if (isActive !== undefined) {
@@ -1505,9 +1515,12 @@ module.exports = (pool) => {
                 console.log(`[Employees/Update] 🔐 Actualizando password_hash para empleado ${employeeId}`);
             }
 
-            // ✅ Sincronizar email_verified desde Desktop (solo permite poner en true, nunca revertir)
-            if (emailVerified === true) {
-                updates.push(`email_verified = true`);
+            // ✅ Sincronizar email_verified desde Desktop (bidireccional)
+            // Guard: no aplicar si canUseMobileApp=false (ya reseteado arriba)
+            if (emailVerified !== undefined && typeof emailVerified === 'boolean' && canUseMobileApp !== false) {
+                updates.push(`email_verified = $${paramIndex}`);
+                params.push(emailVerified);
+                paramIndex++;
             }
 
             // ✅ Actualizar foto de perfil (desde mobile con Google Sign-In o desktop)
