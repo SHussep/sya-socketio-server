@@ -549,19 +549,22 @@ module.exports = (pool) => {
                         total_returned_amount: totalReturnedAmount,
                         // Payment info
                         // 🔧 FIX: Si está liquidada pero no tiene desglose de pago, asumir efectivo
+                        // Usar monto NETO (asignado - devuelto) no el asignado original
                         ...(() => {
                             const cashAmt = parseFloat(row.cash_amount || 0);
                             const cardAmt = parseFloat(row.card_amount || 0);
                             const creditAmt = parseFloat(row.credit_amount || 0);
                             const assignedAmt = parseFloat(row.assigned_amount || 0);
+                            const netAmt = assignedAmt - totalReturnedAmount; // Neto después de devoluciones
                             const isLiquidated = row.status === 'liquidated';
                             const noPaymentBreakdown = (cashAmt + cardAmt + creditAmt) === 0;
 
                             // Si está liquidada sin desglose, asumir que es efectivo (comportamiento legacy)
+                            // Usar netAmt para descontar devoluciones del total
                             if (isLiquidated && noPaymentBreakdown && assignedAmt > 0) {
                                 return {
                                     payment_method_id: row.payment_method_id ? parseInt(row.payment_method_id) : 1, // 1 = Efectivo
-                                    cash_amount: assignedAmt,
+                                    cash_amount: Math.max(0, netAmt),
                                     card_amount: 0,
                                     credit_amount: 0
                                 };
@@ -1049,23 +1052,26 @@ module.exports = (pool) => {
             // Calcular totales de asignaciones
             const assignmentsResult = await pool.query(`
                 SELECT
-                    COALESCE(SUM(assigned_quantity), 0) as total_assigned_quantity,
-                    COALESCE(SUM(assigned_amount), 0) as total_assigned_amount,
+                    COALESCE(SUM(ra.assigned_quantity), 0) as total_assigned_quantity,
+                    COALESCE(SUM(ra.assigned_amount), 0) as total_assigned_amount,
                     COUNT(*) as assignment_count,
-                    COUNT(CASE WHEN status = 'liquidated' THEN 1 END) as liquidated_count,
-                    COALESCE(SUM(CASE WHEN status = 'liquidated' THEN
+                    COUNT(CASE WHEN ra.status = 'liquidated' THEN 1 END) as liquidated_count,
+                    COALESCE(SUM(CASE WHEN ra.status = 'liquidated' THEN
                         CASE
-                            WHEN COALESCE(cash_amount, 0) + COALESCE(card_amount, 0) + COALESCE(credit_amount, 0) = 0
-                            THEN assigned_amount
-                            ELSE cash_amount
+                            WHEN COALESCE(ra.cash_amount, 0) + COALESCE(ra.card_amount, 0) + COALESCE(ra.credit_amount, 0) = 0
+                            THEN ra.assigned_amount - COALESCE((
+                                SELECT SUM(rr.amount) FROM repartidor_returns rr
+                                WHERE rr.assignment_id = ra.id AND rr.status = 'confirmed'
+                            ), 0)
+                            ELSE ra.cash_amount
                         END
                     ELSE 0 END), 0) as total_cash_collected,
-                    COALESCE(SUM(CASE WHEN status = 'liquidated' THEN card_amount ELSE 0 END), 0) as total_card_collected,
-                    COALESCE(SUM(CASE WHEN status = 'liquidated' THEN credit_amount ELSE 0 END), 0) as total_credit_collected
-                FROM repartidor_assignments
-                WHERE repartidor_shift_id = $1
-                  AND tenant_id = $2
-                  AND status NOT IN ('cancelled', 'voided')
+                    COALESCE(SUM(CASE WHEN ra.status = 'liquidated' THEN ra.card_amount ELSE 0 END), 0) as total_card_collected,
+                    COALESCE(SUM(CASE WHEN ra.status = 'liquidated' THEN ra.credit_amount ELSE 0 END), 0) as total_credit_collected
+                FROM repartidor_assignments ra
+                WHERE ra.repartidor_shift_id = $1
+                  AND ra.tenant_id = $2
+                  AND ra.status NOT IN ('cancelled', 'voided')
             `, [shiftId, tenantId]);
 
             // Calcular totales de devoluciones
