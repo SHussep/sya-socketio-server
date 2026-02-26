@@ -1144,7 +1144,7 @@ module.exports = (pool, io) => {
                      transaction_counter = EXCLUDED.transaction_counter,
                      is_cash_cut_open = EXCLUDED.is_cash_cut_open,
                      updated_at = NOW()
-                 RETURNING *`,
+                 RETURNING *, (xmax = 0) AS was_inserted`,
                 [
                     tenant_id,
                     branch_id,
@@ -1168,11 +1168,13 @@ module.exports = (pool, io) => {
             console.log(`[Sync/Shifts] ✅ Turno sincronizado: ID ${shift.id} (LocalShiftId: ${local_shift_id}) - Employee ${resolvedEmployeeId}`);
 
             // 🔌 EMIT Socket.IO para actualizar app móvil en tiempo real
-            if (io) {
+            // Solo emitir en INSERT real (no en UPDATE por re-sync/backup restore)
+            const wasInserted = shift.was_inserted;
+            if (io && wasInserted) {
                 const roomName = `branch_${branch_id}`;
                 if (is_cash_cut_open === false && end_time) {
                     // Turno cerrado
-                    console.log(`[Sync/Shifts] 📡 Emitiendo 'shift_ended' a ${roomName} (sync general)`);
+                    console.log(`[Sync/Shifts] 📡 Emitiendo 'shift_ended' a ${roomName} (INSERT nuevo)`);
                     io.to(roomName).emit('shift_ended', {
                         shiftId: shift.id,
                         globalId: shift.global_id,
@@ -1184,7 +1186,7 @@ module.exports = (pool, io) => {
                     });
                 } else if (is_cash_cut_open !== false) {
                     // Turno abierto
-                    console.log(`[Sync/Shifts] 📡 Emitiendo 'shift_started' a ${roomName} (sync general)`);
+                    console.log(`[Sync/Shifts] 📡 Emitiendo 'shift_started' a ${roomName} (INSERT nuevo)`);
                     io.to(roomName).emit('shift_started', {
                         shiftId: shift.id,
                         employeeId: resolvedEmployeeId,
@@ -1194,6 +1196,8 @@ module.exports = (pool, io) => {
                         source: 'rest_sync'
                     });
                 }
+            } else if (!wasInserted) {
+                console.log(`[Sync/Shifts] ⏭️ Turno ya existía (UPDATE), no se emite notificación (GlobalId: ${shift.global_id})`);
             }
 
             // 🔔 ENVIAR NOTIFICACIONES FCM SI ES CIERRE DE TURNO

@@ -436,8 +436,9 @@ module.exports = (pool, io) => {
                      notas = EXCLUDED.notas,
                      fecha_liquidacion_raw = EXCLUDED.fecha_liquidacion_raw,
                      id_repartidor_asignado = EXCLUDED.id_repartidor_asignado,
-                     id_turno_repartidor = EXCLUDED.id_turno_repartidor
-                 RETURNING *`,
+                     id_turno_repartidor = EXCLUDED.id_turno_repartidor,
+                     id_cliente = EXCLUDED.id_cliente
+                 RETURNING *, (xmax = 0) AS was_inserted`,
                 [
                     tenant_id,
                     branch_id,
@@ -548,8 +549,10 @@ module.exports = (pool, io) => {
             }
 
             // 🔌 EMIT sale_completed via Socket.IO para actualizar app móvil en tiempo real
-            // Esto es más confiable que depender del socket del Desktop
-            if (io) {
+            // Solo emitir en INSERT real (no en UPDATE por re-sync/backup restore)
+            // xmax = 0 significa INSERT, xmax > 0 significa UPDATE (ON CONFLICT)
+            const wasInserted = insertedVenta.was_inserted;
+            if (io && wasInserted) {
                 const roomName = `branch_${branch_id}`;
                 const saleEvent = {
                     branchId: branch_id,
@@ -564,6 +567,8 @@ module.exports = (pool, io) => {
                 };
                 io.to(roomName).emit('sale_completed', saleEvent);
                 console.log(`[Sync/Sales] 🔌 Socket.IO: sale_completed emitido a ${roomName} (Ticket #${insertedVenta.ticket_number})`);
+            } else if (!wasInserted) {
+                console.log(`[Sync/Sales] ⏭️ Socket.IO: Venta ya existía (UPDATE), no se emite notificación (Ticket #${insertedVenta.ticket_number})`);
             }
 
             // Formatear respuesta (Desktop espera "data.id_venta")
