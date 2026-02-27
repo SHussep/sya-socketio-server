@@ -1511,9 +1511,12 @@ io.on('connection', (socket) => {
         console.log(`[RETURN] 📦 Desktop registró devolución de repartidor: ${data.return?.quantity || 0}kg (${data.return?.reason || 'sin motivo'})`);
 
         // Broadcast to all clients in the branch room (Mobile will receive it)
+        // Flatten repartidorId and quantity to root level for mobile compatibility
         const branchRoom = `branch_${data.branchId}`;
         io.to(branchRoom).emit('repartidor:return-created', {
             ...data,
+            repartidorId: data.return?.employeeId || data.repartidorId || 0,
+            quantity: data.return?.quantity || data.quantity || 0,
             source: 'desktop',
             receivedAt: new Date().toISOString()
         });
