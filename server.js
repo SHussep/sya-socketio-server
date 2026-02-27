@@ -1164,18 +1164,28 @@ io.on('connection', (socket) => {
         // });
     });
 
-    socket.on('scale_disconnected', (data) => {
+    socket.on('scale_disconnected', async (data) => {
         stats.totalEvents++;
         const roomName = `branch_${data.branchId}`;
         console.log(`[SCALE] Sucursal ${data.branchId}: Báscula desconectada`);
         io.to(roomName).emit('scale_disconnected', { ...data, receivedAt: new Date().toISOString() });
+        try {
+            await notificationHelper.notifyScaleDisconnection(data.branchId, { message: data.message });
+        } catch (e) {
+            console.error(`[SCALE] Error enviando FCM desconexión: ${e.message}`);
+        }
     });
 
-    socket.on('scale_connected', (data) => {
+    socket.on('scale_connected', async (data) => {
         stats.totalEvents++;
         const roomName = `branch_${data.branchId}`;
         console.log(`[SCALE] Sucursal ${data.branchId}: Báscula conectada`);
         io.to(roomName).emit('scale_connected', { ...data, receivedAt: new Date().toISOString() });
+        try {
+            await notificationHelper.notifyScaleConnection(data.branchId, { message: data.message });
+        } catch (e) {
+            console.error(`[SCALE] Error enviando FCM conexión: ${e.message}`);
+        }
     });
 
     socket.on('sale_completed', (data) => {
