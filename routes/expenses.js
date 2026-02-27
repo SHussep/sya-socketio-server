@@ -660,6 +660,21 @@ module.exports = (pool, io) => {
                 responseData.amount = parseFloat(responseData.amount);
             }
 
+            // 📡 EMITIR SOCKET para notificación en tiempo real al móvil
+            const targetEmployeeId = finalConsumerEmployeeId || finalEmployeeId;
+            if (io && targetEmployeeId && finalStatus === 'confirmed') {
+                const roomName = `branch_${branchId}`;
+                console.log(`[Sync/Expenses] 📡 Emitiendo 'expense_assigned' a ${roomName} para empleado ${targetEmployeeId}`);
+                io.to(roomName).emit('expense_assigned', {
+                    expenseId: responseData.id,
+                    employeeId: targetEmployeeId,
+                    amount: numericAmount,
+                    category: category,
+                    description: description || '',
+                    timestamp: new Date().toISOString()
+                });
+            }
+
             // 🔔 ENVIAR NOTIFICACIONES FCM si el gasto tiene empleado asignado
             // ⚠️ NO enviar notificación si es un gasto de Desktop ya revisado (el usuario que lo registra no necesita notificación)
             // Solo notificar cuando:
