@@ -221,10 +221,15 @@ function createRepartidorReturnRoutes(io) {
 
       const returnRecord = result.rows[0];
 
-      // Emitir evento en tiempo real
-      io.to(`branch_${branch_id}`).emit('return_created', {
+      // Emitir evento en tiempo real (usar mismo nombre y estructura que el relay de server.js)
+      const branchRoom = `branch_${branch_id}`;
+      console.log(`[RepartidorReturns] 📡 Emitiendo 'repartidor:return-created' a ${branchRoom}: employee_id=${returnRecord.employee_id}, qty=${returnRecord.quantity}`);
+      io.to(branchRoom).emit('repartidor:return-created', {
+        branchId: branch_id,
         return: returnRecord,
-        assignment_id,
+        repartidorId: returnRecord.employee_id,
+        quantity: parseFloat(returnRecord.quantity),
+        source: source || 'desktop',
         timestamp: new Date().toISOString()
       });
 
