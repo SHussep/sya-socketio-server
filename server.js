@@ -527,7 +527,7 @@ app.get('/api/branches', authenticateToken, async (req, res) => {
 
         // Obtener sucursales del empleado (a las que tiene acceso)
         const result = await pool.query(
-            `SELECT b.id, b.branch_code as code, b.name, b.address, b.phone_number
+            `SELECT b.id, b.branch_code as code, b.name, b.address, b.phone
              FROM branches b
              INNER JOIN employee_branches eb ON b.id = eb.branch_id
              WHERE eb.employee_id = $1 AND b.tenant_id = $2 AND b.is_active = true
@@ -535,11 +535,11 @@ app.get('/api/branches', authenticateToken, async (req, res) => {
             [employeeId, tenantId]
         );
 
-        console.log(`[Branches] 📋 Sucursales para employee ${employeeId}: ${result.rows.length}`);
+        console.log(`[Branches] Sucursales para employee ${employeeId}: ${result.rows.length}`);
 
         res.json({
             success: true,
-            branches: result.rows
+            data: result.rows
         });
     } catch (error) {
         console.error('[Branches] Error:', error);
@@ -574,7 +574,7 @@ app.post('/api/branches', authenticateToken, async (req, res) => {
         const branchCode = `${tenantResult.rows[0].tenant_code}-BR${branchCount + 1}`;
 
         const result = await pool.query(
-            `INSERT INTO branches (tenant_id, branch_code, name, address, phone_number, timezone, is_active, created_at, updated_at)
+            `INSERT INTO branches (tenant_id, branch_code, name, address, phone, timezone, is_active, created_at, updated_at)
              VALUES ($1, $2, $3, $4, $5, $6, true, NOW(), NOW())
              RETURNING *`,
             [tenantId, branchCode, name, address || null, phoneNumber || null, timezone || 'America/Mexico_City']
@@ -585,23 +585,6 @@ app.post('/api/branches', authenticateToken, async (req, res) => {
     } catch (error) {
         console.error('[Branches] Error:', error);
         res.status(500).json({ success: false, message: 'Error al crear sucursal' });
-    }
-});
-
-// GET /api/branches - Listar sucursales
-app.get('/api/branches', authenticateToken, async (req, res) => {
-    try {
-        const { tenantId } = req.user;
-
-        const result = await pool.query(
-            `SELECT * FROM branches WHERE tenant_id = $1 AND is_active = true ORDER BY created_at DESC`,
-            [tenantId]
-        );
-
-        res.json({ success: true, data: result.rows });
-    } catch (error) {
-        console.error('[Branches] Error:', error);
-        res.status(500).json({ success: false, message: 'Error al obtener sucursales' });
     }
 });
 
