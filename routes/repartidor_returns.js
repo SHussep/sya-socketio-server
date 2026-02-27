@@ -158,7 +158,7 @@ function createRepartidorReturnRoutes(io) {
 
       // ✅ OFFLINE-FIRST: Buscar asignación por GlobalId en lugar de ID numérico
       const assignmentCheck = await pool.query(
-        'SELECT id, assigned_quantity, unit_price, global_id FROM repartidor_assignments WHERE global_id = $1::uuid AND tenant_id = $2',
+        'SELECT id, assigned_quantity, assigned_amount, unit_price, global_id FROM repartidor_assignments WHERE global_id = $1::uuid AND tenant_id = $2',
         [assignment_global_id, tenant_id]
       );
 
@@ -172,8 +172,13 @@ function createRepartidorReturnRoutes(io) {
       const assignment = assignmentCheck.rows[0];
       const assignment_id = assignment.id;  // ID de PostgreSQL para la FK
 
-      // Calcular amount si no viene (por seguridad)
-      const calculatedAmount = parseFloat(quantity) * parseFloat(unit_price);
+      // Precio efectivo (incluye descuentos prorrateados): assigned_amount / assigned_quantity
+      const assignedQty = parseFloat(assignment.assigned_quantity) || 0;
+      const assignedAmt = parseFloat(assignment.assigned_amount) || 0;
+      const effectiveUnitPrice = assignedQty > 0 ? (assignedAmt / assignedQty) : parseFloat(unit_price);
+
+      // Calcular amount usando precio efectivo si no viene explícitamente
+      const calculatedAmount = parseFloat(quantity) * effectiveUnitPrice;
       const finalAmount = amount || calculatedAmount;
 
       // ✅ IDEMPOTENTE: Insertar con global_id único

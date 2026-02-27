@@ -1097,6 +1097,24 @@ module.exports = (pool) => {
             const returns = returnsResult.rows[0];
             const expenses = expensesResult.rows[0];
 
+            // Calcular neto proporcional (maneja descuentos correctamente)
+            const proportionalResult = await pool.query(`
+                SELECT COALESCE(SUM(
+                    ra.assigned_amount * (ra.assigned_quantity - COALESCE(ret.total_qty, 0)) /
+                    CASE WHEN ra.assigned_quantity > 0 THEN ra.assigned_quantity ELSE 1 END
+                ), 0) as proportional_net
+                FROM repartidor_assignments ra
+                LEFT JOIN (
+                    SELECT assignment_id, SUM(quantity) as total_qty
+                    FROM repartidor_returns
+                    WHERE status IS NULL OR status != 'deleted'
+                    GROUP BY assignment_id
+                ) ret ON ret.assignment_id = ra.id
+                WHERE ra.repartidor_shift_id = $1
+                  AND ra.tenant_id = $2
+                  AND ra.status NOT IN ('cancelled', 'voided')
+            `, [shiftId, tenantId]);
+
             // Calcular valores
             const initialAmount = parseFloat(shift.initial_amount) || 0;
             const totalAssignedAmount = parseFloat(assignments.total_assigned_amount) || 0;
@@ -1108,8 +1126,8 @@ module.exports = (pool) => {
             const totalCardCollected = parseFloat(assignments.total_card_collected) || 0;
             const totalCreditCollected = parseFloat(assignments.total_credit_collected) || 0;
 
-            // Neto a entregar = Fondo inicial + Ventas netas - Gastos
-            const netSales = totalAssignedAmount - totalReturnedAmount;
+            // Neto a entregar usando cálculo proporcional (maneja descuentos)
+            const netSales = parseFloat(proportionalResult.rows[0].proportional_net) || 0;
             const netAmountToDeliver = initialAmount + netSales - totalExpenses;
 
             const snapshot = {
@@ -1299,6 +1317,26 @@ module.exports = (pool) => {
                     WHERE ed.employee_id = $1 AND ed.tenant_id = $2
                       AND ed.monto_deuda > 0
                     GROUP BY ed.shift_id
+                ),
+                shift_proportional_net AS (
+                    SELECT
+                        ra.repartidor_shift_id,
+                        SUM(
+                            ra.assigned_amount * (ra.assigned_quantity - COALESCE(ret.total_qty, 0)) /
+                            CASE WHEN ra.assigned_quantity > 0 THEN ra.assigned_quantity ELSE 1 END
+                        ) as proportional_net
+                    FROM repartidor_assignments ra
+                    LEFT JOIN (
+                        SELECT assignment_id, SUM(quantity) as total_qty
+                        FROM repartidor_returns
+                        WHERE status IS NULL OR status NOT IN ('deleted', 'cancelled', 'voided')
+                        GROUP BY assignment_id
+                    ) ret ON ret.assignment_id = ra.id
+                    LEFT JOIN ventas v ON ra.venta_id = v.id_venta
+                    WHERE ra.employee_id = $1 AND ra.tenant_id = $2
+                      AND ra.status NOT IN ('cancelled', 'voided')
+                      AND (ra.venta_id IS NULL OR v.status NOT IN ('cancelled', 'voided'))
+                    GROUP BY ra.repartidor_shift_id
                 )
                 SELECT
                     s.id as shift_id,
@@ -1325,8 +1363,8 @@ module.exports = (pool) => {
                     COALESCE(sd.total_debt, 0) as total_debt,
                     COALESCE(sd.pending_debt, 0) as pending_debt,
                     COALESCE(sd.debt_count, 0) as debt_count,
-                    -- Neto TOTAL a entregar (Fondo Inicial + Asignado - Devuelto - Gastos) - para compatibilidad
-                    (COALESCE(s.initial_amount, 0) + COALESCE(sa.total_assigned_amount, 0) - COALESCE(sr.total_returned_amount, 0) - COALESCE(se.total_expenses, 0)) as net_to_deliver,
+                    -- Neto TOTAL a entregar (Fondo Inicial + Neto proporcional - Gastos)
+                    (COALESCE(s.initial_amount, 0) + COALESCE(spn.proportional_net, 0) - COALESCE(se.total_expenses, 0)) as net_to_deliver,
                     -- Efectivo esperado = Fondo Inicial + SOLO efectivo liquidado - Gastos
                     -- (devueltas ya se descuentan del assigned_amount antes de aplicar pagos)
                     (COALESCE(s.initial_amount, 0) + COALESCE(sa.total_cash_amount, 0) - COALESCE(se.total_expenses, 0)) as expected_cash,
@@ -1341,6 +1379,7 @@ module.exports = (pool) => {
                 LEFT JOIN shift_returns sr ON s.id = sr.repartidor_shift_id
                 LEFT JOIN shift_expenses se ON s.id = se.shift_id
                 LEFT JOIN shift_debts sd ON s.id = sd.shift_id
+                LEFT JOIN shift_proportional_net spn ON s.id = spn.repartidor_shift_id
                 LEFT JOIN shift_assigned_by_unit sabu ON s.id = sabu.repartidor_shift_id
                 LEFT JOIN shift_returned_by_unit srbu ON s.id = srbu.repartidor_shift_id
                 WHERE s.employee_id = $1 AND s.tenant_id = $2
