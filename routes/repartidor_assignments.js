@@ -558,6 +558,7 @@ function createRepartidorAssignmentRoutes(io) {
       // Emitir evento en tiempo real
       if (wasInserted) {
         // Nueva asignación
+        console.log(`[RepartidorAssignments] 📡 assignment_created emitido a branch_${branch_id}: id=${assignment.id}, employee_id=${assignment.employee_id}`);
         io.to(`branch_${branch_id}`).emit('assignment_created', {
           assignment,
           timestamp: new Date().toISOString()
