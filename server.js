@@ -1704,6 +1704,13 @@ io.on('connection', (socket) => {
         io.to(roomName).emit('assignment_liquidated', { ...data, receivedAt: new Date().toISOString() });
     });
 
+    socket.on('assignment_created', (data) => {
+        stats.totalEvents++;
+        const roomName = `branch_${data.branchId}`;
+        console.log(`[ASSIGNMENT] 📦 Nueva asignación en sucursal ${data.branchId}: ${data.assignment?.productName || '?'} (${data.assignment?.assignedQuantity || 0}${data.assignment?.unitAbbreviation || 'kg'}) para empleado ${data.assignment?.employeeId}`);
+        io.to(roomName).emit('assignment_created', { ...data, receivedAt: new Date().toISOString() });
+    });
+
     // ═══════════════════════════════════════════════════════════════
     // DESKTOP → MOBILE BROADCASTING (Notifications from Desktop to Mobile)
     // ═══════════════════════════════════════════════════════════════
