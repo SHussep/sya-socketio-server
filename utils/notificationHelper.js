@@ -1218,6 +1218,24 @@ async function notifySaleCancelled(tenantId, branchId, { ticketNumber, total, re
     }
 }
 
+/**
+ * Envía notificación cuando el Guardian cambia de estado (activado/desactivado)
+ * Solo notifica a administradores y encargados
+ */
+async function notifyGuardianStatusChanged(branchId, { isEnabled, changedBy }) {
+    const status = isEnabled ? 'ACTIVADO' : 'DESACTIVADO';
+    const icon = isEnabled ? '🛡️' : '⚠️';
+    return await sendNotificationToAdminsInBranch(branchId, {
+        title: `${icon} Guardian ${status}`,
+        body: `El sistema Guardian fue ${status} por ${changedBy}`,
+        data: {
+            type: 'guardian_status_changed',
+            isEnabled: String(isEnabled),
+            changedBy
+        }
+    });
+}
+
 module.exports = {
     sendNotificationToBranch,
     sendNotificationToAdminsInBranch,
@@ -1237,5 +1255,6 @@ module.exports = {
     notifyManualWeightOverrideChanged,
     notifyCreditSaleCreated,
     notifyClientPaymentReceived,
-    notifySaleCancelled
+    notifySaleCancelled,
+    notifyGuardianStatusChanged
 };

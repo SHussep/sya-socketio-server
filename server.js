@@ -1365,7 +1365,7 @@ io.on('connection', (socket) => {
     });
 
     // EVENT: Guardian status changed (Desktop → Mobile)
-    socket.on('guardian_status_changed', (data) => {
+    socket.on('guardian_status_changed', async (data) => {
         stats.totalEvents++;
         const roomName = `branch_${data.branchId}`;
         console.log(`[GUARDIAN] 🛡️ Estado cambiado: isEnabled=${data.isEnabled}, changedBy=${data.changedBy}`);
@@ -1383,6 +1383,16 @@ io.on('connection', (socket) => {
             receivedAt: new Date().toISOString()
         });
         console.log(`[GUARDIAN] 📡 Evento retransmitido a ${roomName}`);
+
+        // FCM notification como respaldo (socket puede no estar conectado en mobile)
+        try {
+            await notificationHelper.notifyGuardianStatusChanged(data.branchId, {
+                isEnabled: data.isEnabled,
+                changedBy: data.changedBy || 'Sistema'
+            });
+        } catch (e) {
+            console.error(`[GUARDIAN] Error enviando FCM: ${e.message}`);
+        }
     });
 
     socket.on('sale_completed', (data) => {
