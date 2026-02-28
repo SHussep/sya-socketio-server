@@ -1067,14 +1067,16 @@ CREATE TABLE IF NOT EXISTS telemetry_events (
     id SERIAL PRIMARY KEY,
     tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+    employee_id INTEGER REFERENCES employees(id) ON DELETE SET NULL,
 
     -- Event identification
-    event_type VARCHAR(50) NOT NULL,  -- 'app_open', 'scale_configured', 'theme_changed'
+    event_type VARCHAR(50) NOT NULL,  -- 'app_open', 'app_resume', 'scale_configured', 'theme_changed'
 
     -- Device info
     device_id VARCHAR(255),
     device_name VARCHAR(255),
     app_version VARCHAR(50),
+    platform VARCHAR(20),  -- 'android', 'ios', 'windows', 'macos', 'linux'
 
     -- Scale configuration (only for scale_configured events)
     scale_model VARCHAR(100),
@@ -1099,6 +1101,9 @@ CREATE INDEX IF NOT EXISTS idx_telemetry_tenant_id ON telemetry_events(tenant_id
 CREATE INDEX IF NOT EXISTS idx_telemetry_branch_id ON telemetry_events(branch_id);
 CREATE INDEX IF NOT EXISTS idx_telemetry_event_type ON telemetry_events(event_type);
 CREATE INDEX IF NOT EXISTS idx_telemetry_event_timestamp ON telemetry_events(event_timestamp);
+CREATE INDEX IF NOT EXISTS idx_telemetry_employee_id ON telemetry_events(employee_id);
+CREATE INDEX IF NOT EXISTS idx_telemetry_employee_date ON telemetry_events(employee_id, event_timestamp DESC) WHERE event_type IN ('app_open', 'app_resume');
+CREATE INDEX IF NOT EXISTS idx_telemetry_tenant_employee ON telemetry_events(tenant_id, employee_id, event_timestamp DESC) WHERE event_type IN ('app_open', 'app_resume');
 
 -- ========== COMENTARIOS ==========
 COMMENT ON TABLE tenants IS 'Empresas/organizaciones multi-tenant';

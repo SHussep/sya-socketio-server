@@ -1002,6 +1002,178 @@ app.post('/api/telemetry', validateTenant, async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+// POST /api/telemetry/mobile - Registrar telemetría desde app móvil (autenticado)
+// Usa JWT para extraer employeeId, tenantId, branchId automáticamente
+// ═══════════════════════════════════════════════════════════════
+app.post('/api/telemetry/mobile', authenticateToken, async (req, res) => {
+    try {
+        const { employeeId, tenantId, branchId } = req.user;
+        const {
+            eventType,        // 'app_open' | 'app_resume'
+            deviceId,
+            deviceName,
+            appVersion,
+            platform,         // 'android' | 'ios'
+            global_id,
+            eventTimestamp
+        } = req.body;
+
+        // Validaciones básicas
+        if (!eventType || !global_id) {
+            return res.status(400).json({
+                success: false,
+                message: 'Campos requeridos: eventType, global_id'
+            });
+        }
+
+        const validEventTypes = ['app_open', 'app_resume'];
+        if (!validEventTypes.includes(eventType)) {
+            return res.status(400).json({
+                success: false,
+                message: `eventType inválido. Valores permitidos: ${validEventTypes.join(', ')}`
+            });
+        }
+
+        const result = await pool.query(`
+            INSERT INTO telemetry_events (
+                tenant_id, branch_id, employee_id, event_type,
+                device_id, device_name, app_version, platform,
+                global_id, event_timestamp
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, NOW()))
+            ON CONFLICT (global_id) DO NOTHING
+            RETURNING id
+        `, [
+            tenantId,
+            branchId,
+            employeeId,
+            eventType,
+            deviceId || null,
+            deviceName || null,
+            appVersion || null,
+            platform || null,
+            global_id,
+            eventTimestamp || null
+        ]);
+
+        const wasInserted = result.rows.length > 0;
+
+        console.log(`[Telemetry Mobile] ${wasInserted ? '✅ NUEVO' : '⏭️ DUP'} ${eventType} - Employee: ${employeeId}, Branch: ${branchId}, Platform: ${platform || 'unknown'}`);
+
+        res.status(wasInserted ? 201 : 200).json({
+            success: true,
+            data: { wasInserted, globalId: global_id }
+        });
+    } catch (error) {
+        console.error('[Telemetry Mobile] Error:', error);
+        res.status(500).json({ success: false, message: 'Error al registrar evento de telemetría' });
+    }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// GET /api/telemetry/user-activity - Actividad por empleado (admin/owner)
+// Muestra cuántas veces al día cada usuario abrió la app
+// ═══════════════════════════════════════════════════════════════
+app.get('/api/telemetry/user-activity', authenticateToken, async (req, res) => {
+    try {
+        const { tenantId, roleId, employeeId: requesterId } = req.user;
+
+        // Solo admins (roleId 1) y owners pueden ver actividad de todos
+        if (roleId !== 1) {
+            const ownerCheck = await pool.query(
+                'SELECT is_owner FROM employees WHERE id = $1 AND tenant_id = $2',
+                [requesterId, tenantId]
+            );
+            if (!ownerCheck.rows[0]?.is_owner) {
+                return res.status(403).json({ success: false, message: 'Acceso solo para administradores y owners' });
+            }
+        }
+
+        const { startDate, endDate, branchId, employeeId } = req.query;
+
+        // Default: últimos 30 días
+        const start = startDate || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+        const end = endDate || new Date().toISOString().split('T')[0];
+
+        // Actividad diaria por empleado
+        let query = `
+            SELECT
+                te.employee_id,
+                e.username,
+                CONCAT(e.first_name, ' ', e.last_name) as full_name,
+                r.name as role_name,
+                e.role_id,
+                e.is_owner,
+                DATE(te.event_timestamp) as date,
+                COUNT(*) FILTER (WHERE te.event_type = 'app_open') as app_opens,
+                COUNT(*) FILTER (WHERE te.event_type = 'app_resume') as app_resumes,
+                MIN(te.event_timestamp) as first_open,
+                MAX(te.event_timestamp) as last_open,
+                te.platform
+            FROM telemetry_events te
+            JOIN employees e ON te.employee_id = e.id
+            LEFT JOIN roles r ON e.role_id = r.id
+            WHERE te.tenant_id = $1
+              AND te.employee_id IS NOT NULL
+              AND te.event_type IN ('app_open', 'app_resume')
+              AND DATE(te.event_timestamp) >= $2
+              AND DATE(te.event_timestamp) <= $3
+        `;
+        const params = [tenantId, start, end];
+        let paramIdx = 4;
+
+        if (branchId) {
+            query += ` AND te.branch_id = $${paramIdx}`;
+            params.push(parseInt(branchId));
+            paramIdx++;
+        }
+        if (employeeId) {
+            query += ` AND te.employee_id = $${paramIdx}`;
+            params.push(parseInt(employeeId));
+            paramIdx++;
+        }
+
+        query += `
+            GROUP BY te.employee_id, e.username, e.first_name, e.last_name,
+                     r.name, e.role_id, e.is_owner, DATE(te.event_timestamp), te.platform
+            ORDER BY date DESC, app_opens DESC
+        `;
+
+        const result = await pool.query(query, params);
+
+        // Resumen: usuarios únicos, aperturas por rol
+        const summary = await pool.query(`
+            SELECT
+                COUNT(DISTINCT te.employee_id) as unique_users,
+                COUNT(*) FILTER (WHERE te.event_type = 'app_open') as total_opens,
+                COUNT(*) FILTER (WHERE te.event_type = 'app_resume') as total_resumes,
+                COUNT(DISTINCT te.employee_id) FILTER (WHERE e.role_id = 1) as admin_users,
+                COUNT(DISTINCT te.employee_id) FILTER (WHERE e.is_owner = true) as owner_users,
+                COUNT(DISTINCT te.employee_id) FILTER (WHERE e.role_id = 3) as repartidor_users
+            FROM telemetry_events te
+            JOIN employees e ON te.employee_id = e.id
+            WHERE te.tenant_id = $1
+              AND te.employee_id IS NOT NULL
+              AND te.event_type IN ('app_open', 'app_resume')
+              AND DATE(te.event_timestamp) >= $2
+              AND DATE(te.event_timestamp) <= $3
+        `, [tenantId, start, end]);
+
+        console.log(`[User Activity] Tenant ${tenantId}: ${result.rows.length} registros, ${summary.rows[0]?.unique_users || 0} usuarios únicos`);
+
+        res.json({
+            success: true,
+            data: {
+                summary: summary.rows[0],
+                dailyActivity: result.rows
+            }
+        });
+    } catch (error) {
+        console.error('[User Activity] Error:', error);
+        res.status(500).json({ success: false, message: 'Error al obtener actividad de usuarios' });
+    }
+});
+
+// ═══════════════════════════════════════════════════════════════
 // GET /api/telemetry/stats - Obtener estadísticas de telemetría (admin)
 // ═══════════════════════════════════════════════════════════════
 app.get('/api/telemetry/stats', requireAdminCredentials, async (req, res) => {
