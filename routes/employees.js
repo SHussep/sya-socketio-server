@@ -391,8 +391,8 @@ module.exports = (pool) => {
             try {
                 await client.query('BEGIN');
 
-                // Email starts unverified - verification code will be sent if canUseMobileApp=true
-                const emailVerified = false;
+                // Si el Desktop ya verificó el email antes de crear, respetar ese estado
+                const emailVerified = req.body.emailVerified === true ? true : false;
 
                 const insertResult = await client.query(
                     `INSERT INTO employees
