@@ -1188,6 +1188,19 @@ io.on('connection', (socket) => {
         }
     });
 
+    // EVENT: Guardian status changed (Desktop → Mobile)
+    socket.on('guardian_status_changed', (data) => {
+        stats.totalEvents++;
+        const roomName = `branch_${data.branchId}`;
+        console.log(`[GUARDIAN] 🛡️ Estado cambiado: isEnabled=${data.isEnabled}, changedBy=${data.changedBy}`);
+        io.to(roomName).emit('guardian_status_changed', {
+            ...data,
+            source: 'desktop',
+            receivedAt: new Date().toISOString()
+        });
+        console.log(`[GUARDIAN] 📡 Evento retransmitido a ${roomName}`);
+    });
+
     socket.on('sale_completed', (data) => {
         stats.totalEvents++;
         const roomName = `branch_${data.branchId}`;
