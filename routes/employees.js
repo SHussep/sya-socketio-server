@@ -1572,11 +1572,12 @@ module.exports = (pool) => {
                 console.log(`[Employees/Update] ✅ Empleado actualizado: ${updatedFullName} (ID: ${employeeId}) - Cambios: ${changes.join(', ')}`);
 
                 // Send verification email if mobile access was enabled or email changed
+                // BUT NOT if emailVerified=true was sent (Desktop already verified the email)
                 let verificationEmailSent = false;
                 const emailChanged = email !== undefined && email !== employee.email;
                 const mobileAccessEnabled = canUseMobileApp === true && employee.can_use_mobile_app === false;
 
-                if (updatedEmployee.can_use_mobile_app && updatedEmployee.email && (emailChanged || mobileAccessEnabled)) {
+                if (updatedEmployee.can_use_mobile_app && updatedEmployee.email && (emailChanged || mobileAccessEnabled) && emailVerified !== true) {
                     verificationEmailSent = await generateAndSendVerificationCode(
                         client, updatedEmployee.id, tenantId, updatedEmployee.email, updatedFullName
                     );
