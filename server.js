@@ -411,6 +411,10 @@ let stats = {
     startTime: new Date(),
 };
 
+// In-memory store for last known Guardian status per branch
+// Key: branchId (number), Value: { isEnabled, changedBy, changedAt }
+const guardianStatusByBranch = new Map();
+
 // ═══════════════════════════════════════════════════════════════
 // INICIALIZAR RUTAS CON SOCKET.IO
 // ═══════════════════════════════════════════════════════════════
@@ -454,7 +458,7 @@ app.use('/api/categorias-productos', categoriasProductosRoutes(pool)); // Rutas 
 app.use('/api/credit-payments', creditPaymentsRoutes(pool)); // Rutas de pagos de crédito
 app.use('/api/suspicious-weighing-logs', suspiciousWeighingLogsRoutes(pool, io)); // Rutas de Guardian logs de báscula (con Socket.IO)
 app.use('/api/scale-disconnection-logs', scaleDisconnectionLogsRoutes(pool)); // Rutas de eventos de desconexión de báscula
-app.use('/api/guardian', guardianRoutes(pool)); // API unificada de Guardian para app móvil (events, summary, employees-ranking)
+app.use('/api/guardian', guardianRoutes(pool, guardianStatusByBranch)); // API unificada de Guardian para app móvil (events, summary, employees-ranking, status)
 app.use('/api/employee-metrics', employeeMetricsRoutes(pool)); // Rutas de métricas diarias de empleados
 app.use('/api/repartidores', repartidoresRoutes(pool)); // Rutas de resumen y detalles de repartidores
 app.use('/api/notas-credito', notasCreditoRoutes(pool)); // Notas de crédito (devoluciones)
@@ -1365,6 +1369,14 @@ io.on('connection', (socket) => {
         stats.totalEvents++;
         const roomName = `branch_${data.branchId}`;
         console.log(`[GUARDIAN] 🛡️ Estado cambiado: isEnabled=${data.isEnabled}, changedBy=${data.changedBy}`);
+
+        // Guardar estado en memoria para que mobile pueda consultarlo via API
+        guardianStatusByBranch.set(Number(data.branchId), {
+            isEnabled: data.isEnabled,
+            changedBy: data.changedBy || 'Sistema',
+            changedAt: data.changedAt || new Date().toISOString(),
+        });
+
         io.to(roomName).emit('guardian_status_changed', {
             ...data,
             source: 'desktop',

@@ -12,7 +12,7 @@
 const express = require('express');
 const { createAuthMiddleware } = require('../middleware/auth');
 
-module.exports = (pool) => {
+module.exports = (pool, guardianStatusByBranch) => {
     const router = express.Router();
     const authenticateToken = createAuthMiddleware(pool);
 
@@ -580,6 +580,35 @@ module.exports = (pool) => {
                 error: undefined
             });
         }
+    });
+
+    // ============================================================================
+    // GET /api/guardian/status
+    // Get last known Guardian enabled/disabled status for a branch
+    // (Stored in server memory from guardian_status_changed socket events)
+    // ============================================================================
+    router.get('/status', authenticateToken, (req, res) => {
+        const { branch_id } = req.query;
+
+        if (!branch_id) {
+            return res.status(400).json({
+                success: false,
+                message: 'branch_id es requerido'
+            });
+        }
+
+        const status = guardianStatusByBranch
+            ? guardianStatusByBranch.get(Number(branch_id))
+            : null;
+
+        res.json({
+            success: true,
+            data: status || {
+                isEnabled: true, // Default: Guardian está activo
+                changedBy: null,
+                changedAt: null,
+            }
+        });
     });
 
     return router;
