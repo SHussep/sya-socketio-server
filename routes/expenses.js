@@ -1738,7 +1738,12 @@ module.exports = (pool, io) => {
 
             // Verificar que el gasto existe y pertenece al tenant
             const existingResult = await pool.query(
-                `SELECT * FROM expenses WHERE global_id = $1 AND tenant_id = $2`,
+                `SELECT e.*, emp.global_id as employee_global_id,
+                        gcat.name as category_name
+                 FROM expenses e
+                 LEFT JOIN employees emp ON e.employee_id = emp.id
+                 LEFT JOIN global_expense_categories gcat ON e.global_category_id = gcat.id
+                 WHERE e.global_id = $1 AND e.tenant_id = $2`,
                 [global_id, tenantId]
             );
 
@@ -1858,6 +1863,65 @@ module.exports = (pool, io) => {
             }
 
             console.log(`[Expenses/Update] ✅ Gasto actualizado: ${global_id}`);
+
+            // ═══════════════════════════════════════════════════════════════
+            // Detectar si hubo cambios reales para notificar
+            // ═══════════════════════════════════════════════════════════════
+            const oldAmount = parseFloat(existing.amount);
+            const newAmount = parseFloat(updatedExpense.amount);
+            const oldDesc = existing.description || '';
+            const newDesc = updatedExpense.description || '';
+            const oldCatId = existing.global_category_id;
+            const newCatId = updatedExpense.global_category_id;
+            const hasChanges = oldAmount !== newAmount || oldDesc !== newDesc || oldCatId !== newCatId;
+
+            if (hasChanges && existing.branch_id) {
+                // Resolver nombre de categoría nueva si cambió
+                let newCategoryName = existing.category_name;
+                if (oldCatId !== newCatId) {
+                    const catResult = await pool.query(
+                        'SELECT name FROM global_expense_categories WHERE id = $1',
+                        [newCatId]
+                    );
+                    if (catResult.rows.length > 0) {
+                        newCategoryName = catResult.rows[0].name;
+                    }
+                }
+
+                // Socket.IO: notificar a la sucursal en tiempo real
+                const io = req.app.get('io');
+                if (io) {
+                    const branchRoom = `branch_${existing.branch_id}`;
+                    io.to(branchRoom).emit('expense_edited', {
+                        globalId: global_id,
+                        branchId: existing.branch_id,
+                        employeeId: existing.employee_id,
+                        oldAmount,
+                        newAmount,
+                        oldDescription: oldDesc,
+                        newDescription: newDesc,
+                        oldCategory: existing.category_name || '',
+                        newCategory: newCategoryName || '',
+                        reason: '',
+                        editedByEmployeeName: 'Mostrador',
+                        timestamp: new Date().toISOString()
+                    });
+                    console.log(`[Expenses/Update] 📡 Emitido 'expense_edited' a ${branchRoom}`);
+                }
+
+                // FCM: notificar al empleado dueño del gasto
+                if (existing.employee_global_id) {
+                    const amountChanged = oldAmount !== newAmount;
+                    const body = amountChanged
+                        ? `Tu gasto fue editado de $${oldAmount.toFixed(2)} a $${newAmount.toFixed(2)} por Mostrador`
+                        : `Tu gasto de $${newAmount.toFixed(2)} fue editado por Mostrador`;
+                    sendNotificationToEmployee(existing.employee_global_id, {
+                        title: '✏️ Gasto Editado',
+                        body,
+                        data: { type: 'expense_edited', globalId: global_id }
+                    }).catch(err => console.error('[Expenses/Update] Error FCM:', err.message));
+                }
+            }
 
             res.json({
                 success: true,
