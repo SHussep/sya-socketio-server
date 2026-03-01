@@ -1013,13 +1013,14 @@ app.post('/api/telemetry/mobile', authenticateToken, async (req, res) => {
     try {
         const { employeeId, tenantId, branchId } = req.user;
         const {
-            eventType,        // 'app_open' | 'app_resume'
+            eventType,        // 'app_open' | 'app_resume' | 'theme_changed'
             deviceId,
             deviceName,
             appVersion,
             platform,         // 'android' | 'ios'
             global_id,
-            eventTimestamp
+            eventTimestamp,
+            themeName         // nombre del tema actual
         } = req.body;
 
         // Validaciones básicas
@@ -1030,7 +1031,7 @@ app.post('/api/telemetry/mobile', authenticateToken, async (req, res) => {
             });
         }
 
-        const validEventTypes = ['app_open', 'app_resume'];
+        const validEventTypes = ['app_open', 'app_resume', 'theme_changed'];
         if (!validEventTypes.includes(eventType)) {
             return res.status(400).json({
                 success: false,
@@ -1042,8 +1043,8 @@ app.post('/api/telemetry/mobile', authenticateToken, async (req, res) => {
             INSERT INTO telemetry_events (
                 tenant_id, branch_id, employee_id, event_type,
                 device_id, device_name, app_version, platform,
-                global_id, event_timestamp
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, NOW()))
+                theme_name, global_id, event_timestamp
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, COALESCE($11, NOW()))
             ON CONFLICT (global_id) DO NOTHING
             RETURNING id
         `, [
@@ -1055,13 +1056,14 @@ app.post('/api/telemetry/mobile', authenticateToken, async (req, res) => {
             deviceName || null,
             appVersion || null,
             platform || null,
+            themeName || null,
             global_id,
             eventTimestamp || null
         ]);
 
         const wasInserted = result.rows.length > 0;
 
-        console.log(`[Telemetry Mobile] ${wasInserted ? '✅ NUEVO' : '⏭️ DUP'} ${eventType} - Employee: ${employeeId}, Branch: ${branchId}, Platform: ${platform || 'unknown'}`);
+        console.log(`[Telemetry Mobile] ${wasInserted ? '✅ NUEVO' : '⏭️ DUP'} ${eventType} - Employee: ${employeeId}, Branch: ${branchId}, Platform: ${platform || 'unknown'}${themeName ? ', Theme: ' + themeName : ''}`);
 
         res.status(wasInserted ? 201 : 200).json({
             success: true,
@@ -1162,13 +1164,31 @@ app.get('/api/telemetry/user-activity', authenticateToken, async (req, res) => {
               AND DATE(te.event_timestamp) <= $3
         `, [tenantId, start, end]);
 
+        // Tema más reciente por empleado
+        const themesResult = await pool.query(`
+            SELECT DISTINCT ON (employee_id)
+                employee_id,
+                theme_name
+            FROM telemetry_events
+            WHERE tenant_id = $1
+              AND employee_id IS NOT NULL
+              AND theme_name IS NOT NULL
+            ORDER BY employee_id, event_timestamp DESC
+        `, [tenantId]);
+
+        const themesByEmployee = {};
+        for (const row of themesResult.rows) {
+            themesByEmployee[row.employee_id] = row.theme_name;
+        }
+
         console.log(`[User Activity] Tenant ${tenantId}: ${result.rows.length} registros, ${summary.rows[0]?.unique_users || 0} usuarios únicos`);
 
         res.json({
             success: true,
             data: {
                 summary: summary.rows[0],
-                dailyActivity: result.rows
+                dailyActivity: result.rows,
+                themesByEmployee
             }
         });
     } catch (error) {
