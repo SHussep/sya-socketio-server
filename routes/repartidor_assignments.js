@@ -556,17 +556,13 @@ function createRepartidorAssignmentRoutes(io) {
       }
 
       // Emitir evento en tiempo real
-      // NOTA: Si source='desktop', Desktop ya envió assignment_created directo via Socket.IO
-      // Solo emitir desde HTTP sync cuando NO es Desktop (ej: mobile) para evitar duplicados
-      if (wasInserted && source !== 'desktop') {
-        // Nueva asignación (solo si no viene de Desktop que ya envió el socket)
-        console.log(`[RepartidorAssignments] 📡 assignment_created emitido a branch_${branch_id}: id=${assignment.id}, employee_id=${assignment.employee_id}`);
+      if (wasInserted) {
+        // Nueva asignación - siempre emitir para notificar a móvil
+        console.log(`[RepartidorAssignments] 📡 assignment_created emitido a branch_${branch_id}: id=${assignment.id}, employee_id=${assignment.employee_id}, source=${source}`);
         io.to(`branch_${branch_id}`).emit('assignment_created', {
           assignment,
           timestamp: new Date().toISOString()
         });
-      } else if (wasInserted && source === 'desktop') {
-        console.log(`[RepartidorAssignments] ⏭️ assignment_created omitido (Desktop ya envió socket directo): id=${assignment.id}`);
       } else {
         // Asignación actualizada (ej: liquidada)
         // ✅ CRÍTICO: Notificar a la app móvil cuando se liquida desde desktop
