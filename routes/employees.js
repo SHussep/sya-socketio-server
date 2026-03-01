@@ -1376,7 +1376,7 @@ module.exports = (pool) => {
 
             // Verify employee exists and belongs to tenant
             const employeeCheck = await client.query(
-                `SELECT id, email, first_name, last_name, role_id, can_use_mobile_app, is_active FROM employees
+                `SELECT id, email, first_name, last_name, role_id, can_use_mobile_app, is_active, global_id, main_branch_id FROM employees
                  WHERE id = $1 AND tenant_id = $2`,
                 [employeeId, tenantId]
             );
@@ -1490,6 +1490,38 @@ module.exports = (pool) => {
                     updates.push(`verification_code = NULL`);
                     updates.push(`verification_expires_at = NULL`);
                     console.log(`[Employees/Update] 🔒 Acceso móvil revocado para empleado ${employeeId} - email_verified reseteado`);
+
+                    // Notificar al empleado en tiempo real para forzar logout
+                    const employeeFullName = `${employee.first_name || ''} ${employee.last_name || ''}`.trim();
+                    const branchId = employee.main_branch_id;
+
+                    // Socket.IO: emitir a la sucursal del empleado
+                    if (branchId) {
+                        const io = req.app.get('io');
+                        if (io) {
+                            io.to(`branch_${branchId}`).emit('employee:access_revoked', {
+                                employeeId: employeeId,
+                                employeeName: employeeFullName,
+                                reason: 'Tu acceso a la app móvil ha sido desactivado por un administrador.',
+                                timestamp: new Date().toISOString()
+                            });
+                            console.log(`[Employees/Update] 📡 Socket employee:access_revoked emitido a branch_${branchId} para empleado ${employeeId}`);
+                        }
+                    }
+
+                    // FCM: enviar push como fallback (fire-and-forget)
+                    if (employee.global_id) {
+                        const { sendNotificationToEmployee } = require('../utils/notificationHelper');
+                        sendNotificationToEmployee(employee.global_id, {
+                            title: 'Acceso Desactivado',
+                            body: 'Tu acceso a la app móvil ha sido desactivado por un administrador.',
+                            data: {
+                                type: 'access_revoked',
+                                employeeId: String(employeeId),
+                                reason: 'disabled_by_admin'
+                            }
+                        }).catch(err => console.log(`[Employees/Update] ⚠️ FCM access_revoked falló: ${err.message}`));
+                    }
                 }
             }
 
