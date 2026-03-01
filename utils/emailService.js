@@ -7,10 +7,15 @@ const nodemailer = require('nodemailer');
 
 // Configurar transporter con variables de entorno
 const createTransporter = () => {
+    const port = parseInt(process.env.EMAIL_PORT || '465');
+    const secure = port === 465; // SSL para 465, STARTTLS para 587
+
+    console.log(`[EmailService] Configurando SMTP: host=${process.env.EMAIL_HOST || 'smtp.gmail.com'}, port=${port}, secure=${secure}, user=${process.env.EMAIL_USER || '(no configurado)'}`);
+
     return nodemailer.createTransport({
         host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-        port: parseInt(process.env.EMAIL_PORT || '587'),
-        secure: false, // true para 465, false para otros puertos
+        port,
+        secure,
         auth: {
             user: process.env.EMAIL_USER,
             pass: process.env.EMAIL_PASSWORD
@@ -39,10 +44,11 @@ async function sendEmail({ to, subject, html, text = null }) {
             html
         });
 
-        console.log('✅ Email enviado:', info.messageId);
+        console.log(`✅ Email enviado a ${to}: messageId=${info.messageId}`);
         return true;
     } catch (err) {
-        console.error('❌ Error enviando email:', err.message);
+        console.error(`❌ Error enviando email a ${to}:`, err.message);
+        console.error(`❌ SMTP config: host=${process.env.EMAIL_HOST}, port=${process.env.EMAIL_PORT}, user=${process.env.EMAIL_USER}`);
         return false;
     }
 }
