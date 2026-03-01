@@ -326,6 +326,35 @@ module.exports = (pool) => {
 
                     console.log(`[Employees/Sync] ✅ Empleado actualizado: ${fullName} (ID: ${employee.id})`);
 
+                    // Notificar al empleado si se revocó acceso móvil
+                    if (canUseMobileApp === false) {
+                        const branchId = employee.main_branch_id;
+                        if (branchId) {
+                            const io = req.app.get('io');
+                            if (io) {
+                                io.to(`branch_${branchId}`).emit('employee:access_revoked', {
+                                    employeeId: employee.id,
+                                    employeeName: fullName,
+                                    reason: 'Tu acceso a la app móvil ha sido desactivado por un administrador.',
+                                    timestamp: new Date().toISOString()
+                                });
+                                console.log(`[Employees/Sync] 📡 Socket employee:access_revoked emitido a branch_${branchId} para empleado ${employee.id}`);
+                            }
+                        }
+                        if (global_id) {
+                            const { sendNotificationToEmployee } = require('../utils/notificationHelper');
+                            sendNotificationToEmployee(global_id, {
+                                title: 'Acceso Desactivado',
+                                body: 'Tu acceso a la app móvil ha sido desactivado por un administrador.',
+                                data: {
+                                    type: 'access_revoked',
+                                    employeeId: String(employee.id),
+                                    reason: 'disabled_by_admin'
+                                }
+                            }).catch(err => console.log(`[Employees/Sync] ⚠️ FCM access_revoked falló: ${err.message}`));
+                        }
+                    }
+
                     // Get role with permissions if roleId is set
                     let roleData = null;
                     if (employee.role_id) {
