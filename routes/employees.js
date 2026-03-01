@@ -1647,6 +1647,26 @@ module.exports = (pool) => {
                     );
                 }
 
+                // Emit socket event to notify Desktop of employee changes
+                const branchId = employee.main_branch_id;
+                if (branchId) {
+                    const io = req.app.get('io');
+                    if (io) {
+                        io.to(`branch_${branchId}`).emit('employee:updated', {
+                            employeeId: updatedEmployee.id,
+                            fullName: updatedFullName,
+                            email: updatedEmployee.email,
+                            roleId: updatedEmployee.role_id,
+                            canUseMobileApp: updatedEmployee.can_use_mobile_app,
+                            isActive: updatedEmployee.is_active,
+                            emailVerified: updatedEmployee.email_verified || false,
+                            updatedAt: updatedEmployee.updated_at,
+                            source: 'mobile'
+                        });
+                        console.log(`[Employees/Update] 📡 Socket employee:updated emitido a branch_${branchId}`);
+                    }
+                }
+
                 return res.json({
                     success: true,
                     message: 'Empleado actualizado exitosamente',
@@ -1860,7 +1880,7 @@ module.exports = (pool) => {
                 params.push(tenantId);
             }
 
-            query += ' RETURNING id, email, first_name, last_name';
+            query += ' RETURNING id, email, first_name, last_name, main_branch_id, role_id, can_use_mobile_app, is_active';
 
             const result = await client.query(query, params);
 
@@ -1876,6 +1896,26 @@ module.exports = (pool) => {
             const fullName = `${employee.first_name || ''} ${employee.last_name || ''}`.trim();
 
             console.log(`[Employees/VerifyEmail] ✅ Email verificado para: ${fullName} (${employee.email})`);
+
+            // Emit socket event to notify Desktop
+            const branchId = employee.main_branch_id;
+            if (branchId) {
+                const io = req.app.get('io');
+                if (io) {
+                    io.to(`branch_${branchId}`).emit('employee:updated', {
+                        employeeId: employee.id,
+                        fullName: fullName,
+                        email: employee.email,
+                        roleId: employee.role_id,
+                        canUseMobileApp: employee.can_use_mobile_app,
+                        isActive: employee.is_active,
+                        emailVerified: true,
+                        updatedAt: new Date().toISOString(),
+                        source: 'mobile'
+                    });
+                    console.log(`[Employees/VerifyEmail] 📡 Socket employee:updated emitido a branch_${branchId}`);
+                }
+            }
 
             return res.json({
                 success: true,
