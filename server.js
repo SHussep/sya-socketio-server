@@ -130,6 +130,7 @@ const devicesRoutes = require('./routes/devices'); // Gestión de dispositivos (
 const notasCreditoRoutes = require('./routes/notas_credito'); // Notas de crédito (devoluciones)
 const preparationModeRoutes = require('./routes/preparation_mode'); // Logs de Modo Preparación (auditoría Guardian)
 const betaEnrollmentRoutes = require('./routes/beta_enrollment'); // Registro de interés en app móvil beta
+const transfersRoutes = require('./routes/transfers'); // Transferencias de inventario entre sucursales
 
 // Inicializar Firebase para notificaciones push
 initializeFirebase();
@@ -469,6 +470,7 @@ app.use('/api/beta-enrollment', betaEnrollmentRoutes(pool)); // Registro de inte
 app.use('/api/deposits', depositsRoutes(pool));
 app.use('/api/withdrawals', withdrawalsRoutes(pool));
 app.use('/api/sync-diagnostics', syncDiagnosticsRoutes(pool)); // Diagnóstico de sincronización (debug)
+app.use('/api/transfers', transfersRoutes(pool, io)); // Transferencias de inventario entre sucursales
 // Note: cash-cuts now uses newCashCutsRoutes at /api/cash-cuts (line 337)
 
 // Sync endpoints are mounted at their service-specific paths
