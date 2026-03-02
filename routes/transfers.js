@@ -373,6 +373,37 @@ module.exports = (pool, io) => {
     });
 
     // ═══════════════════════════════════════════════════════════
+    // GET /api/transfers/tenant-branches — Branches for tenant
+    // (Used by Desktop to populate target branch selector)
+    // ═══════════════════════════════════════════════════════════
+    router.get('/tenant-branches', async (req, res) => {
+        try {
+            const tenantId = parseInt(req.query.tenant_id);
+
+            if (!tenantId) {
+                return res.status(400).json({ success: false, message: 'tenant_id es requerido' });
+            }
+
+            const result = await pool.query(
+                `SELECT id, name, branch_code, is_active
+                 FROM branches
+                 WHERE tenant_id = $1 AND is_active = TRUE
+                 ORDER BY created_at ASC`,
+                [tenantId]
+            );
+
+            return res.json({
+                success: true,
+                data: result.rows
+            });
+
+        } catch (error) {
+            console.error(`[Transfers/TenantBranches] ❌ Error: ${error.message}`);
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    });
+
+    // ═══════════════════════════════════════════════════════════
     // GET /api/transfers/:id — Transfer detail
     // ═══════════════════════════════════════════════════════════
     router.get('/:id', async (req, res) => {
