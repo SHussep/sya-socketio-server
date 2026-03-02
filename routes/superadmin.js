@@ -826,6 +826,76 @@ module.exports = function(pool, io) {
                     .map(t => ({ id: t.tenant_id, businessName: t.business_name }))
             }));
 
+            // ── Uso de app móvil por tenant (employee-level data) ──
+            const mobileByTenant = await pool.query(`
+                SELECT
+                    t.id as tenant_id,
+                    t.business_name,
+                    COUNT(DISTINCT te.employee_id) as employees_with_app,
+                    (SELECT COUNT(*) FROM employees WHERE tenant_id = t.id AND is_active = true) as total_employees,
+                    COUNT(*) FILTER (WHERE te.event_type = 'app_open') as total_opens,
+                    COUNT(*) FILTER (WHERE te.event_type = 'app_open' AND DATE(te.event_timestamp) = CURRENT_DATE) as opens_today,
+                    MAX(te.event_timestamp) as last_activity
+                FROM telemetry_events te
+                JOIN tenants t ON te.tenant_id = t.id
+                WHERE te.employee_id IS NOT NULL
+                  AND te.event_type IN ('app_open', 'app_resume')
+                  AND te.event_timestamp >= NOW() - INTERVAL '${parseInt(days)} days'
+                GROUP BY t.id, t.business_name
+                ORDER BY total_opens DESC
+            `);
+
+            // Detalle por empleado con tema y plataforma
+            const mobileEmployees = await pool.query(`
+                SELECT
+                    te.employee_id,
+                    te.tenant_id,
+                    e.username,
+                    CONCAT(e.first_name, ' ', e.last_name) as full_name,
+                    r.name as role_name,
+                    e.is_owner,
+                    COUNT(*) FILTER (WHERE te.event_type = 'app_open') as app_opens,
+                    COUNT(*) FILTER (WHERE te.event_type = 'app_open' AND DATE(te.event_timestamp) = CURRENT_DATE) as opens_today,
+                    MAX(te.event_timestamp) as last_activity,
+                    (SELECT platform FROM telemetry_events WHERE employee_id = te.employee_id AND platform IS NOT NULL ORDER BY event_timestamp DESC LIMIT 1) as platform,
+                    (SELECT app_version FROM telemetry_events WHERE employee_id = te.employee_id AND app_version IS NOT NULL ORDER BY event_timestamp DESC LIMIT 1) as app_version,
+                    (SELECT theme_name FROM telemetry_events WHERE employee_id = te.employee_id AND theme_name IS NOT NULL ORDER BY event_timestamp DESC LIMIT 1) as theme_name
+                FROM telemetry_events te
+                JOIN employees e ON te.employee_id = e.id
+                LEFT JOIN roles r ON e.role_id = r.id
+                WHERE te.employee_id IS NOT NULL
+                  AND te.event_type IN ('app_open', 'app_resume')
+                  AND te.event_timestamp >= NOW() - INTERVAL '${parseInt(days)} days'
+                GROUP BY te.employee_id, te.tenant_id, e.username, e.first_name, e.last_name, r.name, e.is_owner
+                ORDER BY app_opens DESC
+            `);
+
+            // Agrupar empleados por tenant
+            const mobileUsage = mobileByTenant.rows.map(tenant => ({
+                tenantId: tenant.tenant_id,
+                businessName: tenant.business_name,
+                employeesWithApp: parseInt(tenant.employees_with_app),
+                totalEmployees: parseInt(tenant.total_employees),
+                totalOpens: parseInt(tenant.total_opens),
+                opensToday: parseInt(tenant.opens_today),
+                lastActivity: tenant.last_activity,
+                employees: mobileEmployees.rows
+                    .filter(emp => emp.tenant_id === tenant.tenant_id)
+                    .map(emp => ({
+                        id: emp.employee_id,
+                        username: emp.username,
+                        fullName: emp.full_name?.trim() || emp.username,
+                        role: emp.role_name,
+                        isOwner: emp.is_owner,
+                        appOpens: parseInt(emp.app_opens),
+                        opensToday: parseInt(emp.opens_today),
+                        lastActivity: emp.last_activity,
+                        platform: emp.platform,
+                        appVersion: emp.app_version,
+                        themeName: emp.theme_name
+                    }))
+            }));
+
             res.json({
                 success: true,
                 data: {
@@ -833,7 +903,8 @@ module.exports = function(pool, io) {
                     topTenants: topTenants.rows,
                     appVersions: appVersions.rows,
                     scaleModels: scaleModels.rows,
-                    themes: themesWithTenants
+                    themes: themesWithTenants,
+                    mobileUsage
                 }
             });
 
