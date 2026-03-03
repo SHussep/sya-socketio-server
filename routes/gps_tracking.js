@@ -412,6 +412,115 @@ module.exports = (pool, io) => {
     });
 
     // ═══════════════════════════════════════════════════════════════
+    // POST /api/gps/break-start — Repartidor begins break
+    // Pauses GPS tracking, notifies admins via FCM + socket
+    // ═══════════════════════════════════════════════════════════════
+    const _breakCooldowns = new Map();
+    const BREAK_COOLDOWN_MS = 2 * 60 * 1000; // 2 minutes
+
+    router.post('/break-start', authenticateToken, async (req, res) => {
+        try {
+            const { tenantId } = req.user;
+            const { employee_id, branch_id, shift_id, device_id } = req.body;
+
+            if (!employee_id || !branch_id) {
+                return res.status(400).json({ success: false, message: 'employee_id y branch_id son requeridos' });
+            }
+
+            const cooldownKey = `break_start_${employee_id}`;
+            const lastAction = _breakCooldowns.get(cooldownKey);
+            if (lastAction && Date.now() - lastAction < BREAK_COOLDOWN_MS) {
+                return res.json({ success: true, throttled: true });
+            }
+            _breakCooldowns.set(cooldownKey, Date.now());
+
+            const empResult = await pool.query(
+                `SELECT COALESCE(first_name || ' ' || last_name, username) AS employee_name
+                 FROM employees WHERE id = $1 AND tenant_id = $2`,
+                [employee_id, tenantId]
+            );
+            const employeeName = empResult.rows[0]?.employee_name || 'Repartidor';
+
+            io.to(`branch_${branch_id}`).emit('repartidor:break_started', {
+                employeeId: employee_id,
+                branchId: branch_id,
+                shiftId: shift_id || null,
+                deviceId: device_id || null,
+                employeeName,
+                timestamp: new Date().toISOString()
+            });
+
+            if (sendNotificationToAdminsInBranch) {
+                sendNotificationToAdminsInBranch(branch_id, {
+                    title: 'Descanso Iniciado',
+                    body: `${employeeName} comenzó su descanso`,
+                    data: { type: 'break_started', employeeId: String(employee_id), employeeName }
+                }).catch(err => console.error('[GPS/break-start] FCM error:', err.message));
+            }
+
+            console.log(`[GPS] 🍵 Break started: ${employeeName} (employee=${employee_id}, branch=${branch_id})`);
+            return res.json({ success: true });
+
+        } catch (error) {
+            console.error(`[GPS/break-start] ❌ Error: ${error.message}`);
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // POST /api/gps/break-end — Repartidor ends break
+    // Resumes GPS tracking, notifies admins via FCM + socket
+    // ═══════════════════════════════════════════════════════════════
+    router.post('/break-end', authenticateToken, async (req, res) => {
+        try {
+            const { tenantId } = req.user;
+            const { employee_id, branch_id, shift_id, device_id } = req.body;
+
+            if (!employee_id || !branch_id) {
+                return res.status(400).json({ success: false, message: 'employee_id y branch_id son requeridos' });
+            }
+
+            const cooldownKey = `break_end_${employee_id}`;
+            const lastAction = _breakCooldowns.get(cooldownKey);
+            if (lastAction && Date.now() - lastAction < BREAK_COOLDOWN_MS) {
+                return res.json({ success: true, throttled: true });
+            }
+            _breakCooldowns.set(cooldownKey, Date.now());
+
+            const empResult = await pool.query(
+                `SELECT COALESCE(first_name || ' ' || last_name, username) AS employee_name
+                 FROM employees WHERE id = $1 AND tenant_id = $2`,
+                [employee_id, tenantId]
+            );
+            const employeeName = empResult.rows[0]?.employee_name || 'Repartidor';
+
+            io.to(`branch_${branch_id}`).emit('repartidor:break_ended', {
+                employeeId: employee_id,
+                branchId: branch_id,
+                shiftId: shift_id || null,
+                deviceId: device_id || null,
+                employeeName,
+                timestamp: new Date().toISOString()
+            });
+
+            if (sendNotificationToAdminsInBranch) {
+                sendNotificationToAdminsInBranch(branch_id, {
+                    title: 'Descanso Terminado',
+                    body: `${employeeName} terminó su descanso`,
+                    data: { type: 'break_ended', employeeId: String(employee_id), employeeName }
+                }).catch(err => console.error('[GPS/break-end] FCM error:', err.message));
+            }
+
+            console.log(`[GPS] ✅ Break ended: ${employeeName} (employee=${employee_id}, branch=${branch_id})`);
+            return res.json({ success: true });
+
+        } catch (error) {
+            console.error(`[GPS/break-end] ❌ Error: ${error.message}`);
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    });
+
+    // ═══════════════════════════════════════════════════════════════
     // POST /api/gps/consent — Register GPS consent (LFPDPPP)
     // ═══════════════════════════════════════════════════════════════
     router.post('/consent', authenticateToken, async (req, res) => {
