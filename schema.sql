@@ -1103,6 +1103,25 @@ CREATE INDEX IF NOT EXISTS idx_telemetry_event_type ON telemetry_events(event_ty
 CREATE INDEX IF NOT EXISTS idx_telemetry_event_timestamp ON telemetry_events(event_timestamp);
 CREATE INDEX IF NOT EXISTS idx_telemetry_employee_id ON telemetry_events(employee_id);
 CREATE INDEX IF NOT EXISTS idx_telemetry_employee_date ON telemetry_events(employee_id, event_timestamp DESC) WHERE event_type IN ('app_open', 'app_resume');
+
+-- ═══════════════════════════════════════════════════════════════
+-- shift_requests (solicitudes de turno desde móvil)
+-- ═══════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS shift_requests (
+    id SERIAL PRIMARY KEY,
+    tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+    employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',  -- pending, approved, rejected, cancelled
+    shift_id INTEGER REFERENCES shifts(id),          -- linked shift when approved
+    rejection_reason TEXT,
+    requested_at TIMESTAMPTZ DEFAULT NOW(),
+    resolved_at TIMESTAMPTZ,
+    resolved_by INTEGER REFERENCES employees(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_shift_requests_employee_status ON shift_requests(employee_id, status);
+CREATE INDEX IF NOT EXISTS idx_shift_requests_branch_status ON shift_requests(branch_id, status);
 CREATE INDEX IF NOT EXISTS idx_telemetry_tenant_employee ON telemetry_events(tenant_id, employee_id, event_timestamp DESC) WHERE event_type IN ('app_open', 'app_resume');
 
 -- ========== COMENTARIOS ==========

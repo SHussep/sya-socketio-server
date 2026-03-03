@@ -132,6 +132,7 @@ const preparationModeRoutes = require('./routes/preparation_mode'); // Logs de M
 const betaEnrollmentRoutes = require('./routes/beta_enrollment'); // Registro de interés en app móvil beta
 const transfersRoutes = require('./routes/transfers'); // Transferencias de inventario entre sucursales
 const gpsTrackingRoutes = require('./routes/gps_tracking'); // Rastreo GPS de repartidores en tiempo real
+const shiftRequestsRoutes = require('./routes/shift_requests'); // Solicitudes de turno desde app móvil
 
 // Inicializar Firebase para notificaciones push
 initializeFirebase();
@@ -445,6 +446,7 @@ app.use('/api/sales-items', salesRoutes(pool, io));
 app.use('/api/ventas', ventasRoutes); // Consultas desde App Móvil (GET)
 app.use('/api/expenses', expensesRoutes(pool, io));
 app.use('/api/shifts', shiftsRoutes(pool, io));
+app.use('/api/shift-requests', shiftRequestsRoutes(pool, io));
 app.use('/api/cash-cuts', newCashCutsRoutes(pool)); // Using new cash-cuts.js with offline-first sync
 app.use('/api/purchases', purchasesRoutes(pool));
 app.use('/api/suppliers', suppliersRoutes(pool));

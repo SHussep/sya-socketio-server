@@ -729,6 +729,14 @@ class AuthController {
 
             const employee = employeeResult.rows[0];
 
+            if (!employee.main_branch_id) {
+                console.warn(`[Refresh Token] ⚠️ Empleado ${employee.email} sin sucursal principal asignada`);
+                return res.status(400).json({
+                    success: false,
+                    message: 'El empleado no tiene sucursal principal asignada'
+                });
+            }
+
             const newToken = jwt.sign(
                 {
                     employeeId: employee.id,
