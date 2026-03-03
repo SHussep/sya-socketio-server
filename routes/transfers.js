@@ -19,7 +19,8 @@ module.exports = (pool, io) => {
         try {
             const {
                 tenant_id: tenantId,
-                employee_id: employeeId,
+                employee_id: rawEmployeeId,
+                employee_global_id: employeeGlobalId,
                 from_branch_id,
                 to_branch_id,
                 global_id,
@@ -28,10 +29,29 @@ module.exports = (pool, io) => {
                 items
             } = req.body;
 
-            if (!tenantId || !employeeId) {
+            if (!tenantId) {
                 return res.status(400).json({
                     success: false,
-                    message: 'tenant_id y employee_id son requeridos'
+                    message: 'tenant_id es requerido'
+                });
+            }
+
+            // Resolve employee_id: accept direct ID or resolve from global_id
+            let employeeId = rawEmployeeId;
+            if (!employeeId && employeeGlobalId) {
+                const empLookup = await client.query(
+                    `SELECT id FROM employees WHERE global_id = $1 AND tenant_id = $2`,
+                    [employeeGlobalId, tenantId]
+                );
+                if (empLookup.rows.length > 0) {
+                    employeeId = empLookup.rows[0].id;
+                }
+            }
+
+            if (!employeeId) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'employee_id o employee_global_id es requerido'
                 });
             }
 
@@ -466,12 +486,31 @@ module.exports = (pool, io) => {
 
         try {
             const transferId = req.params.id;
-            const { tenant_id: tenantId, employee_id: employeeId, reason } = req.body;
+            const { tenant_id: tenantId, employee_id: rawEmployeeId, employee_global_id: employeeGlobalId, reason } = req.body;
 
-            if (!tenantId || !employeeId) {
+            if (!tenantId) {
                 return res.status(400).json({
                     success: false,
-                    message: 'tenant_id y employee_id son requeridos'
+                    message: 'tenant_id es requerido'
+                });
+            }
+
+            // Resolve employee_id from global_id if needed
+            let employeeId = rawEmployeeId;
+            if (!employeeId && employeeGlobalId) {
+                const empLookup = await client.query(
+                    `SELECT id FROM employees WHERE global_id = $1 AND tenant_id = $2`,
+                    [employeeGlobalId, tenantId]
+                );
+                if (empLookup.rows.length > 0) {
+                    employeeId = empLookup.rows[0].id;
+                }
+            }
+
+            if (!employeeId) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'employee_id o employee_global_id es requerido'
                 });
             }
 
