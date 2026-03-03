@@ -175,15 +175,15 @@ module.exports = (pool, io) => {
                 if (sourceStock.rows.length === 0) {
                     await client.query(
                         `INSERT INTO branch_inventory (tenant_id, branch_id, producto_id, quantity, minimum)
-                         VALUES ($1, $2, $3, -$4, 0)
+                         VALUES ($1, $2, $3, (0 - $4::numeric), 0)
                          ON CONFLICT (tenant_id, branch_id, producto_id)
-                         DO UPDATE SET quantity = branch_inventory.quantity - $4, updated_at = NOW()`,
+                         DO UPDATE SET quantity = branch_inventory.quantity - $4::numeric, updated_at = NOW()`,
                         [tenantId, from_branch_id, product.id, quantity]
                     );
                 } else {
                     await client.query(
                         `UPDATE branch_inventory
-                         SET quantity = quantity - $1, updated_at = NOW()
+                         SET quantity = quantity - $1::numeric, updated_at = NOW()
                          WHERE branch_id = $2 AND producto_id = $3 AND tenant_id = $4`,
                         [quantity, from_branch_id, product.id, tenantId]
                     );
