@@ -373,6 +373,83 @@ module.exports = (pool, io) => {
     });
 
     // ═══════════════════════════════════════════════════════════════
+    // GET /api/gps/shift-summary/:employeeId — Aggregated shift stats
+    // Returns distance, time, speed stats computed server-side
+    // ═══════════════════════════════════════════════════════════════
+    router.get('/shift-summary/:employeeId', authenticateToken, async (req, res) => {
+        try {
+            const { tenantId } = req.user;
+            const { employeeId } = req.params;
+            const { date } = req.query;
+
+            const targetDate = date || new Date().toISOString().split('T')[0];
+
+            // Single query: aggregates + Haversine distance via window functions
+            const result = await pool.query(`
+                WITH points AS (
+                    SELECT latitude, longitude, speed, recorded_at,
+                           LAG(latitude) OVER (ORDER BY recorded_at) AS prev_lat,
+                           LAG(longitude) OVER (ORDER BY recorded_at) AS prev_lon,
+                           LAG(recorded_at) OVER (ORDER BY recorded_at) AS prev_at
+                    FROM repartidor_locations
+                    WHERE tenant_id = $1
+                      AND employee_id = $2
+                      AND recorded_at >= $3::date
+                      AND recorded_at < ($3::date + INTERVAL '1 day')
+                ),
+                segments AS (
+                    SELECT *,
+                        CASE WHEN prev_lat IS NOT NULL THEN
+                            6371 * 2 * ASIN(SQRT(
+                                POWER(SIN(RADIANS(latitude - prev_lat) / 2), 2) +
+                                COS(RADIANS(prev_lat)) * COS(RADIANS(latitude)) *
+                                POWER(SIN(RADIANS(longitude - prev_lon) / 2), 2)
+                            ))
+                        ELSE 0 END AS segment_km,
+                        CASE WHEN prev_at IS NOT NULL THEN
+                            EXTRACT(EPOCH FROM (recorded_at - prev_at)) / 60.0
+                        ELSE 0 END AS segment_minutes,
+                        CASE WHEN speed IS NULL OR speed < 0.5 THEN true ELSE false END AS is_stopped
+                    FROM points
+                )
+                SELECT
+                    COUNT(*)::int AS total_points,
+                    MIN(recorded_at) AS first_seen,
+                    MAX(recorded_at) AS last_seen,
+                    ROUND(EXTRACT(EPOCH FROM (MAX(recorded_at) - MIN(recorded_at))) / 60.0) AS active_minutes,
+                    ROUND(COALESCE(SUM(CASE WHEN is_stopped AND segment_minutes < 10 THEN segment_minutes ELSE 0 END), 0)) AS stopped_minutes,
+                    ROUND(COALESCE(SUM(segment_km), 0)::numeric, 2) AS distance_km,
+                    ROUND(COALESCE(AVG(CASE WHEN speed IS NOT NULL AND speed >= 0.5 THEN speed * 3.6 END), 0)::numeric, 1) AS avg_speed_kmh,
+                    ROUND(COALESCE(MAX(CASE WHEN speed IS NOT NULL THEN speed * 3.6 END), 0)::numeric, 1) AS max_speed_kmh
+                FROM segments
+            `, [tenantId, employeeId, targetDate]);
+
+            const row = result.rows[0];
+            const activeMin = parseInt(row.active_minutes) || 0;
+            const stoppedMin = parseInt(row.stopped_minutes) || 0;
+
+            return res.json({
+                success: true,
+                data: {
+                    total_points: row.total_points || 0,
+                    first_seen: row.first_seen,
+                    last_seen: row.last_seen,
+                    active_minutes: activeMin,
+                    stopped_minutes: stoppedMin,
+                    moving_minutes: Math.max(0, activeMin - stoppedMin),
+                    distance_km: parseFloat(row.distance_km) || 0,
+                    avg_speed_kmh: parseFloat(row.avg_speed_kmh) || 0,
+                    max_speed_kmh: parseFloat(row.max_speed_kmh) || 0,
+                }
+            });
+
+        } catch (error) {
+            console.error(`[GPS/shift-summary] ❌ Error: ${error.message}`);
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    });
+
+    // ═══════════════════════════════════════════════════════════════
     // POST /api/gps/tracking-disabled — Repartidor GPS was disabled
     // Sends FCM alert to admins in branch
     // ═══════════════════════════════════════════════════════════════
