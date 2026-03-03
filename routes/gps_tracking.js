@@ -451,11 +451,16 @@ module.exports = (pool, io) => {
             });
 
             if (sendNotificationToAdminsInBranch) {
+                console.log(`[GPS/break-start] Sending FCM to admins in branch ${branch_id}...`);
                 sendNotificationToAdminsInBranch(branch_id, {
                     title: 'Descanso Iniciado',
                     body: `${employeeName} comenzó su descanso`,
                     data: { type: 'break_started', employeeId: String(employee_id), employeeName }
+                }).then(result => {
+                    console.log(`[GPS/break-start] FCM result: sent=${result.sent}, failed=${result.failed}, total=${result.total || 0}`);
                 }).catch(err => console.error('[GPS/break-start] FCM error:', err.message));
+            } else {
+                console.warn('[GPS/break-start] sendNotificationToAdminsInBranch is NOT available');
             }
 
             console.log(`[GPS] 🍵 Break started: ${employeeName} (employee=${employee_id}, branch=${branch_id})`);
@@ -504,11 +509,16 @@ module.exports = (pool, io) => {
             });
 
             if (sendNotificationToAdminsInBranch) {
+                console.log(`[GPS/break-end] Sending FCM to admins in branch ${branch_id}...`);
                 sendNotificationToAdminsInBranch(branch_id, {
                     title: 'Descanso Terminado',
                     body: `${employeeName} terminó su descanso`,
                     data: { type: 'break_ended', employeeId: String(employee_id), employeeName }
+                }).then(result => {
+                    console.log(`[GPS/break-end] FCM result: sent=${result.sent}, failed=${result.failed}, total=${result.total || 0}`);
                 }).catch(err => console.error('[GPS/break-end] FCM error:', err.message));
+            } else {
+                console.warn('[GPS/break-end] sendNotificationToAdminsInBranch is NOT available');
             }
 
             console.log(`[GPS] ✅ Break ended: ${employeeName} (employee=${employee_id}, branch=${branch_id})`);
