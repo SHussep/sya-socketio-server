@@ -33,7 +33,7 @@ module.exports = (pool, io) => {
     const _multiDeviceCooldowns = new Map(); // key: employeeId, value: timestamp
     const _gpsDisabledCooldowns = new Map(); // key: employeeId, value: timestamp
     const MULTI_DEVICE_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
-    const GPS_DISABLED_COOLDOWN_MS = 5 * 60 * 1000;  // 5 minutes
+    const GPS_DISABLED_COOLDOWN_MS = 15 * 60 * 1000; // 15 minutes
 
     // Import notification helper (lazy — may not be available in all setups)
     let sendNotificationToAdminsInTenant;
@@ -423,8 +423,8 @@ module.exports = (pool, io) => {
             if (sendNotificationToAdminsInTenant) {
                 const branchTag = branchName ? ` [${branchName}]` : '';
                 sendNotificationToAdminsInTenant(tenantId, {
-                    title: `GPS Desactivado${branchTag}`,
-                    body: `${employeeName} desactivó la ubicación durante su turno`,
+                    title: `GPS Inactivo${branchTag}`,
+                    body: `${employeeName} sin señal GPS por más de 5 minutos`,
                     data: {
                         type: 'gps_tracking_disabled',
                         employeeId: String(employee_id),
