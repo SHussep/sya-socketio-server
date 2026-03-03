@@ -380,11 +380,24 @@ module.exports = (pool, io) => {
         try {
             const { tenantId } = req.user;
             const { employeeId } = req.params;
-            const { date } = req.query;
+            const { date, shift_id } = req.query;
 
             const targetDate = date || new Date().toISOString().split('T')[0];
 
+            // Build WHERE clause: filter by shift_id if provided, otherwise by date
+            let whereClause = `tenant_id = $1 AND employee_id = $2`;
+            const params = [tenantId, employeeId];
+
+            if (shift_id) {
+                whereClause += ` AND shift_id = $${params.length + 1}`;
+                params.push(shift_id);
+            } else {
+                whereClause += ` AND recorded_at >= $${params.length + 1}::date AND recorded_at < ($${params.length + 1}::date + INTERVAL '1 day')`;
+                params.push(targetDate);
+            }
+
             // Single query: aggregates + Haversine distance via window functions
+            // Segments < 0.02km (20m) are GPS noise and excluded from distance
             const result = await pool.query(`
                 WITH points AS (
                     SELECT latitude, longitude, speed, recorded_at,
@@ -392,10 +405,7 @@ module.exports = (pool, io) => {
                            LAG(longitude) OVER (ORDER BY recorded_at) AS prev_lon,
                            LAG(recorded_at) OVER (ORDER BY recorded_at) AS prev_at
                     FROM repartidor_locations
-                    WHERE tenant_id = $1
-                      AND employee_id = $2
-                      AND recorded_at >= $3::date
-                      AND recorded_at < ($3::date + INTERVAL '1 day')
+                    WHERE ${whereClause}
                 ),
                 segments AS (
                     SELECT *,
@@ -418,11 +428,11 @@ module.exports = (pool, io) => {
                     MAX(recorded_at) AS last_seen,
                     ROUND(EXTRACT(EPOCH FROM (MAX(recorded_at) - MIN(recorded_at))) / 60.0) AS active_minutes,
                     ROUND(COALESCE(SUM(CASE WHEN is_stopped AND segment_minutes < 10 THEN segment_minutes ELSE 0 END), 0)) AS stopped_minutes,
-                    ROUND(COALESCE(SUM(segment_km), 0)::numeric, 2) AS distance_km,
+                    ROUND(COALESCE(SUM(CASE WHEN segment_km >= 0.02 THEN segment_km ELSE 0 END), 0)::numeric, 2) AS distance_km,
                     ROUND(COALESCE(AVG(CASE WHEN speed IS NOT NULL AND speed >= 0.5 THEN speed * 3.6 END), 0)::numeric, 1) AS avg_speed_kmh,
                     ROUND(COALESCE(MAX(CASE WHEN speed IS NOT NULL THEN speed * 3.6 END), 0)::numeric, 1) AS max_speed_kmh
                 FROM segments
-            `, [tenantId, employeeId, targetDate]);
+            `, params);
 
             const row = result.rows[0];
             const activeMin = parseInt(row.active_minutes) || 0;
