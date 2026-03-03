@@ -131,6 +131,7 @@ const notasCreditoRoutes = require('./routes/notas_credito'); // Notas de crédi
 const preparationModeRoutes = require('./routes/preparation_mode'); // Logs de Modo Preparación (auditoría Guardian)
 const betaEnrollmentRoutes = require('./routes/beta_enrollment'); // Registro de interés en app móvil beta
 const transfersRoutes = require('./routes/transfers'); // Transferencias de inventario entre sucursales
+const gpsTrackingRoutes = require('./routes/gps_tracking'); // Rastreo GPS de repartidores en tiempo real
 
 // Inicializar Firebase para notificaciones push
 initializeFirebase();
@@ -471,6 +472,7 @@ app.use('/api/deposits', depositsRoutes(pool));
 app.use('/api/withdrawals', withdrawalsRoutes(pool));
 app.use('/api/sync-diagnostics', syncDiagnosticsRoutes(pool)); // Diagnóstico de sincronización (debug)
 app.use('/api/transfers', transfersRoutes(pool, io)); // Transferencias de inventario entre sucursales
+app.use('/api/gps', gpsTrackingRoutes(pool, io)); // Rastreo GPS de repartidores en tiempo real
 // Note: cash-cuts now uses newCashCutsRoutes at /api/cash-cuts (line 337)
 
 // Sync endpoints are mounted at their service-specific paths
@@ -2004,6 +2006,20 @@ async function startServer() {
             console.log('   POST /api/auth/mobile-credentials-login');
             console.log('   POST /api/auth/scan-qr');
             console.log('   GET  /health\n');
+
+            // GPS location cleanup — delete records older than 90 days (runs every 24h)
+            setInterval(async () => {
+                try {
+                    const result = await pool.query(
+                        `DELETE FROM repartidor_locations WHERE received_at < NOW() - INTERVAL '90 days'`
+                    );
+                    if (result.rowCount > 0) {
+                        console.log(`[GPS Cleanup] Deleted ${result.rowCount} location records older than 90 days`);
+                    }
+                } catch (err) {
+                    console.error('[GPS Cleanup] Error:', err.message);
+                }
+            }, 24 * 60 * 60 * 1000); // 24 hours
         });
     } catch (error) {
         console.error('❌ Error starting server:', error);
