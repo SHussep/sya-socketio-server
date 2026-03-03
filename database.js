@@ -2558,11 +2558,12 @@ async function runMigrations() {
                     (17, 'CloseApplication',            'Cerrar Aplicación',            'Permite cerrar la aplicación', 'administracion'),
                     (18, 'ManageProduction',            'Gestionar Producción',         'Permite acceder a la bitácora, configuración y alertas del módulo de producción', 'produccion'),
                     (19, 'AccessProduction',            'Acceso a Producción',          'Permite acceder al módulo de Producción para registrar peso de masa', 'produccion'),
-                    (20, 'ManualWeightOverride',        'Peso Manual',                  'Permite ingresar peso manualmente aún con la báscula conectada', 'produccion')
+                    (20, 'ManualWeightOverride',        'Peso Manual',                  'Permite ingresar peso manualmente aún con la báscula conectada', 'produccion'),
+                    (21, 'CanTransferInventory',       'Transferir Inventario',        'Permite transferir inventario entre sucursales', 'inventario')
                 `);
 
-                // Reset sequence so next auto-generated ID is 21
-                await client.query(`SELECT setval('permissions_id_seq', 20, true)`);
+                // Reset sequence so next auto-generated ID is 22
+                await client.query(`SELECT setval('permissions_id_seq', 21, true)`);
 
                 // Seed default role_permissions for all tenant system roles
                 // Administrador → ALL permissions
@@ -2818,6 +2819,33 @@ async function runMigrations() {
                     `);
                     console.log('[Schema] ✅ cash_cuts consolidation columns added successfully');
                 }
+            }
+
+            // Patch: Add CanTransferInventory permission for inter-branch transfers
+            try {
+                const permCheck = await client.query(
+                    `SELECT id FROM permissions WHERE code = 'CanTransferInventory'`
+                );
+                if (permCheck.rows.length === 0) {
+                    console.log('[Schema] 📝 Adding CanTransferInventory permission...');
+                    await client.query(`
+                        INSERT INTO permissions (code, name, description, category)
+                        VALUES ('CanTransferInventory', 'Transferir Inventario', 'Permite transferir inventario entre sucursales', 'inventario')
+                    `);
+                    // Assign to all Administrador roles
+                    await client.query(`
+                        INSERT INTO role_permissions (role_id, permission_id)
+                        SELECT r.id, p.id
+                        FROM roles r
+                        CROSS JOIN permissions p
+                        WHERE r.is_system = true AND r.name = 'Administrador'
+                        AND p.code = 'CanTransferInventory'
+                        ON CONFLICT (role_id, permission_id) DO NOTHING
+                    `);
+                    console.log('[Schema] ✅ CanTransferInventory permission added and assigned to admins');
+                }
+            } catch (permErr) {
+                console.error(`[Schema] ⚠️ CanTransferInventory migration error: ${permErr.message}`);
             }
 
             console.log('[Schema] ✅ Database initialization complete');
