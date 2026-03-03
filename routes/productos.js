@@ -88,7 +88,8 @@ module.exports = (pool) => {
                     p.tipos_de_salida_id,
                     p.notificar,
                     p.minimo,
-                    p.inventario,
+                    p.inventario AS inventario_global,
+                    COALESCE(bi.quantity, p.inventario) AS inventario,
                     p.proveedor_id,
                     p.unidad_medida_id,
                     p.eliminado,
@@ -105,6 +106,10 @@ module.exports = (pool) => {
                     ON pbp.producto_id = p.id
                     AND pbp.branch_id = $2
                     AND pbp.eliminado = FALSE
+                LEFT JOIN branch_inventory bi
+                    ON bi.producto_id = p.id
+                    AND bi.branch_id = $2
+                    AND bi.tenant_id = $1
                 LEFT JOIN units_of_measure um
                     ON um.id = p.unidad_medida_id
                 WHERE p.tenant_id = $1
