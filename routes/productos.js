@@ -42,17 +42,16 @@ module.exports = (pool) => {
             let tenantId = req.query.tenantId;
             let branchId = req.query.branchId;
 
-            // Si hay token JWT, intentar extraer datos de ahí
+            // Si hay token JWT, extraer datos (query params tienen prioridad si se proporcionan)
             const authHeader = req.headers['authorization'];
             const token = authHeader && authHeader.split(' ')[1];
             if (token) {
                 try {
                     const jwt = require('jsonwebtoken');
                     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-                    if (decoded.tenantId) tenantId = decoded.tenantId;
-                    if (decoded.branchId) branchId = decoded.branchId;
+                    if (!tenantId && decoded.tenantId) tenantId = decoded.tenantId;
+                    if (!branchId && decoded.branchId) branchId = decoded.branchId;
                 } catch (jwtErr) {
-                    // Token inválido o de Google - usar query params
                     console.log('[Productos] Token no es JWT del backend, usando query params');
                 }
             }
