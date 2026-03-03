@@ -2899,6 +2899,51 @@ async function runMigrations() {
                 console.error(`[Schema] ⚠️ CanTransferInventory migration error: ${permErr.message}`);
             }
 
+            // Patch: GPS tracking tables for repartidores (028)
+            try {
+                await client.query(`
+                    CREATE TABLE IF NOT EXISTS repartidor_locations (
+                        id BIGSERIAL PRIMARY KEY,
+                        tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                        branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+                        employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+                        shift_id INTEGER,
+                        latitude DOUBLE PRECISION NOT NULL,
+                        longitude DOUBLE PRECISION NOT NULL,
+                        accuracy DOUBLE PRECISION,
+                        speed DOUBLE PRECISION,
+                        heading DOUBLE PRECISION,
+                        recorded_at TIMESTAMPTZ NOT NULL,
+                        received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        CONSTRAINT chk_latitude CHECK (latitude BETWEEN -90 AND 90),
+                        CONSTRAINT chk_longitude CHECK (longitude BETWEEN -180 AND 180)
+                    )
+                `);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_repartidor_locations_branch_employee ON repartidor_locations (branch_id, employee_id, received_at DESC)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_repartidor_locations_employee_date ON repartidor_locations (employee_id, recorded_at DESC)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_repartidor_locations_retention ON repartidor_locations (received_at)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_repartidor_locations_tenant ON repartidor_locations (tenant_id)`);
+
+                await client.query(`
+                    CREATE TABLE IF NOT EXISTS gps_consent_log (
+                        id SERIAL PRIMARY KEY,
+                        tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                        employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+                        consented BOOLEAN NOT NULL DEFAULT false,
+                        consented_at TIMESTAMPTZ,
+                        revoked_at TIMESTAMPTZ,
+                        device_info TEXT,
+                        ip_address INET,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                `);
+                await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_gps_consent_tenant_employee ON gps_consent_log (tenant_id, employee_id)`);
+                console.log('[Schema] ✅ GPS tracking tables ready');
+            } catch (gpsErr) {
+                console.error(`[Schema] ⚠️ GPS tracking migration error: ${gpsErr.message}`);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {
