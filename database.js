@@ -2961,6 +2961,15 @@ async function runMigrations() {
                 console.error(`[Schema] ⚠️ GPS tracking migration error: ${gpsErr.message}`);
             }
 
+            // Patch: Add device_id to repartidor_locations for multi-device security (029)
+            try {
+                await client.query(`ALTER TABLE repartidor_locations ADD COLUMN IF NOT EXISTS device_id VARCHAR(255)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_repartidor_locations_device ON repartidor_locations (employee_id, device_id)`);
+                console.log('[Schema] ✅ GPS device_id column ready');
+            } catch (deviceErr) {
+                console.error(`[Schema] ⚠️ GPS device_id migration error: ${deviceErr.message}`);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {

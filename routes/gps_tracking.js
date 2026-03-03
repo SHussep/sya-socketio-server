@@ -29,6 +29,21 @@ function authenticateToken(req, res, next) {
 
 module.exports = (pool, io) => {
 
+    // Rate-limit cooldowns (in-memory)
+    const _multiDeviceCooldowns = new Map(); // key: employeeId, value: timestamp
+    const _gpsDisabledCooldowns = new Map(); // key: employeeId, value: timestamp
+    const MULTI_DEVICE_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
+    const GPS_DISABLED_COOLDOWN_MS = 5 * 60 * 1000;  // 5 minutes
+
+    // Import notification helper (lazy — may not be available in all setups)
+    let sendNotificationToAdminsInBranch;
+    try {
+        const notificationHelper = require('../utils/notificationHelper');
+        sendNotificationToAdminsInBranch = notificationHelper.sendNotificationToAdminsInBranch;
+    } catch (e) {
+        console.warn('[GPS] ⚠️ notificationHelper not available, FCM disabled');
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // POST /api/gps/location — Repartidor sends current location
     // ═══════════════════════════════════════════════════════════════
@@ -46,7 +61,8 @@ module.exports = (pool, io) => {
                 accuracy,
                 speed,
                 heading,
-                recorded_at
+                recorded_at,
+                device_id
             } = req.body;
 
             if (!branch_id || latitude === undefined || longitude === undefined) {
@@ -71,13 +87,58 @@ module.exports = (pool, io) => {
 
             const result = await client.query(
                 `INSERT INTO repartidor_locations
-                    (tenant_id, branch_id, employee_id, shift_id, latitude, longitude, accuracy, speed, heading, recorded_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                    (tenant_id, branch_id, employee_id, shift_id, latitude, longitude, accuracy, speed, heading, recorded_at, device_id)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                  RETURNING id, received_at`,
                 [tenantId, branch_id, empId, shift_id || null, latitude, longitude,
                  accuracy || null, speed || null, heading || null,
-                 recorded_at || new Date().toISOString()]
+                 recorded_at || new Date().toISOString(), device_id || null]
             );
+
+            // Multi-device anomaly detection
+            if (device_id) {
+                try {
+                    const otherDevices = await client.query(
+                        `SELECT DISTINCT device_id FROM repartidor_locations
+                         WHERE employee_id = $1 AND device_id IS NOT NULL AND device_id != $2
+                           AND received_at >= NOW() - INTERVAL '2 minutes'`,
+                        [empId, device_id]
+                    );
+                    if (otherDevices.rows.length > 0) {
+                        const cooldownKey = `${empId}`;
+                        const lastAlerted = _multiDeviceCooldowns.get(cooldownKey);
+                        if (!lastAlerted || Date.now() - lastAlerted > MULTI_DEVICE_COOLDOWN_MS) {
+                            _multiDeviceCooldowns.set(cooldownKey, Date.now());
+
+                            // Lookup employee name
+                            const empInfo = await client.query(
+                                `SELECT COALESCE(first_name || ' ' || last_name, username) AS name FROM employees WHERE id = $1`,
+                                [empId]
+                            );
+                            const empName = empInfo.rows[0]?.name || 'Repartidor';
+
+                            io.to(`branch_${branch_id}`).emit('repartidor:multi_device_alert', {
+                                employeeId: empId,
+                                branchId: branch_id,
+                                employeeName: empName,
+                                deviceIds: [device_id, ...otherDevices.rows.map(r => r.device_id)],
+                                timestamp: new Date().toISOString()
+                            });
+
+                            if (sendNotificationToAdminsInBranch) {
+                                sendNotificationToAdminsInBranch(branch_id, {
+                                    title: '⚠️ Alerta: Múltiples Dispositivos',
+                                    body: `${empName} está enviando ubicación desde ${otherDevices.rows.length + 1} dispositivos`,
+                                    data: { type: 'multi_device_alert', employeeId: String(empId) }
+                                }).catch(err => console.error('[GPS] Multi-device FCM error:', err.message));
+                            }
+                            console.log(`[GPS] ⚠️ Multi-device alert: employee ${empId} using ${otherDevices.rows.length + 1} devices`);
+                        }
+                    }
+                } catch (detectErr) {
+                    console.error(`[GPS] Multi-device check error: ${detectErr.message}`);
+                }
+            }
 
             // Emit to branch room for admin real-time map
             io.to(`branch_${branch_id}`).emit('repartidor:location_update', {
@@ -88,6 +149,7 @@ module.exports = (pool, io) => {
                 accuracy: accuracy || null,
                 speed: speed || null,
                 shiftId: shift_id || null,
+                deviceId: device_id || null,
                 recordedAt: recorded_at || new Date().toISOString()
             });
 
@@ -112,7 +174,7 @@ module.exports = (pool, io) => {
         const client = await pool.connect();
         try {
             const { tenantId } = req.user;
-            const { employee_id, employee_global_id, branch_id, shift_id, locations } = req.body;
+            const { employee_id, employee_global_id, branch_id, shift_id, device_id, locations } = req.body;
 
             if (!branch_id || !Array.isArray(locations) || locations.length === 0) {
                 return res.status(400).json({
@@ -143,27 +205,28 @@ module.exports = (pool, io) => {
 
             await client.query('BEGIN');
 
-            // Build batch INSERT with parameterized values
+            // Build batch INSERT with parameterized values (now 11 columns)
             const values = [];
             const placeholders = [];
             let paramIdx = 1;
 
             for (const loc of locations) {
                 placeholders.push(
-                    `($${paramIdx}, $${paramIdx + 1}, $${paramIdx + 2}, $${paramIdx + 3}, $${paramIdx + 4}, $${paramIdx + 5}, $${paramIdx + 6}, $${paramIdx + 7}, $${paramIdx + 8}, $${paramIdx + 9})`
+                    `($${paramIdx}, $${paramIdx + 1}, $${paramIdx + 2}, $${paramIdx + 3}, $${paramIdx + 4}, $${paramIdx + 5}, $${paramIdx + 6}, $${paramIdx + 7}, $${paramIdx + 8}, $${paramIdx + 9}, $${paramIdx + 10})`
                 );
                 values.push(
                     tenantId, branch_id, empId, shift_id || null,
                     loc.latitude, loc.longitude,
                     loc.accuracy || null, loc.speed || null, loc.heading || null,
-                    loc.recorded_at || new Date().toISOString()
+                    loc.recorded_at || new Date().toISOString(),
+                    device_id || null
                 );
-                paramIdx += 10;
+                paramIdx += 11;
             }
 
-            const insertedCount = await client.query(
+            await client.query(
                 `INSERT INTO repartidor_locations
-                    (tenant_id, branch_id, employee_id, shift_id, latitude, longitude, accuracy, speed, heading, recorded_at)
+                    (tenant_id, branch_id, employee_id, shift_id, latitude, longitude, accuracy, speed, heading, recorded_at, device_id)
                  VALUES ${placeholders.join(', ')}`,
                 values
             );
@@ -180,6 +243,7 @@ module.exports = (pool, io) => {
                 accuracy: latest.accuracy || null,
                 speed: latest.speed || null,
                 shiftId: shift_id || null,
+                deviceId: device_id || null,
                 recordedAt: latest.recorded_at || new Date().toISOString()
             });
 
@@ -217,6 +281,7 @@ module.exports = (pool, io) => {
                     rl.speed,
                     rl.heading,
                     rl.shift_id,
+                    rl.device_id,
                     rl.recorded_at,
                     rl.received_at
                  FROM repartidor_locations rl
@@ -250,7 +315,7 @@ module.exports = (pool, io) => {
 
             let query = `
                 SELECT id, latitude, longitude, accuracy, speed, heading,
-                       shift_id, recorded_at, received_at
+                       shift_id, device_id, recorded_at, received_at
                 FROM repartidor_locations
                 WHERE tenant_id = $1
                   AND employee_id = $2
@@ -271,6 +336,72 @@ module.exports = (pool, io) => {
 
         } catch (error) {
             console.error(`[GPS/history] ❌ Error: ${error.message}`);
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // POST /api/gps/tracking-disabled — Repartidor GPS was disabled
+    // Sends FCM alert to admins in branch
+    // ═══════════════════════════════════════════════════════════════
+    router.post('/tracking-disabled', authenticateToken, async (req, res) => {
+        try {
+            const { tenantId } = req.user;
+            const { employee_id, branch_id, shift_id, device_id, reason } = req.body;
+
+            if (!employee_id || !branch_id) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'employee_id y branch_id son requeridos'
+                });
+            }
+
+            // Rate limit: 1 notification per employee per 5 minutes
+            const cooldownKey = `${employee_id}`;
+            const lastNotified = _gpsDisabledCooldowns.get(cooldownKey);
+            if (lastNotified && Date.now() - lastNotified < GPS_DISABLED_COOLDOWN_MS) {
+                return res.json({ success: true, throttled: true });
+            }
+            _gpsDisabledCooldowns.set(cooldownKey, Date.now());
+
+            // Look up employee name
+            const empResult = await pool.query(
+                `SELECT COALESCE(first_name || ' ' || last_name, username) AS employee_name
+                 FROM employees WHERE id = $1 AND tenant_id = $2`,
+                [employee_id, tenantId]
+            );
+            const employeeName = empResult.rows[0]?.employee_name || 'Repartidor';
+
+            // Emit socket event to branch room
+            io.to(`branch_${branch_id}`).emit('repartidor:tracking_disabled', {
+                employeeId: employee_id,
+                branchId: branch_id,
+                shiftId: shift_id || null,
+                deviceId: device_id || null,
+                employeeName,
+                reason: reason || 'GPS desactivado',
+                timestamp: new Date().toISOString()
+            });
+
+            // Send FCM to admins
+            if (sendNotificationToAdminsInBranch) {
+                sendNotificationToAdminsInBranch(branch_id, {
+                    title: 'GPS Desactivado',
+                    body: `${employeeName} desactivó la ubicación durante su turno`,
+                    data: {
+                        type: 'gps_tracking_disabled',
+                        employeeId: String(employee_id),
+                        employeeName,
+                        shiftId: String(shift_id || '')
+                    }
+                }).catch(err => console.error('[GPS/tracking-disabled] FCM error:', err.message));
+            }
+
+            console.log(`[GPS] ⚠️ Tracking disabled: ${employeeName} (employee=${employee_id}, branch=${branch_id})`);
+            return res.json({ success: true });
+
+        } catch (error) {
+            console.error(`[GPS/tracking-disabled] ❌ Error: ${error.message}`);
             return res.status(500).json({ success: false, message: error.message });
         }
     });
