@@ -36,10 +36,10 @@ module.exports = (pool, io) => {
     const GPS_DISABLED_COOLDOWN_MS = 5 * 60 * 1000;  // 5 minutes
 
     // Import notification helper (lazy — may not be available in all setups)
-    let sendNotificationToAdminsInBranch;
+    let sendNotificationToAdminsInTenant;
     try {
         const notificationHelper = require('../utils/notificationHelper');
-        sendNotificationToAdminsInBranch = notificationHelper.sendNotificationToAdminsInBranch;
+        sendNotificationToAdminsInTenant = notificationHelper.sendNotificationToAdminsInTenant;
     } catch (e) {
         console.warn('[GPS] ⚠️ notificationHelper not available, FCM disabled');
     }
@@ -127,11 +127,11 @@ module.exports = (pool, io) => {
                                 timestamp: new Date().toISOString()
                             });
 
-                            if (sendNotificationToAdminsInBranch) {
-                                sendNotificationToAdminsInBranch(branch_id, {
+                            if (sendNotificationToAdminsInTenant) {
+                                sendNotificationToAdminsInTenant(tenantId, {
                                     title: '⚠️ Alerta: Múltiples Dispositivos',
                                     body: `${empName} está enviando ubicación desde ${otherDevices.rows.length + 1} dispositivos`,
-                                    data: { type: 'multi_device_alert', employeeId: String(empId) }
+                                    data: { type: 'multi_device_alert', employeeId: String(empId), branchId: String(branch_id) }
                                 }).catch(err => console.error('[GPS] Multi-device FCM error:', err.message));
                             }
                             console.log(`[GPS] ⚠️ Multi-device alert: employee ${empId} using ${otherDevices.rows.length + 1} devices`);
@@ -269,35 +269,62 @@ module.exports = (pool, io) => {
     // ═══════════════════════════════════════════════════════════════
     router.get('/active-locations', authenticateToken, async (req, res) => {
         try {
-            const { tenantId, branchId: userBranchId } = req.user;
+            const { tenantId } = req.user;
             const { branch_id } = req.query;
-            const targetBranch = parseInt(branch_id) || userBranchId;
+            const targetBranch = branch_id ? parseInt(branch_id) : null;
 
-            console.log(`[GPS/active] Query: tenantId=${tenantId}, branch_id(param)=${branch_id}, userBranchId(jwt)=${userBranchId}, targetBranch=${targetBranch}`);
+            let result;
+            if (targetBranch) {
+                // Filter by specific branch
+                console.log(`[GPS/active] Query: tenantId=${tenantId}, branch_id=${targetBranch}`);
+                result = await pool.query(
+                    `SELECT DISTINCT ON (rl.employee_id)
+                        rl.employee_id,
+                        COALESCE(e.first_name || ' ' || e.last_name, e.username) AS employee_name,
+                        rl.latitude,
+                        rl.longitude,
+                        rl.accuracy,
+                        rl.speed,
+                        rl.heading,
+                        rl.shift_id,
+                        rl.device_id,
+                        rl.recorded_at,
+                        rl.received_at
+                     FROM repartidor_locations rl
+                     JOIN employees e ON e.id = rl.employee_id
+                     WHERE rl.tenant_id = $1
+                       AND rl.branch_id = $2
+                       AND rl.received_at >= NOW() - INTERVAL '1 hour'
+                     ORDER BY rl.employee_id, rl.received_at DESC`,
+                    [tenantId, targetBranch]
+                );
+            } else {
+                // No branch filter: show ALL repartidores in tenant
+                console.log(`[GPS/active] Query: tenantId=${tenantId}, all branches`);
+                result = await pool.query(
+                    `SELECT DISTINCT ON (rl.employee_id)
+                        rl.employee_id,
+                        COALESCE(e.first_name || ' ' || e.last_name, e.username) AS employee_name,
+                        rl.latitude,
+                        rl.longitude,
+                        rl.accuracy,
+                        rl.speed,
+                        rl.heading,
+                        rl.shift_id,
+                        rl.device_id,
+                        rl.recorded_at,
+                        rl.received_at,
+                        rl.branch_id
+                     FROM repartidor_locations rl
+                     JOIN employees e ON e.id = rl.employee_id
+                     WHERE rl.tenant_id = $1
+                       AND rl.received_at >= NOW() - INTERVAL '1 hour'
+                     ORDER BY rl.employee_id, rl.received_at DESC`,
+                    [tenantId]
+                );
+            }
 
-            const result = await pool.query(
-                `SELECT DISTINCT ON (rl.employee_id)
-                    rl.employee_id,
-                    COALESCE(e.first_name || ' ' || e.last_name, e.username) AS employee_name,
-                    rl.latitude,
-                    rl.longitude,
-                    rl.accuracy,
-                    rl.speed,
-                    rl.heading,
-                    rl.shift_id,
-                    rl.device_id,
-                    rl.recorded_at,
-                    rl.received_at
-                 FROM repartidor_locations rl
-                 JOIN employees e ON e.id = rl.employee_id
-                 WHERE rl.tenant_id = $1
-                   AND rl.branch_id = $2
-                   AND rl.received_at >= NOW() - INTERVAL '1 hour'
-                 ORDER BY rl.employee_id, rl.received_at DESC`,
-                [tenantId, targetBranch]
-            );
-
-            console.log(`[GPS/active] Found ${result.rows.length} active repartidores for branch ${targetBranch}`);
+            console.log(`[GPS/active] Found ${result.rows.length} active repartidores${targetBranch ? ` for branch ${targetBranch}` : ' (all branches)'}`);
             return res.json({ success: true, data: result.rows });
 
         } catch (error) {
@@ -369,15 +396,19 @@ module.exports = (pool, io) => {
             }
             _gpsDisabledCooldowns.set(cooldownKey, Date.now());
 
-            // Look up employee name
+            // Look up employee name + branch name
             const empResult = await pool.query(
-                `SELECT COALESCE(first_name || ' ' || last_name, username) AS employee_name
-                 FROM employees WHERE id = $1 AND tenant_id = $2`,
-                [employee_id, tenantId]
+                `SELECT COALESCE(e.first_name || ' ' || e.last_name, e.username) AS employee_name,
+                        b.name AS branch_name
+                 FROM employees e
+                 LEFT JOIN branches b ON b.id = $3
+                 WHERE e.id = $1 AND e.tenant_id = $2`,
+                [employee_id, tenantId, branch_id]
             );
             const employeeName = empResult.rows[0]?.employee_name || 'Repartidor';
+            const branchName = empResult.rows[0]?.branch_name || '';
 
-            // Emit socket event to branch room
+            // Emit socket event to branch room (UI update)
             io.to(`branch_${branch_id}`).emit('repartidor:tracking_disabled', {
                 employeeId: employee_id,
                 branchId: branch_id,
@@ -388,15 +419,17 @@ module.exports = (pool, io) => {
                 timestamp: new Date().toISOString()
             });
 
-            // Send FCM to admins
-            if (sendNotificationToAdminsInBranch) {
-                sendNotificationToAdminsInBranch(branch_id, {
-                    title: 'GPS Desactivado',
+            // Send FCM to ALL admins in tenant (not branch-scoped)
+            if (sendNotificationToAdminsInTenant) {
+                const branchTag = branchName ? ` [${branchName}]` : '';
+                sendNotificationToAdminsInTenant(tenantId, {
+                    title: `GPS Desactivado${branchTag}`,
                     body: `${employeeName} desactivó la ubicación durante su turno`,
                     data: {
                         type: 'gps_tracking_disabled',
                         employeeId: String(employee_id),
                         employeeName,
+                        branchId: String(branch_id),
                         shiftId: String(shift_id || '')
                     }
                 }).catch(err => console.error('[GPS/tracking-disabled] FCM error:', err.message));
@@ -434,13 +467,19 @@ module.exports = (pool, io) => {
             }
             _breakCooldowns.set(cooldownKey, Date.now());
 
+            // Look up employee name + branch name
             const empResult = await pool.query(
-                `SELECT COALESCE(first_name || ' ' || last_name, username) AS employee_name
-                 FROM employees WHERE id = $1 AND tenant_id = $2`,
-                [employee_id, tenantId]
+                `SELECT COALESCE(e.first_name || ' ' || e.last_name, e.username) AS employee_name,
+                        b.name AS branch_name
+                 FROM employees e
+                 LEFT JOIN branches b ON b.id = $3
+                 WHERE e.id = $1 AND e.tenant_id = $2`,
+                [employee_id, tenantId, branch_id]
             );
             const employeeName = empResult.rows[0]?.employee_name || 'Repartidor';
+            const branchName = empResult.rows[0]?.branch_name || '';
 
+            // Socket event to branch room (UI update)
             io.to(`branch_${branch_id}`).emit('repartidor:break_started', {
                 employeeId: employee_id,
                 branchId: branch_id,
@@ -450,17 +489,19 @@ module.exports = (pool, io) => {
                 timestamp: new Date().toISOString()
             });
 
-            if (sendNotificationToAdminsInBranch) {
-                console.log(`[GPS/break-start] Sending FCM to admins in branch ${branch_id}...`);
-                sendNotificationToAdminsInBranch(branch_id, {
-                    title: 'Descanso Iniciado',
+            // FCM to ALL admins in tenant
+            if (sendNotificationToAdminsInTenant) {
+                const branchTag = branchName ? ` [${branchName}]` : '';
+                console.log(`[GPS/break-start] Sending FCM to admins in tenant ${tenantId}...`);
+                sendNotificationToAdminsInTenant(tenantId, {
+                    title: `Descanso Iniciado${branchTag}`,
                     body: `${employeeName} comenzó su descanso`,
-                    data: { type: 'break_started', employeeId: String(employee_id), employeeName }
+                    data: { type: 'break_started', employeeId: String(employee_id), employeeName, branchId: String(branch_id) }
                 }).then(result => {
                     console.log(`[GPS/break-start] FCM result: sent=${result.sent}, failed=${result.failed}, total=${result.total || 0}`);
                 }).catch(err => console.error('[GPS/break-start] FCM error:', err.message));
             } else {
-                console.warn('[GPS/break-start] sendNotificationToAdminsInBranch is NOT available');
+                console.warn('[GPS/break-start] sendNotificationToAdminsInTenant is NOT available');
             }
 
             console.log(`[GPS] 🍵 Break started: ${employeeName} (employee=${employee_id}, branch=${branch_id})`);
@@ -492,13 +533,19 @@ module.exports = (pool, io) => {
             }
             _breakCooldowns.set(cooldownKey, Date.now());
 
+            // Look up employee name + branch name
             const empResult = await pool.query(
-                `SELECT COALESCE(first_name || ' ' || last_name, username) AS employee_name
-                 FROM employees WHERE id = $1 AND tenant_id = $2`,
-                [employee_id, tenantId]
+                `SELECT COALESCE(e.first_name || ' ' || e.last_name, e.username) AS employee_name,
+                        b.name AS branch_name
+                 FROM employees e
+                 LEFT JOIN branches b ON b.id = $3
+                 WHERE e.id = $1 AND e.tenant_id = $2`,
+                [employee_id, tenantId, branch_id]
             );
             const employeeName = empResult.rows[0]?.employee_name || 'Repartidor';
+            const branchName = empResult.rows[0]?.branch_name || '';
 
+            // Socket event to branch room (UI update)
             io.to(`branch_${branch_id}`).emit('repartidor:break_ended', {
                 employeeId: employee_id,
                 branchId: branch_id,
@@ -508,17 +555,19 @@ module.exports = (pool, io) => {
                 timestamp: new Date().toISOString()
             });
 
-            if (sendNotificationToAdminsInBranch) {
-                console.log(`[GPS/break-end] Sending FCM to admins in branch ${branch_id}...`);
-                sendNotificationToAdminsInBranch(branch_id, {
-                    title: 'Descanso Terminado',
+            // FCM to ALL admins in tenant
+            if (sendNotificationToAdminsInTenant) {
+                const branchTag = branchName ? ` [${branchName}]` : '';
+                console.log(`[GPS/break-end] Sending FCM to admins in tenant ${tenantId}...`);
+                sendNotificationToAdminsInTenant(tenantId, {
+                    title: `Descanso Terminado${branchTag}`,
                     body: `${employeeName} terminó su descanso`,
-                    data: { type: 'break_ended', employeeId: String(employee_id), employeeName }
+                    data: { type: 'break_ended', employeeId: String(employee_id), employeeName, branchId: String(branch_id) }
                 }).then(result => {
                     console.log(`[GPS/break-end] FCM result: sent=${result.sent}, failed=${result.failed}, total=${result.total || 0}`);
                 }).catch(err => console.error('[GPS/break-end] FCM error:', err.message));
             } else {
-                console.warn('[GPS/break-end] sendNotificationToAdminsInBranch is NOT available');
+                console.warn('[GPS/break-end] sendNotificationToAdminsInTenant is NOT available');
             }
 
             console.log(`[GPS] ✅ Break ended: ${employeeName} (employee=${employee_id}, branch=${branch_id})`);
