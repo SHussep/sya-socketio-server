@@ -1316,6 +1316,24 @@ io.on('connection', (socket) => {
         socket.emit('joined_branch', { branchId: parsedBranchId, message: `Conectado a sucursal ${parsedBranchId}` });
     });
 
+    // Admin: join ALL branch rooms to receive events from every branch
+    socket.on('join_all_branches', (branchIds) => {
+        if (!socket.authenticated) {
+            socket.emit('auth_error', { message: 'Token requerido para unirse a sucursales' });
+            return;
+        }
+        if (!Array.isArray(branchIds)) return;
+
+        for (const id of branchIds) {
+            const parsed = parseInt(id);
+            if (!isNaN(parsed)) {
+                socket.join(`branch_${parsed}`);
+            }
+        }
+        console.log(`[JOIN_ALL] Cliente ${socket.id} (tenant:${socket.user?.tenantId}) → ${branchIds.map(id => `branch_${id}`).join(', ')}`);
+        socket.emit('joined_branch', { branchIds, message: `Conectado a ${branchIds.length} sucursales` });
+    });
+
     socket.on('identify_client', (data) => {
         socket.clientType = data.type;
         socket.deviceInfo = data.deviceInfo || {};
