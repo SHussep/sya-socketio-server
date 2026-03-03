@@ -2821,6 +2821,57 @@ async function runMigrations() {
                 }
             }
 
+            // Patch: Create branch_inventory table for inter-branch transfer tracking
+            try {
+                await client.query(`
+                    CREATE TABLE IF NOT EXISTS branch_inventory (
+                        id SERIAL PRIMARY KEY,
+                        tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                        branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+                        producto_id INTEGER NOT NULL REFERENCES productos(id) ON DELETE CASCADE,
+                        quantity NUMERIC(12, 2) DEFAULT 0,
+                        minimum NUMERIC(12, 2) DEFAULT 0,
+                        updated_at TIMESTAMP DEFAULT NOW(),
+                        UNIQUE(tenant_id, branch_id, producto_id)
+                    )
+                `);
+                console.log('[Schema] ✅ branch_inventory table ready');
+            } catch (biErr) {
+                console.error(`[Schema] ⚠️ branch_inventory migration error: ${biErr.message}`);
+            }
+
+            // Patch: Create inventory_transfers + items tables
+            try {
+                await client.query(`
+                    CREATE TABLE IF NOT EXISTS inventory_transfers (
+                        id SERIAL PRIMARY KEY,
+                        tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                        from_branch_id INTEGER NOT NULL REFERENCES branches(id),
+                        to_branch_id INTEGER NOT NULL REFERENCES branches(id),
+                        status VARCHAR(20) DEFAULT 'completed',
+                        notes TEXT,
+                        created_by_employee_id INTEGER REFERENCES employees(id),
+                        global_id VARCHAR(255) UNIQUE,
+                        terminal_id VARCHAR(100),
+                        created_at TIMESTAMP DEFAULT NOW()
+                    )
+                `);
+                await client.query(`
+                    CREATE TABLE IF NOT EXISTS inventory_transfer_items (
+                        id SERIAL PRIMARY KEY,
+                        transfer_id INTEGER NOT NULL REFERENCES inventory_transfers(id) ON DELETE CASCADE,
+                        producto_id INTEGER NOT NULL REFERENCES productos(id),
+                        product_name VARCHAR(255),
+                        quantity NUMERIC(12, 2) NOT NULL,
+                        unit_abbreviation VARCHAR(20) DEFAULT 'kg',
+                        producto_global_id VARCHAR(255)
+                    )
+                `);
+                console.log('[Schema] ✅ inventory_transfers + items tables ready');
+            } catch (itErr) {
+                console.error(`[Schema] ⚠️ inventory_transfers migration error: ${itErr.message}`);
+            }
+
             // Patch: Add CanTransferInventory permission for inter-branch transfers
             try {
                 const permCheck = await client.query(

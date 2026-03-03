@@ -152,10 +152,10 @@ module.exports = (pool, io) => {
 
                 // Get unit abbreviation
                 const unitResult = await client.query(
-                    `SELECT abreviacion FROM unidades_medida WHERE id = $1`,
+                    `SELECT abbreviation FROM units_of_measure WHERE id = $1`,
                     [product.unidad_medida_id]
                 );
-                const unitAbbrev = unitResult.rows[0]?.abreviacion || 'kg';
+                const unitAbbrev = unitResult.rows[0]?.abbreviation || 'kg';
 
                 // Lock source row and check stock
                 const sourceStock = await client.query(
@@ -165,23 +165,29 @@ module.exports = (pool, io) => {
                     [from_branch_id, product.id, tenantId]
                 );
 
-                const currentQty = sourceStock.rows[0]?.quantity || 0;
+                const currentQty = parseFloat(sourceStock.rows[0]?.quantity || 0);
 
-                if (parseFloat(currentQty) < quantity) {
-                    await client.query('ROLLBACK');
-                    return res.status(400).json({
-                        success: false,
-                        message: `Stock insuficiente de "${product.descripcion}": disponible ${currentQty}, solicitado ${quantity}`
-                    });
+                if (currentQty < quantity) {
+                    console.log(`[Transfers/POST]   ⚠️ Stock insuficiente de "${product.descripcion}": disponible ${currentQty}, solicitado ${quantity} — se permite de todas formas`);
                 }
 
-                // Deduct from source
-                await client.query(
-                    `UPDATE branch_inventory
-                     SET quantity = quantity - $1, updated_at = NOW()
-                     WHERE branch_id = $2 AND producto_id = $3 AND tenant_id = $4`,
-                    [quantity, from_branch_id, product.id, tenantId]
-                );
+                // Deduct from source (upsert: create row if not exists, then subtract)
+                if (sourceStock.rows.length === 0) {
+                    await client.query(
+                        `INSERT INTO branch_inventory (tenant_id, branch_id, producto_id, quantity, minimum)
+                         VALUES ($1, $2, $3, -$4, 0)
+                         ON CONFLICT (tenant_id, branch_id, producto_id)
+                         DO UPDATE SET quantity = branch_inventory.quantity - $4, updated_at = NOW()`,
+                        [tenantId, from_branch_id, product.id, quantity]
+                    );
+                } else {
+                    await client.query(
+                        `UPDATE branch_inventory
+                         SET quantity = quantity - $1, updated_at = NOW()
+                         WHERE branch_id = $2 AND producto_id = $3 AND tenant_id = $4`,
+                        [quantity, from_branch_id, product.id, tenantId]
+                    );
+                }
 
                 // Add to target (upsert)
                 await client.query(
@@ -197,7 +203,10 @@ module.exports = (pool, io) => {
                     producto_global_id,
                     product_name: product.descripcion,
                     quantity: parseFloat(quantity),
-                    unit_abbreviation: unitAbbrev
+                    unit_abbreviation: unitAbbrev,
+                    stock_warning: currentQty < quantity
+                        ? `Stock insuficiente: disponible ${currentQty}, transferido ${quantity}`
+                        : null
                 });
 
                 console.log(`[Transfers/POST]   📦 ${product.descripcion}: -${quantity}${unitAbbrev} (branch ${from_branch_id}) → +${quantity}${unitAbbrev} (branch ${to_branch_id})`);
@@ -640,7 +649,7 @@ module.exports = (pool, io) => {
                         um.abreviacion AS unit_abbreviation
                  FROM branch_inventory bi
                  JOIN productos p ON p.id = bi.producto_id
-                 LEFT JOIN unidades_medida um ON um.id = p.unidad_medida_id
+                 LEFT JOIN units_of_measure um ON um.id = p.unidad_medida_id
                  WHERE bi.branch_id = $1 AND bi.tenant_id = $2 AND p.eliminado = FALSE
                  ORDER BY p.descripcion`,
                 [branchId, tenantId]
