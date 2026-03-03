@@ -95,6 +95,8 @@ module.exports = (pool, io) => {
                  recorded_at || new Date().toISOString(), device_id || null]
             );
 
+            console.log(`[GPS/location] ✅ Stored: employee=${empId}, branch=${branch_id}, tenant=${tenantId}, device=${device_id || 'none'}`);
+
             // Multi-device anomaly detection
             if (device_id) {
                 try {
@@ -269,7 +271,9 @@ module.exports = (pool, io) => {
         try {
             const { tenantId, branchId: userBranchId } = req.user;
             const { branch_id } = req.query;
-            const targetBranch = branch_id || userBranchId;
+            const targetBranch = parseInt(branch_id) || userBranchId;
+
+            console.log(`[GPS/active] Query: tenantId=${tenantId}, branch_id(param)=${branch_id}, userBranchId(jwt)=${userBranchId}, targetBranch=${targetBranch}`);
 
             const result = await pool.query(
                 `SELECT DISTINCT ON (rl.employee_id)
@@ -293,6 +297,7 @@ module.exports = (pool, io) => {
                 [tenantId, targetBranch]
             );
 
+            console.log(`[GPS/active] Found ${result.rows.length} active repartidores for branch ${targetBranch}`);
             return res.json({ success: true, data: result.rows });
 
         } catch (error) {
