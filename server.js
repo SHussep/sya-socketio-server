@@ -596,11 +596,45 @@ app.post('/api/branches', authenticateToken, async (req, res) => {
     }
 });
 
-// PUT /api/branches/:id/settings - Actualizar configuración de sucursal (cajero consolida, etc.)
-// Usado por Desktop para sincronizar CajeroConsolidaLiquidaciones
+// GET /api/branches/:id/settings - Obtener configuración de sucursal
+app.get('/api/branches/:id/settings', async (req, res) => {
+    const { id } = req.params;
+    const { tenantId } = req.query;
+
+    if (!tenantId) {
+        return res.status(400).json({ success: false, message: 'tenantId es requerido' });
+    }
+
+    try {
+        const result = await pool.query(`
+            SELECT cajero_consolida_liquidaciones, max_breaks_per_shift
+            FROM branches
+            WHERE id = $1 AND tenant_id = $2
+        `, [id, tenantId]);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ success: false, message: 'Sucursal no encontrada' });
+        }
+
+        const row = result.rows[0];
+        res.json({
+            success: true,
+            data: {
+                cajero_consolida_liquidaciones: row.cajero_consolida_liquidaciones ?? false,
+                max_breaks_per_shift: row.max_breaks_per_shift ?? 3,
+            }
+        });
+    } catch (error) {
+        console.error('[Branch Settings] Error GET:', error);
+        res.status(500).json({ success: false, message: 'Error al obtener configuración' });
+    }
+});
+
+// PUT /api/branches/:id/settings - Actualizar configuración de sucursal (cajero consolida, max breaks, etc.)
+// Usado por Desktop y Mobile Admin para sincronizar settings
 app.put('/api/branches/:id/settings', async (req, res) => {
     const { id } = req.params;
-    const { tenantId, cajero_consolida_liquidaciones } = req.body;
+    const { tenantId, cajero_consolida_liquidaciones, max_breaks_per_shift } = req.body;
 
     if (!tenantId) {
         return res.status(400).json({ success: false, message: 'tenantId es requerido' });
@@ -610,27 +644,29 @@ app.put('/api/branches/:id/settings', async (req, res) => {
         const result = await pool.query(`
             UPDATE branches
             SET cajero_consolida_liquidaciones = COALESCE($1, cajero_consolida_liquidaciones),
+                max_breaks_per_shift = COALESCE($2, max_breaks_per_shift),
                 updated_at = CURRENT_TIMESTAMP
-            WHERE id = $2 AND tenant_id = $3
-            RETURNING id, cajero_consolida_liquidaciones
-        `, [cajero_consolida_liquidaciones, id, tenantId]);
+            WHERE id = $3 AND tenant_id = $4
+            RETURNING id, cajero_consolida_liquidaciones, max_breaks_per_shift
+        `, [cajero_consolida_liquidaciones, max_breaks_per_shift, id, tenantId]);
 
         if (result.rows.length === 0) {
             return res.status(404).json({ success: false, message: 'Sucursal no encontrada' });
         }
 
-        const newValue = result.rows[0].cajero_consolida_liquidaciones;
-        console.log(`[Branch Settings] ✅ cajero_consolida=${newValue} para branch ${id}`);
+        const row = result.rows[0];
+        console.log(`[Branch Settings] ✅ cajero_consolida=${row.cajero_consolida_liquidaciones}, max_breaks=${row.max_breaks_per_shift} para branch ${id}`);
 
         // Notificar via socket a todos los dispositivos de esta sucursal
         const roomName = `branch_${id}`;
         io.to(roomName).emit('branch_settings_changed', {
             branchId: parseInt(id),
-            cajero_consolida_liquidaciones: newValue,
+            cajero_consolida_liquidaciones: row.cajero_consolida_liquidaciones,
+            max_breaks_per_shift: row.max_breaks_per_shift,
             receivedAt: new Date().toISOString()
         });
 
-        res.json({ success: true, data: result.rows[0] });
+        res.json({ success: true, data: row });
     } catch (error) {
         console.error('[Branch Settings] Error:', error);
         res.status(500).json({ success: false, message: 'Error al actualizar configuración' });
