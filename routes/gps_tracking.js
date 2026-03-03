@@ -210,7 +210,7 @@ module.exports = (pool, io) => {
             const result = await pool.query(
                 `SELECT DISTINCT ON (rl.employee_id)
                     rl.employee_id,
-                    e.name AS employee_name,
+                    COALESCE(e.first_name || ' ' || e.last_name, e.username) AS employee_name,
                     rl.latitude,
                     rl.longitude,
                     rl.accuracy,
