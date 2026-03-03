@@ -165,10 +165,19 @@ module.exports = (pool, io) => {
                     [from_branch_id, product.id, tenantId]
                 );
 
-                const currentQty = parseFloat(sourceStock.rows[0]?.quantity || 0);
+                const stockBeforeSource = parseFloat(sourceStock.rows[0]?.quantity || 0);
 
-                if (currentQty < quantity) {
-                    console.log(`[Transfers/POST]   ⚠️ Stock insuficiente de "${product.descripcion}": disponible ${currentQty}, solicitado ${quantity} — se permite de todas formas`);
+                // Get target stock before transfer
+                const targetStock = await client.query(
+                    `SELECT quantity FROM branch_inventory
+                     WHERE branch_id = $1 AND producto_id = $2 AND tenant_id = $3
+                     FOR UPDATE`,
+                    [to_branch_id, product.id, tenantId]
+                );
+                const stockBeforeTarget = parseFloat(targetStock.rows[0]?.quantity || 0);
+
+                if (stockBeforeSource < quantity) {
+                    console.log(`[Transfers/POST]   ⚠️ Stock insuficiente de "${product.descripcion}": disponible ${stockBeforeSource}, solicitado ${quantity} — se permite de todas formas`);
                 }
 
                 // Deduct from source (upsert: create row if not exists, then subtract)
@@ -198,14 +207,21 @@ module.exports = (pool, io) => {
                     [tenantId, to_branch_id, product.id, quantity]
                 );
 
+                const stockAfterSource = stockBeforeSource - parseFloat(quantity);
+                const stockAfterTarget = stockBeforeTarget + parseFloat(quantity);
+
                 processedItems.push({
                     producto_id: product.id,
                     producto_global_id,
                     product_name: product.descripcion,
                     quantity: parseFloat(quantity),
                     unit_abbreviation: unitAbbrev,
-                    stock_warning: currentQty < quantity
-                        ? `Stock insuficiente: disponible ${currentQty}, transferido ${quantity}`
+                    stock_before_source: stockBeforeSource,
+                    stock_after_source: stockAfterSource,
+                    stock_before_target: stockBeforeTarget,
+                    stock_after_target: stockAfterTarget,
+                    stock_warning: stockBeforeSource < quantity
+                        ? `Stock insuficiente: disponible ${stockBeforeSource}, transferido ${quantity}`
                         : null
                 });
 
@@ -223,13 +239,15 @@ module.exports = (pool, io) => {
 
             const transfer = transferResult.rows[0];
 
-            // Insert transfer items
+            // Insert transfer items (with before/after stock tracking)
             for (const item of processedItems) {
                 await client.query(
                     `INSERT INTO inventory_transfer_items
-                     (transfer_id, producto_id, quantity, product_name, unit_abbreviation)
-                     VALUES ($1, $2, $3, $4, $5)`,
-                    [transfer.id, item.producto_id, item.quantity, item.product_name, item.unit_abbreviation]
+                     (transfer_id, producto_id, quantity, product_name, unit_abbreviation,
+                      stock_before_source, stock_after_source, stock_before_target, stock_after_target)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+                    [transfer.id, item.producto_id, item.quantity, item.product_name, item.unit_abbreviation,
+                     item.stock_before_source, item.stock_after_source, item.stock_before_target, item.stock_after_target]
                 );
             }
 
@@ -376,7 +394,9 @@ module.exports = (pool, io) => {
             const transfers = [];
             for (const row of result.rows) {
                 const itemsResult = await pool.query(
-                    `SELECT ti.producto_id, ti.product_name, ti.quantity, ti.unit_abbreviation
+                    `SELECT ti.producto_id, ti.product_name, ti.quantity, ti.unit_abbreviation,
+                            ti.stock_before_source, ti.stock_after_source,
+                            ti.stock_before_target, ti.stock_after_target
                      FROM inventory_transfer_items ti
                      WHERE ti.transfer_id = $1
                      ORDER BY ti.id`,

@@ -2868,6 +2868,23 @@ async function runMigrations() {
                     )
                 `);
                 console.log('[Schema] ✅ inventory_transfers + items tables ready');
+
+                // Add stock tracking columns (before/after per branch)
+                const stockColumns = [
+                    'stock_before_source NUMERIC(12, 2)',
+                    'stock_after_source NUMERIC(12, 2)',
+                    'stock_before_target NUMERIC(12, 2)',
+                    'stock_after_target NUMERIC(12, 2)'
+                ];
+                for (const col of stockColumns) {
+                    const colName = col.split(' ')[0];
+                    try {
+                        await client.query(`ALTER TABLE inventory_transfer_items ADD COLUMN IF NOT EXISTS ${col}`);
+                    } catch (colErr) {
+                        // Column might already exist
+                    }
+                }
+                console.log('[Schema] ✅ stock tracking columns ready');
             } catch (itErr) {
                 console.error(`[Schema] ⚠️ inventory_transfers migration error: ${itErr.message}`);
             }
