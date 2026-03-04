@@ -310,5 +310,45 @@ module.exports = (pool, io) => {
         }
     });
 
+    // ═══════════════════════════════════════════════════════════════
+    // DELETE /api/shift-requests/my-pending — Repartidor cancela su solicitud
+    // ═══════════════════════════════════════════════════════════════
+    router.delete('/my-pending', authenticateToken, async (req, res) => {
+        try {
+            const { employeeId } = req.user;
+
+            const result = await pool.query(
+                `UPDATE shift_requests
+                 SET status = 'cancelled', resolved_at = NOW()
+                 WHERE employee_id = $1 AND status = 'pending'
+                 RETURNING id, branch_id`,
+                [employeeId]
+            );
+
+            if (result.rows.length === 0) {
+                return res.json({ success: true, message: 'No hay solicitud pendiente' });
+            }
+
+            const request = result.rows[0];
+
+            // Notify Desktop to remove the badge
+            if (io) {
+                const roomName = `branch_${request.branch_id}`;
+                io.to(roomName).emit('shift_request_resolved', {
+                    requestId: request.id,
+                    employeeId,
+                    status: 'cancelled'
+                });
+            }
+
+            console.log(`[ShiftRequests] 🚫 Solicitud #${request.id} cancelada por empleado ${employeeId}`);
+            res.json({ success: true, message: 'Solicitud cancelada' });
+
+        } catch (error) {
+            console.error('[ShiftRequests] ❌ Error cancelando solicitud:', error);
+            res.status(500).json({ success: false, message: 'Error al cancelar solicitud' });
+        }
+    });
+
     return router;
 };
