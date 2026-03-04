@@ -90,9 +90,9 @@ module.exports = (pool, io) => {
                     (tenant_id, branch_id, employee_id, shift_id, latitude, longitude, accuracy, speed, heading, recorded_at, device_id)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                  RETURNING id, received_at`,
-                [tenantId, branch_id, empId, shift_id || null, latitude, longitude,
-                 accuracy || null, speed || null, heading || null,
-                 recorded_at || new Date().toISOString(), device_id || null]
+                [tenantId, branch_id, empId, shift_id ?? null, latitude, longitude,
+                 accuracy ?? null, speed ?? null, heading ?? null,
+                 recorded_at ?? new Date().toISOString(), device_id ?? null]
             );
 
             console.log(`[GPS/location] ✅ Stored: employee=${empId}, branch=${branch_id}, tenant=${tenantId}, device=${device_id || 'none'}`);
@@ -148,11 +148,11 @@ module.exports = (pool, io) => {
                 branchId: branch_id,
                 latitude,
                 longitude,
-                accuracy: accuracy || null,
-                speed: speed || null,
-                shiftId: shift_id || null,
-                deviceId: device_id || null,
-                recordedAt: recorded_at || new Date().toISOString()
+                accuracy: accuracy ?? null,
+                speed: speed ?? null,
+                shiftId: shift_id ?? null,
+                deviceId: device_id ?? null,
+                recordedAt: recorded_at ?? new Date().toISOString()
             });
 
             return res.status(201).json({
@@ -217,11 +217,11 @@ module.exports = (pool, io) => {
                     `($${paramIdx}, $${paramIdx + 1}, $${paramIdx + 2}, $${paramIdx + 3}, $${paramIdx + 4}, $${paramIdx + 5}, $${paramIdx + 6}, $${paramIdx + 7}, $${paramIdx + 8}, $${paramIdx + 9}, $${paramIdx + 10})`
                 );
                 values.push(
-                    tenantId, branch_id, empId, shift_id || null,
+                    tenantId, branch_id, empId, shift_id ?? null,
                     loc.latitude, loc.longitude,
-                    loc.accuracy || null, loc.speed || null, loc.heading || null,
-                    loc.recorded_at || new Date().toISOString(),
-                    device_id || null
+                    loc.accuracy ?? null, loc.speed ?? null, loc.heading ?? null,
+                    loc.recorded_at ?? new Date().toISOString(),
+                    device_id ?? null
                 );
                 paramIdx += 11;
             }
@@ -242,11 +242,11 @@ module.exports = (pool, io) => {
                 branchId: branch_id,
                 latitude: latest.latitude,
                 longitude: latest.longitude,
-                accuracy: latest.accuracy || null,
-                speed: latest.speed || null,
-                shiftId: shift_id || null,
-                deviceId: device_id || null,
-                recordedAt: latest.recorded_at || new Date().toISOString()
+                accuracy: latest.accuracy ?? null,
+                speed: latest.speed ?? null,
+                shiftId: shift_id ?? null,
+                deviceId: device_id ?? null,
+                recordedAt: latest.recorded_at ?? new Date().toISOString()
             });
 
             return res.status(201).json({
