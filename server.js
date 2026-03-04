@@ -133,6 +133,7 @@ const betaEnrollmentRoutes = require('./routes/beta_enrollment'); // Registro de
 const transfersRoutes = require('./routes/transfers'); // Transferencias de inventario entre sucursales
 const gpsTrackingRoutes = require('./routes/gps_tracking'); // Rastreo GPS de repartidores en tiempo real
 const shiftRequestsRoutes = require('./routes/shift_requests'); // Solicitudes de turno desde app móvil
+const geofenceZonesRoutes = require('./routes/geofence_zones'); // Geocercas — zonas de reparto
 
 // Inicializar Firebase para notificaciones push
 initializeFirebase();
@@ -475,6 +476,7 @@ app.use('/api/withdrawals', withdrawalsRoutes(pool));
 app.use('/api/sync-diagnostics', syncDiagnosticsRoutes(pool)); // Diagnóstico de sincronización (debug)
 app.use('/api/transfers', transfersRoutes(pool, io)); // Transferencias de inventario entre sucursales
 app.use('/api/gps', gpsTrackingRoutes(pool, io)); // Rastreo GPS de repartidores en tiempo real
+app.use('/api/geofence-zones', geofenceZonesRoutes(pool, io)); // Geocercas — zonas de reparto
 // Note: cash-cuts now uses newCashCutsRoutes at /api/cash-cuts (line 337)
 
 // Sync endpoints are mounted at their service-specific paths

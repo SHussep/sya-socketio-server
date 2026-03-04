@@ -32,6 +32,79 @@ module.exports = (pool, io) => {
     // Rate-limit cooldowns (in-memory)
     const _multiDeviceCooldowns = new Map(); // key: employeeId, value: timestamp
     const _gpsDisabledCooldowns = new Map(); // key: employeeId, value: timestamp
+
+    // Geofence state tracker: key = "empId_zoneId", value = boolean (true = inside)
+    const _employeeZoneState = new Map();
+
+    // Haversine distance in meters between two lat/lng points
+    function haversineDistance(lat1, lon1, lat2, lon2) {
+        const R = 6371000;
+        const toRad = (x) => x * Math.PI / 180;
+        const dLat = toRad(lat2 - lat1);
+        const dLon = toRad(lon2 - lon1);
+        const a = Math.sin(dLat / 2) ** 2 +
+                  Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+                  Math.sin(dLon / 2) ** 2;
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    // Check if repartidor entered/exited any geofence zone
+    async function checkGeofences(client, tenantId, branchId, empId, lat, lng) {
+        try {
+            const zones = await client.query(
+                `SELECT id, name, latitude, longitude, radius_meters
+                 FROM geofence_zones
+                 WHERE tenant_id = $1 AND branch_id = $2 AND is_active = true`,
+                [tenantId, branchId]
+            );
+
+            if (zones.rows.length === 0) return;
+
+            let empName = null;
+
+            for (const zone of zones.rows) {
+                const distance = haversineDistance(lat, lng, zone.latitude, zone.longitude);
+                const isInside = distance <= zone.radius_meters;
+                const stateKey = `${empId}_${zone.id}`;
+                const wasInside = _employeeZoneState.get(stateKey) || false;
+
+                if (isInside !== wasInside) {
+                    _employeeZoneState.set(stateKey, isInside);
+                    const eventType = isInside ? 'enter' : 'exit';
+
+                    if (!empName) {
+                        const empInfo = await client.query(
+                            `SELECT COALESCE(first_name || ' ' || last_name, username) AS name FROM employees WHERE id = $1`,
+                            [empId]
+                        );
+                        empName = empInfo.rows[0]?.name || 'Repartidor';
+                    }
+
+                    // Log event
+                    await client.query(
+                        `INSERT INTO geofence_events (tenant_id, zone_id, employee_id, branch_id, event_type, latitude, longitude, distance_meters)
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+                        [tenantId, zone.id, empId, branchId, eventType, lat, lng, Math.round(distance)]
+                    );
+
+                    // Emit socket event
+                    io.to(`branch_${branchId}`).emit(`geofence:${eventType}`, {
+                        employeeId: empId,
+                        employeeName: empName,
+                        zoneId: zone.id,
+                        zoneName: zone.name,
+                        branchId,
+                        distance: Math.round(distance),
+                        timestamp: new Date().toISOString()
+                    });
+
+                    console.log(`[GPS/geofence] ${isInside ? '🟢 ENTER' : '🔴 EXIT'}: ${empName} → "${zone.name}" (${Math.round(distance)}m)`);
+                }
+            }
+        } catch (err) {
+            console.error(`[GPS/geofence] Error: ${err.message}`);
+        }
+    }
     const MULTI_DEVICE_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
     const GPS_DISABLED_COOLDOWN_MS = 15 * 60 * 1000; // 15 minutes
 
@@ -154,6 +227,9 @@ module.exports = (pool, io) => {
                 deviceId: device_id ?? null,
                 recordedAt: recorded_at ?? new Date().toISOString()
             });
+
+            // Check geofence zones (non-blocking — doesn't delay response)
+            checkGeofences(client, tenantId, branch_id, empId, latitude, longitude);
 
             return res.status(201).json({
                 success: true,
