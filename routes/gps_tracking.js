@@ -289,9 +289,11 @@ module.exports = (pool, io) => {
                         rl.shift_id,
                         rl.device_id,
                         rl.recorded_at,
-                        rl.received_at
+                        rl.received_at,
+                        COALESCE(s.is_cash_cut_open, false) AS is_shift_open
                      FROM repartidor_locations rl
                      JOIN employees e ON e.id = rl.employee_id
+                     LEFT JOIN shifts s ON s.id = rl.shift_id
                      WHERE rl.tenant_id = $1
                        AND rl.branch_id = $2
                        AND rl.received_at >= NOW() - INTERVAL '1 hour'
@@ -314,9 +316,11 @@ module.exports = (pool, io) => {
                         rl.device_id,
                         rl.recorded_at,
                         rl.received_at,
-                        rl.branch_id
+                        rl.branch_id,
+                        COALESCE(s.is_cash_cut_open, false) AS is_shift_open
                      FROM repartidor_locations rl
                      JOIN employees e ON e.id = rl.employee_id
+                     LEFT JOIN shifts s ON s.id = rl.shift_id
                      WHERE rl.tenant_id = $1
                        AND rl.received_at >= NOW() - INTERVAL '1 hour'
                      ORDER BY rl.employee_id, rl.received_at DESC`,
