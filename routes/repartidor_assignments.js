@@ -129,6 +129,32 @@ function createRepartidorAssignmentRoutes(io) {
         });
       }
 
+      // GATE: Si la asignación viene de móvil, Desktop debe estar conectado
+      if (source === 'mobile') {
+        const roomName = `branch_${branch_id}`;
+        const roomSockets = io.sockets.adapter.rooms.get(roomName);
+        let desktopOnline = false;
+
+        if (roomSockets) {
+          for (const socketId of roomSockets) {
+            const s = io.sockets.sockets.get(socketId);
+            if (s && s.clientType === 'desktop') {
+              desktopOnline = true;
+              break;
+            }
+          }
+        }
+
+        if (!desktopOnline) {
+          console.log(`[RepartidorAssignments] ❌ BLOCKED: No hay Desktop conectado para branch_${branch_id}`);
+          return res.status(409).json({
+            success: false,
+            message: 'La computadora de la sucursal no está conectada. Enciende el sistema de escritorio para poder asignar.',
+            code: 'DESKTOP_OFFLINE'
+          });
+        }
+      }
+
       // Para asignaciones desde venta, venta_id y shift_id son requeridos
       // Para asignaciones directas (móvil), solo se requiere repartidor_shift
       if (!isDirectAssignment && (!shift_id && !shift_global_id)) {

@@ -559,6 +559,31 @@ app.get('/api/branches', authenticateToken, async (req, res) => {
     }
 });
 
+// GET /api/branches/:branchId/desktop-online
+// Verifica si hay un cliente Desktop conectado al socket de esta sucursal
+app.get('/api/branches/:branchId/desktop-online', authenticateToken, (req, res) => {
+    const branchId = parseInt(req.params.branchId);
+    if (!branchId) {
+        return res.status(400).json({ success: false, message: 'branchId requerido' });
+    }
+
+    const roomName = `branch_${branchId}`;
+    const roomSockets = io.sockets.adapter.rooms.get(roomName);
+
+    let desktopOnline = false;
+    if (roomSockets) {
+        for (const socketId of roomSockets) {
+            const s = io.sockets.sockets.get(socketId);
+            if (s && s.clientType === 'desktop') {
+                desktopOnline = true;
+                break;
+            }
+        }
+    }
+
+    res.json({ online: desktopOnline });
+});
+
 // POST /api/branches - Crear sucursal
 app.post('/api/branches', authenticateToken, async (req, res) => {
     try {
