@@ -1236,6 +1236,56 @@ async function notifyGuardianStatusChanged(branchId, { isEnabled, changedBy }) {
     });
 }
 
+/**
+ * Envía notificación cuando un repartidor entra o sale de una geocerca
+ * Notifica a TODOS los administradores del TENANT
+ */
+async function notifyGeofenceEvent(tenantId, branchId, { employeeId, employeeName, zoneId, zoneName, branchName, eventType, distance }) {
+    try {
+        const isEnter = eventType === 'enter';
+        const emoji = isEnter ? '🟢' : '🔴';
+        const action = isEnter ? 'entró a' : 'salió de';
+        const branchTag = branchName ? ` [${branchName}]` : '';
+
+        const title = `${emoji} Geocerca${branchTag}`;
+        const body = `${employeeName} ${action} "${zoneName}" (${distance}m)`;
+
+        const result = await sendNotificationToAdminsInTenant(tenantId, {
+            title,
+            body,
+            data: {
+                type: 'geofence_event',
+                eventType,
+                employeeId: String(employeeId),
+                employeeName,
+                zoneId: String(zoneId),
+                zoneName,
+                branchId: String(branchId),
+                branchName: branchName || '',
+                distance: String(distance)
+            }
+        });
+
+        console.log(`[NotificationHelper] ${emoji} Geocerca: ${employeeName} ${action} "${zoneName}" - FCM: ${result.sent}/${result.total || 0}`);
+
+        await saveToNotificationHistory({
+            tenant_id: tenantId,
+            branch_id: branchId,
+            employee_id: employeeId,
+            category: 'geofence',
+            event_type: `geofence_${eventType}`,
+            title,
+            body,
+            data: { employeeName, zoneName, zoneId, branchName, distance, eventType }
+        });
+
+        return result;
+    } catch (error) {
+        console.error('[NotificationHelper] ❌ Error en notifyGeofenceEvent:', error.message);
+        return { sent: 0, failed: 0, error: error.message };
+    }
+}
+
 module.exports = {
     sendNotificationToBranch,
     sendNotificationToAdminsInBranch,
@@ -1256,5 +1306,6 @@ module.exports = {
     notifyCreditSaleCreated,
     notifyClientPaymentReceived,
     notifySaleCancelled,
-    notifyGuardianStatusChanged
+    notifyGuardianStatusChanged,
+    notifyGeofenceEvent
 };

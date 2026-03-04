@@ -61,6 +61,7 @@ module.exports = (pool, io) => {
             if (zones.rows.length === 0) return;
 
             let empName = null;
+            let branchName = null;
 
             for (const zone of zones.rows) {
                 const distance = haversineDistance(lat, lng, zone.latitude, zone.longitude);
@@ -99,6 +100,19 @@ module.exports = (pool, io) => {
                     });
 
                     console.log(`[GPS/geofence] ${isInside ? '🟢 ENTER' : '🔴 EXIT'}: ${empName} → "${zone.name}" (${Math.round(distance)}m)`);
+
+                    // FCM push notification to admins
+                    if (notifyGeofenceEvent) {
+                        if (!branchName) {
+                            const branchInfo = await client.query('SELECT name FROM branches WHERE id = $1', [branchId]);
+                            branchName = branchInfo.rows[0]?.name || '';
+                        }
+                        notifyGeofenceEvent(tenantId, branchId, {
+                            employeeId: empId, employeeName: empName,
+                            zoneId: zone.id, zoneName: zone.name,
+                            branchName, eventType, distance: Math.round(distance)
+                        }).catch(err => console.error('[GPS/geofence] FCM error:', err.message));
+                    }
                 }
             }
         } catch (err) {
@@ -110,9 +124,11 @@ module.exports = (pool, io) => {
 
     // Import notification helper (lazy — may not be available in all setups)
     let sendNotificationToAdminsInTenant;
+    let notifyGeofenceEvent;
     try {
         const notificationHelper = require('../utils/notificationHelper');
         sendNotificationToAdminsInTenant = notificationHelper.sendNotificationToAdminsInTenant;
+        notifyGeofenceEvent = notificationHelper.notifyGeofenceEvent;
     } catch (e) {
         console.warn('[GPS] ⚠️ notificationHelper not available, FCM disabled');
     }

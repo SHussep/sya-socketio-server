@@ -54,6 +54,57 @@ module.exports = (pool, io) => {
     });
 
     // ═══════════════════════════════════════════════════════════════
+    // GET /api/geofence-zones/events — Geofence event history
+    // ═══════════════════════════════════════════════════════════════
+    router.get('/events', authenticateToken, async (req, res) => {
+        try {
+            const { tenantId } = req.user;
+            const { branch_id, employee_id, zone_id, date, limit = 100 } = req.query;
+
+            if (!branch_id) {
+                return res.status(400).json({ success: false, message: 'branch_id es requerido' });
+            }
+
+            let query = `
+                SELECT ge.id, ge.event_type, ge.latitude, ge.longitude, ge.distance_meters, ge.created_at,
+                       COALESCE(e.first_name || ' ' || e.last_name, e.username) AS employee_name,
+                       e.id AS employee_id,
+                       gz.name AS zone_name, gz.color AS zone_color
+                FROM geofence_events ge
+                JOIN employees e ON e.id = ge.employee_id
+                JOIN geofence_zones gz ON gz.id = ge.zone_id
+                WHERE ge.tenant_id = $1 AND ge.branch_id = $2`;
+            const params = [tenantId, parseInt(branch_id)];
+            let paramIdx = 3;
+
+            if (employee_id) {
+                query += ` AND ge.employee_id = $${paramIdx}`;
+                params.push(parseInt(employee_id));
+                paramIdx++;
+            }
+            if (zone_id) {
+                query += ` AND ge.zone_id = $${paramIdx}`;
+                params.push(parseInt(zone_id));
+                paramIdx++;
+            }
+            if (date) {
+                query += ` AND ge.created_at >= $${paramIdx}::date AND ge.created_at < ($${paramIdx}::date + INTERVAL '1 day')`;
+                params.push(date);
+                paramIdx++;
+            }
+
+            query += ` ORDER BY ge.created_at DESC LIMIT $${paramIdx}`;
+            params.push(parseInt(limit));
+
+            const result = await pool.query(query, params);
+            return res.json({ success: true, data: result.rows });
+        } catch (error) {
+            console.error('[Geofence] Events GET error:', error.message);
+            return res.status(500).json({ success: false, message: 'Error del servidor' });
+        }
+    });
+
+    // ═══════════════════════════════════════════════════════════════
     // POST /api/geofence-zones — Create zone
     // ═══════════════════════════════════════════════════════════════
     router.post('/', authenticateToken, async (req, res) => {
