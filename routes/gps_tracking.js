@@ -397,15 +397,19 @@ module.exports = (pool, io) => {
             }
 
             // Single query: aggregates + Haversine distance via window functions
-            // Segments < 0.02km (20m) are GPS noise and excluded from distance
+            // GPS drift filtering:
+            //   1. Exclude points with accuracy > 50m (unreliable GPS fix)
+            //   2. Only sum segments where device is moving (speed >= 0.5 m/s)
+            //   3. Exclude segments < 0.05km (50m) as GPS noise
             const result = await pool.query(`
                 WITH points AS (
-                    SELECT latitude, longitude, speed, recorded_at,
+                    SELECT latitude, longitude, speed, accuracy, recorded_at,
                            LAG(latitude) OVER (ORDER BY recorded_at) AS prev_lat,
                            LAG(longitude) OVER (ORDER BY recorded_at) AS prev_lon,
                            LAG(recorded_at) OVER (ORDER BY recorded_at) AS prev_at
                     FROM repartidor_locations
                     WHERE ${whereClause}
+                      AND (accuracy IS NULL OR accuracy <= 50)
                 ),
                 segments AS (
                     SELECT *,
@@ -428,7 +432,7 @@ module.exports = (pool, io) => {
                     MAX(recorded_at) AS last_seen,
                     ROUND(EXTRACT(EPOCH FROM (MAX(recorded_at) - MIN(recorded_at))) / 60.0) AS active_minutes,
                     ROUND(COALESCE(SUM(CASE WHEN is_stopped AND segment_minutes < 10 THEN segment_minutes ELSE 0 END), 0)) AS stopped_minutes,
-                    ROUND(COALESCE(SUM(CASE WHEN segment_km >= 0.02 THEN segment_km ELSE 0 END), 0)::numeric, 2) AS distance_km,
+                    ROUND(COALESCE(SUM(CASE WHEN NOT is_stopped AND segment_km >= 0.05 THEN segment_km ELSE 0 END), 0)::numeric, 2) AS distance_km,
                     ROUND(COALESCE(AVG(CASE WHEN speed IS NOT NULL AND speed >= 0.5 THEN speed * 3.6 END), 0)::numeric, 1) AS avg_speed_kmh,
                     ROUND(COALESCE(MAX(CASE WHEN speed IS NOT NULL THEN speed * 3.6 END), 0)::numeric, 1) AS max_speed_kmh
                 FROM segments
