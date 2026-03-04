@@ -433,7 +433,11 @@ function createRepartidorAssignmentRoutes(io) {
             -- ✅ Campos de auditoría de cancelaciones (siempre actualizables)
             cancel_reason = COALESCE(EXCLUDED.cancel_reason, repartidor_assignments.cancel_reason),
             cancelled_at = COALESCE(EXCLUDED.cancelled_at, repartidor_assignments.cancelled_at),
-            cancelled_by_employee_id = COALESCE(EXCLUDED.cancelled_by_employee_id, repartidor_assignments.cancelled_by_employee_id)
+            cancelled_by_employee_id = COALESCE(EXCLUDED.cancelled_by_employee_id, repartidor_assignments.cancelled_by_employee_id),
+            -- ✅ Permitir vincular venta/turno desde Desktop cuando procesa asignación de móvil
+            venta_id = COALESCE(EXCLUDED.venta_id, repartidor_assignments.venta_id),
+            shift_id = COALESCE(EXCLUDED.shift_id, repartidor_assignments.shift_id),
+            updated_at = NOW()
         RETURNING *, (xmax = 0) AS inserted
       `;
 
@@ -558,16 +562,29 @@ function createRepartidorAssignmentRoutes(io) {
       // Emitir evento en tiempo real
       if (wasInserted) {
         // Nueva asignación - siempre emitir para notificar a móvil
+        // ✅ Enriquecer con global_ids para que Desktop pueda resolver entidades locales
+        const enrichedAssignment = {
+          ...assignment,
+          employee_global_id: employee_global_id || null,
+          created_by_employee_global_id: created_by_employee_global_id || null,
+          product_global_id: product_global_id || null
+        };
         console.log(`[RepartidorAssignments] 📡 assignment_created emitido a branch_${branch_id}: id=${assignment.id}, employee_id=${assignment.employee_id}, source=${source}`);
         io.to(`branch_${branch_id}`).emit('assignment_created', {
-          assignment,
+          assignment: enrichedAssignment,
           timestamp: new Date().toISOString()
         });
       } else {
         // Asignación actualizada (ej: liquidada)
         // ✅ CRÍTICO: Notificar a la app móvil cuando se liquida desde desktop
+        const enrichedAssignment = {
+          ...assignment,
+          employee_global_id: employee_global_id || null,
+          created_by_employee_global_id: created_by_employee_global_id || null,
+          product_global_id: product_global_id || null
+        };
         io.to(`branch_${branch_id}`).emit('assignment_updated', {
-          assignment,
+          assignment: enrichedAssignment,
           previousStatus: status !== 'liquidated' ? 'pending' : null,
           isLiquidation: status === 'liquidated',
           timestamp: new Date().toISOString()
