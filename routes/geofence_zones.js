@@ -208,5 +208,158 @@ module.exports = (pool, io) => {
         }
     });
 
+    // ═══════════════════════════════════════════════════════════════
+    // GET /api/geofence-zones/by-employee/:employeeId — Assigned zones for a repartidor
+    // ═══════════════════════════════════════════════════════════════
+    router.get('/by-employee/:employeeId', authenticateToken, async (req, res) => {
+        try {
+            const { tenantId } = req.user;
+            const { employeeId } = req.params;
+
+            const result = await pool.query(
+                `SELECT gz.id, gz.branch_id, gz.name, gz.latitude, gz.longitude,
+                        gz.radius_meters, gz.color, gz.is_active, gz.created_at, gz.updated_at
+                 FROM geofence_zones gz
+                 JOIN employee_geofence_zones egz ON egz.zone_id = gz.id
+                 WHERE egz.employee_id = $1 AND egz.tenant_id = $2
+                   AND egz.is_active = true AND gz.is_active = true
+                 ORDER BY gz.name`,
+                [parseInt(employeeId), tenantId]
+            );
+
+            return res.json({ success: true, data: result.rows });
+        } catch (error) {
+            console.error('[Geofence] by-employee error:', error.message);
+            return res.status(500).json({ success: false, message: 'Error del servidor' });
+        }
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // GET /api/geofence-zones/:zoneId/assignments — Employees assigned to a zone
+    // ═══════════════════════════════════════════════════════════════
+    router.get('/:zoneId/assignments', authenticateToken, async (req, res) => {
+        try {
+            const { tenantId } = req.user;
+            const { zoneId } = req.params;
+
+            const result = await pool.query(
+                `SELECT egz.id, egz.employee_id, egz.created_at,
+                        COALESCE(e.first_name || ' ' || e.last_name, e.username) AS employee_name,
+                        e.global_id AS employee_global_id
+                 FROM employee_geofence_zones egz
+                 JOIN employees e ON e.id = egz.employee_id
+                 WHERE egz.zone_id = $1 AND egz.tenant_id = $2 AND egz.is_active = true
+                 ORDER BY employee_name`,
+                [parseInt(zoneId), tenantId]
+            );
+
+            return res.json({ success: true, data: result.rows });
+        } catch (error) {
+            console.error('[Geofence] zone assignments error:', error.message);
+            return res.status(500).json({ success: false, message: 'Error del servidor' });
+        }
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // POST /api/geofence-zones/:zoneId/assignments — Assign employees to zone
+    // ═══════════════════════════════════════════════════════════════
+    router.post('/:zoneId/assignments', authenticateToken, async (req, res) => {
+        const client = await pool.connect();
+        try {
+            const { tenantId } = req.user;
+            const { zoneId } = req.params;
+            const { employee_ids } = req.body;
+            const assignedBy = req.user.employeeId || null;
+
+            if (!Array.isArray(employee_ids) || employee_ids.length === 0) {
+                return res.status(400).json({ success: false, message: 'employee_ids es requerido' });
+            }
+
+            // Verify zone exists and belongs to tenant
+            const zone = await client.query(
+                'SELECT id, branch_id, name FROM geofence_zones WHERE id = $1 AND tenant_id = $2 AND is_active = true',
+                [parseInt(zoneId), tenantId]
+            );
+            if (zone.rows.length === 0) {
+                return res.status(404).json({ success: false, message: 'Zona no encontrada' });
+            }
+
+            await client.query('BEGIN');
+
+            const results = [];
+            for (const empId of employee_ids) {
+                const result = await client.query(
+                    `INSERT INTO employee_geofence_zones (tenant_id, employee_id, zone_id, assigned_by_employee_id)
+                     VALUES ($1, $2, $3, $4)
+                     ON CONFLICT (employee_id, zone_id) WHERE is_active = true
+                     DO NOTHING
+                     RETURNING *`,
+                    [tenantId, parseInt(empId), parseInt(zoneId), assignedBy]
+                );
+                if (result.rows.length > 0) results.push(result.rows[0]);
+            }
+
+            await client.query('COMMIT');
+
+            console.log(`[Geofence] 👥 Asignados ${results.length} repartidores a zona "${zone.rows[0].name}"`);
+
+            io.to(`branch_${zone.rows[0].branch_id}`).emit('geofence:assignments_changed', {
+                zoneId: parseInt(zoneId),
+                zoneName: zone.rows[0].name,
+                action: 'assigned',
+                employeeIds: employee_ids.map(id => parseInt(id)),
+                timestamp: new Date().toISOString()
+            });
+
+            return res.status(201).json({ success: true, data: results });
+        } catch (error) {
+            await client.query('ROLLBACK').catch(() => {});
+            console.error('[Geofence] Assignment error:', error.message);
+            return res.status(500).json({ success: false, message: 'Error del servidor' });
+        } finally {
+            client.release();
+        }
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // DELETE /api/geofence-zones/:zoneId/assignments/:employeeId — Unassign
+    // ═══════════════════════════════════════════════════════════════
+    router.delete('/:zoneId/assignments/:employeeId', authenticateToken, async (req, res) => {
+        try {
+            const { tenantId } = req.user;
+            const { zoneId, employeeId } = req.params;
+
+            const result = await pool.query(
+                `UPDATE employee_geofence_zones
+                 SET is_active = false, updated_at = NOW()
+                 WHERE zone_id = $1 AND employee_id = $2 AND tenant_id = $3 AND is_active = true
+                 RETURNING *`,
+                [parseInt(zoneId), parseInt(employeeId), tenantId]
+            );
+
+            if (result.rows.length === 0) {
+                return res.status(404).json({ success: false, message: 'Asignación no encontrada' });
+            }
+
+            // Get zone info for socket emission
+            const zone = await pool.query('SELECT branch_id, name FROM geofence_zones WHERE id = $1', [parseInt(zoneId)]);
+
+            console.log(`[Geofence] 👤❌ Desasignado empleado ${employeeId} de zona "${zone.rows[0]?.name}"`);
+
+            io.to(`branch_${zone.rows[0]?.branch_id}`).emit('geofence:assignments_changed', {
+                zoneId: parseInt(zoneId),
+                zoneName: zone.rows[0]?.name,
+                action: 'unassigned',
+                employeeIds: [parseInt(employeeId)],
+                timestamp: new Date().toISOString()
+            });
+
+            return res.json({ success: true, message: 'Asignación eliminada' });
+        } catch (error) {
+            console.error('[Geofence] Unassign error:', error.message);
+            return res.status(500).json({ success: false, message: 'Error del servidor' });
+        }
+    });
+
     return router;
 };

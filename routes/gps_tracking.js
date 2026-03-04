@@ -49,18 +49,33 @@ module.exports = (pool, io) => {
     }
 
     // Check if repartidor entered/exited any geofence zone
+    // Filters by assigned zones first; falls back to all branch zones if none assigned
     async function checkGeofences(client, tenantId, branchId, empId, lat, lng) {
         try {
-            const zones = await client.query(
-                `SELECT id, name, latitude, longitude, radius_meters
-                 FROM geofence_zones
-                 WHERE tenant_id = $1 AND branch_id = $2 AND is_active = true`,
-                [tenantId, branchId]
+            // Check assigned zones first
+            const assignedZones = await client.query(
+                `SELECT gz.id, gz.name, gz.latitude, gz.longitude, gz.radius_meters
+                 FROM geofence_zones gz
+                 JOIN employee_geofence_zones egz ON egz.zone_id = gz.id
+                 WHERE egz.employee_id = $1 AND egz.tenant_id = $2
+                   AND egz.is_active = true AND gz.is_active = true`,
+                [empId, tenantId]
             );
+
+            // Fallback: if no zones assigned, check all branch zones (backward compatible)
+            const zones = assignedZones.rows.length > 0
+                ? assignedZones
+                : await client.query(
+                    `SELECT id, name, latitude, longitude, radius_meters
+                     FROM geofence_zones
+                     WHERE tenant_id = $1 AND branch_id = $2 AND is_active = true`,
+                    [tenantId, branchId]
+                );
 
             if (zones.rows.length === 0) return;
 
             let empName = null;
+            let empGlobalId = null;
             let branchName = null;
 
             for (const zone of zones.rows) {
@@ -75,10 +90,11 @@ module.exports = (pool, io) => {
 
                     if (!empName) {
                         const empInfo = await client.query(
-                            `SELECT COALESCE(first_name || ' ' || last_name, username) AS name FROM employees WHERE id = $1`,
+                            `SELECT COALESCE(first_name || ' ' || last_name, username) AS name, global_id FROM employees WHERE id = $1`,
                             [empId]
                         );
                         empName = empInfo.rows[0]?.name || 'Repartidor';
+                        empGlobalId = empInfo.rows[0]?.global_id;
                     }
 
                     // Log event
@@ -111,7 +127,24 @@ module.exports = (pool, io) => {
                             employeeId: empId, employeeName: empName,
                             zoneId: zone.id, zoneName: zone.name,
                             branchName, eventType, distance: Math.round(distance)
-                        }).catch(err => console.error('[GPS/geofence] FCM error:', err.message));
+                        }).catch(err => console.error('[GPS/geofence] FCM admin error:', err.message));
+                    }
+
+                    // FCM push notification to the repartidor themselves
+                    if (sendNotificationToEmployee && empGlobalId) {
+                        const emoji = isInside ? '📍' : '📤';
+                        const action = isInside ? 'Entraste a' : 'Saliste de';
+                        sendNotificationToEmployee(empGlobalId, {
+                            title: `${emoji} ${zone.name}`,
+                            body: `${action} la zona "${zone.name}" (${Math.round(distance)}m)`,
+                            data: {
+                                type: 'geofence_event_self',
+                                eventType,
+                                zoneId: String(zone.id),
+                                zoneName: zone.name,
+                                distance: String(Math.round(distance))
+                            }
+                        }).catch(err => console.error('[GPS/geofence] FCM repartidor error:', err.message));
                     }
                 }
             }
@@ -125,10 +158,12 @@ module.exports = (pool, io) => {
     // Import notification helper (lazy — may not be available in all setups)
     let sendNotificationToAdminsInTenant;
     let notifyGeofenceEvent;
+    let sendNotificationToEmployee;
     try {
         const notificationHelper = require('../utils/notificationHelper');
         sendNotificationToAdminsInTenant = notificationHelper.sendNotificationToAdminsInTenant;
         notifyGeofenceEvent = notificationHelper.notifyGeofenceEvent;
+        sendNotificationToEmployee = notificationHelper.sendNotificationToEmployee;
     } catch (e) {
         console.warn('[GPS] ⚠️ notificationHelper not available, FCM disabled');
     }
