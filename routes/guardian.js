@@ -738,11 +738,54 @@ module.exports = (pool, guardianStatusByBranch) => {
                     LIMIT 5
                 `, baseParams),
 
-                // 5️⃣ Event types breakdown (by scenario_code)
+                // 5️⃣ Event types breakdown (by scenario_code → human-readable label)
                 pool.query(`
                     SELECT
                         COALESCE(scenario_code, event_type) as type_key,
-                        COALESCE(scenario_code, event_type) as label,
+                        CASE COALESCE(scenario_code, event_type)
+                            WHEN 'PesoSinRegistro' THEN 'Peso no cobrado'
+                            WHEN 'MultiplesPesosSinRegistro' THEN 'Multiples pesos sin cobrar'
+                            WHEN 'PesoParcialSinRegistro' THEN 'Retiro parcial sin cobrar'
+                            WHEN 'PesoEnPantallaNoAutorizada' THEN 'Peso fuera de ventas'
+                            WHEN 'CambioPantallaDurantePesaje' THEN 'Salio de ventas con peso'
+                            WHEN 'SesionNoIniciadaConPeso' THEN 'Peso sin sesion'
+                            WHEN 'PesoSinConfirmacionFinal' THEN 'Pesaje abandonado'
+                            WHEN 'ProductoPesadoEliminado' THEN 'Producto pesado eliminado'
+                            WHEN 'DialogoCanceladoConPeso' THEN 'Pesaje cancelado'
+                            WHEN 'DialogoIgnorado' THEN 'Tiempo excedido sin confirmar'
+                            WHEN 'ActividadFueraHorario' THEN 'Actividad fuera de horario'
+                            WHEN 'CancelacionesExcesivas' THEN 'Muchas cancelaciones'
+                            WHEN 'TiempoExcesivoConfirmacion' THEN 'Producto mucho tiempo en bascula'
+                            WHEN 'AjusteNormal' THEN 'Operacion normal'
+                            WHEN 'ReduccionPesoSinJustificacion' THEN 'Producto quitado antes de cobrar'
+                            WHEN 'PesoInestableProlongado' THEN 'Bascula inestable'
+                            WHEN 'MultiplesAjustesArribaAbajo' THEN 'Ajustes repetidos de peso'
+                            WHEN 'DesconexionBascula' THEN 'Bascula desconectada'
+                            WHEN 'DesconexionesFrecuentes' THEN 'Desconexiones frecuentes'
+                            WHEN 'ReconexionConPesoActivo' THEN 'Reconexion con peso activo'
+                            WHEN 'ReinicioSistemaDuranteTurno' THEN 'Sistema reiniciado'
+                            WHEN 'PesoRealVsRegistrado' THEN 'Peso cobrado diferente al pesado'
+                            WHEN 'PesoCeroConPesoEnBascula' THEN 'Cobro $0 con producto en bascula'
+                            WHEN 'PesoInferiorPromedioProducto' THEN 'Peso muy bajo para el producto'
+                            WHEN 'DiscrepanciaInventarioCierre' THEN 'Inventario no cuadra'
+                            WHEN 'CorrelacionPesoProductoIncorrecta' THEN 'Peso no corresponde al producto'
+                            WHEN 'PicosActividadSospechosa' THEN 'Muchos eventos sospechosos'
+                            WHEN 'AusenciaActividadHorarioPico' THEN 'Sin actividad en horario pico'
+                            WHEN 'CambioUsuarioDurantePesaje' THEN 'Cambio de usuario con peso'
+                            WHEN 'VelocidadTransaccionAnormal' THEN 'Transaccion muy rapida/lenta'
+                            WHEN 'UsoOverridePermisos' THEN 'Permiso especial usado'
+                            WHEN 'BasculaNoAutorizada' THEN 'Bascula no autorizada'
+                            WHEN 'PesajesFraccionados' THEN 'Pesajes divididos'
+                            WHEN 'PesoExcedeDuranteGracia' THEN 'Peso excede durante gracia'
+                            WHEN 'PesoRetiradoSinRegistrar' THEN 'Peso retirado sin registrar'
+                            WHEN 'VentaCanceladaConProductosPesados' THEN 'Venta cancelada con productos pesados'
+                            WHEN 'SegundoProductoSinMoverBascula' THEN 'Segundo producto sin mover bascula'
+                            WHEN 'TaraSospechosa' THEN 'TARA bloqueada - peso sospechoso'
+                            WHEN 'PesoNegativo' THEN 'Peso negativo - error de bascula'
+                            WHEN 'GraciaExpiradaConPeso' THEN 'Producto olvidado en bascula'
+                            WHEN 'PesoIncrementadoPostVenta' THEN 'Peso agregado despues de cobrar'
+                            ELSE COALESCE(scenario_code, event_type)
+                        END as label,
                         COUNT(*) as count,
                         AVG(risk_score) as avg_risk
                     FROM suspicious_weighing_logs
