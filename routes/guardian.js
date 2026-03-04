@@ -611,5 +611,257 @@ module.exports = (pool, guardianStatusByBranch) => {
         });
     });
 
+    // ============================================================================
+    // GET /api/guardian/analytics
+    // Aggregated analytics data for Guardian charts (mobile "Análisis" tab)
+    // Single endpoint → 7 parallel queries → one JSON response
+    // ============================================================================
+    router.get('/analytics', authenticateToken, async (req, res) => {
+        try {
+            const {
+                tenant_id,
+                branch_id,
+                start_date,
+                end_date
+            } = req.query;
+
+            if (!tenant_id) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'tenant_id es requerido'
+                });
+            }
+
+            // Default to last 7 days if no dates provided
+            const endDt = end_date ? new Date(end_date) : new Date();
+            const startDt = start_date ? new Date(start_date) : new Date(endDt.getTime() - 7 * 24 * 60 * 60 * 1000);
+            const startISO = startDt.toISOString();
+            const endISO = endDt.toISOString();
+
+            console.log(`[Guardian/Analytics] 📊 Request: tenant=${tenant_id}, branch=${branch_id}, ${startISO} → ${endISO}`);
+
+            // Build branch filter clause
+            const branchFilter = branch_id ? ' AND branch_id = $4' : '';
+            const baseParams = branch_id
+                ? [tenant_id, startISO, endISO, branch_id]
+                : [tenant_id, startISO, endISO];
+
+            // Determine granularity: daily for ≤30 days, weekly for >30 days
+            const daysDiff = Math.ceil((endDt - startDt) / (1000 * 60 * 60 * 24));
+            const truncUnit = daysDiff > 30 ? 'week' : 'day';
+
+            // ═══════════════════════════════════════════════════════════════
+            // Run 7 queries in parallel
+            // ═══════════════════════════════════════════════════════════════
+            const [
+                dailyTrendResult,
+                disconnectionTrendResult,
+                severityDistResult,
+                topEmployeesResult,
+                eventTypesResult,
+                disconnectionStatsResult,
+                keyMetricsResult
+            ] = await Promise.all([
+
+                // 1️⃣ Daily event trend by severity (suspicious events)
+                pool.query(`
+                    SELECT
+                        date_trunc('${truncUnit}', timestamp) as period,
+                        COUNT(*) FILTER (WHERE severity = 'Critical') as critical,
+                        COUNT(*) FILTER (WHERE severity = 'High') as high,
+                        COUNT(*) FILTER (WHERE severity = 'Medium') as medium,
+                        COUNT(*) FILTER (WHERE severity = 'Low') as low,
+                        COUNT(*) as total
+                    FROM suspicious_weighing_logs
+                    WHERE tenant_id = $1
+                      AND timestamp >= $2::timestamptz
+                      AND timestamp < $3::timestamptz
+                      ${branchFilter}
+                    GROUP BY period
+                    ORDER BY period ASC
+                `, baseParams),
+
+                // 2️⃣ Daily disconnection trend
+                pool.query(`
+                    SELECT
+                        date_trunc('${truncUnit}', disconnected_at) as period,
+                        COUNT(*) as count,
+                        COALESCE(SUM(duration_minutes), 0) as total_minutes
+                    FROM scale_disconnection_logs
+                    WHERE tenant_id = $1
+                      AND disconnected_at >= $2::timestamptz
+                      AND disconnected_at < $3::timestamptz
+                      ${branchFilter}
+                    GROUP BY period
+                    ORDER BY period ASC
+                `, baseParams),
+
+                // 3️⃣ Severity distribution (suspicious only)
+                pool.query(`
+                    SELECT
+                        severity,
+                        COUNT(*) as count
+                    FROM suspicious_weighing_logs
+                    WHERE tenant_id = $1
+                      AND timestamp >= $2::timestamptz
+                      AND timestamp < $3::timestamptz
+                      ${branchFilter}
+                    GROUP BY severity
+                    ORDER BY
+                        CASE severity
+                            WHEN 'Critical' THEN 1
+                            WHEN 'High' THEN 2
+                            WHEN 'Medium' THEN 3
+                            WHEN 'Low' THEN 4
+                        END
+                `, baseParams),
+
+                // 4️⃣ Top 5 employees with most events (severity breakdown)
+                pool.query(`
+                    SELECT
+                        swl.employee_id,
+                        COALESCE(e.first_name || ' ' || e.last_name, 'Desconocido') as employee_name,
+                        COUNT(*) as total,
+                        COUNT(*) FILTER (WHERE swl.severity = 'Critical') as critical,
+                        COUNT(*) FILTER (WHERE swl.severity = 'High') as high,
+                        COUNT(*) FILTER (WHERE swl.severity = 'Medium') as medium,
+                        COUNT(*) FILTER (WHERE swl.severity = 'Low') as low,
+                        COALESCE(AVG(swl.risk_score), 0) as avg_risk_score
+                    FROM suspicious_weighing_logs swl
+                    LEFT JOIN employees e ON e.id = swl.employee_id
+                    WHERE swl.tenant_id = $1
+                      AND swl.timestamp >= $2::timestamptz
+                      AND swl.timestamp < $3::timestamptz
+                      ${branchFilter.replace('branch_id', 'swl.branch_id')}
+                    GROUP BY swl.employee_id, e.first_name, e.last_name
+                    ORDER BY critical DESC, high DESC, total DESC
+                    LIMIT 5
+                `, baseParams),
+
+                // 5️⃣ Event types breakdown (by scenario_code)
+                pool.query(`
+                    SELECT
+                        COALESCE(scenario_code, event_type) as type_key,
+                        COALESCE(scenario_code, event_type) as label,
+                        COUNT(*) as count,
+                        AVG(risk_score) as avg_risk
+                    FROM suspicious_weighing_logs
+                    WHERE tenant_id = $1
+                      AND timestamp >= $2::timestamptz
+                      AND timestamp < $3::timestamptz
+                      ${branchFilter}
+                    GROUP BY type_key, label
+                    ORDER BY count DESC
+                    LIMIT 10
+                `, baseParams),
+
+                // 6️⃣ Disconnection stats (aggregate)
+                pool.query(`
+                    SELECT
+                        COUNT(*) as total_disconnections,
+                        COALESCE(SUM(duration_minutes), 0) as total_downtime_minutes,
+                        COALESCE(AVG(duration_minutes), 0) as avg_downtime_minutes,
+                        COALESCE(MAX(duration_minutes), 0) as max_downtime_minutes
+                    FROM scale_disconnection_logs
+                    WHERE tenant_id = $1
+                      AND disconnected_at >= $2::timestamptz
+                      AND disconnected_at < $3::timestamptz
+                      ${branchFilter}
+                `, baseParams),
+
+                // 7️⃣ Key metrics: most active hour + avg risk score + total events
+                pool.query(`
+                    SELECT
+                        COUNT(*) as total_events,
+                        COALESCE(AVG(risk_score), 0) as avg_risk_score,
+                        MODE() WITHIN GROUP (ORDER BY EXTRACT(HOUR FROM timestamp)) as most_active_hour
+                    FROM suspicious_weighing_logs
+                    WHERE tenant_id = $1
+                      AND timestamp >= $2::timestamptz
+                      AND timestamp < $3::timestamptz
+                      ${branchFilter}
+                `, baseParams)
+            ]);
+
+            // ═══════════════════════════════════════════════════════════════
+            // Format response
+            // ═══════════════════════════════════════════════════════════════
+            const keyMetrics = keyMetricsResult.rows[0] || {};
+            const disconnectionStats = disconnectionStatsResult.rows[0] || {};
+
+            res.json({
+                success: true,
+                data: {
+                    granularity: truncUnit,
+                    period: { start: startISO, end: endISO, days: daysDiff },
+
+                    keyMetrics: {
+                        totalEvents: parseInt(keyMetrics.total_events) || 0,
+                        avgRiskScore: parseFloat(parseFloat(keyMetrics.avg_risk_score || 0).toFixed(1)),
+                        mostActiveHour: keyMetrics.most_active_hour != null
+                            ? parseInt(keyMetrics.most_active_hour)
+                            : null,
+                        totalDisconnections: parseInt(disconnectionStats.total_disconnections) || 0
+                    },
+
+                    dailyTrend: dailyTrendResult.rows.map(r => ({
+                        period: r.period,
+                        critical: parseInt(r.critical) || 0,
+                        high: parseInt(r.high) || 0,
+                        medium: parseInt(r.medium) || 0,
+                        low: parseInt(r.low) || 0,
+                        total: parseInt(r.total) || 0
+                    })),
+
+                    disconnectionTrend: disconnectionTrendResult.rows.map(r => ({
+                        period: r.period,
+                        count: parseInt(r.count) || 0,
+                        totalMinutes: parseFloat(r.total_minutes) || 0
+                    })),
+
+                    severityDistribution: severityDistResult.rows.map(r => ({
+                        severity: r.severity,
+                        count: parseInt(r.count) || 0
+                    })),
+
+                    topEmployees: topEmployeesResult.rows.map(r => ({
+                        employeeId: r.employee_id,
+                        employeeName: r.employee_name,
+                        total: parseInt(r.total) || 0,
+                        critical: parseInt(r.critical) || 0,
+                        high: parseInt(r.high) || 0,
+                        medium: parseInt(r.medium) || 0,
+                        low: parseInt(r.low) || 0,
+                        avgRiskScore: parseFloat(parseFloat(r.avg_risk_score || 0).toFixed(1))
+                    })),
+
+                    eventTypes: eventTypesResult.rows.map(r => ({
+                        typeKey: r.type_key,
+                        label: r.label,
+                        count: parseInt(r.count) || 0,
+                        avgRisk: parseFloat(parseFloat(r.avg_risk || 0).toFixed(1))
+                    })),
+
+                    disconnectionStats: {
+                        total: parseInt(disconnectionStats.total_disconnections) || 0,
+                        totalDowntimeMinutes: parseFloat(parseFloat(disconnectionStats.total_downtime_minutes || 0).toFixed(1)),
+                        avgDowntimeMinutes: parseFloat(parseFloat(disconnectionStats.avg_downtime_minutes || 0).toFixed(1)),
+                        maxDowntimeMinutes: parseFloat(parseFloat(disconnectionStats.max_downtime_minutes || 0).toFixed(1))
+                    }
+                }
+            });
+
+            console.log(`[Guardian/Analytics] ✅ Response sent (${dailyTrendResult.rows.length} trend periods, ${topEmployeesResult.rows.length} top employees)`);
+
+        } catch (error) {
+            console.error('[Guardian/Analytics] ❌ Error:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Error al obtener analytics de Guardian',
+                error: undefined
+            });
+        }
+    });
+
     return router;
 };
