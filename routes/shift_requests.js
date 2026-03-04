@@ -83,10 +83,12 @@ module.exports = (pool, io) => {
                  WHERE e.id = $1`,
                 [employeeId, branchId]
             );
-            const employeeName = empResult.rows[0]
-                ? `${empResult.rows[0].first_name} ${empResult.rows[0].last_name}`.trim()
+            const empRow = empResult.rows[0];
+            const employeeName = empRow
+                ? `${empRow.first_name} ${empRow.last_name}`.trim()
                 : 'Repartidor';
-            const branchName = empResult.rows[0]?.branch_name || 'Sucursal';
+            const employeeGlobalId = empRow?.global_id || null;
+            const branchName = empRow?.branch_name || 'Sucursal';
 
             // Emit socket event to branch room
             if (io) {
@@ -95,6 +97,7 @@ module.exports = (pool, io) => {
                 io.to(roomName).emit('shift_request_new', {
                     requestId: request.id,
                     employeeId,
+                    employeeGlobalId,
                     employeeName,
                     branchId,
                     branchName,
@@ -106,7 +109,7 @@ module.exports = (pool, io) => {
             if (sendNotificationToAdminsInTenant) {
                 sendNotificationToAdminsInTenant(tenantId, {
                     title: `📋 Solicitud de Turno [${branchName}]`,
-                    body: `${employeeName} solicita abrir su turno`,
+                    body: `${employeeName} solicita abrir su turno. Aprueba desde la app de escritorio.`,
                     data: {
                         type: 'shift_request_new',
                         requestId: request.id.toString(),
