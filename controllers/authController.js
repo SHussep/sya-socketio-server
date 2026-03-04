@@ -667,6 +667,55 @@ class AuthController {
                 timezone: branch.timezone || 'America/Mexico_City'
             }));
 
+            // === SINGLE SESSION ENFORCEMENT ===
+            // Kick old devices before allowing new login
+            try {
+                const io = req.app.get('io');
+                const activeDevices = await this.pool.query(
+                    `SELECT device_token FROM device_tokens
+                     WHERE employee_id = $1 AND is_active = true`,
+                    [employee.id]
+                );
+
+                if (activeDevices.rows.length > 0) {
+                    // 1. Send FCM to old devices FIRST (while tokens still active)
+                    const { sendNotificationToEmployee } = require('../utils/notificationHelper');
+                    await sendNotificationToEmployee(employee.global_id, {
+                        title: 'Sesión cerrada',
+                        body: 'Se inició sesión en otro dispositivo. Tu sesión ha sido cerrada.',
+                        data: {
+                            type: 'access_revoked',
+                            employeeId: String(employee.id),
+                            reason: 'new_device_login'
+                        }
+                    }).catch(err => console.log(`[Mobile Login] ⚠️ FCM kick failed: ${err.message}`));
+
+                    // 2. Emit socket event to branch room
+                    if (io) {
+                        const branchId = selectedBranch.id;
+                        io.to(`branch_${branchId}`).emit('employee:access_revoked', {
+                            employeeId: employee.id,
+                            employeeName: employeeData.fullName,
+                            reason: 'Se inició sesión desde otro dispositivo.',
+                            timestamp: new Date().toISOString()
+                        });
+                        console.log(`[Mobile Login] 📡 access_revoked emitido a branch_${branchId}`);
+                    }
+
+                    // 3. Deactivate ALL old device tokens (new device will register after login)
+                    await this.pool.query(
+                        `UPDATE device_tokens SET is_active = false, updated_at = CURRENT_TIMESTAMP
+                         WHERE employee_id = $1 AND is_active = true`,
+                        [employee.id]
+                    );
+
+                    console.log(`[Mobile Login] 🔒 Kicked ${activeDevices.rows.length} old device(s) for employee ${employee.id}`);
+                }
+            } catch (kickErr) {
+                console.log(`[Mobile Login] ⚠️ Could not kick old devices: ${kickErr.message}`);
+                // Non-blocking — login continues even if kick fails
+            }
+
             console.log(`[Mobile Login] ✅ Login exitoso: ${employee.email} (can_use_mobile_app=true)`);
 
             return res.json({
