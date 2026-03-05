@@ -35,6 +35,11 @@ module.exports = (pool, io) => {
 
     // Geofence state tracker: key = "empId_zoneId", value = boolean (true = inside)
     const _employeeZoneState = new Map();
+    // Geofence notification cooldown: key = "empId_zoneId", value = timestamp of last notification
+    const _geofenceCooldowns = new Map();
+    const GEOFENCE_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes between notifications per employee-zone
+    // Hysteresis: exit requires distance > radius * EXIT_MULTIPLIER to prevent GPS jitter toggling
+    const EXIT_HYSTERESIS_MULTIPLIER = 1.20; // 20% buffer beyond radius to trigger exit
 
     // Haversine distance in meters between two lat/lng points
     function haversineDistance(lat1, lon1, lat2, lon2) {
@@ -48,12 +53,12 @@ module.exports = (pool, io) => {
         return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     }
 
-    // Check if repartidor entered/exited any geofence zone
-    // Filters by assigned zones first; falls back to all branch zones if none assigned
+    // Check if repartidor entered/exited any ASSIGNED geofence zone
+    // Only checks zones explicitly assigned to the employee — no fallback
     async function checkGeofences(client, tenantId, branchId, empId, lat, lng) {
         try {
-            // Check assigned zones first
-            const assignedZones = await client.query(
+            // Only check zones assigned to this employee
+            const zones = await client.query(
                 `SELECT gz.id, gz.name, gz.latitude, gz.longitude, gz.radius_meters
                  FROM geofence_zones gz
                  JOIN employee_geofence_zones egz ON egz.zone_id = gz.id
@@ -62,16 +67,7 @@ module.exports = (pool, io) => {
                 [empId, tenantId]
             );
 
-            // Fallback: if no zones assigned, check all branch zones (backward compatible)
-            const zones = assignedZones.rows.length > 0
-                ? assignedZones
-                : await client.query(
-                    `SELECT id, name, latitude, longitude, radius_meters
-                     FROM geofence_zones
-                     WHERE tenant_id = $1 AND branch_id = $2 AND is_active = true`,
-                    [tenantId, branchId]
-                );
-
+            // No assigned zones = no monitoring
             if (zones.rows.length === 0) return;
 
             let empName = null;
@@ -80,12 +76,27 @@ module.exports = (pool, io) => {
 
             for (const zone of zones.rows) {
                 const distance = haversineDistance(lat, lng, zone.latitude, zone.longitude);
-                const isInside = distance <= zone.radius_meters;
                 const stateKey = `${empId}_${zone.id}`;
                 const wasInside = _employeeZoneState.get(stateKey) || false;
 
+                // Hysteresis: enter at radius, exit at radius * 1.20
+                // This prevents GPS jitter from causing rapid enter/exit toggling
+                const isInside = wasInside
+                    ? distance <= zone.radius_meters * EXIT_HYSTERESIS_MULTIPLIER  // already inside: stay inside until clearly out
+                    : distance <= zone.radius_meters;                                // outside: enter only when clearly inside
+
                 if (isInside !== wasInside) {
+                    // Check cooldown: prevent spam notifications
+                    const now = Date.now();
+                    const lastNotification = _geofenceCooldowns.get(stateKey) || 0;
+                    if (now - lastNotification < GEOFENCE_COOLDOWN_MS) {
+                        // Update state silently (track position) but don't notify
+                        _employeeZoneState.set(stateKey, isInside);
+                        continue;
+                    }
+
                     _employeeZoneState.set(stateKey, isInside);
+                    _geofenceCooldowns.set(stateKey, now);
                     const eventType = isInside ? 'enter' : 'exit';
 
                     if (!empName) {
@@ -115,7 +126,7 @@ module.exports = (pool, io) => {
                         timestamp: new Date().toISOString()
                     });
 
-                    console.log(`[GPS/geofence] ${isInside ? '🟢 ENTER' : '🔴 EXIT'}: ${empName} → "${zone.name}" (${Math.round(distance)}m)`);
+                    console.log(`[GPS/geofence] ${isInside ? '🟢 ENTER' : '🔴 EXIT'}: ${empName} → "${zone.name}" (${Math.round(distance)}m, radius=${zone.radius_meters}m)`);
 
                     // FCM push notification to admins
                     if (notifyGeofenceEvent) {
