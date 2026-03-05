@@ -167,7 +167,7 @@ module.exports = (pool) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al reclamar rol Principal',
-                ...(process.env.NODE_ENV !== 'production' && { error: error.message })
+                error: error.message
             });
         } finally {
             client.release();
