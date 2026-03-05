@@ -668,6 +668,41 @@ async function initializeDatabase() {
             console.log('[DB] ⚠️ employees.profile_photo_url:', error.message);
         }
 
+        // Patch: Add missing columns to employee_branches (used by routes but missing from CREATE TABLE)
+        try {
+            await client.query(`ALTER TABLE employee_branches ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id)`);
+            await client.query(`ALTER TABLE employee_branches ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`);
+            await client.query(`ALTER TABLE employee_branches ADD COLUMN IF NOT EXISTS removed_at TIMESTAMP`);
+            await client.query(`ALTER TABLE employee_branches ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`);
+            console.log('[DB] ✅ employee_branches columns verified');
+        } catch (error) {
+            console.log('[DB] ⚠️ employee_branches columns:', error.message);
+        }
+
+        // Tabla: cliente_branches (relacion muchos a muchos entre customers y branches)
+        try {
+            await client.query(`
+                CREATE TABLE IF NOT EXISTS cliente_branches (
+                    id SERIAL PRIMARY KEY,
+                    tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+                    customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+                    branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+                    is_active BOOLEAN DEFAULT true,
+                    assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    removed_at TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(tenant_id, customer_id, branch_id)
+                )
+            `);
+            await client.query(`CREATE INDEX IF NOT EXISTS idx_cliente_branches_tenant ON cliente_branches(tenant_id)`);
+            await client.query(`CREATE INDEX IF NOT EXISTS idx_cliente_branches_customer ON cliente_branches(customer_id)`);
+            await client.query(`CREATE INDEX IF NOT EXISTS idx_cliente_branches_branch ON cliente_branches(branch_id)`);
+            console.log('[DB] ✅ Tabla cliente_branches verificada/creada');
+        } catch (error) {
+            console.log('[DB] ⚠️ cliente_branches:', error.message);
+        }
+
         console.log('[DB] ✅ Database schema initialized successfully');
     } catch (error) {
         console.error('[DB] ❌ Error initializing database:', error);

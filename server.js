@@ -107,6 +107,7 @@ const depositsRoutes = require('./routes/deposits');
 const withdrawalsRoutes = require('./routes/withdrawals');
 const newCashCutsRoutes = require('./routes/cash-cuts');
 const employeeBranchesRoutes = require('./routes/employee_branches')(pool); // Rutas de relaciones empleado-sucursal
+const clienteBranchesRoutes = require('./routes/cliente_branches')(pool); // Rutas de relaciones cliente-sucursal
 const employeeRolesRoutes = require('./routes/employee_roles'); // Rutas para gestionar roles y permisos
 const employeesRoutes = require('./routes/employees')(pool); // Rutas de empleados con sync-role endpoint
 const customersRoutes = require('./routes/customers'); // Rutas de sincronización de clientes
@@ -152,6 +153,7 @@ app.use('/api/notification-preferences', notificationPreferencesRoutes); // Pref
 app.use('/api/desktop/updates', desktopUpdatesRoutes); // Actualizaciones de app Desktop
 app.use('/api/employees', employeesRoutes); // Registrar rutas de empleados con sync-role endpoint
 app.use('/api/employee-branches', employeeBranchesRoutes); // Registrar rutas de relaciones empleado-sucursal
+app.use('/api/cliente-branches', clienteBranchesRoutes); // Registrar rutas de relaciones cliente-sucursal
 
 // ✅ SECURITY: Create tenant validation middleware for sync endpoints
 const validateTenant = createTenantValidationMiddleware(pool);
@@ -365,6 +367,7 @@ app.post('/api/database/delete-tenant-by-email', requireAdminCredentials, async 
         await pool.query('DELETE FROM ventas WHERE tenant_id = $1', [tenantId]);
         await pool.query('DELETE FROM expenses WHERE tenant_id = $1', [tenantId]);
         await pool.query('DELETE FROM backup_metadata WHERE tenant_id = $1', [tenantId]);
+        await pool.query('DELETE FROM cliente_branches WHERE tenant_id = $1', [tenantId]);
         await pool.query('DELETE FROM employee_branches WHERE employee_id IN (SELECT id FROM employees WHERE tenant_id = $1)', [tenantId]);
         await pool.query('DELETE FROM employees WHERE tenant_id = $1', [tenantId]);
         await pool.query('DELETE FROM devices WHERE tenant_id = $1', [tenantId]);
