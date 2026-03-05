@@ -7,6 +7,26 @@ const express = require('express');
 module.exports = (pool) => {
     const router = express.Router();
 
+    // Helper: Emitir evento Socket.IO de cambio de asignación
+    function emitBranchAssignmentEvent(req, employeeId, branchId, isActive, action) {
+        try {
+            const io = req.app.get('io');
+            if (io) {
+                const roomName = `branch_${branchId}`;
+                io.to(roomName).emit('employee_branch:updated', {
+                    employeeId,
+                    branchId,
+                    isActive,
+                    action,
+                    timestamp: new Date().toISOString()
+                });
+                console.log(`[EmployeeBranches/Socket] 📡 Evento emitido a ${roomName}: ${action}`);
+            }
+        } catch (err) {
+            console.error(`[EmployeeBranches/Socket] ⚠️ Error emitiendo evento: ${err.message}`);
+        }
+    }
+
     // POST /api/employee-branches - Sync employee branch assignment from Desktop
     // Creates or updates the relationship between an employee and a branch
     router.post('/', async (req, res) => {
@@ -83,6 +103,9 @@ module.exports = (pool) => {
                     const relationship = updateResult.rows[0];
                     console.log(`[EmployeeBranches/Sync] ✅ Relación actualizada: Empleado ${employeeId} en Sucursal ${branchId}`);
 
+                    // Notificar a la sucursal afectada via Socket.IO
+                    emitBranchAssignmentEvent(req, employeeId, branchId, isActive, 'updated');
+
                     return res.json({
                         success: true,
                         data: relationship,
@@ -106,6 +129,9 @@ module.exports = (pool) => {
             if (insertResult.rows.length > 0) {
                 const relationship = insertResult.rows[0];
                 console.log(`[EmployeeBranches/Sync] ✅ Relación creada: Empleado ${employeeId} en Sucursal ${branchId} (ID: ${relationship.id})`);
+
+                // Notificar a la sucursal afectada via Socket.IO
+                emitBranchAssignmentEvent(req, employeeId, branchId, isActive, 'assigned');
 
                 return res.json({
                     success: true,
