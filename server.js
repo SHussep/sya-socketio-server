@@ -783,6 +783,19 @@ app.put('/api/branches/:id', validateTenant, async (req, res) => {
 
         console.log(`[Branch Update] ✅ Sucursal actualizada: ${branch.name} (RFC: ${branch.rfc || 'N/A'})`);
 
+        // Notificar a dispositivos en esta sucursal (admins tambien estan en el room)
+        io.to(`branch_${id}`).emit('branch_info_updated', {
+            branchId: parseInt(id),
+            tenantId: parseInt(tenantId),
+            name: branch.name,
+            address: branch.address,
+            phone: branch.phone,
+            rfc: branch.rfc,
+            updatedAt: branch.updated_at,
+            receivedAt: new Date().toISOString()
+        });
+        console.log(`[Branch Update] 📡 Emitido branch_info_updated a branch_${id}`);
+
         res.json({
             success: true,
             message: 'Sucursal actualizada exitosamente',
@@ -958,6 +971,20 @@ app.post('/api/branches/sync-info', validateTenant, async (req, res) => {
                 console.log(`[Branch Sync] ✅ Tenant actualizado (nombre: ${name || 'sin cambio'}, logo: ${logoUrl ? 'Sí' : 'No'})`);
             }
         }
+
+        // Notificar a dispositivos moviles en esta sucursal
+        io.to(`branch_${branchId}`).emit('branch_info_updated', {
+            branchId: parseInt(branchId),
+            tenantId: parseInt(tenantId),
+            name: branch.name,
+            address: branch.address,
+            phone: branch.phone,
+            rfc: branch.rfc,
+            logoUrl: branch.logo_url,
+            updatedAt: branch.updated_at,
+            receivedAt: new Date().toISOString()
+        });
+        console.log(`[Branch Sync] 📡 Emitido branch_info_updated a branch_${branchId}`);
 
         res.json({
             success: true,
