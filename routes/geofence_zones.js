@@ -307,7 +307,7 @@ module.exports = (pool, io) => {
                 zoneId: parseInt(zoneId),
                 zoneName: zone.rows[0].name,
                 action: 'assigned',
-                employeeIds: employee_ids.map(id => parseInt(id)),
+                employeeIds: employee_ids.map(id => parseInt(id)).filter(Boolean),
                 timestamp: new Date().toISOString()
             });
 
