@@ -649,6 +649,7 @@ class AuthController {
                 email: employee.email,
                 role: employee.role_name || 'Empleado',
                 roleId: employee.role_id,
+                isOwner: employee.is_owner || false,
                 isActive: employee.is_active,
                 canUseMobileApp: employee.can_use_mobile_app,
                 mobileAccessType: employee.mobile_access_type || 'none',  // Viene del JOIN con roles table
