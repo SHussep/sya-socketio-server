@@ -129,31 +129,24 @@ function createRepartidorAssignmentRoutes(io) {
         });
       }
 
-      // GATE: Si la asignación viene de móvil, Desktop debe estar conectado
-      // Acepta clientType 'desktop' o 'unknown' (Desktop sin actualizar aún)
+      // GATE: Log si Desktop está conectado (no bloquear hasta que Desktop se recompile con identify_client)
       if (source === 'mobile') {
         const roomName = `branch_${branch_id}`;
         const roomSockets = io.sockets.adapter.rooms.get(roomName);
-        let desktopOnline = false;
+        let desktopFound = false;
+        let clientTypes = [];
 
         if (roomSockets) {
           for (const socketId of roomSockets) {
             const s = io.sockets.sockets.get(socketId);
-            if (s && s.clientType !== 'mobile') {
-              desktopOnline = true;
-              break;
+            if (s) {
+              clientTypes.push(s.clientType || 'unknown');
+              if (s.clientType !== 'mobile') desktopFound = true;
             }
           }
         }
 
-        if (!desktopOnline) {
-          console.log(`[RepartidorAssignments] ❌ BLOCKED: No hay Desktop conectado para branch_${branch_id}`);
-          return res.status(409).json({
-            success: false,
-            message: 'La computadora de la sucursal no está conectada. Enciende el sistema de escritorio para poder asignar.',
-            code: 'DESKTOP_OFFLINE'
-          });
-        }
+        console.log(`[RepartidorAssignments] 📡 Desktop check for branch_${branch_id}: found=${desktopFound}, clients=[${clientTypes.join(', ')}]`);
       }
 
       // Para asignaciones desde venta, venta_id y shift_id son requeridos
