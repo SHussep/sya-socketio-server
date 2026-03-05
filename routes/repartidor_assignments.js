@@ -130,6 +130,7 @@ function createRepartidorAssignmentRoutes(io) {
       }
 
       // GATE: Si la asignación viene de móvil, Desktop debe estar conectado
+      // Acepta clientType 'desktop' o 'unknown' (Desktop sin actualizar aún)
       if (source === 'mobile') {
         const roomName = `branch_${branch_id}`;
         const roomSockets = io.sockets.adapter.rooms.get(roomName);
@@ -138,7 +139,7 @@ function createRepartidorAssignmentRoutes(io) {
         if (roomSockets) {
           for (const socketId of roomSockets) {
             const s = io.sockets.sockets.get(socketId);
-            if (s && s.clientType === 'desktop') {
+            if (s && s.clientType !== 'mobile') {
               desktopOnline = true;
               break;
             }

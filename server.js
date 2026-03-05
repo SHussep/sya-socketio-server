@@ -574,7 +574,8 @@ app.get('/api/branches/:branchId/desktop-online', authenticateToken, (req, res) 
     if (roomSockets) {
         for (const socketId of roomSockets) {
             const s = io.sockets.sockets.get(socketId);
-            if (s && s.clientType === 'desktop') {
+            // 'desktop' = identificado, 'unknown' = Desktop sin actualizar aún
+            if (s && s.clientType !== 'mobile') {
                 desktopOnline = true;
                 break;
             }
