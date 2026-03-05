@@ -585,11 +585,12 @@ app.get('/api/branches/:branchId/desktop-online', authenticateToken, (req, res) 
     res.json({ online: desktopOnline });
 });
 
-// GET /api/desktop-online — Verifica Desktop usando branchId del JWT (para mobile)
+// GET /api/desktop-online — Verifica Desktop conectado en una sucursal
+// Acepta ?branchId=X para verificar sucursal específica, o usa JWT como fallback
 app.get('/api/desktop-online', authenticateToken, (req, res) => {
-    const branchId = req.jwtData && req.jwtData.branchId;
+    const branchId = req.query.branchId || (req.user && req.user.branchId);
     if (!branchId) {
-        return res.status(400).json({ success: false, message: 'No se pudo determinar branchId del JWT' });
+        return res.status(400).json({ success: false, message: 'No se pudo determinar branchId (query param o JWT)' });
     }
 
     const roomName = `branch_${branchId}`;

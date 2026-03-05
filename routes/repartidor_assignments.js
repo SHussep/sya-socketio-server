@@ -105,7 +105,7 @@ function createRepartidorAssignmentRoutes(io) {
     try {
       // ✅ Usar tenant_id/branch_id del JWT si no vienen en el body (para móvil)
       const tenant_id = body_tenant_id || (req.jwtData && req.jwtData.tenantId);
-      const branch_id = body_branch_id || (req.jwtData && req.jwtData.branchId);
+      let branch_id = body_branch_id || (req.jwtData && req.jwtData.branchId);
 
       // ✅ Determinar si es asignación directa (sin venta) o desde venta
       const isDirectAssignment = !venta_id && !venta_global_id;
@@ -127,6 +127,22 @@ function createRepartidorAssignmentRoutes(io) {
           success: false,
           message: 'tenant_id y branch_id son requeridos (pueden venir del JWT o del body)'
         });
+      }
+
+      // ✅ Para móvil: resolver branch_id del turno del REPARTIDOR (no del JWT del admin)
+      // El admin puede estar logueado en branch_36 pero asignar a un repartidor en branch_35
+      if (source === 'mobile' && repartidor_shift_global_id) {
+        const shiftBranch = await pool.query(
+          'SELECT branch_id FROM shifts WHERE global_id = $1 AND tenant_id = $2',
+          [repartidor_shift_global_id, tenant_id]
+        );
+        if (shiftBranch.rows.length > 0 && shiftBranch.rows[0].branch_id) {
+          const originalBranch = branch_id;
+          branch_id = shiftBranch.rows[0].branch_id;
+          if (originalBranch != branch_id) {
+            console.log(`[RepartidorAssignments] 🔄 branch_id corregido: JWT=${originalBranch} → shift=${branch_id} (del turno del repartidor)`);
+          }
+        }
       }
 
       // GATE: Bloquear asignaciones desde móvil si Desktop no está conectado
