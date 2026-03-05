@@ -163,11 +163,11 @@ module.exports = (pool) => {
 
         } catch (error) {
             await client.query('ROLLBACK');
-            console.error('[Devices] ❌ Error en claim-primary:', error.message);
+            console.error('[Devices] ❌ Error en claim-primary:', error.message, error.stack);
             res.status(500).json({
                 success: false,
                 message: 'Error al reclamar rol Principal',
-                error: undefined
+                ...(process.env.NODE_ENV !== 'production' && { error: error.message })
             });
         } finally {
             client.release();

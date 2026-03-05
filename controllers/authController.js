@@ -1725,12 +1725,14 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
 
             console.log(`[Branch Full Wipe] Limpieza completa de branch ${branch.name} (ID: ${branchId})`);
 
+            // 1. Dispositivos (tabla actual: branch_devices)
             const devicesResult = await client.query(
-                'DELETE FROM devices WHERE branch_id = $1',
+                'DELETE FROM branch_devices WHERE branch_id = $1',
                 [branchId]
             );
             console.log(`[Branch Full Wipe] OK ${devicesResult.rowCount} dispositivos eliminados`);
 
+            // 2. Sesiones
             const sessionsResult = await client.query(
                 `DELETE FROM sessions WHERE employee_id IN (
                     SELECT id FROM employees WHERE id IN (
@@ -1741,29 +1743,68 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
             );
             console.log(`[Branch Full Wipe] OK ${sessionsResult.rowCount} sesiones eliminadas`);
 
+            // 3. Ventas (CASCADE elimina ventas_detalle, repartidor_assignments y repartidor_returns)
             const salesResult = await client.query(
                 'DELETE FROM ventas WHERE branch_id = $1',
                 [branchId]
             );
             console.log(`[Branch Full Wipe] OK ${salesResult.rowCount} ventas eliminadas`);
 
+            // 4. Pagos de crédito
+            const creditPaymentsResult = await client.query(
+                'DELETE FROM credit_payments WHERE branch_id = $1',
+                [branchId]
+            );
+            console.log(`[Branch Full Wipe] OK ${creditPaymentsResult.rowCount} pagos de crédito eliminados`);
+
+            // 5. Gastos
             const expensesResult = await client.query(
                 'DELETE FROM expenses WHERE branch_id = $1',
                 [branchId]
             );
             console.log(`[Branch Full Wipe] OK ${expensesResult.rowCount} gastos eliminados`);
 
+            // 6. Depósitos
+            const depositsResult = await client.query(
+                'DELETE FROM deposits WHERE branch_id = $1',
+                [branchId]
+            );
+            console.log(`[Branch Full Wipe] OK ${depositsResult.rowCount} depósitos eliminados`);
+
+            // 7. Retiros
+            const withdrawalsResult = await client.query(
+                'DELETE FROM withdrawals WHERE branch_id = $1',
+                [branchId]
+            );
+            console.log(`[Branch Full Wipe] OK ${withdrawalsResult.rowCount} retiros eliminados`);
+
+            // 8. Cortes de caja
+            const cashCutsResult = await client.query(
+                'DELETE FROM cash_cuts WHERE branch_id = $1',
+                [branchId]
+            );
+            console.log(`[Branch Full Wipe] OK ${cashCutsResult.rowCount} cortes de caja eliminados`);
+
+            // 9. Shifts (después de ventas/expenses por FK RESTRICT)
             const shiftsResult = await client.query(
                 'DELETE FROM shifts WHERE branch_id = $1',
                 [branchId]
             );
             console.log(`[Branch Full Wipe] OK ${shiftsResult.rowCount} shifts eliminados`);
 
-            const eventsResult = await client.query(
-                'DELETE FROM guardian_events WHERE branch_id = $1',
+            // 10. Guardian: pesajes sospechosos
+            const suspiciousLogsResult = await client.query(
+                'DELETE FROM suspicious_weighing_logs WHERE branch_id = $1',
                 [branchId]
             );
-            console.log(`[Branch Full Wipe] OK ${eventsResult.rowCount} eventos eliminados`);
+            console.log(`[Branch Full Wipe] OK ${suspiciousLogsResult.rowCount} suspicious weighing logs eliminados`);
+
+            // 11. Guardian: desconexiones de báscula
+            const scaleLogsResult = await client.query(
+                'DELETE FROM scale_disconnection_logs WHERE branch_id = $1',
+                [branchId]
+            );
+            console.log(`[Branch Full Wipe] OK ${scaleLogsResult.rowCount} scale disconnection logs eliminados`);
 
             const employeeBranchesResult = await client.query(
                 'DELETE FROM employee_branches WHERE branch_id = $1',
@@ -1803,6 +1844,16 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                 },
                 deletedItems: {
                     devices: devicesResult.rowCount,
+                    sessions: sessionsResult.rowCount,
+                    sales: salesResult.rowCount,
+                    creditPayments: creditPaymentsResult.rowCount,
+                    expenses: expensesResult.rowCount,
+                    deposits: depositsResult.rowCount,
+                    withdrawals: withdrawalsResult.rowCount,
+                    cashCuts: cashCutsResult.rowCount,
+                    shifts: shiftsResult.rowCount,
+                    suspiciousLogs: suspiciousLogsResult.rowCount,
+                    scaleLogs: scaleLogsResult.rowCount,
                     employeeBranches: employeeBranchesResult.rowCount,
                     backups: backupsResult.rowCount,
                     employeesUpdated: employeesMainBranchResult.rowCount
@@ -1900,11 +1951,11 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
             console.log(`[Branch Wipe] Limpiando datos transaccionales de branch ${branch.name} (ID: ${branchId})`);
 
             const devicesResult = await client.query(
-                'UPDATE devices SET is_active = false, updated_at = NOW() WHERE branch_id = $1',
+                'DELETE FROM branch_devices WHERE branch_id = $1',
                 [branchId]
             );
 
-            console.log(`[Branch Wipe] ✅ ${devicesResult.rowCount} dispositivos desactivados`);
+            console.log(`[Branch Wipe] ✅ ${devicesResult.rowCount} dispositivos eliminados`);
 
             await client.query('COMMIT');
 
