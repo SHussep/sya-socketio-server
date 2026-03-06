@@ -446,16 +446,18 @@ router.get('/by-uuid/:globalId/role', async (req, res) => {
                 e.last_name,
                 e.email,
                 e.main_branch_id,
+                b.name as main_branch_name,
                 r.id as role_id,
                 r.name as role_name,
                 r.mobile_access_type,
                 ARRAY_AGG(p.code) FILTER (WHERE p.code IS NOT NULL) as permission_codes
             FROM employees e
             JOIN roles r ON e.role_id = r.id
+            LEFT JOIN branches b ON e.main_branch_id = b.id
             LEFT JOIN role_permissions rp ON r.id = rp.role_id
             LEFT JOIN permissions p ON rp.permission_id = p.id
             WHERE e.global_id = $1 AND e.tenant_id = $2
-            GROUP BY e.id, r.id
+            GROUP BY e.id, r.id, b.name
         `, [globalId, tenantId]);
 
         if (result.rows.length === 0) {
@@ -474,6 +476,8 @@ router.get('/by-uuid/:globalId/role', async (req, res) => {
                 employeeId: emp.id,
                 fullName: `${emp.first_name} ${emp.last_name || ''}`.trim(),
                 email: emp.email,
+                mainBranchId: emp.main_branch_id,
+                mainBranchName: emp.main_branch_name,
                 roleId: emp.role_id,
                 roleName: emp.role_name,
                 mobileAccessType: emp.mobile_access_type,
