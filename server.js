@@ -1524,6 +1524,25 @@ io.on('connection', (socket) => {
         const roomName = `branch_${data.branchId}`;
         console.log(`[SCALE] Sucursal ${data.branchId}: Báscula conectada`);
         io.to(roomName).emit('scale_connected', { ...data, receivedAt: new Date().toISOString() });
+
+        // Cerrar logs de desconexión huérfanos para esta sucursal
+        try {
+            const closedLogs = await pool.query(
+                `UPDATE scale_disconnection_logs
+                 SET reconnected_at = NOW(),
+                     disconnection_status = 'Reconnected',
+                     duration_minutes = EXTRACT(EPOCH FROM (NOW() - disconnected_at)) / 60
+                 WHERE branch_id = $1 AND reconnected_at IS NULL
+                 RETURNING id`,
+                [data.branchId]
+            );
+            if (closedLogs.rows.length > 0) {
+                console.log(`[SCALE] Cerrados ${closedLogs.rows.length} log(s) huérfanos para branch ${data.branchId}`);
+            }
+        } catch (e) {
+            console.error(`[SCALE] Error cerrando logs huérfanos: ${e.message}`);
+        }
+
         try {
             await notificationHelper.notifyScaleConnection(data.branchId, { message: data.message });
         } catch (e) {
