@@ -541,13 +541,8 @@ app.get('/api/branches', authenticateToken, async (req, res) => {
         const { tenantId, employeeId } = req.user;
 
         // Obtener sucursales del empleado (a las que tiene acceso)
-        // has_scale: true si existe al menos un evento de telemetria 'scale_configured' para esa sucursal
         const result = await pool.query(
-            `SELECT b.id, b.branch_code as code, b.name, b.address, b.phone,
-                    EXISTS (
-                        SELECT 1 FROM telemetry_events te
-                        WHERE te.branch_id = b.id AND te.event_type = 'scale_configured'
-                    ) as has_scale
+            `SELECT b.id, b.branch_code as code, b.name, b.address, b.phone
              FROM branches b
              INNER JOIN employee_branches eb ON b.id = eb.branch_id
              WHERE eb.employee_id = $1 AND b.tenant_id = $2 AND b.is_active = true
