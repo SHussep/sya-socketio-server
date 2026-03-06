@@ -39,12 +39,16 @@ const pool = new Pool({
 // TABLAS PARA LIMPIEZA PARCIAL (solo datos transaccionales)
 // Las tablas de empleados, clientes, productos estan PROTEGIDAS
 const PARTIAL_CLEANUP_TABLES = [
-    // Nivel 1: Tablas mas dependientes
+    // Nivel 1: Tablas mas dependientes (detalles)
     { name: 'notas_credito_detalle', description: 'Detalles de notas de credito' },
+    { name: 'inventory_transfer_items', description: 'Items de transferencias' },
+    { name: 'ventas_detalle', description: 'Detalles de ventas' },
+    { name: 'purchase_details', description: 'Detalles de compras' },
+    // Nivel 2: Tablas transaccionales
     { name: 'notas_credito', description: 'Notas de credito' },
+    { name: 'inventory_transfers', description: 'Transferencias de inventario' },
     { name: 'repartidor_returns', description: 'Devoluciones de repartidor' },
     { name: 'repartidor_assignments', description: 'Asignaciones de repartidor' },
-    { name: 'ventas_detalle', description: 'Detalles de ventas' },
     { name: 'ventas', description: 'Ventas' },
     { name: 'credit_payments', description: 'Pagos de credito' },
     { name: 'suspicious_weighing_logs', description: 'Logs pesajes sospechosos' },
@@ -55,9 +59,12 @@ const PARTIAL_CLEANUP_TABLES = [
     { name: 'deposits', description: 'Depositos' },
     { name: 'withdrawals', description: 'Retiros' },
     { name: 'expenses', description: 'Gastos' },
-    { name: 'purchase_details', description: 'Detalles de compras' },
     { name: 'purchases', description: 'Compras' },
     { name: 'shifts', description: 'Turnos' },
+    // Nivel 3: GPS y geofence
+    { name: 'repartidor_locations', description: 'Ubicaciones GPS repartidores' },
+    { name: 'geofence_events', description: 'Eventos de geofence' },
+    // Nivel 4: Operacional
     { name: 'telemetry_events', description: 'Telemetria' },
     { name: 'backup_metadata', description: 'Metadata respaldos' }
 ];
@@ -65,12 +72,16 @@ const PARTIAL_CLEANUP_TABLES = [
 // TABLAS PARA LIMPIEZA COMPLETA (TODO incluido)
 // Orden critico: de mayor a menor dependencia
 const FULL_CLEANUP_TABLES = [
-    // Nivel 1: Tablas mas dependientes
+    // Nivel 1: Detalles (tablas hijas mas profundas)
     { name: 'notas_credito_detalle', description: 'Detalles de notas de credito', fkColumn: 'tenant_id' },
+    { name: 'inventory_transfer_items', description: 'Items de transferencias', fkColumn: 'tenant_id' },
+    { name: 'ventas_detalle', description: 'Detalles de ventas', fkColumn: 'tenant_id' },
+    { name: 'purchase_details', description: 'Detalles de compras', fkColumn: 'tenant_id' },
+    // Nivel 2: Transacciones
     { name: 'notas_credito', description: 'Notas de credito', fkColumn: 'tenant_id' },
+    { name: 'inventory_transfers', description: 'Transferencias de inventario', fkColumn: 'tenant_id' },
     { name: 'repartidor_returns', description: 'Devoluciones de repartidor', fkColumn: 'tenant_id' },
     { name: 'repartidor_assignments', description: 'Asignaciones de repartidor', fkColumn: 'tenant_id' },
-    { name: 'ventas_detalle', description: 'Detalles de ventas', fkColumn: 'tenant_id' },
     { name: 'ventas', description: 'Ventas', fkColumn: 'tenant_id' },
     { name: 'credit_payments', description: 'Pagos de credito', fkColumn: 'tenant_id' },
     { name: 'suspicious_weighing_logs', description: 'Logs pesajes sospechosos', fkColumn: 'tenant_id' },
@@ -81,13 +92,23 @@ const FULL_CLEANUP_TABLES = [
     { name: 'deposits', description: 'Depositos', fkColumn: 'tenant_id' },
     { name: 'withdrawals', description: 'Retiros', fkColumn: 'tenant_id' },
     { name: 'expenses', description: 'Gastos', fkColumn: 'tenant_id' },
-    { name: 'purchase_details', description: 'Detalles de compras', fkColumn: 'tenant_id' },
     { name: 'purchases', description: 'Compras', fkColumn: 'tenant_id' },
     { name: 'shifts', description: 'Turnos', fkColumn: 'tenant_id' },
+    // Nivel 3: GPS y geofence (geofence_events antes de geofence_zones)
+    { name: 'repartidor_locations', description: 'Ubicaciones GPS repartidores', fkColumn: 'tenant_id' },
+    { name: 'gps_consent_log', description: 'Consentimiento GPS', fkColumn: 'tenant_id' },
+    { name: 'employee_geofence_zones', description: 'Asignaciones empleado-zona', fkColumn: 'tenant_id' },
+    { name: 'geofence_events', description: 'Eventos de geofence', fkColumn: 'tenant_id' },
+    { name: 'geofence_zones', description: 'Zonas de geofence', fkColumn: 'tenant_id' },
+    // Nivel 4: Tablas de union y config
     { name: 'sessions', description: 'Sesiones', fkColumn: 'tenant_id' },
     { name: 'device_tokens', description: 'Tokens FCM', fkColumn: null, customQuery: 'employee_id' },
     { name: 'employee_branches', description: 'Empleados-Sucursales', fkColumn: 'tenant_id' },
     { name: 'productos_branch_precios', description: 'Precios por sucursal', fkColumn: 'tenant_id' },
+    { name: 'branch_inventory', description: 'Inventario por sucursal', fkColumn: 'tenant_id' },
+    { name: 'branch_devices', description: 'Dispositivos por sucursal', fkColumn: 'tenant_id' },
+    { name: 'notification_preferences', description: 'Preferencias notificaciones', fkColumn: 'tenant_id' },
+    { name: 'cliente_branches', description: 'Clientes-Sucursales', fkColumn: 'tenant_id' },
     { name: 'backup_metadata', description: 'Metadata respaldos', fkColumn: 'tenant_id' },
     { name: 'telemetry_events', description: 'Telemetria', fkColumn: 'tenant_id' },
     { name: 'notifications', description: 'Notificaciones', fkColumn: 'tenant_id' },
@@ -422,6 +443,7 @@ async function runPartialCleanup(tenantId, selectedTenant, branchId = null) {
     header('Ejecutando Limpieza Parcial');
 
     const results = [];
+    let aborted = false;
     for (const table of PARTIAL_CLEANUP_TABLES) {
         process.stdout.write(`  Eliminando ${table.name}... `);
         const result = await deleteFromTable(table.name, tenantId, branchId, false);
@@ -429,6 +451,12 @@ async function runPartialCleanup(tenantId, selectedTenant, branchId = null) {
 
         if (result.error) {
             console.log(`${colors.red}ERROR: ${result.error}${colors.reset}`);
+            if (result.error.includes('foreign key constraint')) {
+                console.log('');
+                error('Abortando: error de foreign key indica tablas dependientes no eliminadas.');
+                aborted = true;
+                break;
+            }
         } else if (result.skipped) {
             console.log(`${colors.dim}SKIP${colors.reset}`);
         } else {
@@ -441,9 +469,13 @@ async function runPartialCleanup(tenantId, selectedTenant, branchId = null) {
     const errors = results.filter(r => r.error);
 
     console.log('');
-    success(`Limpieza parcial completada. ${totalDeleted} registros eliminados.`);
     if (errors.length > 0) {
-        warning(`${errors.length} errores encontrados`);
+        error(`Limpieza parcial FALLIDA. ${totalDeleted} registros eliminados, ${errors.length} errores.`);
+        for (const err of errors) {
+            console.log(`  ${colors.red}- ${err.table}: ${err.error}${colors.reset}`);
+        }
+    } else {
+        success(`Limpieza parcial completada. ${totalDeleted} registros eliminados.`);
     }
 }
 
@@ -525,6 +557,7 @@ async function runFullCleanup(tenantId, selectedTenant) {
     }
 
     const results = [];
+    let aborted = false;
     for (const tableConfig of tablesToDelete) {
         process.stdout.write(`  Eliminando ${tableConfig.name}... `);
         const result = await deleteFromTable(tableConfig.name, tenantId, null, false, tableConfig);
@@ -532,6 +565,14 @@ async function runFullCleanup(tenantId, selectedTenant) {
 
         if (result.error) {
             console.log(`${colors.red}ERROR: ${result.error}${colors.reset}`);
+            // Abortar en errores de FK — los deletes siguientes tambien fallaran
+            if (result.error.includes('foreign key constraint')) {
+                console.log('');
+                error('Abortando: error de foreign key indica tablas dependientes no eliminadas.');
+                error('Esto no deberia pasar. Reporta este error para agregar la tabla faltante.');
+                aborted = true;
+                break;
+            }
         } else if (result.skipped) {
             console.log(`${colors.dim}SKIP${colors.reset}`);
         } else {
@@ -544,13 +585,16 @@ async function runFullCleanup(tenantId, selectedTenant) {
     const errors = results.filter(r => r.error);
 
     console.log('');
-    success(`TENANT ELIMINADO COMPLETAMENTE. ${totalDeleted} registros eliminados.`);
-
     if (errors.length > 0) {
-        warning(`${errors.length} errores encontrados`);
+        error(`ELIMINACION FALLIDA. ${totalDeleted} registros eliminados, ${errors.length} errores.`);
         for (const err of errors) {
             console.log(`  ${colors.red}- ${err.table}: ${err.error}${colors.reset}`);
         }
+        if (aborted) {
+            error('La eliminacion fue abortada. El tenant NO fue eliminado completamente.');
+        }
+    } else {
+        success(`TENANT ELIMINADO COMPLETAMENTE. ${totalDeleted} registros eliminados.`);
     }
 }
 
@@ -762,6 +806,8 @@ Ejemplos:
         }
 
         let totalDeleted = 0;
+        const errors = [];
+        let aborted = false;
         for (const tableConfig of tablesToProcess) {
             const result = await deleteFromTable(
                 tableConfig.name,
@@ -773,6 +819,12 @@ Ejemplos:
 
             if (result.error) {
                 error(`${tableConfig.name}: ${result.error}`);
+                errors.push(result);
+                if (!dryRun && result.error.includes('foreign key constraint')) {
+                    error('Abortando: error de foreign key.');
+                    aborted = true;
+                    break;
+                }
             } else if (result.skipped) {
                 // Skip silently in CLI mode
             } else if (result.deleted > 0) {
@@ -786,7 +838,11 @@ Ejemplos:
         }
 
         console.log('');
-        if (dryRun) {
+        if (errors.length > 0) {
+            error(`Eliminacion FALLIDA. ${totalDeleted} registros eliminados, ${errors.length} errores.`);
+            if (aborted) error('Proceso abortado por error de foreign key.');
+            process.exit(1);
+        } else if (dryRun) {
             success(`DRY-RUN completado. Se eliminarian ${totalDeleted} registros.`);
         } else {
             success(`Eliminacion completada. ${totalDeleted} registros eliminados.`);
