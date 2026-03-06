@@ -1016,6 +1016,31 @@ app.post('/api/branches/sync-info', validateTenant, async (req, res) => {
     }
 });
 
+// POST /api/scale-disconnection-logs/close-orphans - Cerrar logs huérfanos de una sucursal
+// Usado cuando sabemos que la bascula esta conectada pero hay logs sin cerrar
+app.post('/api/scale-disconnection-logs/close-orphans', authenticateToken, async (req, res) => {
+    try {
+        const { branchId } = req.body;
+        if (!branchId) {
+            return res.status(400).json({ success: false, message: 'branchId requerido' });
+        }
+        const result = await pool.query(
+            `UPDATE scale_disconnection_logs
+             SET reconnected_at = NOW(),
+                 disconnection_status = 'Reconnected',
+                 duration_minutes = EXTRACT(EPOCH FROM (NOW() - disconnected_at)) / 60
+             WHERE branch_id = $1 AND reconnected_at IS NULL
+             RETURNING id`,
+            [branchId]
+        );
+        console.log(`[SCALE] Cerrados ${result.rows.length} log(s) huérfanos para branch ${branchId} (manual)`);
+        res.json({ success: true, closed: result.rows.length });
+    } catch (error) {
+        console.error('[SCALE] Error cerrando logs huérfanos:', error);
+        res.status(500).json({ success: false, message: 'Error cerrando logs' });
+    }
+});
+
 // ═══════════════════════════════════════════════════════════════
 // POST /api/telemetry - Registrar eventos de telemetría (app opens, scale config)
 // Idempotente: usa global_id para evitar duplicados
