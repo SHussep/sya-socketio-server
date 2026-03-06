@@ -422,6 +422,10 @@ let stats = {
 // Key: branchId (number), Value: { isEnabled, changedBy, changedAt }
 const guardianStatusByBranch = new Map();
 
+// In-memory store for last known scale status per branch
+// Key: branchId (number), Value: { status: 'connected'|'disconnected', updatedAt, message }
+const scaleStatusByBranch = new Map();
+
 // ═══════════════════════════════════════════════════════════════
 // INICIALIZAR RUTAS CON SOCKET.IO
 // ═══════════════════════════════════════════════════════════════
@@ -1016,6 +1020,20 @@ app.post('/api/branches/sync-info', validateTenant, async (req, res) => {
     }
 });
 
+// GET /api/branches/:branchId/scale-status - Estado actual de la báscula (en memoria, tiempo real)
+app.get('/api/branches/:branchId/scale-status', authenticateToken, (req, res) => {
+    const branchId = parseInt(req.params.branchId);
+    if (!branchId) {
+        return res.status(400).json({ success: false, message: 'branchId requerido' });
+    }
+    const status = scaleStatusByBranch.get(branchId);
+    if (!status) {
+        // No hay info en memoria → no se ha recibido ningun evento de bascula para esta sucursal
+        return res.json({ success: true, data: { status: 'unknown', branchId } });
+    }
+    res.json({ success: true, data: { ...status, branchId } });
+});
+
 // POST /api/scale-disconnection-logs/close-orphans - Cerrar logs huérfanos de una sucursal
 // Usado cuando sabemos que la bascula esta conectada pero hay logs sin cerrar
 app.post('/api/scale-disconnection-logs/close-orphans', authenticateToken, async (req, res) => {
@@ -1536,6 +1554,12 @@ io.on('connection', (socket) => {
         stats.totalEvents++;
         const roomName = `branch_${data.branchId}`;
         console.log(`[SCALE] Sucursal ${data.branchId}: Báscula desconectada`);
+        scaleStatusByBranch.set(Number(data.branchId), {
+            status: 'disconnected',
+            disconnectedAt: data.disconnectedAt || new Date().toISOString(),
+            message: data.message || '',
+            updatedAt: new Date().toISOString(),
+        });
         io.to(roomName).emit('scale_disconnected', { ...data, receivedAt: new Date().toISOString() });
         try {
             await notificationHelper.notifyScaleDisconnection(data.branchId, { message: data.message });
@@ -1548,6 +1572,12 @@ io.on('connection', (socket) => {
         stats.totalEvents++;
         const roomName = `branch_${data.branchId}`;
         console.log(`[SCALE] Sucursal ${data.branchId}: Báscula conectada`);
+        scaleStatusByBranch.set(Number(data.branchId), {
+            status: 'connected',
+            connectedAt: data.connectedAt || new Date().toISOString(),
+            message: data.message || '',
+            updatedAt: new Date().toISOString(),
+        });
         io.to(roomName).emit('scale_connected', { ...data, receivedAt: new Date().toISOString() });
 
         // Cerrar logs de desconexión huérfanos para esta sucursal
