@@ -1202,5 +1202,55 @@ module.exports = function(pool, io) {
         }
     });
 
+    // ─────────────────────────────────────────────────────────
+    // POST /api/superadmin/broadcast
+    // Enviar anuncio global a TODOS los POS conectados via Socket.IO
+    // ─────────────────────────────────────────────────────────
+    router.post('/broadcast', (req, res) => {
+        try {
+            const { title, htmlContent, contentUrl, type } = req.body;
+
+            if (!title) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'El campo "title" es requerido'
+                });
+            }
+
+            if (!htmlContent && !contentUrl) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Se requiere "htmlContent" o "contentUrl"'
+                });
+            }
+
+            const announcement = {
+                title,
+                htmlContent: htmlContent || null,
+                contentUrl: contentUrl || null,
+                type: type || 'info',
+                sentAt: new Date().toISOString()
+            };
+
+            io.emit('system:announcement', announcement);
+
+            console.log(`[SuperAdmin Broadcast] 📢 Anuncio enviado: "${title}" a todos los clientes conectados`);
+
+            res.json({
+                success: true,
+                message: 'Anuncio enviado a todos los clientes conectados',
+                data: announcement
+            });
+
+        } catch (error) {
+            console.error('[SuperAdmin Broadcast] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al enviar anuncio',
+                error: undefined
+            });
+        }
+    });
+
     return router;
 };
