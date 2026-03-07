@@ -236,6 +236,31 @@ module.exports = (pool, io) => {
                 return res.status(400).json({ success: false, message: 'employee_id o employee_global_id requerido' });
             }
 
+            // Teleportation detection: reject jumps > 500m in < 10 seconds
+            try {
+                const lastPos = await client.query(
+                    `SELECT latitude, longitude, received_at FROM repartidor_locations
+                     WHERE employee_id = $1 AND tenant_id = $2
+                     ORDER BY received_at DESC LIMIT 1`,
+                    [empId, tenantId]
+                );
+                if (lastPos.rows.length > 0) {
+                    const prev = lastPos.rows[0];
+                    const dist = haversineDistance(latitude, longitude, prev.latitude, prev.longitude);
+                    const timeDiffSec = (Date.now() - new Date(prev.received_at).getTime()) / 1000;
+                    if (dist > 500 && timeDiffSec < 10) {
+                        console.warn(`[GPS/location] ⚠️ Teleport rejected: employee=${empId} jumped ${Math.round(dist)}m in ${timeDiffSec.toFixed(1)}s`);
+                        return res.status(400).json({
+                            success: false,
+                            message: `Salto GPS anomalo: ${Math.round(dist)}m en ${timeDiffSec.toFixed(0)}s`
+                        });
+                    }
+                }
+            } catch (teleportErr) {
+                // Non-blocking — if check fails, allow the location
+                console.error(`[GPS/location] Teleport check error: ${teleportErr.message}`);
+            }
+
             const result = await client.query(
                 `INSERT INTO repartidor_locations
                     (tenant_id, branch_id, employee_id, shift_id, latitude, longitude, accuracy, speed, heading, recorded_at, device_id)
