@@ -1204,53 +1204,174 @@ module.exports = function(pool, io) {
 
     // ─────────────────────────────────────────────────────────
     // POST /api/superadmin/broadcast
-    // Enviar anuncio global a TODOS los POS conectados via Socket.IO
+    // Enviar o programar anuncio con filtro por tiers
     // ─────────────────────────────────────────────────────────
-    router.post('/broadcast', (req, res) => {
+    router.post('/broadcast', async (req, res) => {
         try {
-            const { title, htmlContent, contentUrl, type } = req.body;
+            const { title, htmlContent, contentUrl, type, targetTiers, scheduledAt, timezone } = req.body;
 
             if (!title) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'El campo "title" es requerido'
-                });
+                return res.status(400).json({ success: false, message: 'El campo "title" es requerido' });
+            }
+            if (!htmlContent && !contentUrl) {
+                return res.status(400).json({ success: false, message: 'Se requiere "htmlContent" o "contentUrl"' });
             }
 
-            if (!htmlContent && !contentUrl) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Se requiere "htmlContent" o "contentUrl"'
-                });
-            }
+            const announcementType = type || 'info';
+            const tiers = targetTiers || [];
+            const tz = timezone || 'America/Mexico_City';
+            const now = new Date().toISOString();
+
+            // Determine if scheduled for later
+            const isScheduled = scheduledAt && new Date(scheduledAt) > new Date();
+
+            // Save to database
+            const result = await pool.query(
+                `INSERT INTO announcements (title, html_content, content_url, type, target_tiers, scheduled_at, timezone, status, created_at, sent_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9)
+                 RETURNING *`,
+                [
+                    title,
+                    htmlContent || null,
+                    contentUrl || null,
+                    announcementType,
+                    tiers,
+                    isScheduled ? scheduledAt : null,
+                    tz,
+                    isScheduled ? 'pending' : 'sent',
+                    isScheduled ? null : now
+                ]
+            );
+
+            const saved = result.rows[0];
 
             const announcement = {
+                id: saved.id,
                 title,
                 htmlContent: htmlContent || null,
                 contentUrl: contentUrl || null,
-                type: type || 'info',
-                sentAt: new Date().toISOString()
+                type: announcementType,
+                targetTiers: tiers,
+                sentAt: now
             };
 
-            io.emit('system:announcement', announcement);
+            if (!isScheduled) {
+                // Emit immediately
+                io.emit('system:announcement', announcement);
+                console.log(`[Broadcast] 📢 Anuncio enviado: "${title}" | Tiers: ${tiers.length ? tiers.join(',') : 'todos'}`);
 
-            console.log(`[SuperAdmin Broadcast] 📢 Anuncio enviado: "${title}" a todos los clientes conectados`);
+                res.json({
+                    success: true,
+                    message: 'Anuncio enviado a todos los clientes conectados',
+                    data: announcement
+                });
+            } else {
+                console.log(`[Broadcast] ⏰ Anuncio programado: "${title}" para ${scheduledAt} (${tz})`);
+                res.json({
+                    success: true,
+                    message: `Anuncio programado para ${scheduledAt}`,
+                    data: { ...announcement, scheduledAt, timezone: tz, status: 'pending' }
+                });
+            }
+
+        } catch (error) {
+            console.error('[Broadcast] Error:', error);
+            res.status(500).json({ success: false, message: 'Error al enviar anuncio' });
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
+    // GET /api/superadmin/announcements
+    // Historial de anuncios enviados y pendientes
+    // ─────────────────────────────────────────────────────────
+    router.get('/announcements', async (req, res) => {
+        try {
+            const result = await pool.query(
+                `SELECT id, title, type, target_tiers, scheduled_at, timezone, status, created_at, sent_at
+                 FROM announcements
+                 ORDER BY created_at DESC
+                 LIMIT 50`
+            );
 
             res.json({
                 success: true,
-                message: 'Anuncio enviado a todos los clientes conectados',
-                data: announcement
+                data: result.rows.map(r => ({
+                    id: r.id,
+                    title: r.title,
+                    type: r.type,
+                    targetTiers: r.target_tiers || [],
+                    scheduledAt: r.scheduled_at,
+                    timezone: r.timezone,
+                    status: r.status,
+                    createdAt: r.created_at,
+                    sentAt: r.sent_at
+                }))
             });
-
         } catch (error) {
-            console.error('[SuperAdmin Broadcast] Error:', error);
-            res.status(500).json({
-                success: false,
-                message: 'Error al enviar anuncio',
-                error: undefined
-            });
+            console.error('[Announcements] Error:', error);
+            res.status(500).json({ success: false, message: 'Error al obtener anuncios' });
         }
     });
+
+    // ─────────────────────────────────────────────────────────
+    // DELETE /api/superadmin/announcements/:id
+    // Cancelar anuncio pendiente
+    // ─────────────────────────────────────────────────────────
+    router.delete('/announcements/:id', async (req, res) => {
+        try {
+            const { id } = req.params;
+            const result = await pool.query(
+                `DELETE FROM announcements WHERE id = $1 AND status = 'pending' RETURNING id`,
+                [id]
+            );
+
+            if (result.rows.length === 0) {
+                return res.status(404).json({ success: false, message: 'Anuncio no encontrado o ya enviado' });
+            }
+
+            console.log(`[Broadcast] 🗑️ Anuncio pendiente #${id} cancelado`);
+            res.json({ success: true, message: 'Anuncio cancelado' });
+        } catch (error) {
+            console.error('[Announcements] Error:', error);
+            res.status(500).json({ success: false, message: 'Error al cancelar anuncio' });
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
+    // Scheduler: Check for pending announcements every 30 seconds
+    // ─────────────────────────────────────────────────────────
+    setInterval(async () => {
+        try {
+            const result = await pool.query(
+                `SELECT * FROM announcements
+                 WHERE status = 'pending' AND scheduled_at <= NOW()
+                 ORDER BY scheduled_at ASC`
+            );
+
+            for (const row of result.rows) {
+                const announcement = {
+                    id: row.id,
+                    title: row.title,
+                    htmlContent: row.html_content,
+                    contentUrl: row.content_url,
+                    type: row.type,
+                    targetTiers: row.target_tiers || [],
+                    sentAt: new Date().toISOString()
+                };
+
+                io.emit('system:announcement', announcement);
+
+                await pool.query(
+                    `UPDATE announcements SET status = 'sent', sent_at = NOW() WHERE id = $1`,
+                    [row.id]
+                );
+
+                console.log(`[Broadcast Scheduler] 📢 Anuncio programado enviado: "${row.title}"`);
+            }
+        } catch (error) {
+            // Silent fail - scheduler will retry on next tick
+        }
+    }, 30 * 1000);
 
     return router;
 };
