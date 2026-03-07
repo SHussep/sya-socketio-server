@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background: #0a1628;
+            font-family: 'Inter', 'Segoe UI', sans-serif;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+            overflow-y: auto;
+        }
+
+        .container {
+            max-width: 750px;
+            width: 100%;
+        }
+
+        /* Header con gradiente */
+        .header {
+            background: linear-gradient(135deg, #0d2137 0%, #1a3a5c 50%, #0d2137 100%);
+            border-radius: 20px 20px 0 0;
+            padding: 40px 40px 30px;
+            text-align: center;
+            border: 1px solid rgba(79, 195, 247, 0.15);
+            border-bottom: none;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .header::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle at 30% 50%, rgba(79, 195, 247, 0.08) 0%, transparent 50%);
+        }
+
+        .header-icon {
+            font-size: 56px;
+            margin-bottom: 12px;
+            display: block;
+        }
+
+        .header h1 {
+            color: #ffffff;
+            font-size: 26px;
+            font-weight: 800;
+            margin-bottom: 6px;
+            position: relative;
+        }
+
+        .header h1 span {
+            color: #4fc3f7;
+        }
+
+        .subtitle {
+            color: #78909c;
+            font-size: 14px;
+            position: relative;
+        }
+
+        /* Cuerpo */
+        .body {
+            background: #0f1d30;
+            padding: 32px 40px;
+            border-left: 1px solid rgba(79, 195, 247, 0.15);
+            border-right: 1px solid rgba(79, 195, 247, 0.15);
+        }
+
+        .highlight-box {
+            background: linear-gradient(135deg, rgba(79, 195, 247, 0.1), rgba(79, 195, 247, 0.03));
+            border: 1px solid rgba(79, 195, 247, 0.2);
+            border-radius: 12px;
+            padding: 20px 24px;
+            margin-bottom: 28px;
+            text-align: center;
+        }
+
+        .highlight-box p {
+            color: #b0bec5;
+            font-size: 15px;
+            line-height: 1.6;
+        }
+
+        .highlight-box strong {
+            color: #4fc3f7;
+        }
+
+        .section-title {
+            color: #4fc3f7;
+            font-size: 13px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 18px;
+        }
+
+        /* Feature grid */
+        .features {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 14px;
+            margin-bottom: 28px;
+        }
+
+        .feature {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 12px;
+            padding: 18px;
+            transition: all 0.2s;
+        }
+
+        .feature:hover {
+            border-color: rgba(79, 195, 247, 0.3);
+            background: rgba(79, 195, 247, 0.05);
+        }
+
+        .feature-icon {
+            font-size: 28px;
+            margin-bottom: 8px;
+            display: block;
+        }
+
+        .feature-name {
+            color: #e0e0e0;
+            font-size: 14px;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+
+        .feature-desc {
+            color: #78909c;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+
+        /* CTA */
+        .cta {
+            text-align: center;
+            padding: 24px;
+            background: #0f1d30;
+            border-left: 1px solid rgba(79, 195, 247, 0.15);
+            border-right: 1px solid rgba(79, 195, 247, 0.15);
+        }
+
+        .cta-badge {
+            display: inline-block;
+            background: linear-gradient(135deg, #4fc3f7, #29b6f6);
+            color: #0a1628;
+            padding: 10px 32px;
+            border-radius: 30px;
+            font-size: 14px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+        }
+
+        .cta-text {
+            color: #546e7a;
+            font-size: 12px;
+            margin-top: 10px;
+        }
+
+        /* Footer */
+        .footer {
+            background: #081220;
+            border-radius: 0 0 20px 20px;
+            padding: 18px 40px;
+            text-align: center;
+            border: 1px solid rgba(79, 195, 247, 0.15);
+            border-top: 1px solid rgba(79, 195, 247, 0.08);
+        }
+
+        .footer p {
+            color: #37474f;
+            font-size: 11px;
+            letter-spacing: 1px;
+        }
+
+        .footer span {
+            color: #4fc3f7;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <span class="header-icon">&#x1F680;</span>
+            <h1>Tu negocio en la <span>palma de tu mano</span></h1>
+            <p class="subtitle">SYA Tortillerias - App Movil</p>
+        </div>
+
+        <div class="body">
+            <div class="highlight-box">
+                <p>Ahora puedes <strong>ver tus ventas, recibir alertas y controlar tu negocio</strong> desde tu celular, sin necesidad de estar en la tortilleria.</p>
+            </div>
+
+            <p class="section-title">&#x2728; Que puedes hacer</p>
+
+            <div class="features">
+                <div class="feature">
+                    <span class="feature-icon">&#x1F4CA;</span>
+                    <div class="feature-name">Ventas en vivo</div>
+                    <div class="feature-desc">Mira cuanto se ha vendido hoy en tiempo real</div>
+                </div>
+                <div class="feature">
+                    <span class="feature-icon">&#x1F6E1;&#xFE0F;</span>
+                    <div class="feature-name">Guardian Anti-fraude</div>
+                    <div class="feature-desc">Alertas al instante si alguien pesa y no cobra</div>
+                </div>
+                <div class="feature">
+                    <span class="feature-icon">&#x1F4B5;</span>
+                    <div class="feature-name">Cortes de Caja</div>
+                    <div class="feature-desc">Revisa cortes y faltantes desde cualquier lugar</div>
+                </div>
+                <div class="feature">
+                    <span class="feature-icon">&#x1F69A;</span>
+                    <div class="feature-name">Repartidores</div>
+                    <div class="feature-desc">Asigna y liquida rutas desde tu celular</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="cta">
+            <div class="cta-badge">Disponible para iOS y Android</div>
+            <p class="cta-text">Pide tus datos de acceso a tu proveedor SYA</p>
+        </div>
+
+        <div class="footer">
+            <p><span>SYA TORTILLERIAS</span> &bull; Sistema Punto de Venta</p>
+        </div>
+    </div>
+</body>
+</html>
