@@ -1037,6 +1037,15 @@ app.get('/api/branches/:branchId/scale-status', authenticateToken, (req, res) =>
     res.json({ success: true, data: { ...status, branchId } });
 });
 
+// GET /api/debug/scale-status-map - Ver contenido completo del Map en memoria (debug)
+app.get('/api/debug/scale-status-map', authenticateToken, (req, res) => {
+    const allStatuses = {};
+    for (const [branchId, status] of scaleStatusByBranch) {
+        allStatuses[branchId] = status;
+    }
+    res.json({ success: true, data: allStatuses, totalBranches: scaleStatusByBranch.size });
+});
+
 // POST /api/scale-disconnection-logs/close-orphans - Cerrar logs huérfanos de una sucursal
 // Usado cuando sabemos que la bascula esta conectada pero hay logs sin cerrar
 app.post('/api/scale-disconnection-logs/close-orphans', authenticateToken, async (req, res) => {
@@ -1556,7 +1565,7 @@ io.on('connection', (socket) => {
     socket.on('scale_disconnected', async (data) => {
         stats.totalEvents++;
         const roomName = `branch_${data.branchId}`;
-        console.log(`[SCALE] Sucursal ${data.branchId}: Báscula desconectada`);
+        console.log(`[SCALE] Sucursal ${data.branchId}: Báscula desconectada (raw data keys: ${Object.keys(data).join(', ')}, branchId type: ${typeof data.branchId})`);
         scaleStatusByBranch.set(Number(data.branchId), {
             status: 'disconnected',
             disconnectedAt: data.disconnectedAt || new Date().toISOString(),
@@ -1574,7 +1583,7 @@ io.on('connection', (socket) => {
     socket.on('scale_connected', async (data) => {
         stats.totalEvents++;
         const roomName = `branch_${data.branchId}`;
-        console.log(`[SCALE] Sucursal ${data.branchId}: Báscula conectada`);
+        console.log(`[SCALE] Sucursal ${data.branchId}: Báscula conectada (raw data keys: ${Object.keys(data).join(', ')}, branchId type: ${typeof data.branchId})`);
         scaleStatusByBranch.set(Number(data.branchId), {
             status: 'connected',
             connectedAt: data.connectedAt || new Date().toISOString(),
