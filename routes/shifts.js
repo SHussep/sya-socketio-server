@@ -34,19 +34,22 @@ module.exports = (pool, io) => {
             const { tenantId, employeeId, branchId } = req.user;
             const { initialAmount } = req.body;
 
-            // Verificar si hay un turno abierto para este empleado
-            const existingShift = await pool.query(
-                `SELECT id FROM shifts
-                 WHERE tenant_id = $1 AND branch_id = $2 AND employee_id = $3 AND is_cash_cut_open = true`,
-                [tenantId, branchId, employeeId]
+            // Verificar si hay un turno abierto para este empleado en CUALQUIER sucursal
+            const existingShifts = await pool.query(
+                `SELECT id, branch_id, start_time FROM shifts
+                 WHERE tenant_id = $1 AND employee_id = $2 AND is_cash_cut_open = true`,
+                [tenantId, employeeId]
             );
 
-            if (existingShift.rows.length > 0) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Ya tienes un turno abierto. Debes cerrar el turno actual antes de abrir uno nuevo.',
-                    existingShiftId: existingShift.rows[0].id
-                });
+            if (existingShifts.rows.length > 0) {
+                // Auto-cerrar todos los turnos previos antes de abrir uno nuevo
+                const autoCloseResult = await pool.query(
+                    `UPDATE shifts SET end_time = CURRENT_TIMESTAMP, is_cash_cut_open = false, updated_at = NOW()
+                     WHERE tenant_id = $1 AND employee_id = $2 AND is_cash_cut_open = true
+                     RETURNING id, branch_id`,
+                    [tenantId, employeeId]
+                );
+                console.log(`[Shifts] 🧹 Auto-cerrados ${autoCloseResult.rows.length} turnos previos del empleado ${employeeId}: ${autoCloseResult.rows.map(r => `ID ${r.id} (branch ${r.branch_id})`).join(', ')}`);
             }
 
             // Crear nuevo turno
@@ -162,6 +165,21 @@ module.exports = (pool, io) => {
 
             const shift = result.rows[0];
             console.log(`[Shifts] 🔒 Turno cerrado: ID ${shift.id} - Empleado ${employeeId}`);
+
+            // 🧹 Limpiar otros turnos huérfanos del mismo empleado
+            try {
+                const orphanCleanup = await pool.query(
+                    `UPDATE shifts SET end_time = CURRENT_TIMESTAMP, is_cash_cut_open = false, updated_at = NOW()
+                     WHERE tenant_id = $1 AND employee_id = $2 AND is_cash_cut_open = true AND id != $3
+                     RETURNING id, branch_id`,
+                    [tenantId, employeeId, shiftId]
+                );
+                if (orphanCleanup.rows.length > 0) {
+                    console.log(`[Shifts] 🧹 Limpiados ${orphanCleanup.rows.length} turnos huérfanos: ${orphanCleanup.rows.map(r => `ID ${r.id}`).join(', ')}`);
+                }
+            } catch (cleanupErr) {
+                console.warn(`[Shifts] ⚠️ Error limpiando huérfanos: ${cleanupErr.message}`);
+            }
 
             // 🔌 EMIT Socket.IO para actualizar app móvil en tiempo real
             if (io) {
@@ -931,28 +949,24 @@ module.exports = (pool, io) => {
                 });
             }
 
-            // ⚠️ VALIDACIÓN: Verificar que no haya un turno activo para este empleado
-            const activeShiftCheck = await pool.query(
-                `SELECT id, global_id, terminal_id, start_time FROM shifts
-                 WHERE tenant_id = $1 AND branch_id = $2 AND employee_id = $3 AND is_cash_cut_open = true
-                 AND local_shift_id != $4`,
-                [tenantId, branchId, employeeId, localShiftId || 0]
+            // 🧹 Auto-cerrar TODOS los turnos previos del empleado en CUALQUIER sucursal
+            // (excepto el que estamos sincronizando, identificado por local_shift_id)
+            const staleShifts = await pool.query(
+                `SELECT id, branch_id, local_shift_id, start_time FROM shifts
+                 WHERE tenant_id = $1 AND employee_id = $2 AND is_cash_cut_open = true
+                 AND (local_shift_id IS NULL OR local_shift_id != $3)`,
+                [tenantId, employeeId, localShiftId || 0]
             );
 
-            if (activeShiftCheck.rows.length > 0) {
-                const existing = activeShiftCheck.rows[0];
-                console.log(`[Sync/Shifts] ⚠️ Turno activo encontrado en otro dispositivo: ID ${existing.id} (Terminal: ${existing.terminal_id})`);
-
-                return res.status(409).json({
-                    success: false,
-                    message: 'El empleado ya tiene un turno abierto en otro dispositivo. Ciérrelo primero.',
-                    existingShift: {
-                        id: existing.id,
-                        global_id: existing.global_id,
-                        terminal_id: existing.terminal_id,
-                        start_time: existing.start_time
-                    }
-                });
+            if (staleShifts.rows.length > 0) {
+                const autoCloseResult = await pool.query(
+                    `UPDATE shifts SET end_time = CURRENT_TIMESTAMP, is_cash_cut_open = false, updated_at = NOW()
+                     WHERE tenant_id = $1 AND employee_id = $2 AND is_cash_cut_open = true
+                     AND (local_shift_id IS NULL OR local_shift_id != $3)
+                     RETURNING id, branch_id`,
+                    [tenantId, employeeId, localShiftId || 0]
+                );
+                console.log(`[Sync/Shifts] 🧹 Auto-cerrados ${autoCloseResult.rows.length} turnos huérfanos: ${autoCloseResult.rows.map(r => `ID ${r.id} (branch ${r.branch_id})`).join(', ')}`);
             }
 
             // Buscar nombre del empleado para la notificación
@@ -984,51 +998,7 @@ module.exports = (pool, io) => {
                 console.warn('[Sync/Shifts] No se pudo obtener nombre de la sucursal:', e.message);
             }
 
-            // PASO 1: Verificar si hay un turno abierto con DIFERENTE local_shift_id
-            // Si existe, significa que fue cerrado offline y necesita auto-cerrarse en PostgreSQL
-            const existingShift = await pool.query(
-                `SELECT id, local_shift_id, start_time FROM shifts
-                 WHERE employee_id = $1 AND end_time IS NULL AND local_shift_id IS NOT NULL AND local_shift_id != $2`,
-                [employeeId, localShiftId]
-            );
-
-            if (existingShift.rows.length > 0) {
-                const oldShift = existingShift.rows[0];
-                console.log(`[Sync/Shifts] 🔄 Detectado cierre offline - Auto-cerrando shift ${oldShift.id} (localShiftId: ${oldShift.local_shift_id})`);
-
-                // Auto-cerrar el turno anterior (fue cerrado en Desktop offline)
-                const autoCloseResult = await pool.query(
-                    `UPDATE shifts SET end_time = CURRENT_TIMESTAMP, is_cash_cut_open = false, updated_at = NOW()
-                     WHERE id = $1
-                     RETURNING id, global_id, employee_id, branch_id, start_time, end_time`,
-                    [oldShift.id]
-                );
-
-                console.log(`[Sync/Shifts] ✅ Shift ${oldShift.id} auto-cerrado por sincronización offline`);
-
-                // 📢 NOTIFICAR VIA SOCKET.IO: Turno auto-cerrado
-                if (io && autoCloseResult.rows.length > 0) {
-                    const closedShift = autoCloseResult.rows[0];
-                    const roomName = `branch_${branchId}`;
-                    console.log(`[Sync/Shifts] 📡 Emitiendo 'shift_auto_closed' a ${roomName}`);
-                    io.to(roomName).emit('shift_auto_closed', {
-                        shiftId: closedShift.id,
-                        globalId: closedShift.global_id,
-                        employeeId: closedShift.employee_id,
-                        employeeName: employeeName,
-                        branchId: branchId,
-                        branchName: branchName,
-                        startTime: closedShift.start_time,
-                        endTime: closedShift.end_time,
-                        reason: 'new_shift_opened_offline',
-                        newShiftLocalId: localShiftId,
-                        closedBy: 'system',
-                        message: `Turno de ${employeeName} cerrado automáticamente porque se abrió un nuevo turno desde otro dispositivo`
-                    });
-                }
-            }
-
-            // PASO 2: Crear nuevo turno con el local_shift_id
+            // Crear nuevo turno con el local_shift_id (turnos huérfanos ya fueron cerrados arriba)
             const result = await pool.query(
                 `INSERT INTO shifts (tenant_id, branch_id, employee_id, local_shift_id, start_time, initial_amount, transaction_counter, is_cash_cut_open)
                  VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, $5, 0, true)
@@ -1431,6 +1401,21 @@ module.exports = (pool, io) => {
                 });
             }
 
+            // 🧹 Limpiar otros turnos huérfanos del mismo empleado
+            try {
+                const orphanCleanup = await pool.query(
+                    `UPDATE shifts SET end_time = CURRENT_TIMESTAMP, is_cash_cut_open = false, updated_at = NOW()
+                     WHERE tenant_id = $1 AND employee_id = $2 AND is_cash_cut_open = true AND global_id != $3
+                     RETURNING id, branch_id`,
+                    [tenant_id, closedShift.employee_id, global_id]
+                );
+                if (orphanCleanup.rows.length > 0) {
+                    console.log(`[Shifts/SyncClose] 🧹 Limpiados ${orphanCleanup.rows.length} turnos huérfanos adicionales: ${orphanCleanup.rows.map(r => `ID ${r.id}`).join(', ')}`);
+                }
+            } catch (cleanupErr) {
+                console.warn(`[Shifts/SyncClose] ⚠️ Error limpiando turnos huérfanos (no crítico): ${cleanupErr.message}`);
+            }
+
             res.json({
                 success: true,
                 data: closedShift,
@@ -1647,10 +1632,25 @@ module.exports = (pool, io) => {
                 });
             }
 
+            const closedShift = result.rows[0];
             console.log(`[Shifts/Close] ✅ Turno ${id} cerrado exitosamente`);
 
+            // 🧹 Limpiar otros turnos huérfanos del mismo empleado
+            try {
+                const orphanCleanup = await pool.query(
+                    `UPDATE shifts SET end_time = CURRENT_TIMESTAMP, is_cash_cut_open = false, updated_at = NOW()
+                     WHERE tenant_id = $1 AND employee_id = $2 AND is_cash_cut_open = true AND id != $3
+                     RETURNING id, branch_id`,
+                    [tenantId, closedShift.employee_id, id]
+                );
+                if (orphanCleanup.rows.length > 0) {
+                    console.log(`[Shifts/Close] 🧹 Limpiados ${orphanCleanup.rows.length} turnos huérfanos: ${orphanCleanup.rows.map(r => `ID ${r.id}`).join(', ')}`);
+                }
+            } catch (cleanupErr) {
+                console.warn(`[Shifts/Close] ⚠️ Error limpiando huérfanos: ${cleanupErr.message}`);
+            }
+
             // 🔌 EMIT Socket.IO para actualizar app móvil en tiempo real
-            const closedShift = result.rows[0];
             if (io && closedShift.branch_id) {
                 const roomName = `branch_${closedShift.branch_id}`;
                 console.log(`[Shifts/Close] 📡 Emitiendo 'shift_ended' a ${roomName}`);
