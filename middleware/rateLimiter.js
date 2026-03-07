@@ -7,6 +7,7 @@
 // En produccion con multiples instancias, usar Redis
 const loginAttempts = new Map();
 const syncAttempts = new Map();
+const superadminAttempts = new Map();
 
 // Configuracion
 const LOGIN_CONFIG = {
@@ -19,6 +20,12 @@ const SYNC_CONFIG = {
     maxAttempts: 100,
     windowMs: 60 * 1000,  // 1 minuto
     lockoutMs: 5 * 60 * 1000,  // 5 minutos de bloqueo
+};
+
+const SUPERADMIN_CONFIG = {
+    maxAttempts: 3,
+    windowMs: 15 * 60 * 1000,   // 15 minutos
+    lockoutMs: 60 * 60 * 1000,  // 1 hora de bloqueo
 };
 
 /**
@@ -40,6 +47,14 @@ function cleanupExpiredRecords() {
             syncAttempts.delete(key);
         } else if (now - record.firstAttempt > SYNC_CONFIG.windowMs * 2) {
             syncAttempts.delete(key);
+        }
+    }
+
+    for (const [key, record] of superadminAttempts.entries()) {
+        if (record.lockedUntil && record.lockedUntil < now) {
+            superadminAttempts.delete(key);
+        } else if (now - record.firstAttempt > SUPERADMIN_CONFIG.windowMs * 2) {
+            superadminAttempts.delete(key);
         }
     }
 }
@@ -148,6 +163,54 @@ function syncRateLimiter(req, res, next) {
 }
 
 /**
+ * Rate limiter para endpoints de superadmin
+ * Limita por IP - muy agresivo: 3 intentos, 1 hora de bloqueo
+ */
+function superadminRateLimiter(req, res, next) {
+    const ip = req.ip || req.connection?.remoteAddress || 'unknown';
+    const now = Date.now();
+
+    let record = superadminAttempts.get(ip);
+
+    if (!record) {
+        record = { count: 0, firstAttempt: now };
+    }
+
+    // Verificar si esta bloqueado
+    if (record.lockedUntil && record.lockedUntil > now) {
+        const remainingSeconds = Math.ceil((record.lockedUntil - now) / 1000);
+        console.warn(`[RateLimit] SuperAdmin IP bloqueada: ${ip}, remaining: ${remainingSeconds}s`);
+        return res.status(429).json({
+            success: false,
+            message: `Demasiados intentos fallidos. Bloqueado por ${Math.ceil(remainingSeconds / 60)} minutos.`,
+            retryAfter: remainingSeconds
+        });
+    }
+
+    // Resetear ventana si expiro
+    if (now - record.firstAttempt > SUPERADMIN_CONFIG.windowMs) {
+        record = { count: 0, firstAttempt: now };
+    }
+
+    superadminAttempts.set(ip, record);
+
+    // Guardar funcion para registrar intento fallido (se llama desde el middleware de auth)
+    req.registerFailedSuperadminAttempt = () => {
+        record.count++;
+        if (record.count >= SUPERADMIN_CONFIG.maxAttempts) {
+            record.lockedUntil = now + SUPERADMIN_CONFIG.lockoutMs;
+            console.warn(`[RateLimit] SuperAdmin IP bloqueada por exceso de intentos: ${ip}`);
+        }
+        superadminAttempts.set(ip, record);
+    };
+
+    // Limpiar en auth exitoso
+    req.clearSuperadminAttempts = () => superadminAttempts.delete(ip);
+
+    next();
+}
+
+/**
  * Limpia intentos de login para una IP especifica
  * Llamar despues de un login exitoso
  */
@@ -168,6 +231,7 @@ function getRateLimitStats() {
 module.exports = {
     loginRateLimiter,
     syncRateLimiter,
+    superadminRateLimiter,
     clearLoginAttempts,
     getRateLimitStats
 };

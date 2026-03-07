@@ -5,6 +5,7 @@
 
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
+const { superadminRateLimiter } = require('../middleware/rateLimiter');
 
 // PIN hasheado (SHA256) - OBLIGATORIO via variable de entorno
 const SUPER_ADMIN_PIN_HASH = process.env.SUPER_ADMIN_PIN_HASH;
@@ -24,6 +25,7 @@ function authenticateSuperAdmin(req, res, next) {
     const authHeader = req.headers['x-admin-pin'];
 
     if (!authHeader) {
+        // No registrar como intento fallido si no envio PIN (puede ser un scan aleatorio)
         return res.status(401).json({
             success: false,
             message: 'PIN de administrador requerido'
@@ -33,10 +35,21 @@ function authenticateSuperAdmin(req, res, next) {
     const pinHash = crypto.createHash('sha256').update(authHeader).digest('hex');
 
     if (!crypto.timingSafeEqual(Buffer.from(pinHash), Buffer.from(SUPER_ADMIN_PIN_HASH))) {
+        // Registrar intento fallido para rate limiting
+        if (req.registerFailedSuperadminAttempt) {
+            req.registerFailedSuperadminAttempt();
+        }
+        const ip = req.ip || req.connection?.remoteAddress || 'unknown';
+        console.warn(`[Security] PIN incorrecto desde IP: ${ip}`);
         return res.status(403).json({
             success: false,
             message: 'PIN incorrecto'
         });
+    }
+
+    // PIN correcto - limpiar intentos fallidos
+    if (req.clearSuperadminAttempts) {
+        req.clearSuperadminAttempts();
     }
 
     next();
@@ -44,6 +57,9 @@ function authenticateSuperAdmin(req, res, next) {
 
 module.exports = function(pool, io) {
     const router = require('express').Router();
+
+    // Aplicar rate limiting ANTES de autenticación (bloquea IPs abusivas)
+    router.use(superadminRateLimiter);
 
     // Aplicar autenticación a todas las rutas
     router.use(authenticateSuperAdmin);
