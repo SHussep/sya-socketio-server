@@ -41,6 +41,14 @@ module.exports = (pool, io) => {
     // Hysteresis: exit requires distance > radius * EXIT_MULTIPLIER to prevent GPS jitter toggling
     const EXIT_HYSTERESIS_MULTIPLIER = 1.20; // 20% buffer beyond radius to trigger exit
 
+    // Format distance: meters when < 1000m, km when >= 1000m
+    function formatDistance(meters) {
+        if (meters >= 1000) {
+            return `${(meters / 1000).toFixed(1)}km`;
+        }
+        return `${Math.round(meters)}m`;
+    }
+
     // Haversine distance in meters between two lat/lng points
     function haversineDistance(lat1, lon1, lat2, lon2) {
         const R = 6371000;
@@ -126,7 +134,7 @@ module.exports = (pool, io) => {
                         timestamp: new Date().toISOString()
                     });
 
-                    console.log(`[GPS/geofence] ${isInside ? '🟢 ENTER' : '🔴 EXIT'}: ${empName} → "${zone.name}" (${Math.round(distance)}m, radius=${zone.radius_meters}m)`);
+                    console.log(`[GPS/geofence] ${isInside ? '🟢 ENTER' : '🔴 EXIT'}: ${empName} → "${zone.name}" (${formatDistance(distance)}, radio=${formatDistance(zone.radius_meters)})`);
 
                     // FCM push notification to admins
                     if (notifyGeofenceEvent) {
@@ -147,7 +155,7 @@ module.exports = (pool, io) => {
                         const action = isInside ? 'Entraste a' : 'Saliste de';
                         sendNotificationToEmployee(empGlobalId, {
                             title: `${emoji} ${zone.name}`,
-                            body: `${action} la zona "${zone.name}" (${Math.round(distance)}m)`,
+                            body: `${action} la zona "${zone.name}" (${formatDistance(distance)})`,
                             data: {
                                 type: 'geofence_event_self',
                                 eventType,
@@ -204,6 +212,14 @@ module.exports = (pool, io) => {
                 return res.status(400).json({
                     success: false,
                     message: 'branch_id, latitude, longitude son requeridos'
+                });
+            }
+
+            // Validate speed: cap at 50 m/s (~180 km/h) — reject GPS anomalies
+            if (speed !== undefined && speed !== null && (speed < 0 || speed > 50)) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Velocidad fuera de rango: ${speed} m/s (max 50 m/s)`
                 });
             }
 

@@ -1246,9 +1246,10 @@ async function notifyGeofenceEvent(tenantId, branchId, { employeeId, employeeNam
         const emoji = isEnter ? '🟢' : '🔴';
         const action = isEnter ? 'entró a' : 'salió de';
         const branchTag = branchName ? ` [${branchName}]` : '';
+        const distText = distance >= 1000 ? `${(distance / 1000).toFixed(1)}km` : `${Math.round(distance)}m`;
 
         const title = `${emoji} Geocerca${branchTag}`;
-        const body = `${employeeName} ${action} "${zoneName}" (${distance}m)`;
+        const body = `${employeeName} ${action} "${zoneName}" (${distText})`;
 
         const result = await sendNotificationToAdminsInTenant(tenantId, {
             title,
