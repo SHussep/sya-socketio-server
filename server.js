@@ -71,6 +71,9 @@ app.use(cors({
 app.use(bodyParser.json({ limit: '5mb' }));  // ✅ SECURITY: Reduced from 10mb (was DoS risk)
 app.use(bodyParser.urlencoded({ extended: true, limit: '5mb' }));
 
+// Archivos estáticos (anuncios HTML, imágenes, etc.)
+app.use('/public', express.static(require('path').join(__dirname, 'public')));
+
 // ═══════════════════════════════════════════════════════════════
 // REST API ENDPOINTS
 // ═══════════════════════════════════════════════════════════════
