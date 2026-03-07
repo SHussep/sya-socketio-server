@@ -1345,6 +1345,194 @@ module.exports = function(pool, io) {
     });
 
     // ─────────────────────────────────────────────────────────
+    // POST /api/superadmin/license-reminders
+    // Send personalized license expiry reminders to specific tenants
+    // ─────────────────────────────────────────────────────────
+    router.post('/license-reminders', async (req, res) => {
+        try {
+            const { tenantIds, daysThreshold } = req.body;
+
+            if (!tenantIds || !Array.isArray(tenantIds) || tenantIds.length === 0) {
+                return res.status(400).json({ success: false, message: 'Se requiere un array de tenantIds' });
+            }
+
+            // Fetch tenant details for the requested IDs
+            const tenantsResult = await pool.query(`
+                SELECT t.id, t.business_name, t.tenant_code,
+                       s.name as subscription_name, s.status as subscription_status,
+                       s.trial_ends_at,
+                       CASE
+                         WHEN s.trial_ends_at IS NOT NULL
+                         THEN GREATEST(0, EXTRACT(DAY FROM s.trial_ends_at - NOW()))::int
+                         ELSE 0
+                       END as days_remaining
+                FROM tenants t
+                JOIN subscriptions_tenants s ON s.tenant_id = t.id
+                WHERE t.id = ANY($1)
+                ORDER BY days_remaining ASC
+            `, [tenantIds]);
+
+            if (tenantsResult.rows.length === 0) {
+                return res.status(404).json({ success: false, message: 'No se encontraron tenants' });
+            }
+
+            let sentCount = 0;
+            const results = [];
+
+            for (const tenant of tenantsResult.rows) {
+                const days = tenant.days_remaining;
+                const name = tenant.business_name;
+                const plan = tenant.subscription_name;
+
+                // Generate personalized HTML
+                const html = generateLicenseReminderHTML(name, days, plan);
+                const title = days <= 0
+                    ? `${name}: Tu licencia ha expirado`
+                    : `${name}: Te quedan ${days} día${days === 1 ? '' : 's'}`;
+
+                const announcement = {
+                    title,
+                    htmlContent: html,
+                    type: 'license_reminder',
+                    targetTenantId: tenant.id,
+                    sentAt: new Date().toISOString()
+                };
+
+                // Send only to this tenant's sockets
+                let delivered = 0;
+                io.sockets.sockets.forEach(socket => {
+                    if (socket.user && socket.user.tenantId === tenant.id) {
+                        socket.emit('system:announcement', announcement);
+                        delivered++;
+                    }
+                });
+
+                // Save to DB
+                await pool.query(
+                    `INSERT INTO announcements (title, html_content, type, status, created_at, sent_at)
+                     VALUES ($1, $2, 'license_reminder', 'sent', NOW(), NOW())`,
+                    [title, html]
+                );
+
+                results.push({ tenantId: tenant.id, name, days, delivered });
+                sentCount++;
+                console.log(`[License Reminder] 📬 ${name}: ${days} días restantes (${delivered} sockets)`);
+            }
+
+            res.json({
+                success: true,
+                message: `${sentCount} recordatorio${sentCount === 1 ? '' : 's'} enviado${sentCount === 1 ? '' : 's'}`,
+                data: results
+            });
+
+        } catch (error) {
+            console.error('[License Reminders] Error:', error);
+            res.status(500).json({ success: false, message: 'Error al enviar recordatorios' });
+        }
+    });
+
+    // Generate personalized license reminder HTML (matches renovacion.html design)
+    function generateLicenseReminderHTML(businessName, daysRemaining, plan) {
+        const isExpired = daysRemaining <= 0;
+        const urgencyColor = isExpired ? '#EF4444' : daysRemaining <= 3 ? '#F59E0B' : '#4fc3f7';
+        const alertBg = isExpired
+            ? 'rgba(239, 68, 68, 0.12), rgba(239, 68, 68, 0.04)'
+            : daysRemaining <= 3
+            ? 'rgba(255, 167, 38, 0.12), rgba(255, 167, 38, 0.04)'
+            : 'rgba(79, 195, 247, 0.12), rgba(79, 195, 247, 0.04)';
+        const alertBorder = isExpired
+            ? 'rgba(239, 68, 68, 0.3)'
+            : daysRemaining <= 3
+            ? 'rgba(255, 167, 38, 0.3)'
+            : 'rgba(79, 195, 247, 0.3)';
+        const alertStrong = isExpired ? '#EF4444' : daysRemaining <= 3 ? '#ffa726' : '#4fc3f7';
+        const alertIcon = isExpired ? '&#x26A0;&#xFE0F;' : daysRemaining <= 3 ? '&#x23F0;' : '&#x1F4CB;';
+        const alertText = isExpired
+            ? `<strong>${businessName}</strong>, tu licencia del sistema SYA <strong style="color:${alertStrong};">ha expirado</strong>. Renueva para seguir usando todas las funciones sin interrupciones.`
+            : `<strong>${businessName}</strong>, tu licencia del plan <strong style="color:${alertStrong};">${plan}</strong> ${daysRemaining <= 3 ? '<strong style="color:#ffa726;">esta por vencer</strong>' : 'vence pronto'}. Te quedan <strong style="color:${urgencyColor};font-size:18px;">${daysRemaining}</strong> dia${daysRemaining === 1 ? '' : 's'}.`;
+
+        const statusBadge = isExpired
+            ? `<span style="display:inline-block;background:#EF4444;color:white;font-size:11px;font-weight:700;padding:5px 14px;border-radius:20px;letter-spacing:1px;margin-bottom:10px;">LICENCIA EXPIRADA</span>`
+            : `<span style="display:inline-block;background:${urgencyColor};color:${daysRemaining <= 3 ? '#0a1628' : 'white'};font-size:11px;font-weight:700;padding:5px 14px;border-radius:20px;letter-spacing:1px;margin-bottom:10px;">${daysRemaining} DIA${daysRemaining === 1 ? '' : 'S'} RESTANTE${daysRemaining === 1 ? '' : 'S'}</span>`;
+
+        return `<!DOCTYPE html>
+<html lang="es"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:#0a1628;font-family:'Inter','Segoe UI',sans-serif;min-height:100vh;display:flex;justify-content:center;align-items:center;padding:20px;overflow-y:auto;}
+.container{max-width:700px;width:100%;}
+.header{background:linear-gradient(135deg,#0d2137 0%,#1a3a5c 50%,#0d2137 100%);border-radius:20px 20px 0 0;padding:36px 40px 28px;text-align:center;border:1px solid rgba(79,195,247,0.15);border-bottom:none;position:relative;overflow:hidden;}
+.header::before{content:'';position:absolute;top:-50%;left:-50%;width:200%;height:200%;background:radial-gradient(circle at 50% 40%,rgba(79,195,247,0.06) 0%,transparent 50%);}
+.logo{width:80px;height:auto;margin-bottom:14px;position:relative;filter:drop-shadow(0 4px 12px rgba(0,0,0,0.3));}
+.brand{color:#4fc3f7;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:3px;margin-bottom:8px;position:relative;}
+.header h1{color:#fff;font-size:24px;font-weight:800;position:relative;line-height:1.3;}
+.divider{width:60px;height:3px;background:linear-gradient(90deg,${urgencyColor},${isExpired ? '#f87171' : daysRemaining <= 3 ? '#fbbf24' : '#81d4fa'});margin:16px auto 0;border-radius:2px;position:relative;}
+.body{background:#0f1d30;padding:30px 40px;border-left:1px solid rgba(79,195,247,0.15);border-right:1px solid rgba(79,195,247,0.15);}
+.alert-box{background:linear-gradient(135deg,${alertBg});border:1px solid ${alertBorder};border-radius:12px;padding:20px 24px;margin-bottom:24px;display:flex;align-items:center;gap:16px;}
+.alert-icon{font-size:32px;min-width:40px;text-align:center;}
+.alert-text{color:#e0e0e0;font-size:14px;line-height:1.6;}
+.benefits-title{color:#4fc3f7;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:2px;margin-bottom:16px;}
+.benefits{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:24px;}
+.benefit{display:flex;align-items:center;gap:10px;padding:12px 14px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:10px;}
+.benefit-icon{font-size:20px;min-width:28px;text-align:center;}
+.benefit-text{color:#b0bec5;font-size:13px;line-height:1.4;}
+.price-box{background:linear-gradient(135deg,rgba(79,195,247,0.1),rgba(79,195,247,0.03));border:1px solid rgba(79,195,247,0.2);border-radius:12px;padding:24px;text-align:center;margin-bottom:24px;}
+.price-label{color:#78909c;font-size:13px;margin-bottom:6px;}
+.price{color:#4fc3f7;font-size:36px;font-weight:800;}
+.price-period{color:#546e7a;font-size:14px;}
+.price-monthly{color:#78909c;font-size:13px;margin-top:6px;}
+.contact-box{text-align:center;padding:20px;}
+.contact-text{color:#b0bec5;font-size:14px;margin-bottom:14px;}
+.contact-badge{display:inline-block;background:linear-gradient(135deg,#4fc3f7,#29b6f6);color:#0a1628;padding:12px 36px;border-radius:30px;font-size:14px;font-weight:700;}
+.footer{background:#081220;border-radius:0 0 20px 20px;padding:16px 40px;text-align:center;border:1px solid rgba(79,195,247,0.15);border-top:1px solid rgba(79,195,247,0.08);}
+.footer p{color:#37474f;font-size:11px;letter-spacing:1px;}
+.footer span{color:#4fc3f7;}
+</style>
+</head><body>
+<div class="container">
+    <div class="header">
+        <img src="/public/assets/logo-sya.png" alt="SYA" class="logo">
+        <p class="brand">SYA Tortillerias</p>
+        ${statusBadge}
+        <h1>Aviso de Licencia</h1>
+        <div class="divider"></div>
+    </div>
+    <div class="body">
+        <div class="alert-box">
+            <span class="alert-icon">${alertIcon}</span>
+            <div class="alert-text">${alertText}</div>
+        </div>
+        <p class="benefits-title">&#x2705; Tu licencia incluye</p>
+        <div class="benefits">
+            <div class="benefit"><span class="benefit-icon">&#x1F4BB;</span><span class="benefit-text">Punto de Venta completo</span></div>
+            <div class="benefit"><span class="benefit-icon">&#x1F6E1;&#xFE0F;</span><span class="benefit-text">Guardian Anti-fraude</span></div>
+            <div class="benefit"><span class="benefit-icon">&#x1F4F1;</span><span class="benefit-text">App movil incluida</span></div>
+            <div class="benefit"><span class="benefit-icon">&#x2601;&#xFE0F;</span><span class="benefit-text">Respaldo en la nube</span></div>
+            <div class="benefit"><span class="benefit-icon">&#x1F4CA;</span><span class="benefit-text">Reportes y dashboard</span></div>
+            <div class="benefit"><span class="benefit-icon">&#x1F527;</span><span class="benefit-text">Soporte tecnico</span></div>
+        </div>
+        <div class="price-box">
+            <p class="price-label">Licencia anual</p>
+            <span class="price">$3,500</span>
+            <span class="price-period"> MXN / a&#xF1;o</span>
+            <p class="price-monthly">Menos de $300 al mes por todo tu negocio controlado</p>
+        </div>
+        <div class="contact-box">
+            <p class="contact-text">Contacta a tu proveedor SYA para renovar</p>
+            <span class="contact-badge">Renovar ahora</span>
+        </div>
+    </div>
+    <div class="footer">
+        <p><span>SYA TORTILLERIAS</span> &bull; Sistema Punto de Venta</p>
+    </div>
+</div>
+</body></html>`;
+    }
+
+    // ─────────────────────────────────────────────────────────
     // Scheduler: Check for pending announcements every 30 seconds
     // ─────────────────────────────────────────────────────────
     setInterval(async () => {
