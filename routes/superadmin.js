@@ -1398,14 +1398,22 @@ module.exports = function(pool, io) {
                     sentAt: new Date().toISOString()
                 };
 
-                // Send only to this tenant's sockets
+                // Find this tenant's branches and emit to their rooms
                 let delivered = 0;
-                io.sockets.sockets.forEach(socket => {
-                    if (socket.user && socket.user.tenantId === tenant.id) {
-                        socket.emit('system:announcement', announcement);
-                        delivered++;
+                const branchesResult = await pool.query(
+                    'SELECT id FROM branches WHERE tenant_id = $1 AND is_active = true',
+                    [tenant.id]
+                );
+
+                for (const branch of branchesResult.rows) {
+                    const roomName = `branch_${branch.id}`;
+                    const room = io.sockets.adapter.rooms.get(roomName);
+                    if (room && room.size > 0) {
+                        io.to(roomName).emit('system:announcement', announcement);
+                        delivered += room.size;
+                        console.log(`[License Reminder] 📡 Emitido a ${roomName} (${room.size} clientes)`);
                     }
-                });
+                }
 
                 // Save to DB
                 await pool.query(
