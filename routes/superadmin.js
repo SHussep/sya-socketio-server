@@ -1222,8 +1222,15 @@ module.exports = function(pool, io) {
             const tz = timezone || 'America/Mexico_City';
             const now = new Date().toISOString();
 
-            // Determine if scheduled for later
-            const isScheduled = scheduledAt && new Date(scheduledAt) > new Date();
+            // Determine if scheduled — if scheduledAt is provided, always treat as scheduled
+            // The scheduler will pick it up on the next tick if time has already passed
+            const isScheduled = !!scheduledAt;
+            if (isScheduled) {
+                const parsedDate = new Date(scheduledAt);
+                if (isNaN(parsedDate.getTime())) {
+                    return res.status(400).json({ success: false, message: 'Formato de scheduledAt invalido' });
+                }
+            }
 
             // Save to database
             const result = await pool.query(
