@@ -1502,7 +1502,7 @@ body{background:#0a1628;font-family:'Inter','Segoe UI',sans-serif;min-height:100
 </head><body>
 <div class="container">
     <div class="header">
-        <img src="/public/assets/logo-sya.png" alt="SYA" class="logo">
+        <img src="https://sya-socketio-server.onrender.com/public/assets/logo-sya.png" alt="SYA" class="logo">
         <p class="brand">SYA Tortillerias</p>
         ${statusBadge}
         <h1>Aviso de Licencia</h1>
