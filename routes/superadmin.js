@@ -1359,15 +1359,15 @@ module.exports = function(pool, io) {
             // Fetch tenant details for the requested IDs
             const tenantsResult = await pool.query(`
                 SELECT t.id, t.business_name, t.tenant_code,
-                       s.name as subscription_name, s.status as subscription_status,
-                       s.trial_ends_at,
+                       s.name as subscription_name, t.subscription_status,
+                       t.trial_ends_at,
                        CASE
-                         WHEN s.trial_ends_at IS NOT NULL
-                         THEN GREATEST(0, EXTRACT(DAY FROM s.trial_ends_at - NOW()))::int
+                         WHEN t.trial_ends_at IS NOT NULL
+                         THEN GREATEST(0, EXTRACT(DAY FROM t.trial_ends_at - NOW()))::int
                          ELSE 0
                        END as days_remaining
                 FROM tenants t
-                JOIN subscriptions_tenants s ON s.tenant_id = t.id
+                JOIN subscriptions s ON t.subscription_id = s.id
                 WHERE t.id = ANY($1)
                 ORDER BY days_remaining ASC
             `, [tenantIds]);
