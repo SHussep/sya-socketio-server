@@ -1541,6 +1541,105 @@ body{background:#0a1628;font-family:'Inter','Segoe UI',sans-serif;min-height:100
     }
 
     // ─────────────────────────────────────────────────────────
+    // POST /api/superadmin/license-reminders
+    // Enviar recordatorio de licencia personalizado por tenant
+    // ─────────────────────────────────────────────────────────
+    router.post('/license-reminders', async (req, res) => {
+        try {
+            const { tenantIds } = req.body;
+
+            if (!tenantIds || !Array.isArray(tenantIds) || tenantIds.length === 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Se requiere un array "tenantIds" con al menos un ID'
+                });
+            }
+
+            // Consultar info de cada tenant
+            const tenantsResult = await pool.query(`
+                SELECT
+                    t.id,
+                    t.business_name,
+                    t.trial_ends_at,
+                    t.subscription_status,
+                    s.name as plan_name
+                FROM tenants t
+                JOIN subscriptions s ON t.subscription_id = s.id
+                WHERE t.id = ANY($1)
+            `, [tenantIds]);
+
+            if (tenantsResult.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'No se encontraron tenants con esos IDs'
+                });
+            }
+
+            const results = [];
+
+            for (const tenant of tenantsResult.rows) {
+                const now = new Date();
+                const trialEndsAt = tenant.trial_ends_at ? new Date(tenant.trial_ends_at) : null;
+                const daysRemaining = trialEndsAt
+                    ? Math.ceil((trialEndsAt - now) / (1000 * 60 * 60 * 24))
+                    : 0;
+
+                const htmlContent = generateLicenseReminderHTML(
+                    tenant.business_name,
+                    daysRemaining,
+                    tenant.plan_name
+                );
+
+                const isExpired = daysRemaining <= 0;
+                const title = isExpired
+                    ? `${tenant.business_name}: Licencia expirada`
+                    : `${tenant.business_name}: Te quedan ${daysRemaining} dia${daysRemaining === 1 ? '' : 's'}`;
+
+                const announcement = {
+                    title,
+                    htmlContent,
+                    type: 'license_reminder',
+                    targetTenantId: tenant.id,
+                    sentAt: new Date().toISOString()
+                };
+
+                // Enviar solo a sockets de este tenant
+                let delivered = 0;
+                const sockets = await io.fetchSockets();
+                for (const socket of sockets) {
+                    if (socket.user && socket.user.tenantId === tenant.id) {
+                        socket.emit('system:announcement', announcement);
+                        delivered++;
+                    }
+                }
+
+                console.log(`[License Reminder] 📢 "${title}" → ${delivered} socket(s)`);
+
+                results.push({
+                    tenantId: tenant.id,
+                    name: tenant.business_name,
+                    days: daysRemaining,
+                    delivered
+                });
+            }
+
+            res.json({
+                success: true,
+                message: `${results.length} recordatorios enviados`,
+                data: results
+            });
+
+        } catch (error) {
+            console.error('[License Reminders] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al enviar recordatorios',
+                error: undefined
+            });
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
     // Scheduler: Check for pending announcements every 30 seconds
     // ─────────────────────────────────────────────────────────
     setInterval(async () => {
