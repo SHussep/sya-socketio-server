@@ -59,7 +59,7 @@ module.exports = (pool, io) => {
     router.get('/events', authenticateToken, async (req, res) => {
         try {
             const { tenantId } = req.user;
-            const { branch_id, employee_id, zone_id, date, limit = 100 } = req.query;
+            const { branch_id, employee_id, zone_id, date, start_date, end_date, limit = 100 } = req.query;
 
             if (!branch_id) {
                 return res.status(400).json({ success: false, message: 'branch_id es requerido' });
@@ -87,7 +87,11 @@ module.exports = (pool, io) => {
                 params.push(parseInt(zone_id));
                 paramIdx++;
             }
-            if (date) {
+            if (start_date && end_date) {
+                query += ` AND ge.created_at >= $${paramIdx}::date AND ge.created_at < ($${paramIdx + 1}::date + INTERVAL '1 day')`;
+                params.push(start_date, end_date);
+                paramIdx += 2;
+            } else if (date) {
                 query += ` AND ge.created_at >= $${paramIdx}::date AND ge.created_at < ($${paramIdx}::date + INTERVAL '1 day')`;
                 params.push(date);
                 paramIdx++;
