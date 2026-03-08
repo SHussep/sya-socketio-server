@@ -38,7 +38,9 @@ module.exports = (pool, io) => {
     // ═══════════════════════════════════════════════════════════════
     router.post('/', authenticateToken, async (req, res) => {
         try {
-            const { tenantId, employeeId, branchId } = req.user;
+            const { tenantId, employeeId, branchId: jwtBranchId } = req.user;
+            // Permitir override de branchId desde body (multi-sucursal)
+            const branchId = req.body?.branchId || jwtBranchId;
 
             // Check if employee already has an open shift
             const existingShift = await pool.query(
