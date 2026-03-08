@@ -241,15 +241,12 @@ module.exports = (pool, io) => {
             query += ' AND s.employee_id = $2';
             params.push(employeeId);
 
-            // Si el JWT incluye branchId (Desktop), filtrar por sucursal
-            if (branchId) {
-                query += ` AND s.branch_id = $${params.length + 1}`;
-                params.push(branchId);
-            }
+            // No filtrar por branchId — el empleado debe ver su turno activo
+            // sin importar en qué sucursal fue abierto (multi-sucursal)
 
             query += ' ORDER BY s.start_time DESC LIMIT 1';
 
-            console.log(`[Shifts Current] Fetching current shift - Tenant: ${tenantId}, Employee: ${employeeId}, Branch: ${branchId || 'all'}, isAdmin: ${isAdmin}`);
+            console.log(`[Shifts Current] Fetching current shift - Tenant: ${tenantId}, Employee: ${employeeId}, Branch: all (multi-branch), isAdmin: ${isAdmin}`);
             console.log(`[Shifts Current] Query params: ${JSON.stringify(params)}`);
 
             const result = await pool.query(query, params);
