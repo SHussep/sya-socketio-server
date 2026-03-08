@@ -1674,9 +1674,10 @@ io.on('connection', (socket) => {
                 employeeId: data.employeeId,
                 employeeName: data.employeeName,
                 branchName: data.branchName,
-                scaleStatus: data.scaleStatus || 'unknown'
+                scaleStatus: data.scaleStatus || 'unknown',
+                isReviewMode: data.isReviewMode || false
             });
-            console.log(`[FCM] 📨 Notificación de login enviada a sucursal ${data.branchId}`);
+            console.log(`[FCM] 📨 Notificación de login enviada a sucursal ${data.branchId}${data.isReviewMode ? ' (modo consulta)' : ''}`);
         } catch (error) {
             console.error(`[USER-LOGIN] ⚠️ Error enviando notificación FCM:`, error.message);
             // No fallar el broadcast si hay error en la notificación

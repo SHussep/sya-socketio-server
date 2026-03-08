@@ -439,7 +439,7 @@ async function sendNotificationToEmployee(employeeId, { title, body, data = {} }
  * Envía notificación cuando un usuario inicia sesión
  * A: Administradores y encargados (role_id 1,2) EXCEPTO el que hizo login + el empleado que hizo login
  */
-async function notifyUserLogin(branchId, { employeeId, employeeName, branchName, scaleStatus }) {
+async function notifyUserLogin(branchId, { employeeId, employeeName, branchName, scaleStatus, isReviewMode }) {
     try {
         // IMPORTANTE: employeeId es el GlobalId (UUID), no el autoincrement ID
         // Obtener el ID numérico del empleado desde PostgreSQL usando global_id
@@ -457,14 +457,18 @@ async function notifyUserLogin(branchId, { employeeId, employeeName, branchName,
         const employeeRoleId = employeeResult.rows[0].role_id;
 
         // Enviar notificación personalizada al empleado que hizo login
+        const selfBody = isReviewMode
+            ? `Iniciaste sesión en ${branchName} (modo consulta)`
+            : `Iniciaste sesión en ${branchName}`;
         const selfResult = await sendNotificationToEmployee(employeeId, {
             title: 'Acceso de Usuario',
-            body: `Iniciaste sesión en ${branchName}`,
+            body: selfBody,
             data: {
                 type: 'user_login',
                 employeeName,
                 branchName,
-                scaleStatus
+                scaleStatus,
+                isReviewMode: isReviewMode ? 'true' : 'false'
             }
         });
 
@@ -494,14 +498,18 @@ async function notifyUserLogin(branchId, { employeeId, employeeName, branchName,
         let adminResult = { sent: 0, failed: 0, total: 0 };
 
         if (adminDeviceTokens.length > 0) {
+            const adminBody = isReviewMode
+                ? `${employeeName} inició sesión en ${branchName} (modo consulta)`
+                : `${employeeName} inició sesión en ${branchName}`;
             const results = await sendNotificationToMultipleDevices(adminDeviceTokens, {
                 title: 'Acceso de Usuario',
-                body: `${employeeName} inició sesión en ${branchName}`,
+                body: adminBody,
                 data: {
                     type: 'user_login',
                     employeeName,
                     branchName,
-                    scaleStatus
+                    scaleStatus,
+                    isReviewMode: isReviewMode ? 'true' : 'false'
                 }
             });
 
@@ -542,8 +550,10 @@ async function notifyUserLogin(branchId, { employeeId, employeeName, branchName,
                 category: 'login',
                 event_type: 'user_login',
                 title: 'Inicio de Sesión',
-                body: `${employeeName} inició sesión en ${branchName}`,
-                data: { employeeName, branchName, scaleStatus }
+                body: isReviewMode
+                    ? `${employeeName} inició sesión en ${branchName} (modo consulta)`
+                    : `${employeeName} inició sesión en ${branchName}`,
+                data: { employeeName, branchName, scaleStatus, isReviewMode }
             });
         }
 
