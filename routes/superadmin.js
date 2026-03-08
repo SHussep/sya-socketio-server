@@ -1442,125 +1442,130 @@ module.exports = function(pool, io) {
     // Generate personalized license reminder HTML (matches renovacion.html design)
     function generateLicenseReminderHTML(businessName, daysRemaining, plan) {
         const isExpired = daysRemaining <= 0;
-        const urgencyColor = isExpired ? '#EF4444' : daysRemaining <= 3 ? '#F59E0B' : '#4fc3f7';
-        const urgencyColorEnd = isExpired ? '#f87171' : daysRemaining <= 3 ? '#fbbf24' : '#81d4fa';
-        const alertBg = isExpired
-            ? 'rgba(239, 68, 68, 0.12), rgba(239, 68, 68, 0.04)'
+        const accentColor = isExpired ? '#ef4444' : daysRemaining <= 3 ? '#f59e0b' : '#22d3ee';
+        const accentGlow = isExpired ? 'rgba(239,68,68,0.25)' : daysRemaining <= 3 ? 'rgba(245,158,11,0.25)' : 'rgba(34,211,238,0.2)';
+        const statusLabel = isExpired ? 'Expirada' : daysRemaining <= 3 ? 'Por vencer' : 'Activa';
+        const statusBg = isExpired ? 'rgba(239,68,68,0.15)' : daysRemaining <= 3 ? 'rgba(245,158,11,0.15)' : 'rgba(34,211,238,0.1)';
+
+        const messageText = isExpired
+            ? `Tu licencia <strong>ha expirado</strong>. El acceso al sistema puede verse interrumpido. Contacta a tu proveedor SYA para reactivar tu servicio.`
             : daysRemaining <= 3
-            ? 'rgba(255, 167, 38, 0.12), rgba(255, 167, 38, 0.04)'
-            : 'rgba(79, 195, 247, 0.12), rgba(79, 195, 247, 0.04)';
-        const alertBorder = isExpired
-            ? 'rgba(239, 68, 68, 0.3)'
-            : daysRemaining <= 3
-            ? 'rgba(255, 167, 38, 0.3)'
-            : 'rgba(79, 195, 247, 0.3)';
-        const alertStrong = isExpired ? '#EF4444' : daysRemaining <= 3 ? '#ffa726' : '#4fc3f7';
-        const alertIcon = isExpired ? '&#x26A0;&#xFE0F;' : daysRemaining <= 3 ? '&#x23F0;' : '&#x1F4CB;';
+            ? `Tu licencia vence en <strong>${daysRemaining} dia${daysRemaining === 1 ? '' : 's'}</strong>. Contacta a tu proveedor SYA para renovar y evitar interrupciones en tu servicio.`
+            : `Tu licencia vence en <strong>${daysRemaining} dias</strong>. Te recomendamos renovar con anticipacion para asegurar la continuidad de tu servicio.`;
 
-        const alertText = isExpired
-            ? `<strong>${businessName}</strong>, tu licencia del sistema SYA <strong style="color:${alertStrong};">ha expirado</strong>. Contacta a tu proveedor para reactivar el servicio y seguir usando todas las funciones.`
-            : `<strong>${businessName}</strong>, tu licencia del plan <strong style="color:${alertStrong};">${plan}</strong> ${daysRemaining <= 3 ? '<strong style="color:#ffa726;">esta por vencer</strong>' : 'vence pronto'}. Te quedan <strong style="color:${urgencyColor};font-size:18px;">${daysRemaining}</strong> dia${daysRemaining === 1 ? '' : 's'}.`;
-
-        const statusBadge = isExpired
-            ? `<span class="badge badge-expired">LICENCIA EXPIRADA</span>`
-            : `<span class="badge badge-active">${daysRemaining} DIA${daysRemaining === 1 ? '' : 'S'} RESTANTE${daysRemaining === 1 ? '' : 'S'}</span>`;
-
-        const countdownSection = isExpired
-            ? `<div class="countdown-ring expired">
-                <div class="countdown-number">!</div>
-                <div class="countdown-label">Expirada</div>
-               </div>`
-            : `<div class="countdown-ring">
-                <div class="countdown-number">${daysRemaining}</div>
-                <div class="countdown-label">dia${daysRemaining === 1 ? '' : 's'} restante${daysRemaining === 1 ? '' : 's'}</div>
-               </div>`;
+        const progressPercent = isExpired ? 100 : Math.max(5, Math.min(95, ((30 - daysRemaining) / 30) * 100));
+        const progressColor = isExpired ? '#ef4444' : daysRemaining <= 3 ? '#f59e0b' : '#22d3ee';
 
         return `<!DOCTYPE html>
 <html lang="es"><head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-*{margin:0;padding:0;box-sizing:border-box;}
-body{background:#0a1628;font-family:'Inter','Segoe UI',sans-serif;min-height:100vh;display:flex;justify-content:center;align-items:center;padding:20px;overflow-y:auto;}
-.container{max-width:700px;width:100%;}
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#080e1a;font-family:'Inter','Segoe UI',sans-serif;min-height:100vh;display:flex;justify-content:center;align-items:center;padding:24px;overflow-y:auto}
+.card{max-width:620px;width:100%;background:#0c1525;border:1px solid rgba(255,255,255,0.06);border-radius:16px;overflow:hidden}
 
-/* Header */
-.header{background:linear-gradient(135deg,#0d2137 0%,#1a3a5c 50%,#0d2137 100%);border-radius:20px 20px 0 0;padding:32px 40px 24px;text-align:center;border:1px solid rgba(79,195,247,0.15);border-bottom:none;position:relative;overflow:hidden;}
-.header::before{content:'';position:absolute;top:-50%;left:-50%;width:200%;height:200%;background:radial-gradient(circle at 50% 40%,rgba(79,195,247,0.06) 0%,transparent 50%);}
-.logo{width:70px;height:auto;margin-bottom:10px;position:relative;filter:drop-shadow(0 4px 12px rgba(0,0,0,0.3));}
-.brand{color:#4fc3f7;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:3px;margin-bottom:12px;position:relative;}
-.badge{display:inline-block;font-size:11px;font-weight:700;padding:5px 16px;border-radius:20px;letter-spacing:1px;margin-bottom:10px;position:relative;}
-.badge-expired{background:#EF4444;color:white;}
-.badge-active{background:${urgencyColor};color:${daysRemaining <= 3 ? '#0a1628' : '#0a1628'};}
-.header h1{color:#fff;font-size:22px;font-weight:800;position:relative;line-height:1.3;}
-.divider{width:50px;height:3px;background:linear-gradient(90deg,${urgencyColor},${urgencyColorEnd});margin:14px auto 0;border-radius:2px;position:relative;}
+/* Top bar */
+.top-bar{display:flex;align-items:center;justify-content:space-between;padding:16px 28px;border-bottom:1px solid rgba(255,255,255,0.04)}
+.top-left{display:flex;align-items:center;gap:12px}
+.logo{width:36px;height:36px;border-radius:10px;object-fit:contain}
+.app-name{font-size:13px;font-weight:600;color:#e2e8f0;letter-spacing:0.3px}
+.app-sub{font-size:11px;color:#475569;font-weight:400}
+.status-pill{font-size:11px;font-weight:600;padding:4px 12px;border-radius:20px;letter-spacing:0.5px;background:${statusBg};color:${accentColor};border:1px solid ${accentColor}30}
 
-/* Body */
-.body{background:#0f1d30;padding:28px 36px;border-left:1px solid rgba(79,195,247,0.15);border-right:1px solid rgba(79,195,247,0.15);}
+/* Hero */
+.hero{padding:36px 28px 28px;text-align:center;position:relative}
+.hero::before{content:'';position:absolute;top:0;left:50%;transform:translateX(-50%);width:200px;height:120px;background:radial-gradient(ellipse,${accentGlow},transparent 70%);pointer-events:none}
+.days-number{font-size:72px;font-weight:700;color:${accentColor};line-height:1;position:relative;letter-spacing:-3px}
+.days-number.expired{font-size:48px;letter-spacing:0}
+.days-label{font-size:13px;color:#64748b;font-weight:500;margin-top:4px;text-transform:uppercase;letter-spacing:2px}
+.progress-track{width:100%;max-width:280px;height:4px;background:rgba(255,255,255,0.06);border-radius:2px;margin:20px auto 0;overflow:hidden}
+.progress-fill{height:100%;width:${progressPercent}%;background:${progressColor};border-radius:2px;transition:width 0.6s ease}
 
-/* Countdown ring */
-.countdown-ring{text-align:center;margin:0 auto 24px;width:110px;height:110px;border-radius:50%;border:3px solid ${urgencyColor};display:flex;flex-direction:column;justify-content:center;align-items:center;position:relative;background:rgba(0,0,0,0.2);}
-.countdown-ring::before{content:'';position:absolute;inset:-6px;border-radius:50%;border:1px solid ${urgencyColor}20;;}
-.countdown-ring.expired{border-color:#EF4444;animation:pulse 2s ease-in-out infinite;}
-.countdown-number{color:${urgencyColor};font-size:36px;font-weight:800;line-height:1;}
-.countdown-ring.expired .countdown-number{color:#EF4444;font-size:40px;}
-.countdown-label{color:#78909c;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-top:2px;}
-@keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.6;}}
+/* Message */
+.message{padding:0 28px 24px}
+.message-box{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:12px;padding:16px 20px}
+.message-box p{font-size:13px;color:#94a3b8;line-height:1.7}
+.message-box strong{color:${accentColor};font-weight:600}
 
-/* Alert */
-.alert-box{background:linear-gradient(135deg,${alertBg});border:1px solid ${alertBorder};border-radius:12px;padding:18px 22px;margin-bottom:24px;display:flex;align-items:center;gap:14px;}
-.alert-icon{font-size:28px;min-width:36px;text-align:center;}
-.alert-text{color:#e0e0e0;font-size:13px;line-height:1.6;}
+/* Plan info */
+.plan-section{padding:0 28px 24px}
+.plan-header{font-size:11px;font-weight:600;color:#475569;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:12px}
+.plan-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:1px;background:rgba(255,255,255,0.04);border-radius:10px;overflow:hidden}
+.plan-item{background:#0c1525;padding:14px 16px;text-align:center}
+.plan-item:first-child{border-radius:10px 0 0 10px}
+.plan-item:last-child{border-radius:0 10px 10px 0}
+.plan-value{font-size:14px;font-weight:600;color:#e2e8f0;margin-bottom:2px}
+.plan-label{font-size:10px;color:#475569;text-transform:uppercase;letter-spacing:1px}
 
-/* Benefits */
-.section-title{color:#4fc3f7;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:2px;margin-bottom:14px;}
-.benefits{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:24px;}
-.benefit{display:flex;align-items:center;gap:10px;padding:11px 13px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:10px;transition:border-color 0.2s;}
-.benefit:hover{border-color:rgba(79,195,247,0.2);}
-.benefit-icon{font-size:18px;min-width:26px;text-align:center;}
-.benefit-text{color:#b0bec5;font-size:12px;line-height:1.4;}
-
-/* Contact info */
-.contact-info{background:linear-gradient(135deg,rgba(79,195,247,0.08),rgba(79,195,247,0.02));border:1px solid rgba(79,195,247,0.15);border-radius:12px;padding:20px;text-align:center;}
-.contact-info p{color:#78909c;font-size:13px;line-height:1.6;}
-.contact-info strong{color:#b0bec5;font-weight:600;}
+/* Features */
+.features{padding:0 28px 24px}
+.feat-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.03)}
+.feat-row:last-child{border-bottom:none}
+.feat-dot{width:6px;height:6px;border-radius:50%;background:${accentColor};flex-shrink:0}
+.feat-text{font-size:13px;color:#94a3b8}
+.feat-text strong{color:#cbd5e1;font-weight:500}
 
 /* Footer */
-.footer{background:#081220;border-radius:0 0 20px 20px;padding:14px 40px;text-align:center;border:1px solid rgba(79,195,247,0.15);border-top:1px solid rgba(79,195,247,0.08);}
-.footer p{color:#37474f;font-size:11px;letter-spacing:1px;}
-.footer span{color:#4fc3f7;}
-</style>
-</head><body>
-<div class="container">
-    <div class="header">
-        <img src="https://sya-socketio-server.onrender.com/public/assets/logo-sya.png" alt="SYA" class="logo">
-        <p class="brand">SYA Tortillerias</p>
-        ${statusBadge}
-        <h1>Aviso de Licencia</h1>
-        <div class="divider"></div>
+.footer-bar{padding:16px 28px;border-top:1px solid rgba(255,255,255,0.04);display:flex;align-items:center;justify-content:space-between}
+.footer-brand{font-size:11px;color:#334155;font-weight:500;letter-spacing:0.5px}
+.footer-contact{font-size:11px;color:#475569}
+.footer-contact strong{color:#64748b;font-weight:500}
+</style></head><body>
+<div class="card">
+    <div class="top-bar">
+        <div class="top-left">
+            <img src="https://sya-socketio-server.onrender.com/public/assets/logo-sya.png" alt="SYA" class="logo">
+            <div>
+                <div class="app-name">SYA Tortillerias</div>
+                <div class="app-sub">Sistema Punto de Venta</div>
+            </div>
+        </div>
+        <span class="status-pill">${statusLabel}</span>
     </div>
-    <div class="body">
-        ${countdownSection}
-        <div class="alert-box">
-            <span class="alert-icon">${alertIcon}</span>
-            <div class="alert-text">${alertText}</div>
-        </div>
-        <p class="section-title">&#x2705; Tu licencia incluye</p>
-        <div class="benefits">
-            <div class="benefit"><span class="benefit-icon">&#x1F4BB;</span><span class="benefit-text">Punto de Venta completo</span></div>
-            <div class="benefit"><span class="benefit-icon">&#x1F6E1;&#xFE0F;</span><span class="benefit-text">Guardian Anti-fraude</span></div>
-            <div class="benefit"><span class="benefit-icon">&#x1F4F1;</span><span class="benefit-text">App movil incluida</span></div>
-            <div class="benefit"><span class="benefit-icon">&#x2601;&#xFE0F;</span><span class="benefit-text">Respaldo en la nube</span></div>
-            <div class="benefit"><span class="benefit-icon">&#x1F4CA;</span><span class="benefit-text">Reportes y dashboard</span></div>
-            <div class="benefit"><span class="benefit-icon">&#x1F527;</span><span class="benefit-text">Soporte y actualizaciones</span></div>
-        </div>
-        <div class="contact-info">
-            <p>Para renovar tu licencia, comunicate con<br><strong>tu proveedor SYA</strong></p>
+
+    <div class="hero">
+        ${isExpired
+            ? '<div class="days-number expired">Licencia Expirada</div><div class="days-label">Servicio interrumpido</div>'
+            : `<div class="days-number">${daysRemaining}</div><div class="days-label">dia${daysRemaining === 1 ? '' : 's'} restante${daysRemaining === 1 ? '' : 's'}</div>`
+        }
+        <div class="progress-track"><div class="progress-fill"></div></div>
+    </div>
+
+    <div class="message">
+        <div class="message-box"><p>${messageText}</p></div>
+    </div>
+
+    <div class="plan-section">
+        <div class="plan-header">Detalles de licencia</div>
+        <div class="plan-grid">
+            <div class="plan-item">
+                <div class="plan-value">${businessName}</div>
+                <div class="plan-label">Negocio</div>
+            </div>
+            <div class="plan-item">
+                <div class="plan-value">${plan}</div>
+                <div class="plan-label">Plan</div>
+            </div>
+            <div class="plan-item">
+                <div class="plan-value">${isExpired ? 'Vencida' : daysRemaining + 'd'}</div>
+                <div class="plan-label">Vigencia</div>
+            </div>
         </div>
     </div>
-    <div class="footer">
-        <p><span>SYA TORTILLERIAS</span> &bull; Sistema Punto de Venta</p>
+
+    <div class="features">
+        <div class="plan-header">Incluido en tu plan</div>
+        <div class="feat-row"><span class="feat-dot"></span><span class="feat-text"><strong>Punto de Venta</strong> con bascula integrada</span></div>
+        <div class="feat-row"><span class="feat-dot"></span><span class="feat-text"><strong>Guardian</strong> sistema anti-fraude en tiempo real</span></div>
+        <div class="feat-row"><span class="feat-dot"></span><span class="feat-text"><strong>App Movil</strong> control remoto de tu negocio</span></div>
+        <div class="feat-row"><span class="feat-dot"></span><span class="feat-text"><strong>Reportes</strong> ventas, cortes y dashboard</span></div>
+        <div class="feat-row"><span class="feat-dot"></span><span class="feat-text"><strong>Soporte</strong> tecnico y actualizaciones incluidas</span></div>
+    </div>
+
+    <div class="footer-bar">
+        <span class="footer-brand">SYA TORTILLERIAS</span>
+        <span class="footer-contact">Contacta a <strong>tu proveedor SYA</strong></span>
     </div>
 </div>
 </body></html>`;

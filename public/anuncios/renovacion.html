@@ -1,320 +1,117 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#080e1a;font-family:'Inter','Segoe UI',sans-serif;min-height:100vh;display:flex;justify-content:center;align-items:center;padding:24px;overflow-y:auto}
+.card{max-width:620px;width:100%;background:#0c1525;border:1px solid rgba(255,255,255,0.06);border-radius:16px;overflow:hidden}
 
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+/* Top bar */
+.top-bar{display:flex;align-items:center;justify-content:space-between;padding:16px 28px;border-bottom:1px solid rgba(255,255,255,0.04)}
+.top-left{display:flex;align-items:center;gap:12px}
+.logo{width:36px;height:36px;border-radius:10px;object-fit:contain}
+.app-name{font-size:13px;font-weight:600;color:#e2e8f0;letter-spacing:0.3px}
+.app-sub{font-size:11px;color:#475569;font-weight:400}
+.status-pill{font-size:11px;font-weight:600;padding:4px 12px;border-radius:20px;letter-spacing:0.5px;background:rgba(245,158,11,0.15);color:#f59e0b;border:1px solid rgba(245,158,11,0.2)}
 
-        body {
-            background: #0a1628;
-            font-family: 'Inter', 'Segoe UI', sans-serif;
-            min-height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 20px;
-            overflow-y: auto;
-        }
+/* Hero */
+.hero{padding:36px 28px 28px;text-align:center;position:relative}
+.hero::before{content:'';position:absolute;top:0;left:50%;transform:translateX(-50%);width:200px;height:120px;background:radial-gradient(ellipse,rgba(245,158,11,0.25),transparent 70%);pointer-events:none}
+.days-number{font-size:72px;font-weight:700;color:#f59e0b;line-height:1;position:relative;letter-spacing:-3px}
+.days-label{font-size:13px;color:#64748b;font-weight:500;margin-top:4px;text-transform:uppercase;letter-spacing:2px}
+.progress-track{width:100%;max-width:280px;height:4px;background:rgba(255,255,255,0.06);border-radius:2px;margin:20px auto 0;overflow:hidden}
+.progress-fill{height:100%;width:77%;background:#f59e0b;border-radius:2px}
 
-        .container {
-            max-width: 700px;
-            width: 100%;
-        }
+/* Message */
+.message{padding:0 28px 24px}
+.message-box{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:12px;padding:16px 20px}
+.message-box p{font-size:13px;color:#94a3b8;line-height:1.7}
+.message-box strong{color:#f59e0b;font-weight:600}
 
-        /* Header */
-        .header {
-            background: linear-gradient(135deg, #0d2137 0%, #1a3a5c 50%, #0d2137 100%);
-            border-radius: 20px 20px 0 0;
-            padding: 32px 40px 24px;
-            text-align: center;
-            border: 1px solid rgba(79, 195, 247, 0.15);
-            border-bottom: none;
-            position: relative;
-            overflow: hidden;
-        }
+/* Plan info */
+.plan-section{padding:0 28px 24px}
+.plan-header{font-size:11px;font-weight:600;color:#475569;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:12px}
+.plan-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:1px;background:rgba(255,255,255,0.04);border-radius:10px;overflow:hidden}
+.plan-item{background:#0c1525;padding:14px 16px;text-align:center}
+.plan-item:first-child{border-radius:10px 0 0 10px}
+.plan-item:last-child{border-radius:0 10px 10px 0}
+.plan-value{font-size:14px;font-weight:600;color:#e2e8f0;margin-bottom:2px}
+.plan-label{font-size:10px;color:#475569;text-transform:uppercase;letter-spacing:1px}
 
-        .header::before {
-            content: '';
-            position: absolute;
-            top: -50%;
-            left: -50%;
-            width: 200%;
-            height: 200%;
-            background: radial-gradient(circle at 50% 40%, rgba(79, 195, 247, 0.06) 0%, transparent 50%);
-        }
+/* Features */
+.features{padding:0 28px 24px}
+.feat-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.03)}
+.feat-row:last-child{border-bottom:none}
+.feat-dot{width:6px;height:6px;border-radius:50%;background:#f59e0b;flex-shrink:0}
+.feat-text{font-size:13px;color:#94a3b8}
+.feat-text strong{color:#cbd5e1;font-weight:500}
 
-        .logo {
-            width: 70px;
-            height: auto;
-            margin-bottom: 10px;
-            position: relative;
-            filter: drop-shadow(0 4px 12px rgba(0,0,0,0.3));
-        }
-
-        .brand {
-            color: #4fc3f7;
-            font-size: 11px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 3px;
-            margin-bottom: 12px;
-            position: relative;
-        }
-
-        .badge {
-            display: inline-block;
-            background: #F59E0B;
-            color: #0a1628;
-            font-size: 11px;
-            font-weight: 700;
-            padding: 5px 16px;
-            border-radius: 20px;
-            letter-spacing: 1px;
-            margin-bottom: 10px;
-            position: relative;
-        }
-
-        .header h1 {
-            color: #ffffff;
-            font-size: 22px;
-            font-weight: 800;
-            position: relative;
-            line-height: 1.3;
-        }
-
-        .divider {
-            width: 50px;
-            height: 3px;
-            background: linear-gradient(90deg, #F59E0B, #fbbf24);
-            margin: 14px auto 0;
-            border-radius: 2px;
-            position: relative;
-        }
-
-        /* Body */
-        .body {
-            background: #0f1d30;
-            padding: 28px 36px;
-            border-left: 1px solid rgba(79, 195, 247, 0.15);
-            border-right: 1px solid rgba(79, 195, 247, 0.15);
-        }
-
-        /* Countdown ring */
-        .countdown-ring {
-            text-align: center;
-            margin: 0 auto 24px;
-            width: 110px;
-            height: 110px;
-            border-radius: 50%;
-            border: 3px solid #F59E0B;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            position: relative;
-            background: rgba(0,0,0,0.2);
-        }
-
-        .countdown-ring::before {
-            content: '';
-            position: absolute;
-            inset: -6px;
-            border-radius: 50%;
-            border: 1px solid rgba(245, 158, 11, 0.12);
-        }
-
-        .countdown-number {
-            color: #F59E0B;
-            font-size: 36px;
-            font-weight: 800;
-            line-height: 1;
-        }
-
-        .countdown-label {
-            color: #78909c;
-            font-size: 11px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            margin-top: 2px;
-        }
-
-        /* Alert */
-        .alert-box {
-            background: linear-gradient(135deg, rgba(255, 167, 38, 0.12), rgba(255, 167, 38, 0.04));
-            border: 1px solid rgba(255, 167, 38, 0.3);
-            border-radius: 12px;
-            padding: 18px 22px;
-            margin-bottom: 24px;
-            display: flex;
-            align-items: center;
-            gap: 14px;
-        }
-
-        .alert-icon {
-            font-size: 28px;
-            min-width: 36px;
-            text-align: center;
-        }
-
-        .alert-text {
-            color: #e0e0e0;
-            font-size: 13px;
-            line-height: 1.6;
-        }
-
-        .alert-text strong {
-            color: #ffa726;
-        }
-
-        /* Benefits */
-        .section-title {
-            color: #4fc3f7;
-            font-size: 12px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 2px;
-            margin-bottom: 14px;
-        }
-
-        .benefits {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 10px;
-            margin-bottom: 24px;
-        }
-
-        .benefit {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 11px 13px;
-            background: rgba(255, 255, 255, 0.03);
-            border: 1px solid rgba(255, 255, 255, 0.06);
-            border-radius: 10px;
-            transition: border-color 0.2s;
-        }
-
-        .benefit:hover {
-            border-color: rgba(79, 195, 247, 0.2);
-        }
-
-        .benefit-icon {
-            font-size: 18px;
-            min-width: 26px;
-            text-align: center;
-        }
-
-        .benefit-text {
-            color: #b0bec5;
-            font-size: 12px;
-            line-height: 1.4;
-        }
-
-        /* Contact info */
-        .contact-info {
-            background: linear-gradient(135deg, rgba(79, 195, 247, 0.08), rgba(79, 195, 247, 0.02));
-            border: 1px solid rgba(79, 195, 247, 0.15);
-            border-radius: 12px;
-            padding: 20px;
-            text-align: center;
-        }
-
-        .contact-info p {
-            color: #78909c;
-            font-size: 13px;
-            line-height: 1.6;
-        }
-
-        .contact-info strong {
-            color: #b0bec5;
-            font-weight: 600;
-        }
-
-        /* Footer */
-        .footer {
-            background: #081220;
-            border-radius: 0 0 20px 20px;
-            padding: 14px 40px;
-            text-align: center;
-            border: 1px solid rgba(79, 195, 247, 0.15);
-            border-top: 1px solid rgba(79, 195, 247, 0.08);
-        }
-
-        .footer p {
-            color: #37474f;
-            font-size: 11px;
-            letter-spacing: 1px;
-        }
-
-        .footer span {
-            color: #4fc3f7;
-        }
-    </style>
+/* Footer */
+.footer-bar{padding:16px 28px;border-top:1px solid rgba(255,255,255,0.04);display:flex;align-items:center;justify-content:space-between}
+.footer-brand{font-size:11px;color:#334155;font-weight:500;letter-spacing:0.5px}
+.footer-contact{font-size:11px;color:#475569}
+.footer-contact strong{color:#64748b;font-weight:500}
+</style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
+<div class="card">
+    <div class="top-bar">
+        <div class="top-left">
             <img src="/public/assets/logo-sya.png" alt="SYA" class="logo">
-            <p class="brand">SYA Tortillerias</p>
-            <span class="badge">PROXIMA A VENCER</span>
-            <h1>Aviso de Licencia</h1>
-            <div class="divider"></div>
-        </div>
-
-        <div class="body">
-            <div class="countdown-ring">
-                <div class="countdown-number">7</div>
-                <div class="countdown-label">dias restantes</div>
-            </div>
-
-            <div class="alert-box">
-                <span class="alert-icon">&#x23F0;</span>
-                <div class="alert-text">
-                    Tu licencia esta <strong>proxima a vencer</strong>. Contacta a tu proveedor para renovar y seguir disfrutando de todas las funciones del sistema sin interrupciones.
-                </div>
-            </div>
-
-            <p class="section-title">&#x2705; Tu licencia incluye</p>
-
-            <div class="benefits">
-                <div class="benefit">
-                    <span class="benefit-icon">&#x1F4BB;</span>
-                    <span class="benefit-text">Punto de Venta completo</span>
-                </div>
-                <div class="benefit">
-                    <span class="benefit-icon">&#x1F6E1;&#xFE0F;</span>
-                    <span class="benefit-text">Guardian Anti-fraude</span>
-                </div>
-                <div class="benefit">
-                    <span class="benefit-icon">&#x1F4F1;</span>
-                    <span class="benefit-text">App movil incluida</span>
-                </div>
-                <div class="benefit">
-                    <span class="benefit-icon">&#x2601;&#xFE0F;</span>
-                    <span class="benefit-text">Respaldo en la nube</span>
-                </div>
-                <div class="benefit">
-                    <span class="benefit-icon">&#x1F4CA;</span>
-                    <span class="benefit-text">Reportes y dashboard</span>
-                </div>
-                <div class="benefit">
-                    <span class="benefit-icon">&#x1F527;</span>
-                    <span class="benefit-text">Soporte y actualizaciones</span>
-                </div>
-            </div>
-
-            <div class="contact-info">
-                <p>Para renovar tu licencia, comunicate con<br><strong>tu proveedor SYA</strong></p>
+            <div>
+                <div class="app-name">SYA Tortillerias</div>
+                <div class="app-sub">Sistema Punto de Venta</div>
             </div>
         </div>
+        <span class="status-pill">Por vencer</span>
+    </div>
 
-        <div class="footer">
-            <p><span>SYA TORTILLERIAS</span> &bull; Sistema Punto de Venta</p>
+    <div class="hero">
+        <div class="days-number">7</div>
+        <div class="days-label">dias restantes</div>
+        <div class="progress-track"><div class="progress-fill"></div></div>
+    </div>
+
+    <div class="message">
+        <div class="message-box">
+            <p>Tu licencia vence en <strong>7 dias</strong>. Contacta a tu proveedor SYA para renovar y evitar interrupciones en tu servicio.</p>
         </div>
     </div>
+
+    <div class="plan-section">
+        <div class="plan-header">Detalles de licencia</div>
+        <div class="plan-grid">
+            <div class="plan-item">
+                <div class="plan-value">Mi Negocio</div>
+                <div class="plan-label">Negocio</div>
+            </div>
+            <div class="plan-item">
+                <div class="plan-value">Basico</div>
+                <div class="plan-label">Plan</div>
+            </div>
+            <div class="plan-item">
+                <div class="plan-value">7d</div>
+                <div class="plan-label">Vigencia</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="features">
+        <div class="plan-header">Incluido en tu plan</div>
+        <div class="feat-row"><span class="feat-dot"></span><span class="feat-text"><strong>Punto de Venta</strong> con bascula integrada</span></div>
+        <div class="feat-row"><span class="feat-dot"></span><span class="feat-text"><strong>Guardian</strong> sistema anti-fraude en tiempo real</span></div>
+        <div class="feat-row"><span class="feat-dot"></span><span class="feat-text"><strong>App Movil</strong> control remoto de tu negocio</span></div>
+        <div class="feat-row"><span class="feat-dot"></span><span class="feat-text"><strong>Reportes</strong> ventas, cortes y dashboard</span></div>
+        <div class="feat-row"><span class="feat-dot"></span><span class="feat-text"><strong>Soporte</strong> tecnico y actualizaciones incluidas</span></div>
+    </div>
+
+    <div class="footer-bar">
+        <span class="footer-brand">SYA TORTILLERIAS</span>
+        <span class="footer-contact">Contacta a <strong>tu proveedor SYA</strong></span>
+    </div>
+</div>
 </body>
 </html>
