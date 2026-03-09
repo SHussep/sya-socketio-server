@@ -17,8 +17,12 @@ const helmet = require('helmet');
 const bodyParser = require('body-parser');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const { pool, initializeDatabase, runMigrations } = require('./database');
 require('dotenv').config();
+
+// ✅ SECURITY: Superadmin PIN for dangerous admin endpoints
+const SUPER_ADMIN_PIN_HASH = process.env.SUPER_ADMIN_PIN_HASH;
 
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -271,8 +275,27 @@ app.get('/timezone-diagnostic', requireAdminCredentials, (req, res) => {
     }
 });
 
+// ✅ SECURITY: Superadmin PIN middleware for dangerous admin endpoints
+function requireSuperAdminPIN(req, res, next) {
+    if (!SUPER_ADMIN_PIN_HASH) {
+        return res.status(503).json({ success: false, message: 'Superadmin no configurado' });
+    }
+    const pin = req.headers['x-admin-pin'];
+    if (!pin) {
+        return res.status(401).json({ success: false, message: 'PIN de superadmin requerido' });
+    }
+    const pinHash = crypto.createHash('sha256').update(pin).digest('hex');
+    if (!crypto.timingSafeEqual(Buffer.from(pinHash), Buffer.from(SUPER_ADMIN_PIN_HASH))) {
+        const ip = req.ip || req.connection?.remoteAddress || 'unknown';
+        console.warn(`[Security] ⚠️ PIN incorrecto en endpoint admin desde IP: ${ip}`);
+        return res.status(403).json({ success: false, message: 'PIN incorrecto' });
+    }
+    next();
+}
+
 // Ver todos los datos de la BD (para debugging)
-app.get('/api/database/view', requireAdminCredentials, async (req, res) => {
+// ⚠️ SECURITY: Now requires superadmin PIN instead of simple admin password
+app.get('/api/database/view', requireSuperAdminPIN, async (req, res) => {
     try {
         const tenants = await pool.query('SELECT * FROM tenants ORDER BY created_at DESC');
         const employees = await pool.query('SELECT id, tenant_id, username, full_name, email, role, is_active, created_at FROM employees ORDER BY created_at DESC');
@@ -295,7 +318,7 @@ app.get('/api/database/view', requireAdminCredentials, async (req, res) => {
 });
 
 // Arreglar tenants antiguos sin subscription_id
-app.post('/api/database/fix-old-tenants', requireAdminCredentials, async (req, res) => {
+app.post('/api/database/fix-old-tenants', requireSuperAdminPIN, async (req, res) => {
     try {
         // Obtener subscription Basic
         const subResult = await pool.query("SELECT id FROM subscriptions WHERE name = 'Basic' LIMIT 1");
@@ -321,7 +344,8 @@ app.post('/api/database/fix-old-tenants', requireAdminCredentials, async (req, r
 });
 
 // Eliminar tenant y todos sus datos relacionados
-app.post('/api/database/delete-tenant-by-email', requireAdminCredentials, async (req, res) => {
+// ⚠️ SECURITY: Requires superadmin PIN - this permanently deletes ALL tenant data
+app.post('/api/database/delete-tenant-by-email', requireSuperAdminPIN, async (req, res) => {
     try {
         const { email } = req.body;
 
@@ -666,7 +690,8 @@ app.post('/api/branches', authenticateToken, async (req, res) => {
 });
 
 // GET /api/branches/:id/settings - Obtener configuración de sucursal
-app.get('/api/branches/:id/settings', async (req, res) => {
+// ✅ SECURITY: Protected with JWT authentication
+app.get('/api/branches/:id/settings', authenticateToken, async (req, res) => {
     const { id } = req.params;
     const { tenantId } = req.query;
 
@@ -701,7 +726,8 @@ app.get('/api/branches/:id/settings', async (req, res) => {
 
 // PUT /api/branches/:id/settings - Actualizar configuración de sucursal (cajero consolida, max breaks, etc.)
 // Usado por Desktop y Mobile Admin para sincronizar settings
-app.put('/api/branches/:id/settings', async (req, res) => {
+// ✅ SECURITY: Protected with JWT authentication
+app.put('/api/branches/:id/settings', authenticateToken, async (req, res) => {
     const { id } = req.params;
     const { tenantId, cajero_consolida_liquidaciones, max_breaks_per_shift } = req.body;
 

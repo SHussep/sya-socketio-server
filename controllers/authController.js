@@ -10,6 +10,12 @@ const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
 
+// ✅ SECURITY: Mask emails in logs to prevent data leakage
+const maskEmail = (email) => {
+    if (!email) return 'unknown';
+    return email.replace(/^(.)(.*)(@.*)$/, '$1***$3');
+};
+
 // Helper: Derive mobile access type from role_id and can_use_mobile_app
 // Must match the logic in routes/employees.js getMobileAccessType
 const deriveMobileAccessType = (roleId, canUseMobileApp) => {
@@ -223,7 +229,7 @@ class AuthController {
     async desktopLogin(req, res) {
         const { email, password, branchId, tenantCode } = req.body;
 
-        console.log(`[Desktop Login] Intento de login: email=${email}, tenantCode=${tenantCode}`);
+        console.log(`[Desktop Login] Intento de login: email=${maskEmail(email)}, tenantCode=${tenantCode}`);
 
         if (!tenantCode || !email || !password) {
             return res.status(400).json({
@@ -296,7 +302,8 @@ class AuthController {
             }
 
             if (!validPassword) {
-                console.log(`[Desktop Login] Contraseña incorrecta para: ${employee.email}`);
+                const maskedEmail = employee.email ? employee.email.replace(/^(.)(.*)(@.*)$/, '$1***$3') : 'unknown';
+                console.log(`[Desktop Login] Contraseña incorrecta para: ${maskedEmail}`);
                 return res.status(401).json({
                     success: false,
                     message: 'Credenciales inválidas'
@@ -516,7 +523,7 @@ class AuthController {
             const employee = employeeResult.rows[0];
 
             if (!employee.can_use_mobile_app) {
-                console.log(`[Mobile Login] ❌ Empleado ${employee.email} NO tiene permiso para app móvil`);
+                console.log(`[Mobile Login] ❌ Empleado ${maskEmail(employee.email)} NO tiene permiso para app móvil`);
                 return res.status(403).json({
                     success: false,
                     message: 'No tienes permiso para usar la aplicación móvil. Contacta al administrador.'
@@ -526,7 +533,7 @@ class AuthController {
             // Verificar que el email esté verificado (requerido para app móvil)
             // NOTA: El owner (is_owner = true) está verificado implícitamente por haber usado Gmail OAuth
             if (employee.email_verified !== true && !employee.is_owner) {
-                console.log(`[Mobile Login] ❌ Empleado ${employee.email} NO tiene email verificado (email_verified=${employee.email_verified})`);
+                console.log(`[Mobile Login] ❌ Empleado ${maskEmail(employee.email)} NO tiene email verificado`);
                 return res.status(403).json({
                     success: false,
                     message: 'Tu email no ha sido verificado. Contacta al administrador para completar la verificación.',
@@ -930,6 +937,14 @@ class AuthController {
 
             console.log(`[Google Signup] ✅ Branch creado: ${branch.branch_code} (ID: ${branch.id})`);
 
+            // ✅ SECURITY: Password validation
+            if (!password || password.length < 8) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'La contraseña debe tener al menos 8 caracteres'
+                });
+            }
+
             const passwordHash = await bcrypt.hash(password, 10);
             const username = displayName.replace(/\s+/g, '').toLowerCase();
 
@@ -1162,7 +1177,7 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
             );
 
             if (tenantResult.rows.length === 0) {
-                console.log(`[Google Login] Email no registrado en tenants: ${email}`);
+                console.log(`[Google Login] Email no registrado en tenants: ${maskEmail(email)}`);
                 return res.json({
                     success: true,
                     emailExists: false,
