@@ -94,18 +94,21 @@ module.exports = (pool, io) => {
                     : distance <= zone.radius_meters;                                // outside: enter only when clearly inside
 
                 if (isInside !== wasInside) {
-                    // Check cooldown: prevent spam notifications
+                    const eventType = isInside ? 'enter' : 'exit';
+
+                    // Check cooldown: prevent spam notifications for same event type
+                    // But ALWAYS allow state transitions (enter→exit, exit→enter)
                     const now = Date.now();
-                    const lastNotification = _geofenceCooldowns.get(stateKey) || 0;
+                    const cooldownKey = `${stateKey}_${eventType}`;
+                    const lastNotification = _geofenceCooldowns.get(cooldownKey) || 0;
                     if (now - lastNotification < GEOFENCE_COOLDOWN_MS) {
-                        // Update state silently (track position) but don't notify
+                        // Same event type within cooldown — update state silently
                         _employeeZoneState.set(stateKey, isInside);
                         continue;
                     }
 
                     _employeeZoneState.set(stateKey, isInside);
-                    _geofenceCooldowns.set(stateKey, now);
-                    const eventType = isInside ? 'enter' : 'exit';
+                    _geofenceCooldowns.set(cooldownKey, now);
 
                     if (!empName) {
                         const empInfo = await client.query(
