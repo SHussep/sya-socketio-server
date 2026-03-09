@@ -1,28 +1,25 @@
 // ═══════════════════════════════════════════════════════════════
-// AUTH CONTROLLERS - Indice de controladores de autenticacion
-// ═══════════════════════════════════════════════════════════════
-//
-// Este modulo re-exporta el AuthController original para mantener
-// compatibilidad mientras se migra gradualmente a controladores modulares.
-//
-// Estructura de controladores disponibles:
-// - LoginController: desktopLogin, mobileLogin
-// - TokenController: refreshToken, authenticateToken (pendiente)
-// - GoogleAuthController: googleSignup, googleLogin (pendiente)
-// - GmailOAuthController: startGmailOAuth, callbacks (pendiente)
-// - DeviceController: registerDevice (pendiente)
-// - BranchController: getBranches, createBranch, etc. (pendiente)
-// - TenantController: overwriteTenant (pendiente)
-// - EmployeeController: getMainEmployee, verifyAdminPassword (pendiente)
+// AUTH CONTROLLER - Assembled from modular method files
 // ═══════════════════════════════════════════════════════════════
 
-// Re-exportar el controlador original para compatibilidad
-const AuthController = require('../authController');
+const gmailMethods = require('./gmailMethods');
+const loginMethods = require('./loginMethods');
+const signupMethods = require('./signupMethods');
+const tenantMethods = require('./tenantMethods');
 
-// Exportar controladores modulares (para uso futuro)
-const LoginController = require('./loginController');
+class AuthController {
+    constructor(pool) {
+        this.pool = pool;
+    }
+}
+
+// Attach all methods to the prototype
+Object.assign(
+    AuthController.prototype,
+    gmailMethods,
+    loginMethods,
+    signupMethods,
+    tenantMethods
+);
 
 module.exports = AuthController;
-
-// Exportar tambien los controladores individuales para uso directo
-module.exports.LoginController = LoginController;

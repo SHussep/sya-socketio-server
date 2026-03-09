@@ -1,4 +1,4 @@
-const AuthController = require('../controllers/authController');
+const AuthController = require('../controllers/auth');
 const { loginRateLimiter } = require('../middleware/rateLimiter');
 
 module.exports = function (pool) {
