@@ -8,6 +8,21 @@ const { sendNotificationToMultipleDevices } = require('./firebaseAdmin');
 const { pool } = require('../database');
 
 // ═══════════════════════════════════════════════════════════════
+// MAPEO DE COLUMNAS LEGACY → GRUPO
+// ═══════════════════════════════════════════════════════════════
+
+const LEGACY_TO_GROUP = {
+    'notify_login': 'notify_turnos',
+    'notify_shift_start': 'notify_turnos',
+    'notify_shift_end': 'notify_turnos',
+    'notify_expense_created': 'notify_gastos',
+    'notify_assignment_created': 'notify_repartidores',
+    'notify_guardian_peso_no_registrado': 'notify_guardian',
+    'notify_guardian_operacion_irregular': 'notify_guardian',
+    'notify_guardian_discrepancia': 'notify_guardian',
+};
+
+// ═══════════════════════════════════════════════════════════════
 // PREFERENCIAS DE NOTIFICACIONES
 // ═══════════════════════════════════════════════════════════════
 
@@ -18,6 +33,13 @@ const { pool } = require('../database');
  */
 async function getNotificationPreferences(employeeId) {
     const defaults = {
+        // Group columns (new system)
+        notify_turnos: true,
+        notify_ventas: true,
+        notify_gastos: true,
+        notify_repartidores: true,
+        notify_guardian: true,
+        // Legacy columns (backward compatibility)
         notify_login: true,
         notify_shift_start: true,
         notify_shift_end: true,
@@ -54,15 +76,17 @@ async function getNotificationPreferences(employeeId) {
  */
 async function filterDevicesByPreferences(deviceTokensWithEmployeeId, notificationType) {
     const filteredTokens = [];
+    // Resolve legacy column names to group columns
+    const groupColumn = LEGACY_TO_GROUP[notificationType] || notificationType;
 
     for (const device of deviceTokensWithEmployeeId) {
         const prefs = await getNotificationPreferences(device.employee_id);
 
-        // Verificar si el empleado quiere recibir este tipo de notificación
-        if (prefs[notificationType] !== false) {
+        // Check group column (new system takes precedence)
+        if (prefs[groupColumn] !== false) {
             filteredTokens.push(device.device_token);
         } else {
-            console.log(`[NotificationHelper] ⏭️ Empleado ${device.employee_id} no quiere ${notificationType}`);
+            console.log(`[NotificationHelper] Empleado ${device.employee_id} no quiere ${groupColumn}`);
         }
     }
 
@@ -441,105 +465,16 @@ async function sendNotificationToEmployee(employeeId, { title, body, data = {} }
  */
 async function notifyUserLogin(branchId, { employeeId, employeeName, branchName, scaleStatus, isReviewMode }) {
     try {
-        // IMPORTANTE: employeeId es el GlobalId (UUID), no el autoincrement ID
-        // Obtener el ID numérico del empleado desde PostgreSQL usando global_id
+        // NO enviar push FCM para user-login.
+        // El evento shift_started ya notifica la accion relevante (apertura de turno).
+        // user-login solo se guarda en historial para auditoria.
         const employeeResult = await pool.query(
-            `SELECT id, role_id FROM employees WHERE global_id = $1 LIMIT 1`,
+            `SELECT id FROM employees WHERE global_id = $1 LIMIT 1`,
             [employeeId]
         );
+        const employeeIdNumeric = employeeResult.rows[0]?.id;
 
-        if (employeeResult.rows.length === 0) {
-            console.log(`[NotificationHelper] ⚠️ No se encontró empleado con global_id: ${employeeId}`);
-            return { sent: 0, failed: 0 };
-        }
-
-        const employeeIdNumeric = employeeResult.rows[0].id;
-        const employeeRoleId = employeeResult.rows[0].role_id;
-
-        // Enviar notificación personalizada al empleado que hizo login
-        const selfBody = isReviewMode
-            ? `Iniciaste sesión en ${branchName} (modo consulta)`
-            : `Iniciaste sesión en ${branchName}`;
-        const selfResult = await sendNotificationToEmployee(employeeId, {
-            title: 'Acceso de Usuario',
-            body: selfBody,
-            data: {
-                type: 'user_login',
-                employeeName,
-                branchName,
-                scaleStatus,
-                isReviewMode: isReviewMode ? 'true' : 'false'
-            }
-        });
-
-        // Solo enviar a otros admins/encargados si no es el mismo empleado
-        // Obtener dispositivos de empleados con acceso móvil de tipo 'admin'
-        // Buscar por mobile_access_type en la tabla roles (NO por nombre de rol)
-        // EXCLUYENDO al empleado que hizo login
-        // INCLUYENDO employee_id para filtrar por preferencias
-        const adminTokensResult = await pool.query(
-            `SELECT DISTINCT dt.device_token, dt.employee_id
-             FROM device_tokens dt
-             JOIN employees e ON dt.employee_id = e.id
-             JOIN roles r ON e.role_id = r.id
-             WHERE dt.branch_id = $1
-               AND dt.is_active = true
-               AND r.mobile_access_type = 'admin'
-               AND e.id != $2`,
-            [branchId, employeeIdNumeric]
-        );
-
-        // Filtrar según preferencias de cada empleado
-        const adminDeviceTokens = await filterDevicesByPreferences(
-            adminTokensResult.rows,
-            'notify_login'
-        );
-
-        let adminResult = { sent: 0, failed: 0, total: 0 };
-
-        if (adminDeviceTokens.length > 0) {
-            const adminBody = isReviewMode
-                ? `${employeeName} inició sesión en ${branchName} (modo consulta)`
-                : `${employeeName} inició sesión en ${branchName}`;
-            const results = await sendNotificationToMultipleDevices(adminDeviceTokens, {
-                title: 'Acceso de Usuario',
-                body: adminBody,
-                data: {
-                    type: 'user_login',
-                    employeeName,
-                    branchName,
-                    scaleStatus,
-                    isReviewMode: isReviewMode ? 'true' : 'false'
-                }
-            });
-
-            const successCount = results.filter(r => r.success).length;
-            const invalidTokens = results
-                .filter(r => r.result === 'INVALID_TOKEN')
-                .map(r => r.deviceToken);
-
-            console.log(`[NotificationHelper] ✅ Notificaciones enviadas a otros admins/encargados de sucursal ${branchId}: ${successCount}/${adminDeviceTokens.length}`);
-
-            // Desactivar tokens inválidos
-            if (invalidTokens.length > 0) {
-                await pool.query(
-                    `UPDATE device_tokens SET is_active = false WHERE device_token = ANY($1)`,
-                    [invalidTokens]
-                );
-                console.log(`[NotificationHelper] 🧹 Deactivated ${invalidTokens.length} invalid tokens`);
-            }
-
-            adminResult = {
-                sent: successCount,
-                failed: adminDeviceTokens.length - successCount,
-                total: adminDeviceTokens.length,
-                invalidTokensRemoved: invalidTokens.length
-            };
-        } else {
-            console.log(`[NotificationHelper] ℹ️ No hay otros admins/encargados en sucursal ${branchId}`);
-        }
-
-        // Guardar en historial de notificaciones (campana)
+        // Guardar en historial de notificaciones (campana) - solo auditoria
         const tenantResult = await pool.query('SELECT tenant_id FROM branches WHERE id = $1', [branchId]);
         const tenantId = tenantResult.rows[0]?.tenant_id;
         if (tenantId) {
@@ -549,21 +484,18 @@ async function notifyUserLogin(branchId, { employeeId, employeeName, branchName,
                 employee_id: employeeIdNumeric,
                 category: 'login',
                 event_type: 'user_login',
-                title: 'Inicio de Sesión',
+                title: 'Inicio de Sesion',
                 body: isReviewMode
-                    ? `${employeeName} inició sesión en ${branchName} (modo consulta)`
-                    : `${employeeName} inició sesión en ${branchName}`,
+                    ? `${employeeName} inicio sesion en ${branchName} (modo consulta)`
+                    : `${employeeName} inicio sesion en ${branchName}`,
                 data: { employeeName, branchName, scaleStatus, isReviewMode }
             });
         }
 
-        return {
-            self: selfResult,
-            others: adminResult,
-            total: selfResult.sent + adminResult.sent
-        };
+        console.log(`[NotificationHelper] Login de ${employeeName} registrado en historial (sin push FCM)`);
+        return { self: { sent: 0 }, others: { sent: 0 }, total: 0 };
     } catch (error) {
-        console.error('[NotificationHelper] ❌ Error en notifyUserLogin:', error.message);
+        console.error('[NotificationHelper] Error en notifyUserLogin:', error.message);
         return { sent: 0, failed: 0, error: error.message };
     }
 }
@@ -626,15 +558,8 @@ async function notifyScaleAlert(branchId, { severity, eventType, details, employ
     // Si no viene simpleCategory del frontend, determinarla a partir del eventType
     const resolvedCategory = simpleCategory || getGuardianSimpleCategory(eventType);
 
-    // Determinar el tipo de notificación según la categoría simple
-    let notificationType = null;
-    if (resolvedCategory === 'peso_no_registrado') {
-        notificationType = 'notify_guardian_peso_no_registrado';
-    } else if (resolvedCategory === 'operacion_irregular') {
-        notificationType = 'notify_guardian_operacion_irregular';
-    } else if (resolvedCategory === 'discrepancia') {
-        notificationType = 'notify_guardian_discrepancia';
-    }
+    // Todas las alertas de Guardian usan el mismo grupo de preferencias
+    const notificationType = 'notify_guardian';
 
     console.log(`[NotificationHelper] 🎯 Guardian Alert: ${eventType} → categoría: ${resolvedCategory}`);
 
@@ -683,7 +608,7 @@ async function notifyShiftStarted(branchId, { employeeName, branchName, initialA
             branchName,
             initialAmount: initialAmount.toString()
         }
-    }, { notificationType: 'notify_shift_start' });
+    }, { notificationType: 'notify_turnos' });
 }
 
 /**
@@ -732,7 +657,7 @@ async function notifyShiftEnded(branchId, employeeGlobalId, { employeeName, bran
                 expectedCash: expectedCash.toString(),
                 status
             }
-        }, { excludeEmployeeGlobalId: employeeGlobalId, notificationType: 'notify_shift_end' });
+        }, { excludeEmployeeGlobalId: employeeGlobalId, notificationType: 'notify_turnos' });
 
         console.log(`[NotificationHelper] ✅ Notificaciones de cierre enviadas a admins/encargados de sucursal ${branchId}: ${adminResult.sent}/${adminResult.total || adminResult.sent}`);
 
@@ -771,12 +696,12 @@ async function notifyShiftEnded(branchId, employeeGlobalId, { employeeName, bran
  */
 async function notifyScaleDisconnection(branchId, { message }) {
     return await sendNotificationToAdminsInBranch(branchId, {
-        title: '⚠️ Báscula Desconectada',
-        body: message || 'La báscula se ha desconectado',
+        title: 'Bascula Desconectada',
+        body: message || 'La bascula se ha desconectado',
         data: {
             type: 'scale_disconnected'
         }
-    });
+    }, { notificationType: 'notify_guardian' });
 }
 
 /**
@@ -785,12 +710,12 @@ async function notifyScaleDisconnection(branchId, { message }) {
  */
 async function notifyScaleConnection(branchId, { message }) {
     return await sendNotificationToAdminsInBranch(branchId, {
-        title: '✅ Báscula Conectada',
-        body: message || 'La báscula se ha conectado',
+        title: 'Bascula Conectada',
+        body: message || 'La bascula se ha conectado',
         data: {
             type: 'scale_connected'
         }
-    });
+    }, { notificationType: 'notify_guardian' });
 }
 
 /**
@@ -816,7 +741,7 @@ async function notifyExpenseCreated(employeeGlobalId, { expenseId, amount, descr
                 description,
                 category
             }
-        }, { excludeEmployeeGlobalId: employeeGlobalId, notificationType: 'notify_expense_created' });
+        }, { excludeEmployeeGlobalId: employeeGlobalId, notificationType: 'notify_gastos' });
 
         console.log(`[NotificationHelper] ✅ Notificaciones de gasto enviadas a ADMINS/ENCARGADOS de sucursal ${branchId}: ${adminResult.sent}/${adminResult.total || adminResult.sent} dispositivos`);
 
@@ -910,7 +835,7 @@ async function notifyAssignmentCreated(employeeGlobalId, { assignmentId, quantit
             isConsolidated: isConsolidated ? 'true' : 'false',
             itemCount: (itemCount || 1).toString()
         }
-    }, { excludeEmployeeGlobalId: employeeGlobalId, notificationType: 'notify_assignment_created' });
+    }, { excludeEmployeeGlobalId: employeeGlobalId, notificationType: 'notify_repartidores' });
 
     return {
         employee: employeeResult,
@@ -932,8 +857,8 @@ async function notifyPreparationModeActivated(tenantId, branchId, { operatorName
 
         // Enviar notificación a TODOS los administradores/encargados del TENANT
         const result = await sendNotificationToAdminsInTenant(tenantId, {
-            title: `⚠️ Modo Preparación [${branchName}]`,
-            body: `${operatorName} activó el Modo Preparación${authorizerName !== operatorName ? ` (autorizado por ${authorizerName})` : ''}${reasonText}`,
+            title: `Modo Preparacion [${branchName}]`,
+            body: `${operatorName} activo el Modo Preparacion${authorizerName !== operatorName ? ` (autorizado por ${authorizerName})` : ''}${reasonText}`,
             data: {
                 type: 'preparation_mode_activated',
                 operatorName,
@@ -944,7 +869,7 @@ async function notifyPreparationModeActivated(tenantId, branchId, { operatorName
                 reason: reason || '',
                 activatedAt: activatedAt || new Date().toISOString()
             }
-        });
+        }, { notificationType: 'notify_guardian' });
 
         console.log(`[NotificationHelper] ⚠️ Notificación de Modo Preparación enviada a admins del tenant ${tenantId}: ${result.sent}/${result.total || 0}`);
 
@@ -992,9 +917,9 @@ async function notifyPreparationModeDeactivated(tenantId, branchId, { operatorNa
             body += ` | Pesajes: ${weighingCycleCount}, Total: ${Number(totalWeightKg).toFixed(3)}kg`;
         }
 
-        // Enviar notificación a TODOS los administradores/encargados del TENANT
+        // Enviar notificacion a TODOS los administradores/encargados del TENANT
         const result = await sendNotificationToAdminsInTenant(tenantId, {
-            title: `✅ Modo Preparación Finalizado [${branchName}]`,
+            title: `Modo Preparacion Finalizado [${branchName}]`,
             body,
             data: {
                 type: 'preparation_mode_deactivated',
@@ -1009,7 +934,7 @@ async function notifyPreparationModeDeactivated(tenantId, branchId, { operatorNa
                 weighingCycleCount: weighingCycleCount.toString(),
                 totalWeightKg: totalWeightKg.toString()
             }
-        });
+        }, { notificationType: 'notify_guardian' });
 
         console.log(`[NotificationHelper] ✅ Notificación de desactivación enviada a admins del tenant ${tenantId}: ${result.sent}/${result.total || 0}`);
 
@@ -1060,7 +985,7 @@ async function notifyManualWeightOverrideChanged(tenantId, branchId, { employeeN
                 isActivated: isActivated.toString(),
                 timestamp: timestamp || new Date().toISOString()
             }
-        });
+        }, { notificationType: 'notify_guardian' });
 
         console.log(`[NotificationHelper] ${emoji} Notificación de Peso Manual (${action}) enviada a admins del tenant ${tenantId}: ${result.sent}/${result.total || 0}`);
 
@@ -1093,7 +1018,7 @@ async function notifyManualWeightOverrideChanged(tenantId, branchId, { employeeN
 async function notifyCreditSaleCreated(tenantId, branchId, { ticketNumber, total, creditAmount, clientName, branchName, employeeName }) {
     try {
         const result = await sendNotificationToAdminsInTenant(tenantId, {
-            title: `💳 Venta a Crédito [${branchName}]`,
+            title: `Venta a Credito [${branchName}]`,
             body: `${clientName}: $${creditAmount.toFixed(2)} de $${total.toFixed(2)} - Ticket #${ticketNumber}`,
             data: {
                 type: 'credit_sale_created',
@@ -1106,9 +1031,9 @@ async function notifyCreditSaleCreated(tenantId, branchId, { ticketNumber, total
                 branchId: branchId.toString(),
                 tenantId: tenantId.toString()
             }
-        });
+        }, { notificationType: 'notify_ventas' });
 
-        console.log(`[NotificationHelper] 💳 Notificación de venta a crédito enviada a admins del tenant ${tenantId}: ${result.sent}/${result.total || 0}`);
+        console.log(`[NotificationHelper] Notificacion de venta a credito enviada a admins del tenant ${tenantId}: ${result.sent}/${result.total || 0}`);
 
         // Guardar en historial de notificaciones (campana)
         await saveToNotificationHistory({
@@ -1143,8 +1068,8 @@ async function notifyClientPaymentReceived(tenantId, branchId, { paymentAmount, 
             : 'Deuda liquidada';
 
         const result = await sendNotificationToAdminsInTenant(tenantId, {
-            title: `💵 Abono Recibido [${branchName}]`,
-            body: `${clientName} abonó $${paymentAmount.toFixed(2)} (${paymentMethod || 'Efectivo'}) - ${balanceText}`,
+            title: `Abono Recibido [${branchName}]`,
+            body: `${clientName} abono $${paymentAmount.toFixed(2)} (${paymentMethod || 'Efectivo'}) - ${balanceText}`,
             data: {
                 type: 'client_payment_received',
                 paymentAmount: paymentAmount.toString(),
@@ -1156,7 +1081,7 @@ async function notifyClientPaymentReceived(tenantId, branchId, { paymentAmount, 
                 branchId: branchId.toString(),
                 tenantId: tenantId.toString()
             }
-        });
+        }, { notificationType: 'notify_ventas' });
 
         console.log(`[NotificationHelper] 💵 Notificación de abono recibido enviada a admins del tenant ${tenantId}: ${result.sent}/${result.total || 0}`);
 
@@ -1192,7 +1117,7 @@ async function notifySaleCancelled(tenantId, branchId, { ticketNumber, total, re
         const authText = authorizedBy ? ` (Autorizado por ${authorizedBy})` : '';
 
         const result = await sendNotificationToAdminsInTenant(tenantId, {
-            title: `❌ Venta Cancelada [${branchName}]`,
+            title: `Venta Cancelada [${branchName}]`,
             body: `Ticket #${ticketNumber} ($${total.toFixed(2)}) cancelado por ${employeeName}${authText}${reasonText}`,
             data: {
                 type: 'sale_cancelled',
@@ -1205,7 +1130,7 @@ async function notifySaleCancelled(tenantId, branchId, { ticketNumber, total, re
                 branchId: branchId.toString(),
                 tenantId: tenantId.toString()
             }
-        });
+        }, { notificationType: 'notify_ventas' });
 
         console.log(`[NotificationHelper] ❌ Notificación de venta cancelada enviada a admins del tenant ${tenantId}: ${result.sent}/${result.total || 0}`);
 
@@ -1243,7 +1168,7 @@ async function notifyGuardianStatusChanged(branchId, { isEnabled, changedBy }) {
             isEnabled: String(isEnabled),
             changedBy
         }
-    });
+    }, { notificationType: 'notify_guardian' });
 }
 
 /**
@@ -1275,7 +1200,7 @@ async function notifyGeofenceEvent(tenantId, branchId, { employeeId, employeeNam
                 branchName: branchName || '',
                 distance: String(distance)
             }
-        });
+        }, { notificationType: 'notify_repartidores' });
 
         console.log(`[NotificationHelper] ${emoji} Geocerca: ${employeeName} ${action} "${zoneName}" - FCM: ${result.sent}/${result.total || 0}`);
 

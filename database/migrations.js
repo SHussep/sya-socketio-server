@@ -1013,6 +1013,32 @@ async function runMigrations() {
                 console.log('[Schema] ✅ Table notification_preferences created successfully');
             }
 
+            // Patch: Add group notification preference columns
+            const checkGroupNotifCols = await client.query(`
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'notification_preferences' AND column_name = 'notify_turnos'
+            `);
+            if (checkGroupNotifCols.rows.length === 0) {
+                console.log('[Schema] Adding group notification preference columns...');
+                await client.query(`
+                    ALTER TABLE notification_preferences
+                        ADD COLUMN IF NOT EXISTS notify_turnos BOOLEAN DEFAULT true,
+                        ADD COLUMN IF NOT EXISTS notify_ventas BOOLEAN DEFAULT true,
+                        ADD COLUMN IF NOT EXISTS notify_gastos BOOLEAN DEFAULT true,
+                        ADD COLUMN IF NOT EXISTS notify_repartidores BOOLEAN DEFAULT true,
+                        ADD COLUMN IF NOT EXISTS notify_guardian BOOLEAN DEFAULT true
+                `);
+                await client.query(`
+                    UPDATE notification_preferences SET
+                        notify_turnos = (COALESCE(notify_login, true) AND COALESCE(notify_shift_start, true) AND COALESCE(notify_shift_end, true)),
+                        notify_ventas = true,
+                        notify_gastos = COALESCE(notify_expense_created, true),
+                        notify_repartidores = COALESCE(notify_assignment_created, true),
+                        notify_guardian = (COALESCE(notify_guardian_peso_no_registrado, true) AND COALESCE(notify_guardian_operacion_irregular, true) AND COALESCE(notify_guardian_discrepancia, true))
+                `);
+                console.log('[Schema] Group notification preference columns added and migrated');
+            }
+
             // Patch: Add offline-first columns to productos table
             console.log('[Schema] 🔍 Checking productos offline-first columns...');
             const checkProductosTerminalId = await client.query(`
