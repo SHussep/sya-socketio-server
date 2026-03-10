@@ -97,6 +97,11 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
                 message: data.message || '',
                 updatedAt: new Date().toISOString(),
             });
+            // Persist to DB so status survives server restarts
+            pool.query(
+                `UPDATE branches SET scale_status = 'disconnected', scale_status_updated_at = NOW() WHERE id = $1`,
+                [Number(data.branchId)]
+            ).catch(e => console.error(`[SCALE] Error persisting disconnected status: ${e.message}`));
             io.to(roomName).emit('scale_disconnected', { ...data, receivedAt: new Date().toISOString() });
             try {
                 await notificationHelper.notifyScaleDisconnection(data.branchId, { message: data.message });
@@ -115,6 +120,11 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
                 message: data.message || '',
                 updatedAt: new Date().toISOString(),
             });
+            // Persist to DB so status survives server restarts
+            pool.query(
+                `UPDATE branches SET scale_status = 'connected', scale_status_updated_at = NOW() WHERE id = $1`,
+                [Number(data.branchId)]
+            ).catch(e => console.error(`[SCALE] Error persisting connected status: ${e.message}`));
             io.to(roomName).emit('scale_connected', { ...data, receivedAt: new Date().toISOString() });
 
             // Cerrar logs de desconexión huérfanos para esta sucursal

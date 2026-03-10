@@ -454,17 +454,37 @@ module.exports = (pool, io, scaleStatusByBranch) => {
         }
     });
 
-    // GET /api/branches/:branchId/scale-status - Estado actual de la báscula (en memoria, tiempo real)
-    router.get('/:branchId/scale-status', authenticateToken, (req, res) => {
+    // GET /api/branches/:branchId/scale-status - Estado actual de la báscula (memoria + DB fallback)
+    router.get('/:branchId/scale-status', authenticateToken, async (req, res) => {
         const branchId = parseInt(req.params.branchId);
         if (!branchId) {
             return res.status(400).json({ success: false, message: 'branchId requerido' });
         }
+        // 1. Check in-memory Map first (real-time, updated by socket events)
         const status = scaleStatusByBranch.get(branchId);
-        if (!status) {
-            return res.json({ success: true, data: { status: 'unknown', branchId } });
+        if (status) {
+            return res.json({ success: true, data: { ...status, branchId } });
         }
-        res.json({ success: true, data: { ...status, branchId } });
+        // 2. Fallback to DB (persisted across server restarts)
+        try {
+            const result = await pool.query(
+                `SELECT scale_status, scale_status_updated_at FROM branches WHERE id = $1`,
+                [branchId]
+            );
+            if (result.rows.length > 0 && result.rows[0].scale_status && result.rows[0].scale_status !== 'unknown') {
+                const dbStatus = {
+                    status: result.rows[0].scale_status,
+                    updatedAt: result.rows[0].scale_status_updated_at,
+                    source: 'db'
+                };
+                // Re-hydrate in-memory Map so subsequent requests are fast
+                scaleStatusByBranch.set(branchId, dbStatus);
+                return res.json({ success: true, data: { ...dbStatus, branchId } });
+            }
+        } catch (e) {
+            console.error(`[SCALE] Error reading scale status from DB: ${e.message}`);
+        }
+        res.json({ success: true, data: { status: 'unknown', branchId } });
     });
 
     return router;

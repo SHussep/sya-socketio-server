@@ -2323,6 +2323,18 @@ async function runMigrations() {
                 console.error(`[Schema] ⚠️ GPS device_id migration error: ${deviceErr.message}`);
             }
 
+            // Patch: Add scale_status columns to branches for persistence across server restarts
+            try {
+                await client.query(`
+                    ALTER TABLE branches
+                    ADD COLUMN IF NOT EXISTS scale_status VARCHAR(20) DEFAULT 'unknown',
+                    ADD COLUMN IF NOT EXISTS scale_status_updated_at TIMESTAMPTZ
+                `);
+                console.log('[Schema] ✅ branches.scale_status columns ready');
+            } catch (scaleStatusErr) {
+                console.error(`[Schema] ⚠️ scale_status migration error: ${scaleStatusErr.message}`);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {
