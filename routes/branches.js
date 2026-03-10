@@ -472,9 +472,14 @@ module.exports = (pool, io, scaleStatusByBranch) => {
                 [branchId]
             );
             if (result.rows.length > 0 && result.rows[0].scale_status && result.rows[0].scale_status !== 'unknown') {
+                const statusTime = result.rows[0].scale_status_updated_at;
                 const dbStatus = {
                     status: result.rows[0].scale_status,
-                    updatedAt: result.rows[0].scale_status_updated_at,
+                    updatedAt: statusTime,
+                    // Include disconnectedAt/connectedAt so mobile app can show timer
+                    ...(result.rows[0].scale_status === 'disconnected'
+                        ? { disconnectedAt: statusTime }
+                        : { connectedAt: statusTime }),
                     source: 'db'
                 };
                 // Re-hydrate in-memory Map so subsequent requests are fast
