@@ -1477,6 +1477,32 @@ body{background:#080e1a;font-family:'Inter','Segoe UI',sans-serif;min-height:100
     }
 
     // ─────────────────────────────────────────────────────────
+    // GET /api/superadmin/beta-enrollments
+    // List all tenants who requested beta / more info
+    // ─────────────────────────────────────────────────────────
+    router.get('/beta-enrollments', async (req, res) => {
+        try {
+            const result = await pool.query(`
+                SELECT be.id, be.tenant_id, be.employee_id, be.email,
+                       be.business_name, be.platform, be.enrolled_at,
+                       t.business_name as tenant_name
+                FROM beta_enrollments be
+                LEFT JOIN tenants t ON t.id = be.tenant_id
+                ORDER BY be.enrolled_at DESC
+            `);
+
+            res.json({
+                success: true,
+                count: result.rows.length,
+                data: result.rows
+            });
+        } catch (error) {
+            console.error('[Beta Enrollments] Error:', error);
+            res.status(500).json({ success: false, message: 'Error al obtener beta enrollments' });
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
     // POST /api/superadmin/license-reminders
     // Enviar recordatorio de licencia personalizado por tenant
     // ─────────────────────────────────────────────────────────
