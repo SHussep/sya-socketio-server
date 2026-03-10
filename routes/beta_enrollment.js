@@ -12,10 +12,10 @@ module.exports = (pool) => {
         try {
             const { tenant_id, employee_id, email, business_name, platform } = req.body;
 
-            if (!tenant_id || !email) {
+            if (!tenant_id) {
                 return res.status(400).json({
                     success: false,
-                    message: 'tenant_id y email son requeridos'
+                    message: 'tenant_id es requerido'
                 });
             }
 
