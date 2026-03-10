@@ -134,6 +134,22 @@ router.post('/register-device', async (req, res) => {
 
         console.log(`[Notifications] ✅ Device registered: Tenant ${resolvedTenantId || 'unknown'} - Employee ${employeeId} - Branch ${branchId} - ${platform} - ${email || 'no-email'}`);
 
+        // Deactivate old tokens from same device_id (prevents duplicate notifications on reinstall/token refresh)
+        if (deviceId && deviceToken) {
+            try {
+                const deactivated = await pool.query(
+                    `UPDATE device_tokens SET is_active = false, updated_at = CURRENT_TIMESTAMP
+                     WHERE device_id = $1 AND device_token != $2 AND is_active = true`,
+                    [deviceId, deviceToken]
+                );
+                if (deactivated.rowCount > 0) {
+                    console.log(`[Notifications] 🧹 Deactivated ${deactivated.rowCount} old token(s) for device ${deviceId}`);
+                }
+            } catch (cleanupErr) {
+                console.error(`[Notifications] ⚠️ Error cleaning old tokens: ${cleanupErr.message}`);
+            }
+        }
+
         res.json({
             success: true,
             message: 'Device registered successfully',

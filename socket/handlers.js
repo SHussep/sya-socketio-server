@@ -5,6 +5,22 @@
 
 module.exports = function setupSocketHandlers(io, { pool, stats, notificationHelper, scaleStatusByBranch, guardianStatusByBranch }) {
 
+    // Debounce FCM: prevent duplicate notifications for same branch+event within 15s
+    const lastScaleFcm = new Map(); // key: "branchId:eventType" → timestamp
+    const SCALE_FCM_DEBOUNCE_MS = 15000;
+
+    function shouldSendScaleFcm(branchId, eventType) {
+        const key = `${branchId}:${eventType}`;
+        const now = Date.now();
+        const last = lastScaleFcm.get(key);
+        if (last && (now - last) < SCALE_FCM_DEBOUNCE_MS) {
+            console.log(`[SCALE] ⏭️ FCM debounce: ${eventType} para branch ${branchId} (${Math.round((now - last) / 1000)}s desde último)`);
+            return false;
+        }
+        lastScaleFcm.set(key, now);
+        return true;
+    }
+
     io.on('connection', (socket) => {
         console.log(`[${new Date().toISOString()}] Cliente conectado: ${socket.id} (auth: ${socket.authenticated ? 'yes' : 'no'})`);
 
@@ -103,10 +119,12 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
                 [Number(data.branchId)]
             ).catch(e => console.error(`[SCALE] Error persisting disconnected status: ${e.message}`));
             io.to(roomName).emit('scale_disconnected', { ...data, receivedAt: new Date().toISOString() });
-            try {
-                await notificationHelper.notifyScaleDisconnection(data.branchId, { message: data.message });
-            } catch (e) {
-                console.error(`[SCALE] Error enviando FCM desconexión: ${e.message}`);
+            if (shouldSendScaleFcm(data.branchId, 'disconnected')) {
+                try {
+                    await notificationHelper.notifyScaleDisconnection(data.branchId, { message: data.message });
+                } catch (e) {
+                    console.error(`[SCALE] Error enviando FCM desconexión: ${e.message}`);
+                }
             }
         });
 
@@ -145,10 +163,12 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
                 console.error(`[SCALE] Error cerrando logs huérfanos: ${e.message}`);
             }
 
-            try {
-                await notificationHelper.notifyScaleConnection(data.branchId, { message: data.message });
-            } catch (e) {
-                console.error(`[SCALE] Error enviando FCM conexión: ${e.message}`);
+            if (shouldSendScaleFcm(data.branchId, 'connected')) {
+                try {
+                    await notificationHelper.notifyScaleConnection(data.branchId, { message: data.message });
+                } catch (e) {
+                    console.error(`[SCALE] Error enviando FCM conexión: ${e.message}`);
+                }
             }
         });
 
