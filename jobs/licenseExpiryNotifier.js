@@ -23,11 +23,11 @@ async function processLicenseExpiryNotifications() {
         // Buscar tenants con fechas de vencimiento
         const { rows: tenants } = await pool.query(`
             SELECT t.id, t.business_name, t.email AS tenant_email,
-                   t.subscription_status, t.trial_ends_at, t.subscription_ends_at,
+                   t.subscription_status, t.trial_ends_at,
                    t.license_expiry_last_notified_at, t.license_expiry_last_days_notified
             FROM tenants t
             WHERE t.is_active = true
-              AND (t.trial_ends_at IS NOT NULL OR t.subscription_ends_at IS NOT NULL)
+              AND t.trial_ends_at IS NOT NULL
         `);
 
         if (tenants.length === 0) return;
@@ -49,9 +49,7 @@ async function processLicenseExpiryNotifications() {
 async function checkAndNotifyTenant(tenant, now) {
     // Determinar fecha de vencimiento y tipo
     const isTrial = tenant.subscription_status === 'trial';
-    const expiryDate = isTrial
-        ? (tenant.trial_ends_at ? new Date(tenant.trial_ends_at) : null)
-        : (tenant.subscription_ends_at ? new Date(tenant.subscription_ends_at) : null);
+    const expiryDate = tenant.trial_ends_at ? new Date(tenant.trial_ends_at) : null;
 
     if (!expiryDate) return;
 

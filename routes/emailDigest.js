@@ -118,7 +118,7 @@ router.post('/test', async (req, res) => {
             // DATOS REALES del tenant
             // ══════════════════════════════════════════════════
             const { rows: tenantRows } = await pool.query(
-                `SELECT id, business_name, subscription_status, trial_ends_at, subscription_ends_at
+                `SELECT id, business_name, subscription_status, trial_ends_at
                  FROM tenants WHERE id = $1`, [tenant_id]
             );
             if (tenantRows.length === 0) {
@@ -188,7 +188,7 @@ router.post('/test', async (req, res) => {
 
             // License expiry
             const isTrial = tenant.subscription_status === 'trial';
-            const expiryDate = isTrial ? tenant.trial_ends_at : tenant.subscription_ends_at;
+            const expiryDate = tenant.trial_ends_at;
             if (expiryDate) {
                 const expiry = new Date(expiryDate);
                 const daysRemaining = Math.ceil((expiry - now) / (1000 * 60 * 60 * 24));
