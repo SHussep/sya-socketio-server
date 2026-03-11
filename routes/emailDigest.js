@@ -98,8 +98,8 @@ router.put('/preferences', authenticateToken, async (req, res) => {
 });
 
 // POST /api/email-digest/test
-// Endpoint temporal para enviar un email de prueba (sin auth, REMOVER después)
-router.post('/test', async (req, res) => {
+// Endpoint para enviar un email de prueba del Guardian digest
+router.post('/test', authenticateToken, async (req, res) => {
     try {
         const { email } = req.body;
         if (!email) {
