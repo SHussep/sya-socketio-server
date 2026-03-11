@@ -1532,8 +1532,8 @@ module.exports = (pool) => {
                 paramIndex++;
 
                 // Al revocar acceso móvil, resetear verificación de email
-                // El empleado debe re-verificar si se le vuelve a dar acceso
-                if (canUseMobileApp === false) {
+                // Solo cuando CAMBIA de true a false (no si ya era false)
+                if (canUseMobileApp === false && employee.can_use_mobile_app === true) {
                     updates.push(`email_verified = false`);
                     updates.push(`verification_code = NULL`);
                     updates.push(`verification_expires_at = NULL`);
