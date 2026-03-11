@@ -166,8 +166,8 @@ async function processTenantDigest(tenant) {
 
     // Recent critical events
     const { rows: criticalEvents } = await pool.query(`
-        SELECT s.description, s.severity, s.timestamp, b.name AS branch_name,
-               e.first_name, e.last_name
+        SELECT s.details, s.severity, s.timestamp, s.event_type,
+               b.name AS branch_name, e.first_name, e.last_name
         FROM suspicious_weighing_logs s
         LEFT JOIN branches b ON b.id = s.branch_id
         LEFT JOIN employees e ON e.id = s.employee_id
@@ -177,7 +177,7 @@ async function processTenantDigest(tenant) {
     `, [tenant.id, lookback]);
 
     const recentCritical = criticalEvents.map(r => ({
-        description: r.description || 'Evento detectado',
+        description: r.details || FRAUD_TYPE_LABELS[r.event_type] || r.event_type || 'Evento detectado',
         severity: r.severity,
         timestamp: new Date(r.timestamp).toLocaleString('es-MX', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }),
         branchName: r.branch_name || '',
