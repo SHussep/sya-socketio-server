@@ -141,7 +141,7 @@ router.get('/status', authenticateToken, async (req, res) => {
 // POST /api/email-digest/test
 // Endpoint para enviar email de prueba con datos reales de un tenant
 // Body: { email, tenant_id? } — si se pasa tenant_id, consulta datos reales
-router.post('/test', /* authenticateToken, */ async (req, res) => {
+router.post('/test', authenticateToken, async (req, res) => {
     try {
         const { email, tenant_id } = req.body;
         if (!email) {
