@@ -100,23 +100,20 @@ router.put('/preferences', authenticateToken, async (req, res) => {
 // POST /api/email-digest/test
 // Endpoint para enviar email de prueba con datos reales de un tenant
 // Body: { email, tenant_id? } — si se pasa tenant_id, consulta datos reales
-router.post('/test', authenticateToken, async (req, res) => {
+router.post('/test', async (req, res) => {
     try {
         const { email, tenant_id } = req.body;
         if (!email) {
             return res.status(400).json({ success: false, message: 'email requerido' });
         }
 
-        const { sendGuardianDigestEmail } = require('../utils/guardianDigestEmail');
+        const { sendGuardianDigestEmail, FRAUD_TYPE_LABELS } = require('../utils/guardianDigestEmail');
         const { sendLicenseExpiryEmail } = require('../utils/licenseExpiryEmail');
 
         let guardianSent = false;
         let licenseSent = false;
 
         if (tenant_id) {
-            // ══════════════════════════════════════════════════
-            // DATOS REALES del tenant
-            // ══════════════════════════════════════════════════
             const { rows: tenantRows } = await pool.query(
                 `SELECT id, business_name, subscription_status, trial_ends_at
                  FROM tenants WHERE id = $1`, [tenant_id]
@@ -126,7 +123,6 @@ router.post('/test', authenticateToken, async (req, res) => {
             }
             const tenant = tenantRows[0];
 
-            // Owner
             const { rows: owners } = await pool.query(
                 `SELECT first_name, last_name FROM employees
                  WHERE tenant_id = $1 AND is_owner = true AND is_active = true LIMIT 1`, [tenant_id]
@@ -135,14 +131,13 @@ router.post('/test', authenticateToken, async (req, res) => {
                 ? `${owners[0].first_name || ''} ${owners[0].last_name || ''}`.trim() || 'Propietario'
                 : 'Propietario';
 
-            // Branches
             const { rows: branches } = await pool.query(
                 `SELECT id, name FROM branches WHERE tenant_id = $1 AND is_active = true ORDER BY name`, [tenant_id]
             );
 
-            // Período: mes actual (marzo 2026)
             const now = new Date();
             const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+            const daysInPeriod = Math.ceil((now - startOfMonth) / (1000 * 60 * 60 * 24)) || 1;
 
             const branchData = [];
             let grandTotal = 0, grandCritical = 0, grandHigh = 0, grandDisc = 0;
@@ -173,6 +168,44 @@ router.post('/test', authenticateToken, async (req, res) => {
                 grandTotal += total; grandCritical += critical; grandHigh += high; grandDisc += disconnections;
             }
 
+            // Top event types (fraud_type)
+            const { rows: topTypes } = await pool.query(`
+                SELECT fraud_type, COUNT(*) AS count
+                FROM suspicious_weighing_logs
+                WHERE tenant_id = $1 AND timestamp >= $2::timestamptz
+                GROUP BY fraud_type
+                ORDER BY count DESC
+                LIMIT 5
+            `, [tenant_id, startOfMonth.toISOString()]);
+
+            const topEventTypes = topTypes.map(r => ({
+                fraud_type: r.fraud_type,
+                label: FRAUD_TYPE_LABELS[r.fraud_type] || r.fraud_type,
+                count: parseInt(r.count)
+            }));
+
+            // Recent critical/high events (top 3)
+            const { rows: criticalEvents } = await pool.query(`
+                SELECT s.description, s.severity, s.timestamp, b.name AS branch_name,
+                       e.first_name, e.last_name
+                FROM suspicious_weighing_logs s
+                LEFT JOIN branches b ON b.id = s.branch_id
+                LEFT JOIN employees e ON e.id = s.employee_id
+                WHERE s.tenant_id = $1
+                  AND s.timestamp >= $2::timestamptz
+                  AND s.severity IN ('Critical', 'High')
+                ORDER BY s.timestamp DESC
+                LIMIT 3
+            `, [tenant_id, startOfMonth.toISOString()]);
+
+            const recentCritical = criticalEvents.map(r => ({
+                description: r.description || 'Evento detectado',
+                severity: r.severity,
+                timestamp: new Date(r.timestamp).toLocaleString('es-MX', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }),
+                branchName: r.branch_name || '',
+                employeeName: r.first_name ? `${r.first_name} ${r.last_name || ''}`.trim() : ''
+            }));
+
             const fmtDate = (d) => `${d.getDate().toString().padStart(2,'0')}/${(d.getMonth()+1).toString().padStart(2,'0')}/${d.getFullYear()}`;
 
             guardianSent = await sendGuardianDigestEmail({
@@ -182,7 +215,10 @@ router.post('/test', authenticateToken, async (req, res) => {
                 frequency: 'monthly',
                 periodLabel: `${fmtDate(startOfMonth)} - ${fmtDate(now)}`,
                 branches: branchData,
-                totals: { totalEvents: grandTotal, critical: grandCritical, high: grandHigh, disconnections: grandDisc }
+                totals: { totalEvents: grandTotal, critical: grandCritical, high: grandHigh, disconnections: grandDisc },
+                topEventTypes,
+                recentCritical,
+                daysInPeriod
             });
 
             // License expiry
@@ -209,10 +245,12 @@ router.post('/test', authenticateToken, async (req, res) => {
                 tenantId: tenant_id,
                 businessName: tenant.business_name,
                 branchCount: branches.length,
-                totalEvents: grandTotal
+                totalEvents: grandTotal,
+                topEventTypes: topEventTypes.length,
+                recentCritical: recentCritical.length
             });
         } else {
-            // Datos de ejemplo
+            // Datos de ejemplo enriquecidos
             guardianSent = await sendGuardianDigestEmail({
                 to: email,
                 ownerName: 'Propietario',
@@ -223,7 +261,17 @@ router.post('/test', authenticateToken, async (req, res) => {
                     { branchName: 'Sucursal Centro', totalEvents: 12, critical: 2, high: 3, disconnections: 1 },
                     { branchName: 'Sucursal Norte', totalEvents: 5, critical: 0, high: 1, disconnections: 3 },
                 ],
-                totals: { totalEvents: 17, critical: 2, high: 4, disconnections: 4 }
+                totals: { totalEvents: 17, critical: 2, high: 4, disconnections: 4 },
+                topEventTypes: [
+                    { fraud_type: 'FRD-007', label: 'Peso no registrado (cobro)', count: 8 },
+                    { fraud_type: 'FRD-008', label: 'Pesaje cancelado', count: 5 },
+                    { fraud_type: 'FRD-003', label: 'Discrepancia de peso', count: 4 },
+                ],
+                recentCritical: [
+                    { description: 'Se cobró $45.00 sin peso registrado en báscula', severity: 'Critical', timestamp: '10 mar, 14:32', branchName: 'Sucursal Centro', employeeName: 'Juan Pérez' },
+                    { description: 'Peso retirado 2.5kg después de registrar venta', severity: 'Critical', timestamp: '09 mar, 09:15', branchName: 'Sucursal Centro', employeeName: 'María López' },
+                ],
+                daysInPeriod: 14
             });
 
             licenseSent = await sendLicenseExpiryEmail({

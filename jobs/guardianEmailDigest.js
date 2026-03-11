@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════
 
 const { rawPool: pool } = require('../database/pool');
-const { sendGuardianDigestEmail } = require('../utils/guardianDigestEmail');
+const { sendGuardianDigestEmail, FRAUD_TYPE_LABELS } = require('../utils/guardianDigestEmail');
 
 const FREQUENCY_INTERVALS = {
     weekly: '7 days',
@@ -143,11 +143,46 @@ async function processTenantDigest(tenant) {
     // Calcular label del período
     const endDate = new Date();
     const startDate = new Date();
-    if (frequency === 'weekly') startDate.setDate(startDate.getDate() - 7);
-    else if (frequency === 'biweekly') startDate.setDate(startDate.getDate() - 14);
-    else startDate.setDate(startDate.getDate() - 30);
+    let daysInPeriod = 14;
+    if (frequency === 'weekly') { startDate.setDate(startDate.getDate() - 7); daysInPeriod = 7; }
+    else if (frequency === 'biweekly') { startDate.setDate(startDate.getDate() - 14); daysInPeriod = 14; }
+    else { startDate.setDate(startDate.getDate() - 30); daysInPeriod = 30; }
 
     const periodLabel = `${formatDate(startDate)} - ${formatDate(endDate)}`;
+
+    // Top event types
+    const { rows: topTypes } = await pool.query(`
+        SELECT fraud_type, COUNT(*) AS count
+        FROM suspicious_weighing_logs
+        WHERE tenant_id = $1 AND timestamp >= NOW() - $2::interval
+        GROUP BY fraud_type ORDER BY count DESC LIMIT 5
+    `, [tenant.id, lookback]);
+
+    const topEventTypes = topTypes.map(r => ({
+        fraud_type: r.fraud_type,
+        label: FRAUD_TYPE_LABELS[r.fraud_type] || r.fraud_type,
+        count: parseInt(r.count)
+    }));
+
+    // Recent critical events
+    const { rows: criticalEvents } = await pool.query(`
+        SELECT s.description, s.severity, s.timestamp, b.name AS branch_name,
+               e.first_name, e.last_name
+        FROM suspicious_weighing_logs s
+        LEFT JOIN branches b ON b.id = s.branch_id
+        LEFT JOIN employees e ON e.id = s.employee_id
+        WHERE s.tenant_id = $1 AND s.timestamp >= NOW() - $2::interval
+          AND s.severity IN ('Critical', 'High')
+        ORDER BY s.timestamp DESC LIMIT 3
+    `, [tenant.id, lookback]);
+
+    const recentCritical = criticalEvents.map(r => ({
+        description: r.description || 'Evento detectado',
+        severity: r.severity,
+        timestamp: new Date(r.timestamp).toLocaleString('es-MX', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }),
+        branchName: r.branch_name || '',
+        employeeName: r.first_name ? `${r.first_name} ${r.last_name || ''}`.trim() : ''
+    }));
 
     // Enviar email
     const sent = await sendGuardianDigestEmail({
@@ -162,7 +197,10 @@ async function processTenantDigest(tenant) {
             critical: grandCritical,
             high: grandHigh,
             disconnections: grandDisconnections
-        }
+        },
+        topEventTypes,
+        recentCritical,
+        daysInPeriod
     });
 
     if (sent) {
