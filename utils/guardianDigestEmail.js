@@ -288,6 +288,19 @@ async function sendGuardianDigestEmail({
                     </div>
                 </div>
 
+                <div style="text-align:center;margin-top:16px;padding-top:16px;">
+                    <table cellspacing="0" cellpadding="0" style="margin:0 auto;">
+                        <tr>
+                            <td style="background:#25D366;border-radius:6px;padding:0;">
+                                <a href="https://wa.me/525540538426" target="_blank" style="display:inline-block;padding:10px 20px;color:white;text-decoration:none;font-size:13px;font-weight:600;">
+                                    💬 ¿Dudas? Escríbenos por WhatsApp
+                                </a>
+                            </td>
+                        </tr>
+                    </table>
+                    <div style="font-size:12px;color:#9ca3af;margin-top:8px;">554 053 8426</div>
+                </div>
+
                 <div class="footer">
                     <p><strong>SYA Tortillerías</strong> — Sistema de Gestión para Tortillerías</p>
                     <p style="font-size:11px;">Este correo es generado automáticamente por el sistema Guardian de monitoreo de báscula.</p>
