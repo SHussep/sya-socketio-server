@@ -2160,6 +2160,24 @@ module.exports = (pool) => {
 
             console.log(`[Employees/MobilePermissions] ✅ Updated permissions for employee ${targetId}: ${validatedPermissions.join(', ')}`);
 
+            // Emit socket event to notify the target admin in real-time
+            const io = req.app.get('io');
+            if (io) {
+                // Get all branches for this tenant to emit to all rooms
+                const branchesResult = await client.query(
+                    `SELECT id FROM branches WHERE tenant_id = $1 AND is_active = true`,
+                    [tenantId]
+                );
+                for (const branch of branchesResult.rows) {
+                    io.to(`branch_${branch.id}`).emit('admin:permissions_updated', {
+                        employeeId: targetId,
+                        mobilePermissions: validatedPermissions,
+                        timestamp: new Date().toISOString()
+                    });
+                }
+                console.log(`[Employees/MobilePermissions] 📡 Socket admin:permissions_updated emitido a ${branchesResult.rows.length} branch rooms`);
+            }
+
             return res.json({
                 success: true,
                 data: {
