@@ -10,10 +10,8 @@
 
 const express = require('express');
 const router = express.Router();
-const {
-    notifyPreparationModeActivated,
-    notifyPreparationModeDeactivated
-} = require('../utils/notificationHelper');
+// Las notificaciones FCM se envían directamente vía Socket.IO desde el desktop.
+// El sync endpoint solo persiste datos en PostgreSQL.
 
 module.exports = function(pool, io) {
 
@@ -37,7 +35,6 @@ module.exports = function(pool, io) {
             await client.query('BEGIN');
 
             const results = { inserted: 0, updated: 0, errors: [] };
-            const newEvents = []; // Para emitir por Socket.IO
 
             for (const log of logs) {
                 try {
@@ -147,62 +144,14 @@ module.exports = function(pool, io) {
                         log.created_local_utc
                     ]);
 
-                    // Obtener nombre de la sucursal para notificaciones
-                    const branchResult = await client.query(
-                        'SELECT name FROM branches WHERE id = $1',
-                        [log.branch_id]
-                    );
-                    const branchName = branchResult.rows[0]?.name || `Sucursal ${log.branch_id}`;
-
                     if (upsertResult.rows[0].inserted) {
                         results.inserted++;
-
-                        if (status === 'active') {
-                            // Nueva activación
-                            newEvents.push({
-                                type: 'preparation_mode_activated',
-                                branchId: log.branch_id,
-                                tenantId: log.tenant_id,
-                                branchName,
-                                data: {
-                                    id: upsertResult.rows[0].id,
-                                    global_id: log.global_id,
-                                    operator_employee_id,
-                                    operator_name,
-                                    authorized_by_employee_id,
-                                    authorizer_name,
-                                    activated_at: log.activated_at,
-                                    reason: log.reason,
-                                    branch_name: branchName
-                                }
-                            });
-                        } else if (status === 'completed' && log.deactivated_at) {
-                            // Log insertado ya completado (fue offline durante activación)
-                            // Enviar notificación de desactivación
-                            console.log(`[PrepMode/Sync] 📝 Log insertado ya completado, enviando notificación de desactivación`);
-                            newEvents.push({
-                                type: 'preparation_mode_deactivated',
-                                branchId: log.branch_id,
-                                tenantId: log.tenant_id,
-                                branchName,
-                                data: {
-                                    id: upsertResult.rows[0].id,
-                                    global_id: log.global_id,
-                                    operator_employee_id,
-                                    operator_name,
-                                    deactivated_at: log.deactivated_at,
-                                    duration_seconds: log.duration_seconds,
-                                    severity: upsertResult.rows[0].severity,
-                                    branch_name: branchName
-                                }
-                            });
-                        }
                     } else {
                         results.updated++;
-                        // No enviar notificación en UPDATE — el desktop ya envió FCM
-                        // vía Socket.IO directo al desactivar. Solo notificar en INSERT
-                        // (caso offline donde nunca se envió la notificación original).
                     }
+                    // No enviar FCM desde sync — las notificaciones en tiempo real
+                    // se envían vía Socket.IO directo desde el desktop.
+                    // El sync solo persiste datos en PostgreSQL para consulta.
 
                 } catch (logError) {
                     console.error(`[PrepMode/Sync] ❌ Error en log ${log.global_id}:`, logError.message);
@@ -211,66 +160,6 @@ module.exports = function(pool, io) {
             }
 
             await client.query('COMMIT');
-
-            // Emitir eventos por Socket.IO y enviar notificaciones push
-            for (const event of newEvents) {
-                // Socket.IO
-                if (io) {
-                    const room = `branch_${event.branchId}`;
-                    io.to(room).emit(event.type, event.data);
-                    console.log(`[PrepMode/Sync] 📡 Emitiendo ${event.type} a room ${room}`);
-                }
-
-                // Notificaciones Push FCM
-                console.log(`[PrepMode/Sync] 🔔 Enviando notificación push: ${event.type} para tenant ${event.tenantId}`);
-                try {
-                    if (event.type === 'preparation_mode_activated') {
-                        const notifResult = await notifyPreparationModeActivated(
-                            event.tenantId,
-                            event.branchId,
-                            {
-                                operatorName: event.data.operator_name,
-                                authorizerName: event.data.authorizer_name || event.data.operator_name,
-                                branchName: event.branchName,
-                                reason: event.data.reason,
-                                activatedAt: event.data.activated_at
-                            }
-                        );
-                        console.log(`[PrepMode/Sync] 📲 Resultado notificación activación: sent=${notifResult.sent}, failed=${notifResult.failed}, total=${notifResult.total || 0}`);
-                    } else if (event.type === 'preparation_mode_deactivated') {
-                        // Formatear duración
-                        const durationSecs = parseFloat(event.data.duration_seconds) || 0;
-                        let durationFormatted = '';
-                        if (durationSecs >= 3600) {
-                            const hours = Math.floor(durationSecs / 3600);
-                            const mins = Math.floor((durationSecs % 3600) / 60);
-                            durationFormatted = `${hours}h ${mins}m`;
-                        } else if (durationSecs >= 60) {
-                            const mins = Math.floor(durationSecs / 60);
-                            const secs = Math.floor(durationSecs % 60);
-                            durationFormatted = `${mins}m ${secs}s`;
-                        } else {
-                            durationFormatted = `${Math.floor(durationSecs)}s`;
-                        }
-
-                        const notifResult = await notifyPreparationModeDeactivated(
-                            event.tenantId,
-                            event.branchId,
-                            {
-                                operatorName: event.data.operator_name,
-                                branchName: event.branchName,
-                                durationFormatted,
-                                severity: event.data.severity || 'Low',
-                                deactivatedAt: event.data.deactivated_at
-                            }
-                        );
-                        console.log(`[PrepMode/Sync] 📲 Resultado notificación desactivación: sent=${notifResult.sent}, failed=${notifResult.failed}, total=${notifResult.total || 0}`);
-                    }
-                } catch (notifError) {
-                    console.error(`[PrepMode/Sync] ⚠️ Error enviando notificación push:`, notifError.message);
-                    // No fallar el sync por error de notificación
-                }
-            }
 
             console.log(`[PrepMode/Sync] ✅ Completado: ${results.inserted} insertados, ${results.updated} actualizados, ${results.errors.length} errores`);
 
