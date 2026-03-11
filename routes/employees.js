@@ -1333,20 +1333,12 @@ module.exports = (pool) => {
             ];
 
             const isOwner = employee.is_owner || false;
-            // Owners always have all permissions
-            // NULL = never configured by owner → apply defaults
-            // Array (even empty) = owner has explicitly configured → respect stored
+            // Owners always have all permissions; admins get exactly what's stored
             let mobilePermissions = [];
             if (isOwner) {
                 mobilePermissions = ALL_PERMISSIONS;
             } else if (accessType === 'admin') {
-                if (employee.mobile_permissions === null || employee.mobile_permissions === undefined) {
-                    // Never configured - apply default (distributor_mode only)
-                    mobilePermissions = ['admin.distributor_mode'];
-                } else {
-                    // Owner has explicitly set permissions - respect exactly what's stored
-                    mobilePermissions = employee.mobile_permissions;
-                }
+                mobilePermissions = employee.mobile_permissions || [];
             }
 
             return res.json({

@@ -2385,20 +2385,21 @@ async function runMigrations() {
             }
 
             // Patch: Add mobile_permissions JSONB column to employees for granular admin permissions
-            // NULL = never configured (apply defaults), [] = owner explicitly cleared all
             try {
                 await client.query(`
                     ALTER TABLE employees
                     ADD COLUMN IF NOT EXISTS mobile_permissions JSONB DEFAULT NULL
                 `);
-                // Convert old default '[]' to NULL for "never configured" distinction
+                // One-time: give existing admin employees the default permission (distributor_mode)
+                // Safe to re-run: only affects rows with NULL (never configured by owner)
                 await client.query(`
-                    UPDATE employees SET mobile_permissions = NULL
-                    WHERE mobile_permissions = '[]'::jsonb
-                `);
-                await client.query(`
-                    ALTER TABLE employees
-                    ALTER COLUMN mobile_permissions SET DEFAULT NULL
+                    UPDATE employees e
+                    SET mobile_permissions = '["admin.distributor_mode"]'::jsonb
+                    FROM roles r
+                    WHERE e.role_id = r.id AND e.tenant_id = r.tenant_id
+                      AND r.mobile_access_type = 'admin'
+                      AND e.mobile_permissions IS NULL
+                      AND e.is_active = true
                 `);
                 console.log('[Schema] ✅ employees.mobile_permissions column ready');
             } catch (mobilePermErr) {
