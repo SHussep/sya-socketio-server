@@ -1333,17 +1333,19 @@ module.exports = (pool) => {
             ];
 
             const isOwner = employee.is_owner || false;
-            // Owners always have all permissions; admins get their assigned ones + distributor_mode by default
+            // Owners always have all permissions
+            // NULL = never configured by owner → apply defaults
+            // Array (even empty) = owner has explicitly configured → respect stored
             let mobilePermissions = [];
             if (isOwner) {
                 mobilePermissions = ALL_PERMISSIONS;
             } else if (accessType === 'admin') {
-                const stored = employee.mobile_permissions || [];
-                // Ensure distributor_mode is always included for admins
-                if (!stored.includes('admin.distributor_mode')) {
-                    mobilePermissions = ['admin.distributor_mode', ...stored];
+                if (employee.mobile_permissions === null || employee.mobile_permissions === undefined) {
+                    // Never configured - apply default (distributor_mode only)
+                    mobilePermissions = ['admin.distributor_mode'];
                 } else {
-                    mobilePermissions = stored;
+                    // Owner has explicitly set permissions - respect exactly what's stored
+                    mobilePermissions = employee.mobile_permissions;
                 }
             }
 
@@ -2053,7 +2055,7 @@ module.exports = (pool) => {
             const result = await client.query(
                 `SELECT e.id, e.first_name, e.last_name, e.email, e.is_owner,
                         e.can_use_mobile_app,
-                        COALESCE(e.mobile_permissions, '[]'::jsonb) as mobile_permissions
+                        e.mobile_permissions
                  FROM employees e
                  JOIN roles r ON e.role_id = r.id AND e.tenant_id = r.tenant_id
                  WHERE e.tenant_id = $1
