@@ -434,6 +434,17 @@ async function initializeDatabase() {
             console.log('[DB] ⚠️ tenants.subscription_plan:', error.message);
         }
 
+        // Email digest preferences
+        try {
+            await client.query(`ALTER TABLE tenants ADD COLUMN IF NOT EXISTS email_digest_enabled BOOLEAN DEFAULT true`);
+            await client.query(`ALTER TABLE tenants ADD COLUMN IF NOT EXISTS email_digest_frequency VARCHAR(20) DEFAULT 'biweekly'`);
+            await client.query(`ALTER TABLE tenants ADD COLUMN IF NOT EXISTS email_digest_last_sent_at TIMESTAMPTZ`);
+            await client.query(`ALTER TABLE tenants ADD COLUMN IF NOT EXISTS email_digest_next_send_at TIMESTAMPTZ`);
+            console.log('[DB] ✅ Columnas email_digest_* verificadas/agregadas en tenants');
+        } catch (error) {
+            console.log('[DB] ⚠️ email_digest columns:', error.message);
+        }
+
         // Migraciones para branches
         try {
             await client.query(`ALTER TABLE branches ADD COLUMN IF NOT EXISTS timezone VARCHAR(50) DEFAULT 'America/Mexico_City'`);

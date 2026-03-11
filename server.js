@@ -132,6 +132,8 @@ const transfersRoutes = require('./routes/transfers');
 const gpsTrackingRoutes = require('./routes/gps_tracking');
 const shiftRequestsRoutes = require('./routes/shift_requests');
 const geofenceZonesRoutes = require('./routes/geofence_zones');
+const emailDigestRoutes = require('./routes/emailDigest');
+const { processGuardianDigests } = require('./jobs/guardianEmailDigest');
 
 // Nuevas rutas extraídas de server.js
 const createBranchesRoutes = require('./routes/branches');
@@ -282,6 +284,7 @@ app.use('/api/transfers', transfersRoutes(pool, io));
 app.use('/api/gps', gpsTrackingRoutes(pool, io));
 app.use('/api/geofence-zones', geofenceZonesRoutes(pool, io));
 app.use('/api/notification-history', notificationHistoryRoutes(pool));
+app.use('/api/email-digest', emailDigestRoutes);
 
 // ═══════════════════════════════════════════════════════════════
 // ENDPOINTS MISC (pocos, no justifican su propio archivo de ruta)
@@ -401,6 +404,13 @@ async function startServer() {
                     console.error('[GPS Cleanup] Error:', err.message);
                 }
             }, 24 * 60 * 60 * 1000); // 24 hours
+
+            // Guardian email digest — check every hour for pending digests
+            setInterval(() => {
+                processGuardianDigests().catch(err =>
+                    console.error('[GuardianDigest] Interval error:', err.message)
+                );
+            }, 60 * 60 * 1000); // 1 hour
         });
     } catch (error) {
         console.error('❌ Error starting server:', error);
