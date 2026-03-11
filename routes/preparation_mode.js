@@ -552,5 +552,95 @@ module.exports = function(pool, io) {
         }
     });
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // DELETE /api/preparation-mode/by-date-range - Eliminar logs por rango de fecha
+    // ═══════════════════════════════════════════════════════════════════════════
+    router.delete('/by-date-range', async (req, res) => {
+        try {
+            const tenantId = req.query.tenant_id;
+            const branchId = req.query.branch_id;
+            const startDate = req.query.start_date;
+            const endDate = req.query.end_date;
+
+            if (!tenantId || !branchId || !startDate || !endDate) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'tenant_id, branch_id, start_date y end_date son requeridos'
+                });
+            }
+
+            const result = await pool.query(
+                `DELETE FROM preparation_mode_logs
+                 WHERE tenant_id = $1 AND branch_id = $2
+                   AND activated_at >= $3 AND activated_at <= $4
+                 RETURNING id, global_id`,
+                [parseInt(tenantId), parseInt(branchId), startDate, endDate]
+            );
+
+            console.log(`[PrepMode/DeleteRange] 🗑️ ${result.rows.length} logs eliminados (${startDate} - ${endDate})`);
+
+            res.json({
+                success: true,
+                message: `${result.rows.length} logs eliminados`,
+                data: {
+                    deleted_count: result.rows.length,
+                    deleted_global_ids: result.rows.map(r => r.global_id)
+                }
+            });
+        } catch (error) {
+            console.error('[PrepMode/DeleteRange] ❌ Error:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Error al eliminar logs por rango de fecha'
+            });
+        }
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // DELETE /api/preparation-mode/:global_id - Eliminar un log individual
+    // ═══════════════════════════════════════════════════════════════════════════
+    router.delete('/:global_id', async (req, res) => {
+        try {
+            const { global_id } = req.params;
+            const tenantId = req.query.tenant_id;
+            const branchId = req.query.branch_id;
+
+            if (!tenantId || !branchId) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'tenant_id y branch_id son requeridos'
+                });
+            }
+
+            const result = await pool.query(
+                `DELETE FROM preparation_mode_logs
+                 WHERE global_id = $1 AND tenant_id = $2 AND branch_id = $3
+                 RETURNING id, global_id`,
+                [global_id, parseInt(tenantId), parseInt(branchId)]
+            );
+
+            if (result.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Log no encontrado'
+                });
+            }
+
+            console.log(`[PrepMode/Delete] 🗑️ Log eliminado: ${global_id}`);
+
+            res.json({
+                success: true,
+                message: 'Log eliminado',
+                data: result.rows[0]
+            });
+        } catch (error) {
+            console.error('[PrepMode/Delete] ❌ Error:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Error al eliminar log'
+            });
+        }
+    });
+
     return router;
 };
