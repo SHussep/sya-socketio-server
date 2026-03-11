@@ -97,4 +97,52 @@ router.put('/preferences', authenticateToken, async (req, res) => {
     }
 });
 
+// POST /api/email-digest/test
+// Endpoint temporal para enviar un email de prueba del Guardian digest
+router.post('/test', authenticateToken, async (req, res) => {
+    try {
+        const { email } = req.body;
+        if (!email) {
+            return res.status(400).json({ success: false, message: 'email requerido' });
+        }
+
+        const { sendGuardianDigestEmail } = require('../utils/guardianDigestEmail');
+        const { sendLicenseExpiryEmail } = require('../utils/licenseExpiryEmail');
+
+        // Enviar Guardian Digest de prueba
+        const guardianSent = await sendGuardianDigestEmail({
+            to: email,
+            ownerName: 'Saul',
+            businessName: 'SYA Tortillerías (Prueba)',
+            frequency: 'biweekly',
+            periodLabel: '25/02/2026 - 11/03/2026',
+            branches: [
+                { branchName: 'Sucursal Centro', totalEvents: 12, critical: 2, high: 3, disconnections: 1 },
+                { branchName: 'Sucursal Norte', totalEvents: 5, critical: 0, high: 1, disconnections: 3 },
+            ],
+            totals: { totalEvents: 17, critical: 2, high: 4, disconnections: 4 }
+        });
+
+        // Enviar License Expiry de prueba
+        const licenseSent = await sendLicenseExpiryEmail({
+            to: email,
+            ownerName: 'Saul',
+            businessName: 'SYA Tortillerías (Prueba)',
+            daysRemaining: 7,
+            expiryDate: '18/03/2026',
+            isTrial: true
+        });
+
+        res.json({
+            success: true,
+            guardianDigestSent: guardianSent,
+            licenseExpirySent: licenseSent,
+            sentTo: email
+        });
+    } catch (err) {
+        console.error('[EmailDigest] Error test:', err.message);
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
 module.exports = router;
