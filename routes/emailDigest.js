@@ -168,19 +168,19 @@ router.post('/test', async (req, res) => {
                 grandTotal += total; grandCritical += critical; grandHigh += high; grandDisc += disconnections;
             }
 
-            // Top event types (fraud_type)
+            // Top event types (event_type)
             const { rows: topTypes } = await pool.query(`
-                SELECT fraud_type, COUNT(*) AS count
+                SELECT event_type, COUNT(*) AS count
                 FROM suspicious_weighing_logs
                 WHERE tenant_id = $1 AND timestamp >= $2::timestamptz
-                GROUP BY fraud_type
+                GROUP BY event_type
                 ORDER BY count DESC
                 LIMIT 5
             `, [tenant_id, startOfMonth.toISOString()]);
 
             const topEventTypes = topTypes.map(r => ({
-                fraud_type: r.fraud_type,
-                label: FRAUD_TYPE_LABELS[r.fraud_type] || r.fraud_type,
+                event_type: r.event_type,
+                label: FRAUD_TYPE_LABELS[r.event_type] || r.event_type,
                 count: parseInt(r.count)
             }));
 
@@ -263,9 +263,9 @@ router.post('/test', async (req, res) => {
                 ],
                 totals: { totalEvents: 17, critical: 2, high: 4, disconnections: 4 },
                 topEventTypes: [
-                    { fraud_type: 'FRD-007', label: 'Peso no registrado (cobro)', count: 8 },
-                    { fraud_type: 'FRD-008', label: 'Pesaje cancelado', count: 5 },
-                    { fraud_type: 'FRD-003', label: 'Discrepancia de peso', count: 4 },
+                    { event_type: 'FRD-007', label: 'Peso no registrado (cobro)', count: 8 },
+                    { event_type: 'FRD-008', label: 'Pesaje cancelado', count: 5 },
+                    { event_type: 'FRD-003', label: 'Discrepancia de peso', count: 4 },
                 ],
                 recentCritical: [
                     { description: 'Se cobró $45.00 sin peso registrado en báscula', severity: 'Critical', timestamp: '10 mar, 14:32', branchName: 'Sucursal Centro', employeeName: 'Juan Pérez' },

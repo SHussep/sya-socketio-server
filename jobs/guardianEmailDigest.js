@@ -152,15 +152,15 @@ async function processTenantDigest(tenant) {
 
     // Top event types
     const { rows: topTypes } = await pool.query(`
-        SELECT fraud_type, COUNT(*) AS count
+        SELECT event_type, COUNT(*) AS count
         FROM suspicious_weighing_logs
         WHERE tenant_id = $1 AND timestamp >= NOW() - $2::interval
-        GROUP BY fraud_type ORDER BY count DESC LIMIT 5
+        GROUP BY event_type ORDER BY count DESC LIMIT 5
     `, [tenant.id, lookback]);
 
     const topEventTypes = topTypes.map(r => ({
-        fraud_type: r.fraud_type,
-        label: FRAUD_TYPE_LABELS[r.fraud_type] || r.fraud_type,
+        event_type: r.event_type,
+        label: FRAUD_TYPE_LABELS[r.event_type] || r.event_type,
         count: parseInt(r.count)
     }));
 

@@ -103,7 +103,7 @@ async function sendGuardianDigestEmail({
             return `
                 <tr>
                     <td style="padding:8px 12px;border-bottom:1px solid #f3f4f6;font-size:13px;">
-                        <span style="color:#6b7280;font-weight:500;">${evt.fraud_type}</span><br>
+                        <span style="color:#6b7280;font-weight:500;">${evt.event_type}</span><br>
                         <span style="color:#374151;">${evt.label}</span>
                     </td>
                     <td style="padding:8px 12px;border-bottom:1px solid #f3f4f6;text-align:center;font-size:14px;font-weight:600;">${evt.count}</td>
