@@ -621,7 +621,7 @@ module.exports = (pool) => {
                         e.role_id, r.name as role_name,
                         e.main_branch_id, e.can_use_mobile_app, e.google_user_identifier,
                         e.global_id, e.terminal_id, e.local_op_seq, e.created_local_utc, e.device_event_raw,
-                        e.email_verified, e.is_owner,
+                        e.email_verified, e.is_owner, e.map_icon,
                         e.created_at, e.updated_at
                  FROM employees e
                  LEFT JOIN roles r ON e.role_id = r.id
@@ -1389,7 +1389,8 @@ module.exports = (pool) => {
                 password_hash,        // ✅ Nuevo: para sincronizar cambios de contraseña
                 passwordUpdatedAt,    // ✅ Nuevo: timestamp del cambio de contraseña
                 emailVerified,        // ✅ Nuevo: sincronizar estado de verificación de email
-                profilePhotoUrl       // ✅ Nuevo: actualizar foto de perfil desde mobile/desktop
+                profilePhotoUrl,      // ✅ Nuevo: actualizar foto de perfil desde mobile/desktop
+                mapIcon               // Map marker icon for GPS tracking (Material Icons name)
             } = req.body;
 
             console.log(`[Employees/Update] 🔄 [UPDATE RECIBIDO] Actualizando empleado ID: ${employeeId}`);
@@ -1609,6 +1610,17 @@ module.exports = (pool) => {
                 params.push(profilePhotoUrl);
                 paramIndex++;
                 console.log(`[Employees/Update] 📷 Actualizando profile_photo_url para empleado ${employeeId}`);
+            }
+
+            // Map icon for GPS tracking markers
+            if (mapIcon !== undefined) {
+                const VALID_MAP_ICONS = ['two_wheeler', 'directions_car', 'pedal_bike', 'local_shipping', 'electric_scooter', 'electric_rickshaw'];
+                if (VALID_MAP_ICONS.includes(mapIcon)) {
+                    updates.push(`map_icon = $${paramIndex}`);
+                    params.push(mapIcon);
+                    paramIndex++;
+                    console.log(`[Employees/Update] 🗺️ Actualizando map_icon para empleado ${employeeId}: ${mapIcon}`);
+                }
             }
 
             // Always update timestamp

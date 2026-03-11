@@ -321,6 +321,17 @@ module.exports = (pool, io) => {
                 }
             }
 
+            // Lookup map_icon for marker customization
+            let mapIcon = 'two_wheeler';
+            try {
+                const iconResult = await client.query(
+                    `SELECT map_icon FROM employees WHERE id = $1`, [empId]
+                );
+                if (iconResult.rows.length > 0 && iconResult.rows[0].map_icon) {
+                    mapIcon = iconResult.rows[0].map_icon;
+                }
+            } catch (_) { /* non-blocking */ }
+
             // Emit to branch room for admin real-time map
             io.to(`branch_${branch_id}`).emit('repartidor:location_update', {
                 employeeId: empId,
@@ -331,7 +342,8 @@ module.exports = (pool, io) => {
                 speed: speed ?? null,
                 shiftId: shift_id ?? null,
                 deviceId: device_id ?? null,
-                recordedAt: recorded_at ?? new Date().toISOString()
+                recordedAt: recorded_at ?? new Date().toISOString(),
+                mapIcon
             });
 
             // Check geofence zones (non-blocking — doesn't delay response)
@@ -417,6 +429,17 @@ module.exports = (pool, io) => {
 
             await client.query('COMMIT');
 
+            // Lookup map_icon for marker customization
+            let batchMapIcon = 'two_wheeler';
+            try {
+                const iconResult = await client.query(
+                    `SELECT map_icon FROM employees WHERE id = $1`, [empId]
+                );
+                if (iconResult.rows.length > 0 && iconResult.rows[0].map_icon) {
+                    batchMapIcon = iconResult.rows[0].map_icon;
+                }
+            } catch (_) { /* non-blocking */ }
+
             // Emit latest location to branch room
             const latest = locations[locations.length - 1];
             io.to(`branch_${branch_id}`).emit('repartidor:location_update', {
@@ -428,7 +451,8 @@ module.exports = (pool, io) => {
                 speed: latest.speed ?? null,
                 shiftId: shift_id ?? null,
                 deviceId: device_id ?? null,
-                recordedAt: latest.recorded_at ?? new Date().toISOString()
+                recordedAt: latest.recorded_at ?? new Date().toISOString(),
+                mapIcon: batchMapIcon
             });
 
             return res.status(201).json({
@@ -472,7 +496,8 @@ module.exports = (pool, io) => {
                         rl.device_id,
                         rl.recorded_at,
                         rl.received_at,
-                        COALESCE(s.is_cash_cut_open, false) AS is_shift_open
+                        COALESCE(s.is_cash_cut_open, false) AS is_shift_open,
+                        COALESCE(e.map_icon, 'two_wheeler') AS map_icon
                      FROM repartidor_locations rl
                      JOIN employees e ON e.id = rl.employee_id
                      LEFT JOIN shifts s ON s.id = rl.shift_id
@@ -499,7 +524,8 @@ module.exports = (pool, io) => {
                         rl.recorded_at,
                         rl.received_at,
                         rl.branch_id,
-                        COALESCE(s.is_cash_cut_open, false) AS is_shift_open
+                        COALESCE(s.is_cash_cut_open, false) AS is_shift_open,
+                        COALESCE(e.map_icon, 'two_wheeler') AS map_icon
                      FROM repartidor_locations rl
                      JOIN employees e ON e.id = rl.employee_id
                      LEFT JOIN shifts s ON s.id = rl.shift_id
