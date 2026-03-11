@@ -34,7 +34,8 @@ async function processGuardianDigests() {
             WHERE t.is_active = true
               AND t.email_digest_enabled = true
               AND t.email_digest_frequency != 'off'
-              AND (t.email_digest_next_send_at IS NULL OR t.email_digest_next_send_at <= NOW())
+              AND t.email_digest_next_send_at IS NOT NULL
+              AND t.email_digest_next_send_at <= NOW()
         `);
 
         if (pendingTenants.length === 0) return;
