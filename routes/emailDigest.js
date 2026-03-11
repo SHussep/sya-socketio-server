@@ -140,10 +140,10 @@ router.post('/test', async (req, res) => {
                 `SELECT id, name FROM branches WHERE tenant_id = $1 AND is_active = true ORDER BY name`, [tenant_id]
             );
 
-            // Período: este mes
+            // Período: últimos 60 días para capturar datos recientes
             const now = new Date();
-            const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-            const lookback = `${Math.ceil((now - startOfMonth) / (1000 * 60 * 60 * 24))} days`;
+            const startOfMonth = new Date(now);
+            startOfMonth.setDate(startOfMonth.getDate() - 60);
 
             const branchData = [];
             let grandTotal = 0, grandCritical = 0, grandHigh = 0, grandDisc = 0;
