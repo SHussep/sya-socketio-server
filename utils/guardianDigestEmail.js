@@ -30,7 +30,7 @@ const FRAUD_TYPE_LABELS = {
  * @param {Array} params.branches - [{branchName, totalEvents, critical, high, disconnections}]
  * @param {object} params.totals - {totalEvents, critical, high, disconnections}
  * @param {Array} [params.topEventTypes] - [{fraud_type, label, count}] top 5
- * @param {Array} [params.recentCritical] - [{description, severity, timestamp, branchName, employeeName}] top 3
+ * @param {Array} [params.recentCritical] - [{description, severity, timestamp, branchName}] top 3
  * @param {number} [params.daysInPeriod] - días en el período
  */
 async function sendGuardianDigestEmail({
@@ -141,7 +141,7 @@ async function sendGuardianDigestEmail({
                     ${evt.severity === 'Critical' ? '🔴' : '🟠'} ${evt.description}
                 </div>
                 <div style="font-size:12px;color:#6b7280;margin-top:4px;">
-                    ${evt.branchName}${evt.employeeName ? ` · ${evt.employeeName}` : ''} · ${evt.timestamp}
+                    ${evt.branchName} · ${evt.timestamp}
                 </div>
             </div>
         `).join('');
@@ -275,7 +275,7 @@ async function sendGuardianDigestEmail({
                         <div style="font-size:14px;font-weight:600;color:#166534;margin-bottom:6px;">📊 ¿Cómo revisar estos eventos?</div>
                         <div style="font-size:13px;color:#15803D;line-height:1.6;">
                             Abre la aplicación <strong>SYA Tortillerías</strong> en tu computadora y navega a:<br>
-                            <strong>Monitoreo de Seguridad</strong> (en el menú lateral) → Filtra por fecha para ver el detalle de cada evento,
+                            <strong>Monitoreo de Báscula</strong> → <strong>Auditoría de Seguridad</strong> (en el menú lateral) → Filtra por fecha para ver el detalle de cada evento,
                             marcarlos como revisados o exportar un reporte PDF completo.
                         </div>
                     </div>

@@ -97,6 +97,47 @@ router.put('/preferences', authenticateToken, async (req, res) => {
     }
 });
 
+// GET /api/email-digest/status
+// Vista admin: estado de digest de todos los tenants activos
+router.get('/status', authenticateToken, async (req, res) => {
+    try {
+        const { rows } = await pool.query(`
+            SELECT t.id, t.business_name, t.subscription_status,
+                   t.trial_ends_at, t.is_active,
+                   t.email_digest_enabled, t.email_digest_frequency,
+                   t.email_digest_last_sent_at, t.email_digest_next_send_at,
+                   e.email AS owner_email,
+                   CONCAT_WS(' ', e.first_name, e.last_name) AS owner_name
+            FROM tenants t
+            LEFT JOIN employees e ON e.tenant_id = t.id
+                AND e.is_owner = true AND e.is_active = true
+                AND e.email IS NOT NULL AND e.email != ''
+            WHERE t.is_active = true
+            ORDER BY t.email_digest_next_send_at ASC NULLS LAST
+        `);
+
+        const tenants = rows.map(r => ({
+            id: r.id,
+            businessName: r.business_name,
+            subscriptionStatus: r.subscription_status,
+            trialEndsAt: r.trial_ends_at,
+            ownerEmail: r.owner_email || null,
+            ownerName: r.owner_name?.trim() || null,
+            digest: {
+                enabled: r.email_digest_enabled ?? true,
+                frequency: r.email_digest_frequency || 'biweekly',
+                lastSentAt: r.email_digest_last_sent_at,
+                nextSendAt: r.email_digest_next_send_at
+            }
+        }));
+
+        res.json({ success: true, count: tenants.length, tenants });
+    } catch (err) {
+        console.error('[EmailDigest] Error GET status:', err.message);
+        res.status(500).json({ success: false, message: 'Error interno' });
+    }
+});
+
 // POST /api/email-digest/test
 // Endpoint para enviar email de prueba con datos reales de un tenant
 // Body: { email, tenant_id? } — si se pasa tenant_id, consulta datos reales
@@ -184,13 +225,12 @@ router.post('/test', authenticateToken, async (req, res) => {
                 count: parseInt(r.count)
             }));
 
-            // Recent critical/high events (top 3)
+            // Recent critical/high events (top 3, sin nombres de empleados por privacidad)
             const { rows: criticalEvents } = await pool.query(`
                 SELECT s.details, s.severity, s.timestamp, s.event_type,
-                       b.name AS branch_name, e.first_name, e.last_name
+                       b.name AS branch_name
                 FROM suspicious_weighing_logs s
                 LEFT JOIN branches b ON b.id = s.branch_id
-                LEFT JOIN employees e ON e.id = s.employee_id
                 WHERE s.tenant_id = $1
                   AND s.timestamp >= $2::timestamptz
                   AND s.severity IN ('Critical', 'High')
@@ -201,9 +241,11 @@ router.post('/test', authenticateToken, async (req, res) => {
             const recentCritical = criticalEvents.map(r => ({
                 description: r.details || FRAUD_TYPE_LABELS[r.event_type] || r.event_type || 'Evento detectado',
                 severity: r.severity,
-                timestamp: new Date(r.timestamp).toLocaleString('es-MX', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }),
-                branchName: r.branch_name || '',
-                employeeName: r.first_name ? `${r.first_name} ${r.last_name || ''}`.trim() : ''
+                timestamp: new Date(r.timestamp).toLocaleString('es-MX', {
+                    timeZone: 'America/Mexico_City',
+                    day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit'
+                }),
+                branchName: r.branch_name || ''
             }));
 
             const fmtDate = (d) => `${d.getDate().toString().padStart(2,'0')}/${(d.getMonth()+1).toString().padStart(2,'0')}/${d.getFullYear()}`;
@@ -268,8 +310,8 @@ router.post('/test', authenticateToken, async (req, res) => {
                     { event_type: 'FRD-003', label: 'Discrepancia de peso', count: 4 },
                 ],
                 recentCritical: [
-                    { description: 'Se cobró $45.00 sin peso registrado en báscula', severity: 'Critical', timestamp: '10 mar, 14:32', branchName: 'Sucursal Centro', employeeName: 'Juan Pérez' },
-                    { description: 'Peso retirado 2.5kg después de registrar venta', severity: 'Critical', timestamp: '09 mar, 09:15', branchName: 'Sucursal Centro', employeeName: 'María López' },
+                    { description: 'Se cobró $45.00 sin peso registrado en báscula', severity: 'Critical', timestamp: '10 mar, 14:32', branchName: 'Sucursal Centro' },
+                    { description: 'Peso retirado 2.5kg después de registrar venta', severity: 'Critical', timestamp: '09 mar, 09:15', branchName: 'Sucursal Centro' },
                 ],
                 daysInPeriod: 14
             });

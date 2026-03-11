@@ -133,7 +133,7 @@ const gpsTrackingRoutes = require('./routes/gps_tracking');
 const shiftRequestsRoutes = require('./routes/shift_requests');
 const geofenceZonesRoutes = require('./routes/geofence_zones');
 const emailDigestRoutes = require('./routes/emailDigest');
-const { processGuardianDigests } = require('./jobs/guardianEmailDigest');
+const { processGuardianDigests, initializeDigestSchedules } = require('./jobs/guardianEmailDigest');
 const { processLicenseExpiryNotifications } = require('./jobs/licenseExpiryNotifier');
 
 // Nuevas rutas extraídas de server.js
@@ -405,6 +405,11 @@ async function startServer() {
                     console.error('[GPS Cleanup] Error:', err.message);
                 }
             }, 24 * 60 * 60 * 1000); // 24 hours
+
+            // Guardian email digest — initialize schedules for tenants without next_send_at
+            initializeDigestSchedules().catch(err =>
+                console.error('[GuardianDigest] Init error:', err.message)
+            );
 
             // Guardian email digest — check every hour for pending digests
             setInterval(() => {

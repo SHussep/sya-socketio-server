@@ -20,12 +20,45 @@ const FREQUENCY_LOOKBACK = {
 };
 
 /**
+ * Inicializa email_digest_next_send_at para tenants activos con licencia vigente
+ * que aún no tienen fecha programada. Se ejecuta una vez al arrancar el servidor.
+ * Esto garantiza que al hacer deploy, los tenants existentes empiecen a recibir
+ * su primer digest según la frecuencia default (biweekly = 14 días desde ahora).
+ */
+async function initializeDigestSchedules() {
+    try {
+        const { rowCount } = await pool.query(`
+            UPDATE tenants
+            SET email_digest_next_send_at = NOW() + CASE
+                    WHEN email_digest_frequency = 'weekly' THEN INTERVAL '7 days'
+                    WHEN email_digest_frequency = 'monthly' THEN INTERVAL '1 month'
+                    ELSE INTERVAL '14 days'
+                END
+            WHERE is_active = true
+              AND email_digest_enabled = true
+              AND email_digest_frequency IS DISTINCT FROM 'off'
+              AND email_digest_next_send_at IS NULL
+              AND (
+                  subscription_status = 'active'
+                  OR (subscription_status = 'trial' AND trial_ends_at > NOW())
+              )
+        `);
+        if (rowCount > 0) {
+            console.log(`[GuardianDigest] Inicializados ${rowCount} tenant(s) con próximo envío de digest`);
+        }
+    } catch (err) {
+        console.error('[GuardianDigest] Error inicializando schedules:', err.message);
+    }
+}
+
+/**
  * Procesa todos los tenants que tienen un digest pendiente.
  * Se llama desde un setInterval en server.js cada hora.
+ * Solo procesa tenants con licencia vigente (active o trial no vencido).
  */
 async function processGuardianDigests() {
     try {
-        // Buscar tenants que toca enviar
+        // Buscar tenants que toca enviar (solo con licencia vigente)
         const { rows: pendingTenants } = await pool.query(`
             SELECT t.id, t.business_name, t.email AS tenant_email,
                    t.email_digest_frequency,
@@ -36,6 +69,10 @@ async function processGuardianDigests() {
               AND t.email_digest_frequency != 'off'
               AND t.email_digest_next_send_at IS NOT NULL
               AND t.email_digest_next_send_at <= NOW()
+              AND (
+                  t.subscription_status = 'active'
+                  OR (t.subscription_status = 'trial' AND t.trial_ends_at > NOW())
+              )
         `);
 
         if (pendingTenants.length === 0) return;
@@ -164,13 +201,12 @@ async function processTenantDigest(tenant) {
         count: parseInt(r.count)
     }));
 
-    // Recent critical events
+    // Recent critical events (sin nombres de empleados por privacidad)
     const { rows: criticalEvents } = await pool.query(`
         SELECT s.details, s.severity, s.timestamp, s.event_type,
-               b.name AS branch_name, e.first_name, e.last_name
+               b.name AS branch_name
         FROM suspicious_weighing_logs s
         LEFT JOIN branches b ON b.id = s.branch_id
-        LEFT JOIN employees e ON e.id = s.employee_id
         WHERE s.tenant_id = $1 AND s.timestamp >= NOW() - $2::interval
           AND s.severity IN ('Critical', 'High')
         ORDER BY s.timestamp DESC LIMIT 3
@@ -179,9 +215,11 @@ async function processTenantDigest(tenant) {
     const recentCritical = criticalEvents.map(r => ({
         description: r.details || FRAUD_TYPE_LABELS[r.event_type] || r.event_type || 'Evento detectado',
         severity: r.severity,
-        timestamp: new Date(r.timestamp).toLocaleString('es-MX', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }),
-        branchName: r.branch_name || '',
-        employeeName: r.first_name ? `${r.first_name} ${r.last_name || ''}`.trim() : ''
+        timestamp: new Date(r.timestamp).toLocaleString('es-MX', {
+            timeZone: 'America/Mexico_City',
+            day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit'
+        }),
+        branchName: r.branch_name || ''
     }));
 
     // Enviar email
@@ -229,4 +267,4 @@ function formatDate(date) {
     return `${d}/${m}/${y}`;
 }
 
-module.exports = { processGuardianDigests };
+module.exports = { processGuardianDigests, initializeDigestSchedules };
