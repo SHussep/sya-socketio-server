@@ -445,6 +445,15 @@ async function initializeDatabase() {
             console.log('[DB] ⚠️ email_digest columns:', error.message);
         }
 
+        // License expiry notification tracking
+        try {
+            await client.query(`ALTER TABLE tenants ADD COLUMN IF NOT EXISTS license_expiry_last_notified_at TIMESTAMPTZ`);
+            await client.query(`ALTER TABLE tenants ADD COLUMN IF NOT EXISTS license_expiry_last_days_notified INTEGER`);
+            console.log('[DB] ✅ Columnas license_expiry_* verificadas/agregadas en tenants');
+        } catch (error) {
+            console.log('[DB] ⚠️ license_expiry columns:', error.message);
+        }
+
         // Migraciones para branches
         try {
             await client.query(`ALTER TABLE branches ADD COLUMN IF NOT EXISTS timezone VARCHAR(50) DEFAULT 'America/Mexico_City'`);

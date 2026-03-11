@@ -134,6 +134,7 @@ const shiftRequestsRoutes = require('./routes/shift_requests');
 const geofenceZonesRoutes = require('./routes/geofence_zones');
 const emailDigestRoutes = require('./routes/emailDigest');
 const { processGuardianDigests } = require('./jobs/guardianEmailDigest');
+const { processLicenseExpiryNotifications } = require('./jobs/licenseExpiryNotifier');
 
 // Nuevas rutas extraídas de server.js
 const createBranchesRoutes = require('./routes/branches');
@@ -411,6 +412,20 @@ async function startServer() {
                     console.error('[GuardianDigest] Interval error:', err.message)
                 );
             }, 60 * 60 * 1000); // 1 hour
+
+            // License expiry notifications — check every 12 hours
+            setInterval(() => {
+                processLicenseExpiryNotifications().catch(err =>
+                    console.error('[LicenseExpiry] Interval error:', err.message)
+                );
+            }, 12 * 60 * 60 * 1000); // 12 hours
+
+            // Run license check once on startup (after 30s to let DB init)
+            setTimeout(() => {
+                processLicenseExpiryNotifications().catch(err =>
+                    console.error('[LicenseExpiry] Startup check error:', err.message)
+                );
+            }, 30000);
         });
     } catch (error) {
         console.error('❌ Error starting server:', error);
