@@ -94,7 +94,7 @@ module.exports = function(pool, io) {
                             reason, notes,
                             was_reviewed, review_notes, reviewed_at, reviewed_by_employee_id,
                             status,
-                            weighing_cycle_count, total_weight_kg,
+                            weighing_cycle_count, total_weight_kg, cycle_weights_json,
                             global_id, terminal_id, local_op_seq, device_event_raw, created_local_utc
                         ) VALUES (
                             $1, $2, $3,
@@ -103,8 +103,8 @@ module.exports = function(pool, io) {
                             $9, $10,
                             $11, $12, $13, $14,
                             $15,
-                            $16, $17,
-                            $18, $19, $20, $21, $22
+                            $16, $17, $18,
+                            $19, $20, $21, $22, $23
                         )
                         ON CONFLICT (global_id) DO UPDATE SET
                             deactivated_at = EXCLUDED.deactivated_at,
@@ -117,6 +117,7 @@ module.exports = function(pool, io) {
                             notes = EXCLUDED.notes,
                             weighing_cycle_count = EXCLUDED.weighing_cycle_count,
                             total_weight_kg = EXCLUDED.total_weight_kg,
+                            cycle_weights_json = EXCLUDED.cycle_weights_json,
                             updated_at = CURRENT_TIMESTAMP
                         RETURNING id, (xmax = 0) AS inserted, severity
                     `, [
@@ -137,6 +138,7 @@ module.exports = function(pool, io) {
                         status,
                         log.weighing_cycle_count || 0,
                         log.total_weight_kg ? parseFloat(log.total_weight_kg) : 0,
+                        log.cycle_weights_json || null,
                         log.global_id,
                         log.terminal_id,
                         log.local_op_seq || 0,
@@ -211,7 +213,7 @@ module.exports = function(pool, io) {
                     pm.id, pm.global_id, pm.status, pm.severity,
                     pm.activated_at, pm.deactivated_at, pm.duration_seconds,
                     pm.reason, pm.notes,
-                    pm.weighing_cycle_count, pm.total_weight_kg,
+                    pm.weighing_cycle_count, pm.total_weight_kg, pm.cycle_weights_json,
                     pm.was_reviewed, pm.review_notes, pm.reviewed_at,
                     CONCAT(op.first_name, ' ', op.last_name) as operator_name,
                     CONCAT(auth.first_name, ' ', auth.last_name) as authorizer_name,

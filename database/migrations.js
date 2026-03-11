@@ -1672,7 +1672,8 @@ async function runMigrations() {
                 // Add weighing cycle tracking columns
                 await client.query(`ALTER TABLE preparation_mode_logs ADD COLUMN IF NOT EXISTS weighing_cycle_count INTEGER DEFAULT 0`);
                 await client.query(`ALTER TABLE preparation_mode_logs ADD COLUMN IF NOT EXISTS total_weight_kg DECIMAL(10,3) DEFAULT 0`);
-                console.log('[Schema] ✅ Columnas weighing_cycle_count y total_weight_kg verificadas');
+                await client.query(`ALTER TABLE preparation_mode_logs ADD COLUMN IF NOT EXISTS cycle_weights_json TEXT`);
+                console.log('[Schema] ✅ Columnas weighing_cycle_count, total_weight_kg y cycle_weights_json verificadas');
 
                 // Fix severity trigger: SHORT duration = suspicious (Critical), LONG = normal (Low)
                 // In a tortillería, prep mode is used to prepare 30-50kg delivery orders
