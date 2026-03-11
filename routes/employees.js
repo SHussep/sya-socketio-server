@@ -2049,15 +2049,16 @@ module.exports = (pool) => {
                 });
             }
 
-            // Get all active admins in tenant
+            // Get all active admins in tenant (include those without mobile access for pre-configuration)
             const result = await client.query(
-                `SELECT e.id, e.first_name, e.last_name, e.email, e.is_owner, e.mobile_permissions
+                `SELECT e.id, e.first_name, e.last_name, e.email, e.is_owner,
+                        e.can_use_mobile_app,
+                        COALESCE(e.mobile_permissions, '[]'::jsonb) as mobile_permissions
                  FROM employees e
                  JOIN roles r ON e.role_id = r.id AND e.tenant_id = r.tenant_id
                  WHERE e.tenant_id = $1
                    AND r.mobile_access_type = 'admin'
                    AND e.is_active = true
-                   AND e.can_use_mobile_app = true
                  ORDER BY e.is_owner DESC, e.first_name ASC`,
                 [tenantId]
             );
@@ -2068,6 +2069,7 @@ module.exports = (pool) => {
                 lastName: row.last_name,
                 email: row.email,
                 isOwner: row.is_owner || false,
+                canUseMobileApp: row.can_use_mobile_app || false,
                 mobilePermissions: row.mobile_permissions || []
             }));
 
