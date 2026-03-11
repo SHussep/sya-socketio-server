@@ -97,6 +97,7 @@ module.exports = function(pool, io) {
                             reason, notes,
                             was_reviewed, review_notes, reviewed_at, reviewed_by_employee_id,
                             status,
+                            weighing_cycle_count, total_weight_kg,
                             global_id, terminal_id, local_op_seq, device_event_raw, created_local_utc
                         ) VALUES (
                             $1, $2, $3,
@@ -105,7 +106,8 @@ module.exports = function(pool, io) {
                             $9, $10,
                             $11, $12, $13, $14,
                             $15,
-                            $16, $17, $18, $19, $20
+                            $16, $17,
+                            $18, $19, $20, $21, $22
                         )
                         ON CONFLICT (global_id) DO UPDATE SET
                             deactivated_at = EXCLUDED.deactivated_at,
@@ -116,6 +118,8 @@ module.exports = function(pool, io) {
                             reviewed_at = EXCLUDED.reviewed_at,
                             reviewed_by_employee_id = EXCLUDED.reviewed_by_employee_id,
                             notes = EXCLUDED.notes,
+                            weighing_cycle_count = EXCLUDED.weighing_cycle_count,
+                            total_weight_kg = EXCLUDED.total_weight_kg,
                             updated_at = CURRENT_TIMESTAMP
                         RETURNING id, (xmax = 0) AS inserted, severity
                     `, [
@@ -134,6 +138,8 @@ module.exports = function(pool, io) {
                         log.reviewed_at,
                         null, // reviewed_by_employee_id - resolver si viene
                         status,
+                        log.weighing_cycle_count || 0,
+                        log.total_weight_kg ? parseFloat(log.total_weight_kg) : 0,
                         log.global_id,
                         log.terminal_id,
                         log.local_op_seq || 0,
@@ -193,26 +199,9 @@ module.exports = function(pool, io) {
                         }
                     } else {
                         results.updated++;
-
-                        // Si se actualizó a completado, emitir evento de desactivación
-                        if (status === 'completed' && log.deactivated_at) {
-                            newEvents.push({
-                                type: 'preparation_mode_deactivated',
-                                branchId: log.branch_id,
-                                tenantId: log.tenant_id,
-                                branchName,
-                                data: {
-                                    id: upsertResult.rows[0].id,
-                                    global_id: log.global_id,
-                                    operator_employee_id,
-                                    operator_name,
-                                    deactivated_at: log.deactivated_at,
-                                    duration_seconds: log.duration_seconds,
-                                    severity: upsertResult.rows[0].severity,
-                                    branch_name: branchName
-                                }
-                            });
-                        }
+                        // No enviar notificación en UPDATE — el desktop ya envió FCM
+                        // vía Socket.IO directo al desactivar. Solo notificar en INSERT
+                        // (caso offline donde nunca se envió la notificación original).
                     }
 
                 } catch (logError) {
@@ -333,6 +322,7 @@ module.exports = function(pool, io) {
                     pm.id, pm.global_id, pm.status, pm.severity,
                     pm.activated_at, pm.deactivated_at, pm.duration_seconds,
                     pm.reason, pm.notes,
+                    pm.weighing_cycle_count, pm.total_weight_kg,
                     pm.was_reviewed, pm.review_notes, pm.reviewed_at,
                     CONCAT(op.first_name, ' ', op.last_name) as operator_name,
                     CONCAT(auth.first_name, ' ', auth.last_name) as authorizer_name,
