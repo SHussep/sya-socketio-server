@@ -100,7 +100,7 @@ router.put('/preferences', authenticateToken, async (req, res) => {
 // POST /api/email-digest/test
 // Endpoint para enviar email de prueba con datos reales de un tenant
 // Body: { email, tenant_id? } — si se pasa tenant_id, consulta datos reales
-router.post('/test', async (req, res) => {
+router.post('/test', authenticateToken, async (req, res) => {
     try {
         const { email, tenant_id } = req.body;
         if (!email) {
@@ -240,37 +240,6 @@ router.post('/test', async (req, res) => {
         }
     } catch (err) {
         console.error('[EmailDigest] Error test:', err.message);
-        res.status(500).json({ success: false, message: err.message });
-    }
-});
-
-// GET /api/email-digest/debug-events
-// Temporal: ver qué tenants tienen eventos Guardian
-router.get('/debug-events', async (req, res) => {
-    try {
-        const { rows: suspEvents } = await pool.query(`
-            SELECT tenant_id, COUNT(*) as total,
-                   COUNT(*) FILTER (WHERE severity = 'Critical') as critical,
-                   MIN(timestamp) as earliest,
-                   MAX(timestamp) as latest
-            FROM suspicious_weighing_logs
-            GROUP BY tenant_id
-            ORDER BY total DESC
-            LIMIT 20
-        `);
-
-        const { rows: discEvents } = await pool.query(`
-            SELECT tenant_id, COUNT(*) as total,
-                   MIN(disconnected_at) as earliest,
-                   MAX(disconnected_at) as latest
-            FROM scale_disconnection_logs
-            GROUP BY tenant_id
-            ORDER BY total DESC
-            LIMIT 20
-        `);
-
-        res.json({ success: true, suspiciousEvents: suspEvents, disconnections: discEvents });
-    } catch (err) {
         res.status(500).json({ success: false, message: err.message });
     }
 });
