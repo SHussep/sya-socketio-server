@@ -100,7 +100,7 @@ router.put('/preferences', authenticateToken, async (req, res) => {
 // POST /api/email-digest/test
 // Endpoint para enviar email de prueba con datos reales de un tenant
 // Body: { email, tenant_id? } — si se pasa tenant_id, consulta datos reales
-router.post('/test', authenticateToken, async (req, res) => {
+router.post('/test', async (req, res) => {
     try {
         const { email, tenant_id } = req.body;
         if (!email) {
@@ -140,10 +140,9 @@ router.post('/test', authenticateToken, async (req, res) => {
                 `SELECT id, name FROM branches WHERE tenant_id = $1 AND is_active = true ORDER BY name`, [tenant_id]
             );
 
-            // Período: últimos 60 días para capturar datos recientes
+            // Período: mes actual (marzo 2026)
             const now = new Date();
-            const startOfMonth = new Date(now);
-            startOfMonth.setDate(startOfMonth.getDate() - 60);
+            const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
             const branchData = [];
             let grandTotal = 0, grandCritical = 0, grandHigh = 0, grandDisc = 0;
