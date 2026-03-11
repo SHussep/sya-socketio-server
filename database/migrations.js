@@ -1666,6 +1666,54 @@ async function runMigrations() {
                 console.log('[Schema] ✅ Table preparation_mode_logs created successfully with triggers');
             }
 
+            // Patch: Add weighing columns + fix severity logic for preparation_mode_logs
+            console.log('[Schema] 🔍 Patching preparation_mode_logs (weighing data + inverted severity)...');
+            try {
+                // Add weighing cycle tracking columns
+                await client.query(`ALTER TABLE preparation_mode_logs ADD COLUMN IF NOT EXISTS weighing_cycle_count INTEGER DEFAULT 0`);
+                await client.query(`ALTER TABLE preparation_mode_logs ADD COLUMN IF NOT EXISTS total_weight_kg DECIMAL(10,3) DEFAULT 0`);
+                console.log('[Schema] ✅ Columnas weighing_cycle_count y total_weight_kg verificadas');
+
+                // Fix severity trigger: SHORT duration = suspicious (Critical), LONG = normal (Low)
+                // In a tortillería, prep mode is used to prepare 30-50kg delivery orders
+                // so long duration is expected. Short duration suggests Guardian bypass.
+                await client.query(`
+                    CREATE OR REPLACE FUNCTION calculate_prep_mode_severity()
+                    RETURNS TRIGGER AS $$
+                    BEGIN
+                        IF NEW.duration_seconds IS NOT NULL THEN
+                            IF NEW.duration_seconds < 60 THEN
+                                NEW.severity = 'Critical';
+                            ELSIF NEW.duration_seconds < 180 THEN
+                                NEW.severity = 'High';
+                            ELSIF NEW.duration_seconds < 600 THEN
+                                NEW.severity = 'Medium';
+                            ELSE
+                                NEW.severity = 'Low';
+                            END IF;
+                        END IF;
+                        RETURN NEW;
+                    END;
+                    $$ LANGUAGE plpgsql
+                `);
+                console.log('[Schema] ✅ Severidad de preparation_mode_logs invertida (corto=Critical, largo=Low)');
+
+                // Recalculate severity for existing completed logs
+                await client.query(`
+                    UPDATE preparation_mode_logs SET severity =
+                        CASE
+                            WHEN duration_seconds < 60 THEN 'Critical'
+                            WHEN duration_seconds < 180 THEN 'High'
+                            WHEN duration_seconds < 600 THEN 'Medium'
+                            ELSE 'Low'
+                        END
+                    WHERE duration_seconds IS NOT NULL
+                `);
+                console.log('[Schema] ✅ Severidades recalculadas para logs existentes');
+            } catch (patchError) {
+                console.log('[Schema] ⚠️ Patch preparation_mode_logs:', patchError.message);
+            }
+
             // 3. Always run seeds (idempotent - uses ON CONFLICT)
             console.log('[Seeds] 📝 Running seeds.sql...');
             const seedsPath = path.join(__dirname, 'seeds.sql');
@@ -2333,6 +2381,17 @@ async function runMigrations() {
                 console.log('[Schema] ✅ branches.scale_status columns ready');
             } catch (scaleStatusErr) {
                 console.error(`[Schema] ⚠️ scale_status migration error: ${scaleStatusErr.message}`);
+            }
+
+            // Patch: Add mobile_permissions JSONB column to employees for granular admin permissions
+            try {
+                await client.query(`
+                    ALTER TABLE employees
+                    ADD COLUMN IF NOT EXISTS mobile_permissions JSONB DEFAULT '[]'
+                `);
+                console.log('[Schema] ✅ employees.mobile_permissions column ready');
+            } catch (mobilePermErr) {
+                console.error(`[Schema] ⚠️ mobile_permissions migration error: ${mobilePermErr.message}`);
             }
 
             console.log('[Schema] ✅ Database initialization complete');

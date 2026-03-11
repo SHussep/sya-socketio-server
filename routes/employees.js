@@ -1301,7 +1301,7 @@ module.exports = (pool) => {
             // JOIN con roles para obtener mobile_access_type directamente de la tabla roles
             const result = await client.query(
                 `SELECT e.id, e.email, e.first_name, e.last_name, e.role_id, e.can_use_mobile_app,
-                        e.is_owner, e.profile_photo_url,
+                        e.is_owner, e.profile_photo_url, e.mobile_permissions,
                         r.mobile_access_type as role_mobile_access_type
                  FROM employees e
                  LEFT JOIN roles r ON e.role_id = r.id AND e.tenant_id = r.tenant_id
@@ -1323,6 +1323,30 @@ module.exports = (pool) => {
             const accessType = employee.role_mobile_access_type || 'none';
             const hasMobileAccess = accessType !== 'none' && employee.can_use_mobile_app;
 
+            // All permission codes - owners get everything automatically
+            const ALL_PERMISSIONS = [
+                'admin.distributor_mode',
+                'admin.pos_message',
+                'admin.backup',
+                'admin.business_info',
+                'admin.break_settings'
+            ];
+
+            const isOwner = employee.is_owner || false;
+            // Owners always have all permissions; admins get their assigned ones + distributor_mode by default
+            let mobilePermissions = [];
+            if (isOwner) {
+                mobilePermissions = ALL_PERMISSIONS;
+            } else if (accessType === 'admin') {
+                const stored = employee.mobile_permissions || [];
+                // Ensure distributor_mode is always included for admins
+                if (!stored.includes('admin.distributor_mode')) {
+                    mobilePermissions = ['admin.distributor_mode', ...stored];
+                } else {
+                    mobilePermissions = stored;
+                }
+            }
+
             return res.json({
                 success: true,
                 data: {
@@ -1333,7 +1357,8 @@ module.exports = (pool) => {
                     canUseMobileApp: employee.can_use_mobile_app,
                     mobileAccessType: accessType,
                     hasMobileAccess: hasMobileAccess,
-                    isOwner: employee.is_owner || false,
+                    isOwner: isOwner,
+                    mobilePermissions: mobilePermissions,
                     profilePhotoUrl: employee.profile_photo_url || null,
                     message: hasMobileAccess
                         ? `Acceso aprobado como ${accessType === 'admin' ? 'Administrador' : 'Repartidor'}`
@@ -1990,6 +2015,166 @@ module.exports = (pool) => {
                 message: 'Error al obtener estado de verificación',
                 error: undefined
             });
+        }
+    });
+
+    // ═════════════════════════════════════════════════════════════
+    // ADMIN PERMISSIONS MANAGEMENT (Owner-only)
+    // ═════════════════════════════════════════════════════════════
+
+    // GET /api/employees/admins-permissions - List all admins with their mobile permissions
+    // Only accessible by owners
+    router.get('/admins-permissions', async (req, res) => {
+        const client = await pool.connect();
+        try {
+            const { tenantId, requesterId } = req.query;
+
+            if (!tenantId || !requesterId) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Parámetros requeridos: tenantId, requesterId'
+                });
+            }
+
+            // Verify requester is an owner
+            const ownerCheck = await client.query(
+                `SELECT is_owner FROM employees WHERE id = $1 AND tenant_id = $2 AND is_active = true`,
+                [parseInt(requesterId), tenantId]
+            );
+
+            if (ownerCheck.rows.length === 0 || !ownerCheck.rows[0].is_owner) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Solo los owners pueden gestionar permisos'
+                });
+            }
+
+            // Get all active admins in tenant
+            const result = await client.query(
+                `SELECT e.id, e.first_name, e.last_name, e.email, e.is_owner, e.mobile_permissions
+                 FROM employees e
+                 JOIN roles r ON e.role_id = r.id AND e.tenant_id = r.tenant_id
+                 WHERE e.tenant_id = $1
+                   AND r.mobile_access_type = 'admin'
+                   AND e.is_active = true
+                   AND e.can_use_mobile_app = true
+                 ORDER BY e.is_owner DESC, e.first_name ASC`,
+                [tenantId]
+            );
+
+            const admins = result.rows.map(row => ({
+                id: row.id,
+                firstName: row.first_name,
+                lastName: row.last_name,
+                email: row.email,
+                isOwner: row.is_owner || false,
+                mobilePermissions: row.mobile_permissions || []
+            }));
+
+            return res.json({
+                success: true,
+                data: admins
+            });
+
+        } catch (error) {
+            console.error('[Employees/AdminsPermissions] ❌ Error:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Error al obtener permisos de administradores',
+                error: undefined
+            });
+        } finally {
+            client.release();
+        }
+    });
+
+    // PATCH /api/employees/:id/mobile-permissions - Update an admin's mobile permissions
+    // Only accessible by owners
+    router.patch('/:id/mobile-permissions', async (req, res) => {
+        const client = await pool.connect();
+        try {
+            const targetId = parseInt(req.params.id);
+            const { permissions, requesterId, tenantId } = req.body;
+
+            if (!targetId || !requesterId || !tenantId || !Array.isArray(permissions)) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Parámetros requeridos: id (URL), permissions (array), requesterId, tenantId (body)'
+                });
+            }
+
+            // Verify requester is an owner
+            const ownerCheck = await client.query(
+                `SELECT is_owner FROM employees WHERE id = $1 AND tenant_id = $2 AND is_active = true`,
+                [parseInt(requesterId), tenantId]
+            );
+
+            if (ownerCheck.rows.length === 0 || !ownerCheck.rows[0].is_owner) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Solo los owners pueden modificar permisos'
+                });
+            }
+
+            // Verify target is an admin in the same tenant (and not an owner)
+            const targetCheck = await client.query(
+                `SELECT e.id, e.is_owner, r.mobile_access_type
+                 FROM employees e
+                 JOIN roles r ON e.role_id = r.id AND e.tenant_id = r.tenant_id
+                 WHERE e.id = $1 AND e.tenant_id = $2 AND e.is_active = true`,
+                [targetId, tenantId]
+            );
+
+            if (targetCheck.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Empleado no encontrado'
+                });
+            }
+
+            if (targetCheck.rows[0].is_owner) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'No se pueden modificar los permisos de un owner'
+                });
+            }
+
+            // Validate permission codes
+            const VALID_PERMISSIONS = [
+                'admin.distributor_mode',
+                'admin.pos_message',
+                'admin.backup',
+                'admin.business_info',
+                'admin.break_settings'
+            ];
+
+            const validatedPermissions = permissions.filter(p => VALID_PERMISSIONS.includes(p));
+
+            // Update permissions
+            await client.query(
+                `UPDATE employees SET mobile_permissions = $1 WHERE id = $2 AND tenant_id = $3`,
+                [JSON.stringify(validatedPermissions), targetId, tenantId]
+            );
+
+            console.log(`[Employees/MobilePermissions] ✅ Updated permissions for employee ${targetId}: ${validatedPermissions.join(', ')}`);
+
+            return res.json({
+                success: true,
+                data: {
+                    employeeId: targetId,
+                    mobilePermissions: validatedPermissions
+                }
+            });
+
+        } catch (error) {
+            console.error('[Employees/MobilePermissions] ❌ Error:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Error al actualizar permisos',
+                error: undefined
+            });
+        } finally {
+            client.release();
         }
     });
 
