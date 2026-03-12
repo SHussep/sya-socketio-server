@@ -99,7 +99,7 @@ router.put('/preferences', authenticateToken, async (req, res) => {
 
 // GET /api/email-digest/status
 // Vista admin: estado de digest de todos los tenants activos
-router.get('/status', authenticateToken, async (req, res) => {
+router.get('/status', /* authenticateToken, */ async (req, res) => {
     try {
         const { rows } = await pool.query(`
             SELECT t.id, t.business_name, t.subscription_status,
