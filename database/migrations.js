@@ -2406,6 +2406,25 @@ async function runMigrations() {
                 console.error(`[Schema] ⚠️ mobile_permissions migration error: ${mobilePermErr.message}`);
             }
 
+            // Patch: Backfill employees.mobile_access_type from roles (per-employee override)
+            // Safe to re-run: only affects employees with NULL or 'none' where role has access
+            try {
+                const backfillResult = await client.query(`
+                    UPDATE employees e
+                    SET mobile_access_type = r.mobile_access_type
+                    FROM roles r
+                    WHERE e.role_id = r.id AND e.tenant_id = r.tenant_id
+                      AND e.can_use_mobile_app = true
+                      AND (e.mobile_access_type IS NULL OR e.mobile_access_type = 'none')
+                      AND r.mobile_access_type != 'none'
+                `);
+                if (backfillResult.rowCount > 0) {
+                    console.log(`[Schema] ✅ Backfilled ${backfillResult.rowCount} employees with mobile_access_type from roles`);
+                }
+            } catch (backfillErr) {
+                console.error(`[Schema] ⚠️ mobile_access_type backfill error: ${backfillErr.message}`);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {
