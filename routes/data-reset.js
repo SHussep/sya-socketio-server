@@ -4,7 +4,8 @@
 // ═══════════════════════════════════════════════════════════════
 
 const express = require('express');
-const { FULL_CLEANUP_TABLES } = require('../utils/cleanupTables');
+const { authenticateToken } = require('../middleware/auth');
+const { FULL_CLEANUP_TABLES, PARTIAL_CLEANUP_TABLES } = require('../utils/cleanupTables');
 
 // Helpers (misma lógica que db-cleanup.js)
 async function tableExists(client, tableName) {
@@ -36,21 +37,29 @@ async function removeGenericCustomerProtection(client, tenantId) {
 }
 
 /**
- * Borra datos de un tenant usando la misma lógica de db-cleanup.js
- * @param {boolean} keepStructural - true = no borrar tenant/branches (data-reset), false = borrar todo (cleanup completo)
+ * Borra datos de un tenant
+ * @param {string} mode - 'partial' = solo transaccional, 'full' = todo menos tenant/branches
  */
-async function deleteAllData(client, tenantId, keepStructural = true) {
+async function deleteAllData(client, tenantId, mode = 'full') {
     const deleted = {};
 
-    // Filtrar tablas estructurales si keepStructural
-    const tables = keepStructural
-        ? FULL_CLEANUP_TABLES.filter(t => !t.structural)
-        : FULL_CLEANUP_TABLES;
+    // Seleccionar tablas según modo
+    let tables;
+    if (mode === 'partial') {
+        // Solo tablas transaccionales (ventas, turnos, gastos, etc.)
+        // Conserva: empleados, clientes, productos, roles, config
+        tables = PARTIAL_CLEANUP_TABLES;
+    } else {
+        // Todo excepto tenant y branches (structural)
+        tables = FULL_CLEANUP_TABLES.filter(t => !t.structural);
+    }
 
-    // Quitar protección del cliente genérico
-    const genericRemoved = await removeGenericCustomerProtection(client, tenantId);
-    if (genericRemoved > 0) {
-        console.log(`[DATA-RESET]    🔓 ${genericRemoved} cliente(s) genérico(s) desprotegido(s)`);
+    // Quitar protección del cliente genérico (solo en modo full que borra clientes)
+    if (mode === 'full') {
+        const genericRemoved = await removeGenericCustomerProtection(client, tenantId);
+        if (genericRemoved > 0) {
+            console.log(`[DATA-RESET]    🔓 ${genericRemoved} cliente(s) genérico(s) desprotegido(s)`);
+        }
     }
 
     for (const tableConfig of tables) {
@@ -109,16 +118,17 @@ module.exports = (pool) => {
 
     // ─────────────────────────────────────────────────────────
     // POST /api/data-reset/branch/:branchId
-    // Borra TODO de un tenant en PostgreSQL
-    // Conserva solo: tenant record, branch record
+    // mode=partial: solo transaccional (ventas, turnos, etc.)
+    // mode=full: todo excepto tenant/branches
     // ─────────────────────────────────────────────────────────
-    router.post('/branch/:branchId', async (req, res) => {
+    router.post('/branch/:branchId', authenticateToken, async (req, res) => {
         const client = await pool.connect();
         try {
             const branchId = parseInt(req.params.branchId);
-            const tenantId = req.body.tenantId;
+            const tenantId = req.user.tenantId;
             const employeeId = req.body.employeeId;
             const source = req.body.source || 'desktop';
+            const mode = req.body.mode === 'partial' ? 'partial' : 'full';
 
             if (!branchId || !tenantId) {
                 return res.status(400).json({ success: false, message: 'branchId y tenantId son requeridos' });
@@ -135,12 +145,11 @@ module.exports = (pool) => {
             const branchName = branchCheck.rows[0].name;
             const resetAt = new Date();
 
-            console.log(`\n[DATA-RESET] 🔄 Reset "${branchName}" (Branch ${branchId}, Tenant ${tenantId})`);
+            console.log(`\n[DATA-RESET] 🔄 Reset ${mode.toUpperCase()} "${branchName}" (Branch ${branchId}, Tenant ${tenantId})`);
 
             await client.query('BEGIN');
 
-            // Borrar TODO del tenant (keepStructural=true → no borra tenant ni branches)
-            const deleted = await deleteAllData(client, tenantId, true);
+            const deleted = await deleteAllData(client, tenantId, mode);
 
             // Marcar data_reset_at
             await client.query(
@@ -151,18 +160,18 @@ module.exports = (pool) => {
             // Auditoría
             await client.query(`
                 INSERT INTO data_resets (tenant_id, branch_id, reset_scope, reset_at, purge_after, purged_at, requested_by_employee_id, requested_from, records_purged)
-                VALUES ($1, $2, 'branch', $3, $3, $3, $4, $5, $6)
-            `, [tenantId, branchId, resetAt, employeeId || null, source, JSON.stringify(deleted)]);
+                VALUES ($1, $2, $3, $4, $4, $4, $5, $6, $7)
+            `, [tenantId, branchId, `branch-${mode}`, resetAt, employeeId || null, source, JSON.stringify(deleted)]);
 
             await client.query('COMMIT');
 
             const totalDeleted = Object.values(deleted).reduce((a, b) => a + b, 0);
-            console.log(`[DATA-RESET] ✅ Tenant ${tenantId} limpio: ${totalDeleted} registros eliminados\n`);
+            console.log(`[DATA-RESET] ✅ Tenant ${tenantId} (${mode}): ${totalDeleted} registros eliminados\n`);
 
             res.json({
                 success: true,
-                message: `"${branchName}" restablecida — ${totalDeleted} registros eliminados`,
-                data: { branchId, branchName, resetAt: resetAt.toISOString(), totalDeleted, deleted }
+                message: `"${branchName}" restablecida (${mode}) — ${totalDeleted} registros eliminados`,
+                data: { branchId, branchName, mode, resetAt: resetAt.toISOString(), totalDeleted, deleted }
             });
         } catch (error) {
             await client.query('ROLLBACK').catch(() => {});
@@ -175,14 +184,15 @@ module.exports = (pool) => {
 
     // ─────────────────────────────────────────────────────────
     // POST /api/data-reset/tenant
-    // Borra TODO de TODAS las sucursales del tenant
+    // mode=partial o mode=full para TODAS las sucursales
     // ─────────────────────────────────────────────────────────
-    router.post('/tenant', async (req, res) => {
+    router.post('/tenant', authenticateToken, async (req, res) => {
         const client = await pool.connect();
         try {
-            const tenantId = req.body.tenantId;
+            const tenantId = req.user.tenantId;
             const employeeId = req.body.employeeId;
             const source = req.body.source || 'desktop';
+            const mode = req.body.mode === 'partial' ? 'partial' : 'full';
 
             if (!tenantId) {
                 return res.status(400).json({ success: false, message: 'tenantId es requerido' });
@@ -194,11 +204,11 @@ module.exports = (pool) => {
             const branches = branchesResult.rows;
             const resetAt = new Date();
 
-            console.log(`\n[DATA-RESET] 🔄 Reset TOTAL tenant ${tenantId} (${branches.length} sucursales)`);
+            console.log(`\n[DATA-RESET] 🔄 Reset ${mode.toUpperCase()} tenant ${tenantId} (${branches.length} sucursales)`);
 
             await client.query('BEGIN');
 
-            const deleted = await deleteAllData(client, tenantId, true);
+            const deleted = await deleteAllData(client, tenantId, mode);
 
             await client.query(
                 'UPDATE branches SET data_reset_at = $1 WHERE tenant_id = $2',
@@ -207,18 +217,18 @@ module.exports = (pool) => {
 
             await client.query(`
                 INSERT INTO data_resets (tenant_id, branch_id, reset_scope, reset_at, purge_after, purged_at, requested_by_employee_id, requested_from, records_purged)
-                VALUES ($1, NULL, 'tenant', $2, $2, $2, $3, $4, $5)
-            `, [tenantId, resetAt, employeeId || null, source, JSON.stringify(deleted)]);
+                VALUES ($1, NULL, $2, $3, $3, $3, $4, $5, $6)
+            `, [tenantId, `tenant-${mode}`, resetAt, employeeId || null, source, JSON.stringify(deleted)]);
 
             await client.query('COMMIT');
 
             const totalDeleted = Object.values(deleted).reduce((a, b) => a + b, 0);
-            console.log(`[DATA-RESET] ✅ Tenant ${tenantId} limpio: ${totalDeleted} registros eliminados\n`);
+            console.log(`[DATA-RESET] ✅ Tenant ${tenantId} (${mode}): ${totalDeleted} registros eliminados\n`);
 
             res.json({
                 success: true,
-                message: `${branches.length} sucursales restablecidas — ${totalDeleted} registros eliminados`,
-                data: { tenantId, resetAt: resetAt.toISOString(), totalDeleted, deleted, branches: branches.map(b => ({ id: b.id, name: b.name })) }
+                message: `${branches.length} sucursales restablecidas (${mode}) — ${totalDeleted} registros eliminados`,
+                data: { tenantId, mode, resetAt: resetAt.toISOString(), totalDeleted, deleted, branches: branches.map(b => ({ id: b.id, name: b.name })) }
             });
         } catch (error) {
             await client.query('ROLLBACK').catch(() => {});
@@ -232,9 +242,9 @@ module.exports = (pool) => {
     // ─────────────────────────────────────────────────────────
     // GET /api/data-reset/status/:tenantId
     // ─────────────────────────────────────────────────────────
-    router.get('/status/:tenantId', async (req, res) => {
+    router.get('/status/:tenantId', authenticateToken, async (req, res) => {
         try {
-            const tenantId = parseInt(req.params.tenantId);
+            const tenantId = req.user.tenantId;
             const resets = await pool.query(`
                 SELECT dr.*, b.name as branch_name FROM data_resets dr
                 LEFT JOIN branches b ON dr.branch_id = b.id

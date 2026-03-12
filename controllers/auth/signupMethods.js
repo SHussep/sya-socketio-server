@@ -248,6 +248,13 @@ module.exports = {
             const genericCustomerId = genericCustomerResult.rows[0].customer_id;
             console.log(`[Google Signup] ✅ Cliente genérico creado: ID ${genericCustomerId}`);
 
+            // Crear licencia inicial para la sucursal principal
+            await client.query(`
+                INSERT INTO branch_licenses (tenant_id, branch_id, status, granted_by, activated_at, notes)
+                VALUES ($1, $2, 'active', 'system', NOW(), 'Licencia inicial - registro')
+            `, [tenant.id, branch.id]);
+            console.log(`[Google Signup] ✅ Licencia de sucursal creada para branch ${branch.id}`);
+
             await client.query('COMMIT');
 
             try {
@@ -438,7 +445,7 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
 
             // Buscar en TENANTS (fuente de verdad del email de registro)
             const tenantResult = await this.pool.query(
-                `SELECT t.*, s.name as subscription_name, s.max_branches, s.max_employees, s.max_devices_per_branch
+                `SELECT t.*, s.name as subscription_name, s.max_employees, s.max_devices_per_branch
                  FROM tenants t
                  JOIN subscriptions s ON t.subscription_id = s.id
                  WHERE LOWER(t.email) = LOWER($1) AND t.is_active = true`,
@@ -491,6 +498,17 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
 
             const branches = branchesResult.rows;
 
+            // Obtener conteo de licencias para planLimits
+            const licensesResult = await this.pool.query(`
+                SELECT
+                    COUNT(*) FILTER (WHERE status IN ('available', 'active')) as total_licenses,
+                    COUNT(*) FILTER (WHERE status = 'active') as used_licenses,
+                    COUNT(*) FILTER (WHERE status = 'available') as available_licenses
+                FROM branch_licenses
+                WHERE tenant_id = $1
+            `, [tenant.id]);
+            const licenseInfo = licensesResult.rows[0];
+
             // Generar tokens usando el employee si existe, o datos mínimos del tenant
             const tokenPayload = employee ? {
                 employeeId: employee.id,
@@ -541,7 +559,9 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                     timezone: b.timezone || 'America/Mexico_City'
                 })),
                 planLimits: {
-                    maxBranches: tenant.max_branches,
+                    maxBranches: parseInt(licenseInfo.total_licenses) || 1,
+                    usedBranches: parseInt(licenseInfo.used_licenses) || 0,
+                    availableBranches: parseInt(licenseInfo.available_licenses) || 0,
                     maxEmployees: tenant.max_employees,
                     maxDevicesPerBranch: tenant.max_devices_per_branch
                 },

@@ -49,27 +49,9 @@ module.exports = (pool) => {
     const router = express.Router();
 
     // GET /api/customers - Lista de clientes del tenant
-    // Acepta tenantId del JWT o como query param (para importación desde Desktop)
-    router.get('/', async (req, res) => {
+    router.get('/', authenticateToken, async (req, res) => {
         try {
-            // Intentar obtener tenantId del JWT primero, luego del query param
-            let tenantId = req.query.tenantId;
-
-            // Si hay token JWT, intentar extraer tenantId de ahí
-            const authHeader = req.headers['authorization'];
-            const token = authHeader && authHeader.split(' ')[1];
-            if (token) {
-                try {
-                    const jwt = require('jsonwebtoken');
-                    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-                    if (decoded.tenantId) {
-                        tenantId = decoded.tenantId;
-                    }
-                } catch (jwtErr) {
-                    // Token inválido o de Google - usar query param
-                    console.log('[Customers] Token no es JWT del backend, usando query param');
-                }
-            }
+            const tenantId = req.user.tenantId;
 
             if (!tenantId) {
                 return res.status(400).json({ success: false, message: 'Se requiere tenantId' });
@@ -111,9 +93,9 @@ module.exports = (pool) => {
     // Soporta sincronización incremental con parámetro 'since'
     // NO requiere JWT - acepta tenantId como query param (igual que /sync)
     // ═══════════════════════════════════════════════════════════════════════════
-    router.get('/pull', optionalAuthenticateToken, async (req, res) => {
+    router.get('/pull', authenticateToken, async (req, res) => {
         try {
-            const tenantId = req.user?.tenantId || req.query.tenantId;
+            const tenantId = req.user.tenantId;
             const since = req.query.since; // ISO timestamp para sync incremental
 
             if (!tenantId) {
@@ -181,7 +163,7 @@ module.exports = (pool) => {
     });
 
     // POST /api/customers/sync - Sincronizar cliente desde Desktop (idempotente)
-    router.post('/sync', async (req, res) => {
+    router.post('/sync', authenticateToken, async (req, res) => {
         try {
             const {
                 tenant_id,
@@ -321,7 +303,7 @@ module.exports = (pool) => {
 
     // PUT /api/customers/:id - Actualizar cliente existente desde Desktop
     // :id puede ser el ID numérico O el GlobalId (UUID)
-    router.put('/:id', async (req, res) => {
+    router.put('/:id', authenticateToken, async (req, res) => {
         try {
             const { id } = req.params;
             const {
@@ -453,7 +435,7 @@ module.exports = (pool) => {
 
     // PATCH /api/customers/:id/balance - Actualizar saldo del cliente (desde Desktop offline-first)
     // :id puede ser el ID numérico O el GlobalId (UUID)
-    router.patch('/:id/balance', async (req, res) => {
+    router.patch('/:id/balance', authenticateToken, async (req, res) => {
         try {
             const { id } = req.params;
             const { tenant_id, current_balance, last_balance_update_utc } = req.body;
@@ -550,7 +532,7 @@ module.exports = (pool) => {
 
     // PATCH /api/customers/:id/deactivate - Soft delete (desactivar cliente)
     // :id puede ser el ID numérico O el GlobalId (UUID)
-    router.patch('/:id/deactivate', async (req, res) => {
+    router.patch('/:id/deactivate', authenticateToken, async (req, res) => {
         try {
             const { id } = req.params;
             const { tenant_id, last_modified_local_utc } = req.body;

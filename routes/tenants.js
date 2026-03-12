@@ -176,11 +176,18 @@ module.exports = function(pool, io) {
 
             console.log(`[Tenant Register] ✅ Empleado asignado a sucursal principal`);
 
-            // 5. Obtener plan de suscripción
+            // 5. Crear licencia inicial para la sucursal
+            await pool.query(`
+                INSERT INTO branch_licenses (tenant_id, branch_id, status, granted_by, activated_at, notes)
+                VALUES ($1, $2, 'active', 'system', NOW(), 'Licencia inicial - registro')
+            `, [tenant.id, branch.id]);
+            console.log(`[Tenant Register] ✅ Licencia de sucursal creada para branch ${branch.id}`);
+
+            // 6. Obtener plan de suscripción
             console.log(`[Tenant Register] 📋 Obteniendo plan de suscripción ID ${tenant.subscription_id}...`);
 
             const subscription = await pool.query(
-                'SELECT name, max_branches, max_devices, max_employees FROM subscriptions WHERE id = $1',
+                'SELECT name, max_devices, max_employees FROM subscriptions WHERE id = $1',
                 [tenant.subscription_id]
             );
 
@@ -258,10 +265,15 @@ module.exports = function(pool, io) {
                     },
                     subscription: {
                         plan: plan.name,
-                        maxBranches: plan.max_branches,
+                        maxBranches: 1,
                         maxDevices: plan.max_devices,
                         maxEmployees: plan.max_employees,
                         trial: trialInfo
+                    },
+                    licenses: {
+                        total: 1,
+                        used: 1,
+                        available: 0
                     }
                 }
             });
@@ -338,7 +350,6 @@ module.exports = function(pool, io) {
                 SELECT
                     t.*,
                     s.name as subscription_name,
-                    s.max_branches,
                     s.max_devices,
                     s.max_employees
                 FROM tenants t
@@ -367,6 +378,17 @@ module.exports = function(pool, io) {
                 [id]
             );
 
+            // Obtener conteo de licencias
+            const licensesResult = await pool.query(`
+                SELECT
+                    COUNT(*) FILTER (WHERE status IN ('available', 'active')) as total_licenses,
+                    COUNT(*) FILTER (WHERE status = 'active') as used_licenses,
+                    COUNT(*) FILTER (WHERE status = 'available') as available_licenses
+                FROM branch_licenses
+                WHERE tenant_id = $1
+            `, [id]);
+            const licenseInfo = licensesResult.rows[0];
+
             // Calcular información del trial
             const now = new Date();
             const expiresAt = tenant.trial_ends_at ? new Date(tenant.trial_ends_at) : null;
@@ -391,12 +413,17 @@ module.exports = function(pool, io) {
                     phoneNumber: tenant.phone_number,
                     subscription: {
                         name: tenant.subscription_name,
-                        maxBranches: tenant.max_branches,
+                        maxBranches: parseInt(licenseInfo.total_licenses) || 1,
                         maxDevices: tenant.max_devices,
                         maxEmployees: tenant.max_employees,
                         trialEndsAt: tenant.trial_ends_at,
                         subscriptionStatus: tenant.subscription_status,
                         trial: trialStatus
+                    },
+                    licenses: {
+                        total: parseInt(licenseInfo.total_licenses) || 0,
+                        used: parseInt(licenseInfo.used_licenses) || 0,
+                        available: parseInt(licenseInfo.available_licenses) || 0
                     },
                     stats: {
                         branches: parseInt(branchCount.rows[0].count),

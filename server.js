@@ -204,6 +204,8 @@ const io = new Server(server, {
     transports: ['websocket', 'polling'],
     pingTimeout: 60000,
     pingInterval: 25000,
+    maxHttpBufferSize: 1e6, // 1MB - protección contra payloads grandes
+    connectionStateRecovery: {},
 });
 
 // Make io accessible from routes via req.app.get('io')

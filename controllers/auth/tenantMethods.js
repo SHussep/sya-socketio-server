@@ -560,7 +560,7 @@ module.exports = {
 
             const tenantResult = await client.query(`
                 SELECT t.id, t.tenant_code, t.business_name,
-                       s.name as subscription_name, s.max_branches
+                       s.name as subscription_name
                 FROM tenants t
                 JOIN subscriptions s ON t.subscription_id = s.id
                 WHERE t.id = $1 AND t.is_active = true
@@ -575,24 +575,33 @@ module.exports = {
             }
 
             const tenant = tenantResult.rows[0];
-            const maxBranches = tenant.max_branches || 1;
 
-            const currentBranchesResult = await client.query(
-                'SELECT COUNT(*) as count FROM branches WHERE tenant_id = $1 AND is_active = true',
-                [tenantId]
-            );
+            // Buscar una licencia disponible (FOR UPDATE para evitar race conditions)
+            const licenseResult = await client.query(`
+                SELECT id FROM branch_licenses
+                WHERE tenant_id = $1 AND status = 'available'
+                ORDER BY created_at ASC
+                LIMIT 1
+                FOR UPDATE
+            `, [tenantId]);
 
-            const currentBranchesCount = parseInt(currentBranchesResult.rows[0].count);
-
-            if (currentBranchesCount >= maxBranches) {
+            if (licenseResult.rows.length === 0) {
                 await client.query('ROLLBACK');
                 return res.status(403).json({
                     success: false,
-                    message: `Has alcanzado el límite de ${maxBranches} sucursales para el plan ${tenant.subscription_name}. Actualiza tu suscripción para agregar más sucursales.`
+                    message: `No tienes licencias de sucursal disponibles. Contacta a soporte para agregar más sucursales.`
                 });
             }
 
-            const branchCode = `B${tenantId}S${currentBranchesCount + 1}`;
+            const availableLicenseId = licenseResult.rows[0].id;
+
+            // Contar branches para generar código único
+            const countResult = await client.query(
+                'SELECT COUNT(*) as count FROM branches WHERE tenant_id = $1',
+                [tenantId]
+            );
+            const branchCount = parseInt(countResult.rows[0].count);
+            const branchCode = `B${tenantId}S${branchCount + 1}`;
 
             const newBranchResult = await client.query(`
                 INSERT INTO branches (tenant_id, branch_code, name, address, timezone)
@@ -601,6 +610,13 @@ module.exports = {
             `, [tenantId, branchCode, name, address, timezone || 'America/Mexico_City']);
 
             const newBranch = newBranchResult.rows[0];
+
+            // Activar la licencia con el branch recién creado
+            await client.query(`
+                UPDATE branch_licenses
+                SET branch_id = $1, status = 'active', activated_at = NOW(), updated_at = NOW()
+                WHERE id = $2
+            `, [newBranch.id, availableLicenseId]);
 
             const ownerResult = await client.query(
                 'SELECT id FROM employees WHERE tenant_id = $1 AND is_owner = true',

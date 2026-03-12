@@ -103,6 +103,42 @@ async function initializeDatabase() {
             )
         `);
 
+        // Tabla: branch_licenses (licencias individuales por sucursal)
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS branch_licenses (
+                id SERIAL PRIMARY KEY,
+                tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                branch_id INTEGER REFERENCES branches(id) ON DELETE SET NULL,
+                status VARCHAR(20) NOT NULL DEFAULT 'available',
+                granted_by VARCHAR(50) DEFAULT 'system',
+                notes TEXT,
+                granted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                activated_at TIMESTAMP,
+                revoked_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        // Índices para branch_licenses
+        try {
+            await client.query(`
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_branch_licenses_branch_active
+                ON branch_licenses(branch_id) WHERE branch_id IS NOT NULL AND status = 'active'
+            `);
+            await client.query(`
+                CREATE INDEX IF NOT EXISTS idx_branch_licenses_tenant_available
+                ON branch_licenses(tenant_id) WHERE status = 'available'
+            `);
+            await client.query(`
+                CREATE INDEX IF NOT EXISTS idx_branch_licenses_tenant_status
+                ON branch_licenses(tenant_id, status)
+            `);
+            console.log('[DB] ✅ Tabla branch_licenses e índices verificados/creados');
+        } catch (error) {
+            console.log('[DB] ⚠️ branch_licenses indexes:', error.message);
+        }
+
         // Tabla: roles (debe ir ANTES de employees)
         await client.query(`
             CREATE TABLE IF NOT EXISTS roles (
@@ -700,6 +736,68 @@ async function initializeDatabase() {
         }
 
         console.log('[DB] ✅ Database schema initialized successfully');
+
+        // ───────────────────────────────────────────────────────────
+        // CHECK constraints & missing indexes (hardening)
+        // Each runs independently so one failure doesn't block others
+        // ───────────────────────────────────────────────────────────
+        const checks = [
+            // Montos no negativos
+            `ALTER TABLE expenses ADD CONSTRAINT chk_expenses_amount CHECK (amount >= 0)`,
+            `ALTER TABLE deposits ADD CONSTRAINT chk_deposits_amount CHECK (amount > 0)`,
+            `ALTER TABLE withdrawals ADD CONSTRAINT chk_withdrawals_amount CHECK (amount > 0)`,
+            `ALTER TABLE customers ADD CONSTRAINT chk_customers_credito_limite CHECK (credito_limite >= 0)`,
+            `ALTER TABLE customers ADD CONSTRAINT chk_customers_saldo_deudor CHECK (saldo_deudor >= 0)`,
+            `ALTER TABLE productos ADD CONSTRAINT chk_productos_precio_venta CHECK (precio_venta >= 0)`,
+            `ALTER TABLE productos ADD CONSTRAINT chk_productos_precio_compra CHECK (precio_compra >= 0)`,
+            // Porcentaje válido
+            `ALTER TABLE customers ADD CONSTRAINT chk_customers_porcentaje CHECK (porcentaje_descuento >= 0 AND porcentaje_descuento <= 100)`,
+            // Status válidos
+            `ALTER TABLE tenants ADD CONSTRAINT chk_tenants_status CHECK (subscription_status IN ('trial', 'active', 'expired', 'cancelled', 'suspended'))`,
+            `ALTER TABLE branch_licenses ADD CONSTRAINT chk_licenses_status CHECK (status IN ('available', 'active', 'revoked'))`,
+            // Turnos: end >= start
+            `ALTER TABLE shifts ADD CONSTRAINT chk_shifts_time CHECK (end_time IS NULL OR end_time >= start_time)`,
+            // Suscripciones: límites positivos
+            `ALTER TABLE subscriptions ADD CONSTRAINT chk_sub_branches CHECK (max_branches >= 0)`,
+            `ALTER TABLE subscriptions ADD CONSTRAINT chk_sub_devices CHECK (max_devices >= 0)`,
+            `ALTER TABLE subscriptions ADD CONSTRAINT chk_sub_devices_branch CHECK (max_devices_per_branch >= 0)`,
+        ];
+
+        for (const sql of checks) {
+            try {
+                await client.query(sql);
+            } catch (e) {
+                // "already exists" is expected on subsequent startups
+                if (!e.message.includes('already exists')) {
+                    console.log(`[DB] ⚠️ CHECK: ${e.message}`);
+                }
+            }
+        }
+        console.log('[DB] ✅ CHECK constraints verified');
+
+        // Missing indexes
+        const indexes = [
+            `CREATE INDEX IF NOT EXISTS idx_backup_metadata_tenant ON backup_metadata(tenant_id)`,
+            `CREATE INDEX IF NOT EXISTS idx_backup_metadata_branch ON backup_metadata(branch_id)`,
+            `CREATE INDEX IF NOT EXISTS idx_backup_metadata_created ON backup_metadata(created_at DESC)`,
+            `CREATE INDEX IF NOT EXISTS idx_employees_role ON employees(role_id)`,
+            `CREATE INDEX IF NOT EXISTS idx_employees_active ON employees(tenant_id, is_active)`,
+            `CREATE INDEX IF NOT EXISTS idx_shifts_employee ON shifts(employee_id)`,
+            `CREATE INDEX IF NOT EXISTS idx_shifts_open ON shifts(tenant_id, is_cash_cut_open) WHERE is_cash_cut_open = true`,
+            `CREATE INDEX IF NOT EXISTS idx_tenants_status ON tenants(subscription_status)`,
+            `CREATE INDEX IF NOT EXISTS idx_tenants_active ON tenants(is_active)`,
+            `CREATE INDEX IF NOT EXISTS idx_shift_requests_tenant ON shift_requests(tenant_id)`,
+        ];
+
+        for (const sql of indexes) {
+            try {
+                await client.query(sql);
+            } catch (e) {
+                console.log(`[DB] ⚠️ INDEX: ${e.message}`);
+            }
+        }
+        console.log('[DB] ✅ Indexes verified');
+
     } catch (error) {
         console.error('[DB] ❌ Error initializing database:', error);
         throw error;

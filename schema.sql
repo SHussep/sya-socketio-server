@@ -62,6 +62,38 @@ CREATE TABLE IF NOT EXISTS branches (
 
 CREATE INDEX IF NOT EXISTS idx_branches_tenant_id ON branches(tenant_id);
 
+-- branch_licenses (licencias individuales por sucursal)
+-- Cada licencia permite operar UNA sucursal. El plan define features, no cantidad.
+CREATE TABLE IF NOT EXISTS branch_licenses (
+    id SERIAL PRIMARY KEY,
+    tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    branch_id INTEGER REFERENCES branches(id) ON DELETE SET NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'available',
+        -- 'available' = sin asignar a sucursal
+        -- 'active'    = asignada a una sucursal activa
+        -- 'revoked'   = revocada por superadmin
+    granted_by VARCHAR(50) DEFAULT 'system',
+        -- 'system', 'superadmin', 'purchase'
+    notes TEXT,
+    granted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    activated_at TIMESTAMP,
+    revoked_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Una sucursal solo puede tener UNA licencia activa
+CREATE UNIQUE INDEX IF NOT EXISTS idx_branch_licenses_branch_active
+    ON branch_licenses(branch_id) WHERE branch_id IS NOT NULL AND status = 'active';
+
+-- Búsqueda rápida de licencias disponibles por tenant
+CREATE INDEX IF NOT EXISTS idx_branch_licenses_tenant_available
+    ON branch_licenses(tenant_id) WHERE status = 'available';
+
+-- Todas las licencias no-revocadas por tenant
+CREATE INDEX IF NOT EXISTS idx_branch_licenses_tenant_status
+    ON branch_licenses(tenant_id, status);
+
 -- roles (GLOBAL - fixed IDs)
 CREATE TABLE IF NOT EXISTS roles (
     id INTEGER PRIMARY KEY,

@@ -196,9 +196,10 @@ module.exports = function(pool, io) {
                     t.is_active,
                     t.created_at,
                     s.name as subscription_name,
-                    s.max_branches,
                     s.max_devices,
                     s.max_employees,
+                    (SELECT COUNT(*) FROM branch_licenses WHERE tenant_id = t.id AND status IN ('available', 'active')) as total_licenses,
+                    (SELECT COUNT(*) FROM branch_licenses WHERE tenant_id = t.id AND status = 'active') as used_licenses,
                     (SELECT COUNT(*) FROM branches WHERE tenant_id = t.id) as branch_count,
                     (SELECT COUNT(*) FROM employees WHERE tenant_id = t.id) as employee_count,
                     (SELECT COUNT(*) FROM employees WHERE tenant_id = t.id AND is_active = true) as active_employee_count,
@@ -252,9 +253,14 @@ module.exports = function(pool, io) {
                         id: tenant.subscription_id,
                         name: tenant.subscription_name,
                         status: tenant.subscription_status,
-                        maxBranches: tenant.max_branches,
+                        maxBranches: parseInt(tenant.total_licenses) || 0,
                         maxDevices: tenant.max_devices,
                         maxEmployees: tenant.max_employees
+                    },
+                    licenses: {
+                        total: parseInt(tenant.total_licenses) || 0,
+                        used: parseInt(tenant.used_licenses) || 0,
+                        available: (parseInt(tenant.total_licenses) || 0) - (parseInt(tenant.used_licenses) || 0)
                     },
                     trial: {
                         endsAt: tenant.trial_ends_at,
@@ -307,7 +313,6 @@ module.exports = function(pool, io) {
                 SELECT
                     t.*,
                     s.name as subscription_name,
-                    s.max_branches,
                     s.max_devices,
                     s.max_employees
                 FROM tenants t
@@ -412,6 +417,16 @@ module.exports = function(pool, io) {
                 WHERE tenant_id = $1
             `, [id]);
 
+            // Licencias del tenant
+            const licensesResult = await pool.query(`
+                SELECT bl.id, bl.branch_id, bl.status, bl.granted_by, bl.granted_at, bl.activated_at,
+                       b.name as branch_name, b.branch_code
+                FROM branch_licenses bl
+                LEFT JOIN branches b ON bl.branch_id = b.id
+                WHERE bl.tenant_id = $1 AND bl.status != 'revoked'
+                ORDER BY bl.status DESC, bl.created_at ASC
+            `, [id]);
+
             const now = new Date();
             const trialEndsAt = tenant.trial_ends_at ? new Date(tenant.trial_ends_at) : null;
             const daysRemaining = trialEndsAt ? Math.ceil((trialEndsAt - now) / (1000 * 60 * 60 * 24)) : null;
@@ -434,12 +449,27 @@ module.exports = function(pool, io) {
                         id: tenant.subscription_id,
                         name: tenant.subscription_name,
                         status: tenant.subscription_status,
-                        maxBranches: tenant.max_branches,
+                        maxBranches: licensesResult.rows.length,
                         maxDevices: tenant.max_devices,
                         maxEmployees: tenant.max_employees,
                         trialEndsAt: tenant.trial_ends_at,
                         daysRemaining: Math.max(0, daysRemaining || 0),
                         isExpired: trialEndsAt ? trialEndsAt < now : false
+                    },
+                    licenses: {
+                        total: licensesResult.rows.length,
+                        used: licensesResult.rows.filter(l => l.status === 'active').length,
+                        available: licensesResult.rows.filter(l => l.status === 'available').length,
+                        details: licensesResult.rows.map(l => ({
+                            id: l.id,
+                            branchId: l.branch_id,
+                            branchName: l.branch_name,
+                            branchCode: l.branch_code,
+                            status: l.status,
+                            grantedBy: l.granted_by,
+                            grantedAt: l.granted_at,
+                            activatedAt: l.activated_at
+                        }))
                     },
                     branches: branchesResult.rows.map(b => ({
                         id: b.id,
@@ -738,6 +768,191 @@ module.exports = function(pool, io) {
             res.status(500).json({
                 success: false,
                 message: 'Error al actualizar suscripción',
+                error: undefined
+            });
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
+    // GET /api/superadmin/tenants/:id/licenses
+    // Listar licencias de un tenant
+    // ─────────────────────────────────────────────────────────
+    router.get('/tenants/:id/licenses', async (req, res) => {
+        try {
+            const { id } = req.params;
+
+            const result = await pool.query(`
+                SELECT bl.id, bl.branch_id, bl.status, bl.granted_by, bl.notes,
+                       bl.granted_at, bl.activated_at, bl.revoked_at, bl.created_at,
+                       b.name as branch_name, b.branch_code, b.is_active as branch_is_active
+                FROM branch_licenses bl
+                LEFT JOIN branches b ON bl.branch_id = b.id
+                WHERE bl.tenant_id = $1
+                ORDER BY bl.status ASC, bl.created_at ASC
+            `, [id]);
+
+            const total = result.rows.filter(l => l.status !== 'revoked').length;
+            const used = result.rows.filter(l => l.status === 'active').length;
+
+            res.json({
+                success: true,
+                data: {
+                    total,
+                    used,
+                    available: total - used,
+                    licenses: result.rows.map(l => ({
+                        id: l.id,
+                        branchId: l.branch_id,
+                        branchName: l.branch_name,
+                        branchCode: l.branch_code,
+                        branchIsActive: l.branch_is_active,
+                        status: l.status,
+                        grantedBy: l.granted_by,
+                        notes: l.notes,
+                        grantedAt: l.granted_at,
+                        activatedAt: l.activated_at,
+                        revokedAt: l.revoked_at,
+                        createdAt: l.created_at
+                    }))
+                }
+            });
+
+        } catch (error) {
+            console.error('[SuperAdmin Licenses List] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al obtener licencias',
+                error: undefined
+            });
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
+    // POST /api/superadmin/tenants/:id/licenses
+    // Agregar licencias a un tenant
+    // ─────────────────────────────────────────────────────────
+    router.post('/tenants/:id/licenses', async (req, res) => {
+        try {
+            const { id } = req.params;
+            const { count = 1, notes } = req.body;
+
+            const licenseCount = Math.min(Math.max(1, parseInt(count) || 1), 50);
+
+            // Verificar que el tenant existe
+            const tenantResult = await pool.query(
+                'SELECT id, business_name FROM tenants WHERE id = $1',
+                [id]
+            );
+
+            if (tenantResult.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Tenant no encontrado'
+                });
+            }
+
+            // Insertar licencias
+            const insertedIds = [];
+            for (let i = 0; i < licenseCount; i++) {
+                const result = await pool.query(`
+                    INSERT INTO branch_licenses (tenant_id, status, granted_by, notes)
+                    VALUES ($1, 'available', 'superadmin', $2)
+                    RETURNING id
+                `, [id, notes || 'Agregada por superadmin']);
+                insertedIds.push(result.rows[0].id);
+            }
+
+            // Obtener totales actualizados
+            const totalsResult = await pool.query(`
+                SELECT
+                    COUNT(*) FILTER (WHERE status IN ('available', 'active')) as total,
+                    COUNT(*) FILTER (WHERE status = 'active') as used,
+                    COUNT(*) FILTER (WHERE status = 'available') as available
+                FROM branch_licenses
+                WHERE tenant_id = $1
+            `, [id]);
+
+            console.log(`[SuperAdmin] ✅ ${licenseCount} licencia(s) agregada(s) a tenant ${id} (${tenantResult.rows[0].business_name})`);
+
+            res.json({
+                success: true,
+                message: `${licenseCount} licencia(s) agregada(s) exitosamente`,
+                data: {
+                    addedIds: insertedIds,
+                    totals: {
+                        total: parseInt(totalsResult.rows[0].total),
+                        used: parseInt(totalsResult.rows[0].used),
+                        available: parseInt(totalsResult.rows[0].available)
+                    }
+                }
+            });
+
+        } catch (error) {
+            console.error('[SuperAdmin Add Licenses] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al agregar licencias',
+                error: undefined
+            });
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
+    // DELETE /api/superadmin/tenants/:tenantId/licenses/:licenseId
+    // Revocar una licencia (solo si está 'available')
+    // ─────────────────────────────────────────────────────────
+    router.delete('/tenants/:tenantId/licenses/:licenseId', async (req, res) => {
+        try {
+            const { tenantId, licenseId } = req.params;
+
+            // Verificar que la licencia existe y pertenece al tenant
+            const licenseResult = await pool.query(
+                'SELECT id, status, branch_id FROM branch_licenses WHERE id = $1 AND tenant_id = $2',
+                [licenseId, tenantId]
+            );
+
+            if (licenseResult.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Licencia no encontrada'
+                });
+            }
+
+            const license = licenseResult.rows[0];
+
+            if (license.status === 'active') {
+                return res.status(400).json({
+                    success: false,
+                    message: 'No se puede revocar una licencia activa. Primero desactiva la sucursal asociada.'
+                });
+            }
+
+            if (license.status === 'revoked') {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Esta licencia ya está revocada'
+                });
+            }
+
+            // Revocar
+            await pool.query(`
+                UPDATE branch_licenses
+                SET status = 'revoked', revoked_at = NOW(), updated_at = NOW()
+                WHERE id = $1
+            `, [licenseId]);
+
+            console.log(`[SuperAdmin] ✅ Licencia ${licenseId} revocada para tenant ${tenantId}`);
+
+            res.json({
+                success: true,
+                message: 'Licencia revocada exitosamente'
+            });
+
+        } catch (error) {
+            console.error('[SuperAdmin Revoke License] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al revocar licencia',
                 error: undefined
             });
         }
