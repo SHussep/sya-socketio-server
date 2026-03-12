@@ -119,7 +119,7 @@ router.post('/cleanup', async (req, res) => {
     }
 });
 
-router.get('/status', /* authenticateToken, */ async (req, res) => {
+router.get('/status', authenticateToken, async (req, res) => {
     try {
         const { rows } = await pool.query(`
             SELECT t.id, t.business_name, t.subscription_status,
