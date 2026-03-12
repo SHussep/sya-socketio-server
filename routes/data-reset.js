@@ -1,133 +1,103 @@
 // ═══════════════════════════════════════════════════════════════
 // DATA RESET ROUTES - Restablecer datos por sucursal o tenant
-// Borra INMEDIATAMENTE TODO de PostgreSQL para esa branch/tenant
-// Solo conserva: tenant record, branch record, subscription
+// Reutiliza las mismas tablas de scripts/db-cleanup.js
 // ═══════════════════════════════════════════════════════════════
 
 const express = require('express');
+const { FULL_CLEANUP_TABLES } = require('../utils/cleanupTables');
 
-// TODAS las tablas a borrar (orden por dependencias FK, hijas primero)
-const TABLES_TO_PURGE = [
-    // FK hijas que dependen de otras tablas transaccionales
-    { table: 'ventas_detalle', via: 'id_venta', parent: 'ventas' },
-    { table: 'notas_credito_detalle', via: 'nota_credito_id', parent: 'notas_credito' },
-    { table: 'purchase_details', via: 'purchase_id', parent: 'purchases' },
-    { table: 'inventory_transfer_items', via: 'transfer_id', parent: 'inventory_transfers' },
-    // Transaccionales directas
-    { table: 'repartidor_shift_cash_snapshot', col: 'branch_id' },
-    { table: 'shift_cash_snapshot', col: 'branch_id' },
-    { table: 'ventas', col: 'branch_id' },
-    { table: 'notas_credito', col: 'branch_id' },
-    { table: 'expenses', col: 'branch_id' },
-    { table: 'cash_cuts', col: 'branch_id' },
-    { table: 'deposits', col: 'branch_id' },
-    { table: 'withdrawals', col: 'branch_id' },
-    { table: 'shifts', col: 'branch_id' },
-    { table: 'credit_payments', col: 'branch_id' },
-    { table: 'purchases', col: 'branch_id' },
-    { table: 'repartidor_assignments', col: 'branch_id' },
-    { table: 'repartidor_returns', col: 'branch_id' },
-    { table: 'repartidor_debts', col: 'branch_id' },
-    { table: 'employee_debts', col: 'branch_id' },
-    { table: 'preparation_mode_logs', col: 'branch_id' },
-    { table: 'suspicious_weighing_logs', col: 'branch_id' },
-    { table: 'scale_disconnection_logs', col: 'branch_id' },
-    { table: 'cancelaciones_bitacora', col: 'branch_id' },
-    { table: 'repartidor_locations', col: 'branch_id' },
-    { table: 'gps_consent_log', col: 'branch_id' },
-    { table: 'geofence_events', col: 'branch_id' },
-    { table: 'employee_daily_metrics', col: 'branch_id' },
-    { table: 'inventory_transfers', col: 'source_branch_id' },
-    { table: 'guardian_employee_scores_daily', col: 'branch_id' },
-    { table: 'suspicious_weighing_events', col: 'branch_id' },
-    { table: 'scale_disconnections', col: 'branch_id' },
-    { table: 'sessions', col: 'branch_id' },
-    { table: 'backup_metadata', col: 'branch_id' },
-    // Maestros que también se borran (quedarían huérfanos si no)
-    { table: 'role_permissions', col: 'tenant_id', noBranch: true },
-    { table: 'employee_branches', col: 'branch_id' },
-    { table: 'cliente_branches', col: 'branch_id' },
-    { table: 'employees', col: 'tenant_id', noBranch: true },
-    { table: 'customers', col: 'tenant_id', noBranch: true },
-    { table: 'productos', col: 'tenant_id', noBranch: true },
-    { table: 'categorias_productos', col: 'tenant_id', noBranch: true },
-    { table: 'roles', col: 'tenant_id', noBranch: true },
-    { table: 'devices', col: 'branch_id' },
-    { table: 'fcm_tokens', col: 'tenant_id', noBranch: true },
-];
+// Helpers (misma lógica que db-cleanup.js)
+async function tableExists(client, tableName) {
+    const result = await client.query(
+        `SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = $1)`,
+        [tableName]
+    );
+    return result.rows[0].exists;
+}
+
+async function columnExists(client, tableName, columnName) {
+    const result = await client.query(
+        `SELECT column_name FROM information_schema.columns WHERE table_name = $1 AND column_name = $2`,
+        [tableName, columnName]
+    );
+    return result.rows.length > 0;
+}
+
+async function removeGenericCustomerProtection(client, tenantId) {
+    try {
+        const result = await client.query(
+            `UPDATE customers SET is_system_generic = false WHERE tenant_id = $1 AND is_system_generic = true`,
+            [tenantId]
+        );
+        return result.rowCount;
+    } catch (err) {
+        return 0;
+    }
+}
 
 /**
- * Borra TODO para una o varias branches de un tenant.
- * Usa SAVEPOINT por tabla para que un fallo no aborte toda la transacción.
+ * Borra datos de un tenant usando la misma lógica de db-cleanup.js
+ * @param {boolean} keepStructural - true = no borrar tenant/branches (data-reset), false = borrar todo (cleanup completo)
  */
-async function purgeAllData(client, tenantId, branchIds) {
+async function deleteAllData(client, tenantId, keepStructural = true) {
     const deleted = {};
 
-    for (const def of TABLES_TO_PURGE) {
-        const sp = `sp_${def.table}`;
+    // Filtrar tablas estructurales si keepStructural
+    const tables = keepStructural
+        ? FULL_CLEANUP_TABLES.filter(t => !t.structural)
+        : FULL_CLEANUP_TABLES;
+
+    // Quitar protección del cliente genérico
+    const genericRemoved = await removeGenericCustomerProtection(client, tenantId);
+    if (genericRemoved > 0) {
+        console.log(`[DATA-RESET]    🔓 ${genericRemoved} cliente(s) genérico(s) desprotegido(s)`);
+    }
+
+    for (const tableConfig of tables) {
+        const sp = `sp_${tableConfig.name.replace(/[^a-z0-9_]/g, '')}`;
         try {
             await client.query(`SAVEPOINT ${sp}`);
 
-            let result;
-
-            if (def.parent) {
-                // Tabla hija: borrar vía FK al padre
-                const parentDef = TABLES_TO_PURGE.find(t => t.table === def.parent);
-                const parentCol = parentDef?.col || 'branch_id';
-
-                if (parentDef?.noBranch) {
-                    result = await client.query(`
-                        DELETE FROM ${def.table}
-                        WHERE ${def.via} IN (
-                            SELECT id FROM ${def.parent} WHERE tenant_id = $1
-                        )
-                    `, [tenantId]);
-                } else {
-                    result = await client.query(`
-                        DELETE FROM ${def.table}
-                        WHERE ${def.via} IN (
-                            SELECT id FROM ${def.parent}
-                            WHERE ${parentCol} = ANY($1) AND tenant_id = $2
-                        )
-                    `, [branchIds, tenantId]);
-                }
-            } else if (def.noBranch) {
-                // Tabla a nivel tenant (sin branch_id) — borrar todo del tenant
-                result = await client.query(
-                    `DELETE FROM ${def.table} WHERE ${def.col} = $1`,
-                    [tenantId]
-                );
-            } else {
-                // Tabla con branch_id
-                // Verificar si tiene tenant_id para query más segura
-                const hasTenant = await client.query(
-                    `SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_name = $1 AND column_name = 'tenant_id')`,
-                    [def.table]
-                );
-
-                if (hasTenant.rows[0].exists) {
-                    result = await client.query(
-                        `DELETE FROM ${def.table} WHERE ${def.col} = ANY($1) AND tenant_id = $2`,
-                        [branchIds, tenantId]
-                    );
-                } else {
-                    result = await client.query(
-                        `DELETE FROM ${def.table} WHERE ${def.col} = ANY($1)`,
-                        [branchIds]
-                    );
-                }
+            const exists = await tableExists(client, tableConfig.name);
+            if (!exists) {
+                await client.query(`RELEASE SAVEPOINT ${sp}`);
+                continue;
             }
 
+            let query, params;
+
+            if (tableConfig.isTenantTable) {
+                query = `DELETE FROM ${tableConfig.name} WHERE id = $1`;
+                params = [tenantId];
+            } else if (tableConfig.customQuery === 'employee_id') {
+                const hasCol = await columnExists(client, tableConfig.name, 'employee_id');
+                if (!hasCol) {
+                    await client.query(`RELEASE SAVEPOINT ${sp}`);
+                    continue;
+                }
+                query = `DELETE FROM ${tableConfig.name} dt WHERE EXISTS (SELECT 1 FROM employees e WHERE e.id = dt.employee_id AND e.tenant_id = $1)`;
+                params = [tenantId];
+            } else {
+                const fkCol = tableConfig.fkColumn || 'tenant_id';
+                const hasCol = await columnExists(client, tableConfig.name, fkCol);
+                if (!hasCol) {
+                    await client.query(`RELEASE SAVEPOINT ${sp}`);
+                    continue;
+                }
+                query = `DELETE FROM ${tableConfig.name} WHERE ${fkCol} = $1`;
+                params = [tenantId];
+            }
+
+            const result = await client.query(query, params);
             await client.query(`RELEASE SAVEPOINT ${sp}`);
 
-            if (result && result.rowCount > 0) {
-                deleted[def.table] = result.rowCount;
-                console.log(`[DATA-RESET]    🗑️ ${def.table}: ${result.rowCount}`);
+            if (result.rowCount > 0) {
+                deleted[tableConfig.name] = result.rowCount;
+                console.log(`[DATA-RESET]    🗑️ ${tableConfig.name}: ${result.rowCount}`);
             }
         } catch (err) {
-            // Rollback solo este savepoint, continuar con las demás tablas
-            await client.query(`ROLLBACK TO SAVEPOINT ${sp}`);
-            console.log(`[DATA-RESET]    ⚠️ ${def.table}: ${err.message}`);
+            await client.query(`ROLLBACK TO SAVEPOINT ${sp}`).catch(() => {});
+            console.log(`[DATA-RESET]    ⚠️ ${tableConfig.name}: ${err.message}`);
         }
     }
 
@@ -139,8 +109,8 @@ module.exports = (pool) => {
 
     // ─────────────────────────────────────────────────────────
     // POST /api/data-reset/branch/:branchId
-    // Borra TODO de una sucursal en PostgreSQL
-    // Solo conserva: tenant, branch, subscription
+    // Borra TODO de un tenant en PostgreSQL
+    // Conserva solo: tenant record, branch record
     // ─────────────────────────────────────────────────────────
     router.post('/branch/:branchId', async (req, res) => {
         const client = await pool.connect();
@@ -151,42 +121,34 @@ module.exports = (pool) => {
             const source = req.body.source || 'desktop';
 
             if (!branchId || !tenantId) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'branchId y tenantId son requeridos'
-                });
+                return res.status(400).json({ success: false, message: 'branchId y tenantId son requeridos' });
             }
 
             const branchCheck = await client.query(
                 'SELECT id, name FROM branches WHERE id = $1 AND tenant_id = $2',
                 [branchId, tenantId]
             );
-
             if (branchCheck.rows.length === 0) {
-                return res.status(404).json({
-                    success: false,
-                    message: 'Sucursal no encontrada o no pertenece a tu cuenta'
-                });
+                return res.status(404).json({ success: false, message: 'Sucursal no encontrada' });
             }
 
             const branchName = branchCheck.rows[0].name;
             const resetAt = new Date();
 
-            console.log(`\n[DATA-RESET] 🔄 Reset COMPLETO de "${branchName}" (Branch ${branchId}, Tenant ${tenantId})`);
+            console.log(`\n[DATA-RESET] 🔄 Reset "${branchName}" (Branch ${branchId}, Tenant ${tenantId})`);
 
             await client.query('BEGIN');
 
-            // 1. Borrar TODO inmediatamente
-            console.log('[DATA-RESET] 🗑️ Borrando todos los datos...');
-            const deleted = await purgeAllData(client, tenantId, [branchId]);
+            // Borrar TODO del tenant (keepStructural=true → no borra tenant ni branches)
+            const deleted = await deleteAllData(client, tenantId, true);
 
-            // 2. Marcar data_reset_at
+            // Marcar data_reset_at
             await client.query(
                 'UPDATE branches SET data_reset_at = $1 WHERE id = $2 AND tenant_id = $3',
                 [resetAt, branchId, tenantId]
             );
 
-            // 3. Auditoría
+            // Auditoría
             await client.query(`
                 INSERT INTO data_resets (tenant_id, branch_id, reset_scope, reset_at, purge_after, purged_at, requested_by_employee_id, requested_from, records_purged)
                 VALUES ($1, $2, 'branch', $3, $3, $3, $4, $5, $6)
@@ -195,14 +157,13 @@ module.exports = (pool) => {
             await client.query('COMMIT');
 
             const totalDeleted = Object.values(deleted).reduce((a, b) => a + b, 0);
-            console.log(`[DATA-RESET] ✅ Branch ${branchId} limpia: ${totalDeleted} registros eliminados\n`);
+            console.log(`[DATA-RESET] ✅ Tenant ${tenantId} limpio: ${totalDeleted} registros eliminados\n`);
 
             res.json({
                 success: true,
-                message: `Sucursal "${branchName}" restablecida — ${totalDeleted} registros eliminados`,
+                message: `"${branchName}" restablecida — ${totalDeleted} registros eliminados`,
                 data: { branchId, branchName, resetAt: resetAt.toISOString(), totalDeleted, deleted }
             });
-
         } catch (error) {
             await client.query('ROLLBACK').catch(() => {});
             console.error('[DATA-RESET] ❌ Error:', error.message);
@@ -231,15 +192,13 @@ module.exports = (pool) => {
                 'SELECT id, name FROM branches WHERE tenant_id = $1', [tenantId]
             );
             const branches = branchesResult.rows;
-            const branchIds = branches.map(b => b.id);
             const resetAt = new Date();
 
             console.log(`\n[DATA-RESET] 🔄 Reset TOTAL tenant ${tenantId} (${branches.length} sucursales)`);
 
             await client.query('BEGIN');
 
-            console.log('[DATA-RESET] 🗑️ Borrando todos los datos del tenant...');
-            const deleted = await purgeAllData(client, tenantId, branchIds);
+            const deleted = await deleteAllData(client, tenantId, true);
 
             await client.query(
                 'UPDATE branches SET data_reset_at = $1 WHERE tenant_id = $2',
@@ -261,7 +220,6 @@ module.exports = (pool) => {
                 message: `${branches.length} sucursales restablecidas — ${totalDeleted} registros eliminados`,
                 data: { tenantId, resetAt: resetAt.toISOString(), totalDeleted, deleted, branches: branches.map(b => ({ id: b.id, name: b.name })) }
             });
-
         } catch (error) {
             await client.query('ROLLBACK').catch(() => {});
             console.error('[DATA-RESET] ❌ Error:', error.message);
@@ -277,23 +235,16 @@ module.exports = (pool) => {
     router.get('/status/:tenantId', async (req, res) => {
         try {
             const tenantId = parseInt(req.params.tenantId);
-
             const resets = await pool.query(`
-                SELECT dr.*, b.name as branch_name
-                FROM data_resets dr
+                SELECT dr.*, b.name as branch_name FROM data_resets dr
                 LEFT JOIN branches b ON dr.branch_id = b.id
-                WHERE dr.tenant_id = $1
-                ORDER BY dr.reset_at DESC LIMIT 20
+                WHERE dr.tenant_id = $1 ORDER BY dr.reset_at DESC LIMIT 20
             `, [tenantId]);
-
-            const branches = await pool.query(`
-                SELECT id, name, data_reset_at
-                FROM branches WHERE tenant_id = $1 ORDER BY id
-            `, [tenantId]);
-
+            const branches = await pool.query(
+                `SELECT id, name, data_reset_at FROM branches WHERE tenant_id = $1 ORDER BY id`, [tenantId]
+            );
             res.json({ success: true, data: { branches: branches.rows, resets: resets.rows } });
         } catch (error) {
-            console.error('[DATA-RESET] ❌ Error:', error.message);
             res.status(500).json({ success: false, message: 'Error al obtener estado' });
         }
     });
