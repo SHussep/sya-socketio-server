@@ -411,6 +411,27 @@ async function startServer() {
                 console.error('[GuardianDigest] Init error:', err.message)
             );
 
+            // Cleanup: cerrar sesiones de alistamiento huérfanas (activas > 2h)
+            async function cleanupOrphanedPrepModes() {
+                try {
+                    const { rowCount } = await pool.query(`
+                        UPDATE preparation_mode_logs
+                        SET status = 'force_closed',
+                            deactivated_at = NOW(),
+                            duration_seconds = EXTRACT(EPOCH FROM (NOW() - activated_at)),
+                            notes = COALESCE(notes, '') || ' [Auto-cerrado al arrancar servidor]'
+                        WHERE status = 'active'
+                          AND activated_at < NOW() - INTERVAL '2 hours'
+                    `);
+                    if (rowCount > 0) {
+                        console.log(`[PrepMode] Cerradas ${rowCount} sesión(es) huérfana(s) de alistamiento`);
+                    }
+                } catch (err) {
+                    console.error('[PrepMode] Error limpiando huérfanos:', err.message);
+                }
+            }
+            cleanupOrphanedPrepModes();
+
             // Guardian email digest — check every hour for pending digests
             setInterval(() => {
                 processGuardianDigests().catch(err =>

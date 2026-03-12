@@ -5,9 +5,11 @@
 
 module.exports = function setupSocketHandlers(io, { pool, stats, notificationHelper, scaleStatusByBranch, guardianStatusByBranch }) {
 
-    // Debounce FCM: prevent duplicate notifications for same branch+event within 15s
+    // Debounce FCM: prevent duplicate notifications for same branch+event within window
     const lastScaleFcm = new Map(); // key: "branchId:eventType" → timestamp
     const SCALE_FCM_DEBOUNCE_MS = 15000;
+    const lastPrepModeFcm = new Map(); // key: "branchId:eventType" → timestamp
+    const PREPMODE_FCM_DEBOUNCE_MS = 30000; // 30s — prep mode events are less frequent
 
     function shouldSendScaleFcm(branchId, eventType) {
         const key = `${branchId}:${eventType}`;
@@ -18,6 +20,18 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
             return false;
         }
         lastScaleFcm.set(key, now);
+        return true;
+    }
+
+    function shouldSendPrepModeFcm(branchId, eventType) {
+        const key = `${branchId}:${eventType}`;
+        const now = Date.now();
+        const last = lastPrepModeFcm.get(key);
+        if (last && (now - last) < PREPMODE_FCM_DEBOUNCE_MS) {
+            console.log(`[PREPMODE] ⏭️ FCM debounce: ${eventType} para branch ${branchId} (${Math.round((now - last) / 1000)}s desde último)`);
+            return false;
+        }
+        lastPrepModeFcm.set(key, now);
         return true;
     }
 
@@ -374,22 +388,43 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
             console.log(`[PREPMODE]   Autorizado por: ${data.authorizerName} (ID: ${data.authorizedByEmployeeId})`);
             console.log(`[PREPMODE]   Razón: ${data.reason || 'No especificada'}`);
 
+            // Cerrar sesiones huérfanas de esta sucursal (activas > 2h sin desactivar)
+            try {
+                const orphaned = await pool.query(`
+                    UPDATE preparation_mode_logs
+                    SET status = 'force_closed',
+                        deactivated_at = NOW(),
+                        duration_seconds = EXTRACT(EPOCH FROM (NOW() - activated_at)),
+                        notes = COALESCE(notes, '') || ' [Auto-cerrado: nueva activación detectada]'
+                    WHERE branch_id = $1 AND status = 'active'
+                      AND activated_at < NOW() - INTERVAL '2 hours'
+                    RETURNING id, activated_at
+                `, [data.branchId]);
+                if (orphaned.rows.length > 0) {
+                    console.log(`[PREPMODE] Cerrados ${orphaned.rows.length} registro(s) huérfano(s) para branch ${data.branchId}`);
+                }
+            } catch (e) {
+                console.error(`[PREPMODE] Error cerrando huérfanos: ${e.message}`);
+            }
+
             io.to(roomName).emit('preparation_mode_activated', {
                 ...data,
                 receivedAt: new Date().toISOString()
             });
 
-            try {
-                await notificationHelper.notifyPreparationModeActivated(data.tenantId, data.branchId, {
-                    operatorName: data.operatorName,
-                    authorizerName: data.authorizerName,
-                    branchName: data.branchName,
-                    reason: data.reason,
-                    activatedAt: data.activatedAt
-                });
-                console.log(`[PREPMODE] 📨 Notificación FCM enviada a administradores del tenant ${data.tenantId}`);
-            } catch (error) {
-                console.error(`[PREPMODE] ⚠️ Error enviando notificación FCM:`, error.message);
+            if (shouldSendPrepModeFcm(data.branchId, 'activated')) {
+                try {
+                    await notificationHelper.notifyPreparationModeActivated(data.tenantId, data.branchId, {
+                        operatorName: data.operatorName,
+                        authorizerName: data.authorizerName,
+                        branchName: data.branchName,
+                        reason: data.reason,
+                        activatedAt: data.activatedAt
+                    });
+                    console.log(`[PREPMODE] 📨 Notificación FCM enviada a administradores del tenant ${data.tenantId}`);
+                } catch (error) {
+                    console.error(`[PREPMODE] ⚠️ Error enviando notificación FCM:`, error.message);
+                }
             }
         });
 
@@ -407,20 +442,22 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
                 receivedAt: new Date().toISOString()
             });
 
-            try {
-                await notificationHelper.notifyPreparationModeDeactivated(data.tenantId, data.branchId, {
-                    operatorName: data.operatorName,
-                    branchName: data.branchName,
-                    durationFormatted: data.durationFormatted,
-                    severity: data.severity,
-                    deactivatedAt: data.deactivatedAt,
-                    reason: data.reason,
-                    weighingCycleCount: data.weighingCycleCount || 0,
-                    totalWeightKg: data.totalWeightKg || 0
-                });
-                console.log(`[PREPMODE] 📨 Notificación de desactivación FCM enviada a administradores del tenant ${data.tenantId}`);
-            } catch (error) {
-                console.error(`[PREPMODE] ⚠️ Error enviando notificación FCM de desactivación:`, error.message);
+            if (shouldSendPrepModeFcm(data.branchId, 'deactivated')) {
+                try {
+                    await notificationHelper.notifyPreparationModeDeactivated(data.tenantId, data.branchId, {
+                        operatorName: data.operatorName,
+                        branchName: data.branchName,
+                        durationFormatted: data.durationFormatted,
+                        severity: data.severity,
+                        deactivatedAt: data.deactivatedAt,
+                        reason: data.reason,
+                        weighingCycleCount: data.weighingCycleCount || 0,
+                        totalWeightKg: data.totalWeightKg || 0
+                    });
+                    console.log(`[PREPMODE] 📨 Notificación de desactivación FCM enviada a administradores del tenant ${data.tenantId}`);
+                } catch (error) {
+                    console.error(`[PREPMODE] ⚠️ Error enviando notificación FCM de desactivación:`, error.message);
+                }
             }
         });
 
@@ -441,16 +478,18 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
                 receivedAt: new Date().toISOString()
             });
 
-            try {
-                await notificationHelper.notifyManualWeightOverrideChanged(data.tenantId, data.branchId, {
-                    employeeName: data.employeeName,
-                    branchName: data.branchName,
-                    isActivated: data.isActivated,
-                    timestamp: data.timestamp
-                });
-                console.log(`[WEIGHT-OVERRIDE] Notificación FCM enviada a administradores del tenant ${data.tenantId}`);
-            } catch (error) {
-                console.error(`[WEIGHT-OVERRIDE] Error enviando notificación FCM:`, error.message);
+            if (shouldSendPrepModeFcm(data.branchId, `weight_override_${action}`)) {
+                try {
+                    await notificationHelper.notifyManualWeightOverrideChanged(data.tenantId, data.branchId, {
+                        employeeName: data.employeeName,
+                        branchName: data.branchName,
+                        isActivated: data.isActivated,
+                        timestamp: data.timestamp
+                    });
+                    console.log(`[WEIGHT-OVERRIDE] Notificación FCM enviada a administradores del tenant ${data.tenantId}`);
+                } catch (error) {
+                    console.error(`[WEIGHT-OVERRIDE] Error enviando notificación FCM:`, error.message);
+                }
             }
         });
 
