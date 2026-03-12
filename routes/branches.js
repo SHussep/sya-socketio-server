@@ -66,6 +66,7 @@ module.exports = (pool, io, scaleStatusByBranch) => {
 
     // POST /api/branches - Crear sucursal
     router.post('/', authenticateToken, async (req, res) => {
+        const client = await pool.connect();
         try {
             const { tenantId } = req.user;
             const { name, address, phoneNumber, timezone } = req.body;
@@ -74,44 +75,76 @@ module.exports = (pool, io, scaleStatusByBranch) => {
                 return res.status(400).json({ success: false, message: 'name es requerido' });
             }
 
+            await client.query('BEGIN');
+
             // Obtener tenant_code para generar branch_code
-            const tenantResult = await pool.query('SELECT tenant_code FROM tenants WHERE id = $1', [tenantId]);
+            const tenantResult = await client.query('SELECT tenant_code FROM tenants WHERE id = $1', [tenantId]);
             if (tenantResult.rows.length === 0) {
+                await client.query('ROLLBACK');
                 return res.status(404).json({ success: false, message: 'Tenant no encontrado' });
             }
 
-            // Contar sucursales existentes
-            const countResult = await pool.query(
+            // Verificar licencia disponible (FOR UPDATE para evitar race conditions)
+            const licenseResult = await client.query(`
+                SELECT id FROM branch_licenses
+                WHERE tenant_id = $1 AND status = 'available'
+                ORDER BY created_at ASC
+                LIMIT 1
+                FOR UPDATE
+            `, [tenantId]);
+
+            if (licenseResult.rows.length === 0) {
+                await client.query('ROLLBACK');
+                return res.status(403).json({
+                    success: false,
+                    message: 'No tienes licencias de sucursal disponibles. Contacta a soporte para agregar más sucursales.'
+                });
+            }
+
+            const availableLicenseId = licenseResult.rows[0].id;
+
+            // Contar sucursales existentes para código
+            const countResult = await client.query(
                 'SELECT COUNT(*) as count FROM branches WHERE tenant_id = $1',
                 [tenantId]
             );
             const branchCount = parseInt(countResult.rows[0].count);
-
-            // Generar branch_code único
             const branchCode = `${tenantResult.rows[0].tenant_code}-BR${branchCount + 1}`;
 
-            const result = await pool.query(
+            const result = await client.query(
                 `INSERT INTO branches (tenant_id, branch_code, name, address, phone, timezone, is_active, created_at, updated_at)
                  VALUES ($1, $2, $3, $4, $5, $6, true, NOW(), NOW())
                  RETURNING *`,
                 [tenantId, branchCode, name, address || null, phoneNumber || null, timezone || 'America/Mexico_City']
             );
 
+            // Activar la licencia con el branch recién creado
+            await client.query(`
+                UPDATE branch_licenses
+                SET branch_id = $1, status = 'active', activated_at = NOW(), updated_at = NOW()
+                WHERE id = $2
+            `, [result.rows[0].id, availableLicenseId]);
+
+            await client.query('COMMIT');
+
             console.log(`[Branches] OK Sucursal creada: ${name} (Code: ${branchCode})`);
             res.json({ success: true, data: result.rows[0] });
         } catch (error) {
+            await client.query('ROLLBACK');
             console.error('[Branches] Error:', error);
             res.status(500).json({ success: false, message: 'Error al crear sucursal' });
+        } finally {
+            client.release();
         }
     });
 
     // GET /api/branches/:id/settings - Obtener configuración de sucursal
     router.get('/:id/settings', authenticateToken, async (req, res) => {
         const { id } = req.params;
-        const { tenantId } = req.query;
+        const tenantId = req.user.tenantId;
 
         if (!tenantId) {
-            return res.status(400).json({ success: false, message: 'tenantId es requerido' });
+            return res.status(401).json({ success: false, message: 'Token no contiene tenantId' });
         }
 
         try {
@@ -130,7 +163,7 @@ module.exports = (pool, io, scaleStatusByBranch) => {
                 success: true,
                 data: {
                     cajero_consolida_liquidaciones: row.cajero_consolida_liquidaciones ?? false,
-                    max_breaks_per_shift: row.max_breaks_per_shift ?? 3,
+                    max_breaks_per_shift: row.max_breaks_per_shift ?? 1,
                 }
             });
         } catch (error) {
@@ -142,10 +175,11 @@ module.exports = (pool, io, scaleStatusByBranch) => {
     // PUT /api/branches/:id/settings - Actualizar configuración de sucursal
     router.put('/:id/settings', authenticateToken, async (req, res) => {
         const { id } = req.params;
-        const { tenantId, cajero_consolida_liquidaciones, max_breaks_per_shift } = req.body;
+        const tenantId = req.user.tenantId;
+        const { cajero_consolida_liquidaciones, max_breaks_per_shift } = req.body;
 
         if (!tenantId) {
-            return res.status(400).json({ success: false, message: 'tenantId es requerido' });
+            return res.status(401).json({ success: false, message: 'Token no contiene tenantId' });
         }
 
         try {
@@ -268,12 +302,12 @@ module.exports = (pool, io, scaleStatusByBranch) => {
     });
 
     // GET /api/branches/:branchId/business-info - Obtener info del negocio para una sucursal
-    router.get('/:branchId/business-info', async (req, res) => {
+    router.get('/:branchId/business-info', authenticateToken, async (req, res) => {
         const { branchId } = req.params;
-        const { tenantId } = req.query;
+        const tenantId = req.user.tenantId;
 
         if (!tenantId || !branchId) {
-            return res.status(400).json({ success: false, message: 'tenantId y branchId son requeridos' });
+            return res.status(400).json({ success: false, message: 'branchId es requerido' });
         }
 
         try {
