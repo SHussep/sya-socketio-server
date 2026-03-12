@@ -206,10 +206,11 @@ module.exports = (pool) => {
 
             // Determine if employee can use mobile app
             // If canUseMobileApp is explicitly provided, use it; otherwise determine from role's mobile_access_type
+            const explicitCanUseMobileApp = req.body.canUseMobileApp !== undefined && req.body.canUseMobileApp !== null;
             let canUseMobileApp = req.body.canUseMobileApp;
 
-            if (canUseMobileApp === undefined || canUseMobileApp === null) {
-                // Auto-assign based on role's mobile_access_type
+            if (!explicitCanUseMobileApp) {
+                // Auto-assign based on role's mobile_access_type (only used for NEW employees)
                 canUseMobileApp = roleMobileAccessType !== 'none';
             }
 
@@ -225,7 +226,7 @@ module.exports = (pool) => {
             // Usar mobile_access_type del rol (de la tabla roles), respetando canUseMobileApp
             const mobileAccessType = canUseMobileApp ? roleMobileAccessType : 'none';
 
-            console.log(`[Employees/Sync] 📱 Mobile Access: ${mobileAccessType} (Role: ${mappedRoleId}, roleMobileAccessType: ${roleMobileAccessType}, canUseMobileApp: ${canUseMobileApp})`);
+            console.log(`[Employees/Sync] 📱 Mobile Access: ${mobileAccessType} (Role: ${mappedRoleId}, roleMobileAccessType: ${roleMobileAccessType}, canUseMobileApp: ${canUseMobileApp}, explicit: ${explicitCanUseMobileApp})`);
 
             // ═════════════════════════════════════════════════════════════
             // EMAIL UNIQUENESS CHECK (before insert/update)
@@ -289,7 +290,7 @@ module.exports = (pool) => {
                             hashedPasswordForUpdate,  // ✅ Always BCrypt hashed
                             existingId,
                             tenantId,
-                            canUseMobileApp
+                            explicitCanUseMobileApp ? canUseMobileApp : null  // NULL → COALESCE preserves existing value
                         ]
                     );
 
@@ -326,8 +327,8 @@ module.exports = (pool) => {
 
                     console.log(`[Employees/Sync] ✅ Empleado actualizado: ${fullName} (ID: ${employee.id})`);
 
-                    // Notificar al empleado si se revocó acceso móvil
-                    if (canUseMobileApp === false) {
+                    // Notificar al empleado si se revocó acceso móvil (solo si fue explícito, no auto-determinado)
+                    if (explicitCanUseMobileApp && canUseMobileApp === false) {
                         const branchId = employee.main_branch_id;
                         if (branchId) {
                             const io = req.app.get('io');
@@ -435,7 +436,7 @@ module.exports = (pool) => {
                          password_hash = COALESCE(EXCLUDED.password_hash, employees.password_hash),
                          main_branch_id = COALESCE(EXCLUDED.main_branch_id, employees.main_branch_id),
                          role_id = COALESCE(EXCLUDED.role_id, employees.role_id),
-                         can_use_mobile_app = COALESCE(EXCLUDED.can_use_mobile_app, employees.can_use_mobile_app),
+                         can_use_mobile_app = CASE WHEN $17 = true THEN EXCLUDED.can_use_mobile_app ELSE employees.can_use_mobile_app END,
                          is_active = COALESCE(EXCLUDED.is_active, employees.is_active),
                          email_verified = CASE WHEN EXCLUDED.email_verified = true THEN true ELSE employees.email_verified END,
                          updated_at = NOW()
@@ -456,7 +457,8 @@ module.exports = (pool) => {
                         terminal_id,          // ✅ OFFLINE-FIRST
                         local_op_seq,         // ✅ OFFLINE-FIRST
                         created_local_utc,    // ✅ OFFLINE-FIRST
-                        device_event_raw      // ✅ OFFLINE-FIRST
+                        device_event_raw,     // ✅ OFFLINE-FIRST
+                        explicitCanUseMobileApp  // $17: flag — only update can_use_mobile_app on conflict if explicitly sent
                     ]
                 );
 
