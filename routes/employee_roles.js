@@ -527,7 +527,7 @@ router.put('/by-uuid/:globalId/role', validateTenant, async (req, res) => {
 
         // 1. Verify employee exists by global_id
         const employeeCheck = await client.query(
-            'SELECT id, role_id, main_branch_id, first_name, last_name, email, mobile_access_type FROM employees WHERE global_id = $1 AND tenant_id = $2',
+            'SELECT id, role_id, main_branch_id, first_name, last_name, email, mobile_access_type, is_owner FROM employees WHERE global_id = $1 AND tenant_id = $2',
             [globalId, tenantId]
         );
 
@@ -540,6 +540,18 @@ router.put('/by-uuid/:globalId/role', validateTenant, async (req, res) => {
         }
 
         const employee = employeeCheck.rows[0];
+
+        // Protección del owner — no se puede cambiar su rol
+        if (employee.is_owner === true) {
+            const ownerName = `${employee.first_name || ''} ${employee.last_name || ''}`.trim();
+            console.log(`[Employee Roles] 🛡️ Intento de cambiar rol del owner: ${ownerName} (UUID: ${globalId})`);
+            await client.query('ROLLBACK');
+            return res.status(403).json({
+                success: false,
+                message: 'No se puede modificar el rol del propietario del sistema',
+                errorCode: 'OWNER_PROTECTED'
+            });
+        }
 
         // 2. Verify new role exists for this tenant
         const roleCheck = await client.query(

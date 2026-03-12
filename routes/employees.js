@@ -1434,7 +1434,7 @@ module.exports = (pool) => {
 
             // Verify employee exists and belongs to tenant
             const employeeCheck = await client.query(
-                `SELECT id, email, first_name, last_name, role_id, can_use_mobile_app, is_active, global_id, main_branch_id FROM employees
+                `SELECT id, email, first_name, last_name, role_id, can_use_mobile_app, is_active, global_id, main_branch_id, is_owner FROM employees
                  WHERE id = $1 AND tenant_id = $2`,
                 [employeeId, tenantId]
             );
@@ -1447,6 +1447,45 @@ module.exports = (pool) => {
             }
 
             const employee = employeeCheck.rows[0];
+
+            // ═════════════════════════════════════════════════════════════
+            // PROTECCIÓN DEL OWNER — NO SE PUEDEN MODIFICAR SUS PERMISOS
+            // ═════════════════════════════════════════════════════════════
+            if (employee.is_owner === true) {
+                const ownerName = `${employee.first_name || ''} ${employee.last_name || ''}`.trim();
+                if (roleId !== undefined || roleName !== undefined) {
+                    console.log(`[Employees/Update] 🛡️ Intento de cambiar rol del owner: ${ownerName} (ID: ${employeeId})`);
+                    return res.status(403).json({
+                        success: false,
+                        message: 'No se puede modificar el rol del propietario del sistema',
+                        errorCode: 'OWNER_PROTECTED'
+                    });
+                }
+                if (canUseMobileApp !== undefined) {
+                    console.log(`[Employees/Update] 🛡️ Intento de cambiar acceso móvil del owner: ${ownerName} (ID: ${employeeId})`);
+                    return res.status(403).json({
+                        success: false,
+                        message: 'No se puede modificar el acceso móvil del propietario del sistema',
+                        errorCode: 'OWNER_PROTECTED'
+                    });
+                }
+                if (mobileAccessType !== undefined) {
+                    console.log(`[Employees/Update] 🛡️ Intento de cambiar tipo de acceso del owner: ${ownerName} (ID: ${employeeId})`);
+                    return res.status(403).json({
+                        success: false,
+                        message: 'No se puede modificar el tipo de acceso del propietario del sistema',
+                        errorCode: 'OWNER_PROTECTED'
+                    });
+                }
+                if (isActive === false) {
+                    console.log(`[Employees/Update] 🛡️ Intento de desactivar al owner: ${ownerName} (ID: ${employeeId})`);
+                    return res.status(403).json({
+                        success: false,
+                        message: 'No se puede desactivar al propietario del sistema',
+                        errorCode: 'OWNER_PROTECTED'
+                    });
+                }
+            }
 
             // ═════════════════════════════════════════════════════════════
             // PREVENIR REACTIVACIÓN DE EMPLEADOS ELIMINADOS (SOFT DELETE)
