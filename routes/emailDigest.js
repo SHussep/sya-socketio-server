@@ -99,6 +99,26 @@ router.put('/preferences', authenticateToken, async (req, res) => {
 
 // GET /api/email-digest/status
 // Vista admin: estado de digest de todos los tenants activos
+// POST /api/email-digest/cleanup
+// Limpia next_send_at de tenants con trial vencido para que no se les envíe
+router.post('/cleanup', async (req, res) => {
+    try {
+        const { rowCount } = await pool.query(`
+            UPDATE tenants
+            SET email_digest_next_send_at = NULL,
+                email_digest_enabled = false
+            WHERE is_active = true
+              AND subscription_status = 'trial'
+              AND trial_ends_at < NOW()
+              AND email_digest_next_send_at IS NOT NULL
+        `);
+        res.json({ success: true, cleaned: rowCount });
+    } catch (err) {
+        console.error('[EmailDigest] Error cleanup:', err.message);
+        res.status(500).json({ success: false, message: 'Error interno' });
+    }
+});
+
 router.get('/status', /* authenticateToken, */ async (req, res) => {
     try {
         const { rows } = await pool.query(`

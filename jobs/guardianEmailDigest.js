@@ -27,6 +27,19 @@ const FREQUENCY_LOOKBACK = {
  */
 async function initializeDigestSchedules() {
     try {
+        // 1. Limpiar tenants con trial vencido — no deben tener envío programado
+        const { rowCount: cleaned } = await pool.query(`
+            UPDATE tenants
+            SET email_digest_next_send_at = NULL
+            WHERE subscription_status = 'trial'
+              AND trial_ends_at < NOW()
+              AND email_digest_next_send_at IS NOT NULL
+        `);
+        if (cleaned > 0) {
+            console.log(`[GuardianDigest] Limpiados ${cleaned} tenant(s) con trial vencido`);
+        }
+
+        // 2. Inicializar tenants con licencia vigente que aún no tienen fecha programada
         const { rowCount } = await pool.query(`
             UPDATE tenants
             SET email_digest_next_send_at = NOW() + CASE
