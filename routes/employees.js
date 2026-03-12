@@ -223,8 +223,10 @@ module.exports = (pool) => {
                 });
             }
 
-            // Usar mobile_access_type del rol (de la tabla roles), respetando canUseMobileApp
-            const mobileAccessType = canUseMobileApp ? roleMobileAccessType : 'none';
+            // Usar mobile_access_type: primero del body (override del admin), fallback al rol
+            const mobileAccessType = canUseMobileApp
+                ? (req.body.mobileAccessType || roleMobileAccessType)
+                : 'none';
 
             console.log(`[Employees/Sync] 📱 Mobile Access: ${mobileAccessType} (Role: ${mappedRoleId}, roleMobileAccessType: ${roleMobileAccessType}, canUseMobileApp: ${canUseMobileApp}, explicit: ${explicitCanUseMobileApp})`);
 
@@ -426,8 +428,8 @@ module.exports = (pool) => {
 
                 const insertResult = await client.query(
                     `INSERT INTO employees
-                     (tenant_id, first_name, last_name, username, email, password_hash, main_branch_id, role_id, can_use_mobile_app, is_active, email_verified, global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw, updated_at, created_at)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW(), NOW())
+                     (tenant_id, first_name, last_name, username, email, password_hash, main_branch_id, role_id, can_use_mobile_app, mobile_access_type, is_active, email_verified, global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw, updated_at, created_at)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $18, $10, $11, $12, $13, $14, $15, $16, NOW(), NOW())
                      ON CONFLICT (global_id) DO UPDATE
                      SET first_name = EXCLUDED.first_name,
                          last_name = EXCLUDED.last_name,
@@ -437,10 +439,11 @@ module.exports = (pool) => {
                          main_branch_id = COALESCE(EXCLUDED.main_branch_id, employees.main_branch_id),
                          role_id = COALESCE(EXCLUDED.role_id, employees.role_id),
                          can_use_mobile_app = CASE WHEN $17 = true THEN EXCLUDED.can_use_mobile_app ELSE employees.can_use_mobile_app END,
+                         mobile_access_type = CASE WHEN $17 = true THEN EXCLUDED.mobile_access_type ELSE employees.mobile_access_type END,
                          is_active = COALESCE(EXCLUDED.is_active, employees.is_active),
                          email_verified = CASE WHEN EXCLUDED.email_verified = true THEN true ELSE employees.email_verified END,
                          updated_at = NOW()
-                     RETURNING id, tenant_id, first_name, last_name, username, email, main_branch_id, role_id, can_use_mobile_app, is_active, email_verified, created_at, updated_at`,
+                     RETURNING id, tenant_id, first_name, last_name, username, email, main_branch_id, role_id, can_use_mobile_app, mobile_access_type, is_active, email_verified, created_at, updated_at`,
                     [
                         tenantId,
                         firstName,
@@ -458,7 +461,8 @@ module.exports = (pool) => {
                         local_op_seq,         // ✅ OFFLINE-FIRST
                         created_local_utc,    // ✅ OFFLINE-FIRST
                         device_event_raw,     // ✅ OFFLINE-FIRST
-                        explicitCanUseMobileApp  // $17: flag — only update can_use_mobile_app on conflict if explicitly sent
+                        explicitCanUseMobileApp,  // $17: flag — only update can_use_mobile_app on conflict if explicitly sent
+                        mobileAccessType      // $18: mobile_access_type (admin/distributor/none)
                     ]
                 );
 
@@ -621,7 +625,7 @@ module.exports = (pool) => {
             const result = await pool.query(
                 `SELECT e.id, e.tenant_id, e.first_name, e.last_name, e.username, e.email, e.is_active,
                         e.role_id, r.name as role_name,
-                        e.main_branch_id, e.can_use_mobile_app, e.google_user_identifier,
+                        e.main_branch_id, e.can_use_mobile_app, e.mobile_access_type, e.google_user_identifier,
                         e.global_id, e.terminal_id, e.local_op_seq, e.created_local_utc, e.device_event_raw,
                         e.email_verified, e.is_owner, e.map_icon,
                         e.created_at, e.updated_at
@@ -1300,11 +1304,11 @@ module.exports = (pool) => {
                 });
             }
 
-            // JOIN con roles para obtener mobile_access_type directamente de la tabla roles
+            // JOIN con roles para obtener mobile_access_type (employee override > role default)
             const result = await client.query(
                 `SELECT e.id, e.email, e.first_name, e.last_name, e.role_id, e.can_use_mobile_app,
                         e.is_owner, e.profile_photo_url, e.mobile_permissions,
-                        r.mobile_access_type as role_mobile_access_type
+                        e.mobile_access_type, r.mobile_access_type as role_mobile_access_type
                  FROM employees e
                  LEFT JOIN roles r ON e.role_id = r.id AND e.tenant_id = r.tenant_id
                  WHERE e.id = $1 AND e.tenant_id = $2 AND e.is_active = true`,
@@ -1321,8 +1325,10 @@ module.exports = (pool) => {
             const employee = result.rows[0];
             const employeeFullName = `${employee.first_name || ''} ${employee.last_name || ''}`.trim();
 
-            // Usar mobile_access_type de la tabla roles (no derivar de role_id)
-            const accessType = employee.role_mobile_access_type || 'none';
+            // Prioridad: employee override > role default
+            const accessType = (employee.mobile_access_type && employee.mobile_access_type !== 'none')
+                ? employee.mobile_access_type
+                : (employee.role_mobile_access_type || 'none');
             const hasMobileAccess = accessType !== 'none' && employee.can_use_mobile_app;
 
             // All permission codes - owners get everything automatically
@@ -1385,6 +1391,7 @@ module.exports = (pool) => {
                 roleId,
                 roleName,  // Fallback si roleId es null (Desktop envía nombre del rol)
                 canUseMobileApp,
+                mobileAccessType,     // Per-employee mobile access type override (admin/distributor)
                 fullName,
                 isActive,
                 email,
@@ -1534,6 +1541,17 @@ module.exports = (pool) => {
                 params.push(canUseMobileApp);
                 paramIndex++;
 
+                // Actualizar mobile_access_type según el contexto
+                if (canUseMobileApp === true && mobileAccessType) {
+                    // Admin eligió tipo de acceso explícitamente
+                    updates.push(`mobile_access_type = $${paramIndex}`);
+                    params.push(mobileAccessType);
+                    paramIndex++;
+                } else if (canUseMobileApp === false) {
+                    // Revocar acceso → poner 'none'
+                    updates.push(`mobile_access_type = 'none'`);
+                }
+
                 // Al revocar acceso móvil, limpiar códigos de verificación pendientes
                 // pero NO resetear email_verified — una vez verificado, queda verificado
                 if (canUseMobileApp === false && employee.can_use_mobile_app === true) {
@@ -1573,6 +1591,13 @@ module.exports = (pool) => {
                         }).catch(err => console.log(`[Employees/Update] ⚠️ FCM access_revoked falló: ${err.message}`));
                     }
                 }
+            }
+
+            // Standalone mobile_access_type update (when canUseMobileApp not sent)
+            if (mobileAccessType !== undefined && canUseMobileApp === undefined) {
+                updates.push(`mobile_access_type = $${paramIndex}`);
+                params.push(mobileAccessType);
+                paramIndex++;
             }
 
             if (isActive !== undefined) {
@@ -1634,7 +1659,7 @@ module.exports = (pool) => {
             const query = `UPDATE employees
                           SET ${updates.join(', ')}
                           WHERE id = $${paramIndex} AND tenant_id = $${paramIndex + 1}
-                          RETURNING id, email, first_name, last_name, role_id, can_use_mobile_app, is_active, updated_at, tenant_id`;
+                          RETURNING id, email, first_name, last_name, role_id, can_use_mobile_app, mobile_access_type, is_active, updated_at, tenant_id`;
 
             const updateResult = await client.query(query, params);
 
@@ -1642,23 +1667,17 @@ module.exports = (pool) => {
                 const updatedEmployee = updateResult.rows[0];
                 const updatedFullName = `${updatedEmployee.first_name || ''} ${updatedEmployee.last_name || ''}`.trim();
 
-                // Obtener mobile_access_type del rol (de la tabla roles)
-                let accessType = 'none';
-                if (updatedEmployee.role_id && updatedEmployee.can_use_mobile_app) {
-                    const roleResult = await client.query(
-                        `SELECT mobile_access_type FROM roles WHERE id = $1 AND tenant_id = $2`,
-                        [updatedEmployee.role_id, updatedEmployee.tenant_id]
-                    );
-                    if (roleResult.rows.length > 0) {
-                        accessType = roleResult.rows[0].mobile_access_type || 'none';
-                    }
-                }
+                // Usar mobile_access_type del empleado (ya guardado en la tabla employees)
+                const accessType = (updatedEmployee.mobile_access_type && updatedEmployee.mobile_access_type !== 'none')
+                    ? updatedEmployee.mobile_access_type
+                    : 'none';
 
                 // Log what was updated
                 const changes = [];
                 if (fullName !== undefined) changes.push(`nombre: ${fullName}`);
                 if (roleId !== undefined) changes.push(`rol: ${roleId}`);
                 if (canUseMobileApp !== undefined) changes.push(`acceso_móvil: ${canUseMobileApp}`);
+                if (mobileAccessType !== undefined) changes.push(`tipo_acceso: ${mobileAccessType}`);
                 if (isActive !== undefined) changes.push(`activo: ${isActive}`);
                 if (email !== undefined) changes.push(`email: ${email}`);
 

@@ -301,9 +301,9 @@ module.exports = {
         }
 
         try {
-            // Buscar empleado SOLO por email, con JOIN a roles para obtener mobile_access_type
+            // Buscar empleado SOLO por email, con JOIN a roles para fallback de mobile_access_type
             const query = `
-                SELECT e.*, r.name as role_name, r.mobile_access_type
+                SELECT e.*, r.name as role_name, r.mobile_access_type as role_mobile_access_type
                 FROM employees e
                 LEFT JOIN roles r ON e.role_id = r.id AND e.tenant_id = r.tenant_id
                 WHERE LOWER(e.email) = LOWER($1) AND e.is_active = true
@@ -447,6 +447,11 @@ module.exports = {
                 { expiresIn: '30d' }
             );
 
+            // Prioridad: employee override > role default
+            const resolvedAccessType = (employee.mobile_access_type && employee.mobile_access_type !== 'none')
+                ? employee.mobile_access_type
+                : (employee.role_mobile_access_type || 'none');
+
             const employeeData = {
                 id: employee.id,
                 global_id: employee.global_id,  // ✅ Necesario para preferencias de notificaciones
@@ -458,11 +463,11 @@ module.exports = {
                 isOwner: employee.is_owner || false,
                 isActive: employee.is_active,
                 canUseMobileApp: employee.can_use_mobile_app,
-                mobileAccessType: employee.mobile_access_type || 'none',  // Viene del JOIN con roles table
+                mobileAccessType: resolvedAccessType,
                 createdAt: employee.created_at
             };
 
-            console.log(`[Mobile Login] 📱 Tipo de acceso móvil: ${employee.mobile_access_type || 'none'} (from roles table, roleId=${employee.role_id}) para ${employee.email}`);
+            console.log(`[Mobile Login] 📱 Tipo de acceso móvil: ${resolvedAccessType} (employee=${employee.mobile_access_type || 'none'}, role=${employee.role_mobile_access_type || 'none'}, roleId=${employee.role_id}) para ${employee.email}`);
 
             const branchesData = branches.map(branch => ({
                 id: branch.id,

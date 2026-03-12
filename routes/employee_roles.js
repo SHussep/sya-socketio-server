@@ -527,7 +527,7 @@ router.put('/by-uuid/:globalId/role', validateTenant, async (req, res) => {
 
         // 1. Verify employee exists by global_id
         const employeeCheck = await client.query(
-            'SELECT id, role_id, main_branch_id, first_name, last_name, email FROM employees WHERE global_id = $1 AND tenant_id = $2',
+            'SELECT id, role_id, main_branch_id, first_name, last_name, email, mobile_access_type FROM employees WHERE global_id = $1 AND tenant_id = $2',
             [globalId, tenantId]
         );
 
@@ -606,13 +606,18 @@ router.put('/by-uuid/:globalId/role', validateTenant, async (req, res) => {
         // 6. Emit Socket.IO event to notify other clients
         const io = req.app.get('io');
         if (io && employee.main_branch_id) {
+            // Usar mobile_access_type del empleado (override), no del nuevo rol
+            const employeeAccessType = (employee.mobile_access_type && employee.mobile_access_type !== 'none')
+                ? employee.mobile_access_type
+                : (newRole.mobile_access_type || 'none');
+
             const eventData = {
                 employeeGlobalId: globalId,
                 employeeId: employee.id,
                 employeeName: `${employee.first_name} ${employee.last_name || ''}`.trim(),
                 newRoleId: newRoleId,
                 newRoleName: newRole.name,
-                mobileAccessType: newRole.mobile_access_type,
+                mobileAccessType: employeeAccessType,
                 tenantId: parseInt(tenantId),
                 updatedAt: new Date().toISOString()
             };
