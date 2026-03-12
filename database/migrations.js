@@ -2425,6 +2425,36 @@ async function runMigrations() {
                 console.error(`[Schema] ⚠️ mobile_access_type backfill error: ${backfillErr.message}`);
             }
 
+            // Patch: Add data_reset_at to branches (soft reset for per-branch data wipe)
+            try {
+                await client.query(`ALTER TABLE branches ADD COLUMN IF NOT EXISTS data_reset_at TIMESTAMPTZ NULL`);
+                console.log('[Schema] ✅ branches.data_reset_at column ready');
+            } catch (resetColErr) {
+                console.error(`[Schema] ⚠️ data_reset_at migration error: ${resetColErr.message}`);
+            }
+
+            // Patch: Create data_resets audit log table
+            try {
+                await client.query(`
+                    CREATE TABLE IF NOT EXISTS data_resets (
+                        id SERIAL PRIMARY KEY,
+                        tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+                        branch_id INTEGER REFERENCES branches(id),
+                        reset_scope VARCHAR(20) NOT NULL DEFAULT 'branch',
+                        reset_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        purge_after TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '30 days'),
+                        purged_at TIMESTAMPTZ NULL,
+                        requested_by_employee_id INTEGER NULL,
+                        requested_from VARCHAR(50) DEFAULT 'desktop',
+                        records_purged JSONB NULL,
+                        created_at TIMESTAMPTZ DEFAULT NOW()
+                    )
+                `);
+                console.log('[Schema] ✅ data_resets audit table ready');
+            } catch (resetTableErr) {
+                console.error(`[Schema] ⚠️ data_resets table error: ${resetTableErr.message}`);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {

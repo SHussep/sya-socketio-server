@@ -133,8 +133,10 @@ const gpsTrackingRoutes = require('./routes/gps_tracking');
 const shiftRequestsRoutes = require('./routes/shift_requests');
 const geofenceZonesRoutes = require('./routes/geofence_zones');
 const emailDigestRoutes = require('./routes/emailDigest');
+const dataResetRoutes = require('./routes/data-reset');
 const { processGuardianDigests, initializeDigestSchedules } = require('./jobs/guardianEmailDigest');
 const { processLicenseExpiryNotifications } = require('./jobs/licenseExpiryNotifier');
+const { purgeExpiredResets } = require('./jobs/dataResetPurge');
 
 // Nuevas rutas extraídas de server.js
 const createBranchesRoutes = require('./routes/branches');
@@ -286,6 +288,7 @@ app.use('/api/gps', gpsTrackingRoutes(pool, io));
 app.use('/api/geofence-zones', geofenceZonesRoutes(pool, io));
 app.use('/api/notification-history', notificationHistoryRoutes(pool));
 app.use('/api/email-digest', emailDigestRoutes);
+app.use('/api/data-reset', dataResetRoutes(pool));
 
 // ═══════════════════════════════════════════════════════════════
 // ENDPOINTS MISC (pocos, no justifican su propio archivo de ruta)
@@ -452,6 +455,20 @@ async function startServer() {
                     console.error('[LicenseExpiry] Startup check error:', err.message)
                 );
             }, 30000);
+
+            // Data reset purge — check every 24 hours for expired resets to purge
+            setInterval(() => {
+                purgeExpiredResets().catch(err =>
+                    console.error('[DataResetPurge] Interval error:', err.message)
+                );
+            }, 24 * 60 * 60 * 1000); // 24 hours
+
+            // Run purge check once on startup (after 60s)
+            setTimeout(() => {
+                purgeExpiredResets().catch(err =>
+                    console.error('[DataResetPurge] Startup check error:', err.message)
+                );
+            }, 60000);
         });
     } catch (error) {
         console.error('❌ Error starting server:', error);

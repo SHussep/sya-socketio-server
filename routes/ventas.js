@@ -124,6 +124,17 @@ module.exports = function(pool) {
 
             console.log(`[Ventas/Pull] 📥 Descargando ventas - Tenant: ${tenantIdNum}, Branch: ${branchIdNum}, Since: ${since || 'ALL'}`);
 
+            // Verificar si la branch tiene data_reset_at (soft reset)
+            const branchInfo = await pool.query(
+                'SELECT data_reset_at FROM branches WHERE id = $1 AND tenant_id = $2',
+                [branchIdNum, tenantIdNum]
+            );
+            const dataResetAt = branchInfo.rows[0]?.data_reset_at || null;
+
+            if (dataResetAt) {
+                console.log(`[Ventas/Pull] ⚠️ Branch ${branchIdNum} tiene data_reset_at: ${dataResetAt} - filtrando datos anteriores`);
+            }
+
             let query = `
                 SELECT
                     v.id_venta, v.global_id, v.tenant_id, v.branch_id, v.ticket_number,
@@ -149,6 +160,13 @@ module.exports = function(pool) {
 
             const params = [tenantIdNum, branchIdNum];
             let paramIndex = 3;
+
+            // Filtrar datos posteriores al reset (si existe)
+            if (dataResetAt) {
+                query += ` AND v.created_at >= $${paramIndex}`;
+                params.push(dataResetAt);
+                paramIndex++;
+            }
 
             if (since) {
                 query += ` AND v.updated_at > $${paramIndex}`;
