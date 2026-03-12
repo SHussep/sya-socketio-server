@@ -1534,13 +1534,12 @@ module.exports = (pool) => {
                 params.push(canUseMobileApp);
                 paramIndex++;
 
-                // Al revocar acceso móvil, resetear verificación de email
-                // Solo cuando CAMBIA de true a false (no si ya era false)
+                // Al revocar acceso móvil, limpiar códigos de verificación pendientes
+                // pero NO resetear email_verified — una vez verificado, queda verificado
                 if (canUseMobileApp === false && employee.can_use_mobile_app === true) {
-                    updates.push(`email_verified = false`);
                     updates.push(`verification_code = NULL`);
                     updates.push(`verification_expires_at = NULL`);
-                    console.log(`[Employees/Update] 🔒 Acceso móvil revocado para empleado ${employeeId} - email_verified reseteado`);
+                    console.log(`[Employees/Update] 🔒 Acceso móvil revocado para empleado ${employeeId}`);
 
                     // Notificar al empleado en tiempo real para forzar logout
                     const employeeFullName = `${employee.first_name || ''} ${employee.last_name || ''}`.trim();
