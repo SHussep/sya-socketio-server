@@ -1,18 +1,19 @@
 // ═══════════════════════════════════════════════════════════════
 // DATA RESET ROUTES - Restablecer datos por sucursal o tenant
-// Borra datos transaccionales INMEDIATAMENTE de PostgreSQL
+// Borra INMEDIATAMENTE TODO de PostgreSQL para esa branch/tenant
+// Solo conserva: tenant record, branch record, subscription
 // ═══════════════════════════════════════════════════════════════
 
 const express = require('express');
 
-// Tablas transaccionales a borrar por branch (orden por dependencias FK)
-const BRANCH_TABLES = [
-    // Hijas primero (FK a tablas padre)
+// TODAS las tablas a borrar (orden por dependencias FK, hijas primero)
+const TABLES_TO_PURGE = [
+    // FK hijas que dependen de otras tablas transaccionales
     { table: 'ventas_detalle', via: 'id_venta', parent: 'ventas' },
     { table: 'notas_credito_detalle', via: 'nota_credito_id', parent: 'notas_credito' },
     { table: 'purchase_details', via: 'purchase_id', parent: 'purchases' },
     { table: 'inventory_transfer_items', via: 'transfer_id', parent: 'inventory_transfers' },
-    // Directas con branch_id
+    // Transaccionales directas
     { table: 'repartidor_shift_cash_snapshot', col: 'branch_id' },
     { table: 'shift_cash_snapshot', col: 'branch_id' },
     { table: 'ventas', col: 'branch_id' },
@@ -42,40 +43,63 @@ const BRANCH_TABLES = [
     { table: 'scale_disconnections', col: 'branch_id' },
     { table: 'sessions', col: 'branch_id' },
     { table: 'backup_metadata', col: 'branch_id' },
+    // Maestros que también se borran (quedarían huérfanos si no)
+    { table: 'role_permissions', col: 'tenant_id', noBranch: true },
+    { table: 'employee_branches', col: 'branch_id' },
+    { table: 'cliente_branches', col: 'branch_id' },
+    { table: 'employees', col: 'tenant_id', noBranch: true },
+    { table: 'customers', col: 'tenant_id', noBranch: true },
+    { table: 'productos', col: 'tenant_id', noBranch: true },
+    { table: 'categorias_productos', col: 'tenant_id', noBranch: true },
+    { table: 'roles', col: 'tenant_id', noBranch: true },
+    { table: 'devices', col: 'branch_id' },
+    { table: 'fcm_tokens', col: 'tenant_id', noBranch: true },
 ];
 
 /**
- * Borra datos transaccionales de una o varias branches
- * @returns {Object} { tabla: rowCount } de registros borrados
+ * Borra TODO para una o varias branches de un tenant.
+ * Usa SAVEPOINT por tabla para que un fallo no aborte toda la transacción.
  */
-async function purgeTransactionalData(client, tenantId, branchIds) {
+async function purgeAllData(client, tenantId, branchIds) {
     const deleted = {};
 
-    for (const def of BRANCH_TABLES) {
+    for (const def of TABLES_TO_PURGE) {
+        const sp = `sp_${def.table}`;
         try {
-            // Verificar si la tabla existe
-            const exists = await client.query(
-                `SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = $1)`,
-                [def.table]
-            );
-            if (!exists.rows[0].exists) continue;
+            await client.query(`SAVEPOINT ${sp}`);
 
             let result;
 
             if (def.parent) {
                 // Tabla hija: borrar vía FK al padre
-                const parentDef = BRANCH_TABLES.find(t => t.table === def.parent);
+                const parentDef = TABLES_TO_PURGE.find(t => t.table === def.parent);
                 const parentCol = parentDef?.col || 'branch_id';
 
-                result = await client.query(`
-                    DELETE FROM ${def.table}
-                    WHERE ${def.via} IN (
-                        SELECT id FROM ${def.parent}
-                        WHERE ${parentCol} = ANY($1) AND tenant_id = $2
-                    )
-                `, [branchIds, tenantId]);
+                if (parentDef?.noBranch) {
+                    result = await client.query(`
+                        DELETE FROM ${def.table}
+                        WHERE ${def.via} IN (
+                            SELECT id FROM ${def.parent} WHERE tenant_id = $1
+                        )
+                    `, [tenantId]);
+                } else {
+                    result = await client.query(`
+                        DELETE FROM ${def.table}
+                        WHERE ${def.via} IN (
+                            SELECT id FROM ${def.parent}
+                            WHERE ${parentCol} = ANY($1) AND tenant_id = $2
+                        )
+                    `, [branchIds, tenantId]);
+                }
+            } else if (def.noBranch) {
+                // Tabla a nivel tenant (sin branch_id) — borrar todo del tenant
+                result = await client.query(
+                    `DELETE FROM ${def.table} WHERE ${def.col} = $1`,
+                    [tenantId]
+                );
             } else {
-                // Tabla directa con branch_id
+                // Tabla con branch_id
+                // Verificar si tiene tenant_id para query más segura
                 const hasTenant = await client.query(
                     `SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_name = $1 AND column_name = 'tenant_id')`,
                     [def.table]
@@ -94,12 +118,15 @@ async function purgeTransactionalData(client, tenantId, branchIds) {
                 }
             }
 
+            await client.query(`RELEASE SAVEPOINT ${sp}`);
+
             if (result && result.rowCount > 0) {
                 deleted[def.table] = result.rowCount;
-                console.log(`[DATA-RESET]    🗑️ ${def.table}: ${result.rowCount} registros`);
+                console.log(`[DATA-RESET]    🗑️ ${def.table}: ${result.rowCount}`);
             }
         } catch (err) {
-            // Tabla puede no existir o tener schema diferente
+            // Rollback solo este savepoint, continuar con las demás tablas
+            await client.query(`ROLLBACK TO SAVEPOINT ${sp}`);
             console.log(`[DATA-RESET]    ⚠️ ${def.table}: ${err.message}`);
         }
     }
@@ -112,8 +139,8 @@ module.exports = (pool) => {
 
     // ─────────────────────────────────────────────────────────
     // POST /api/data-reset/branch/:branchId
-    // Borra INMEDIATAMENTE datos transaccionales de una sucursal
-    // Mantiene: employees, customers, productos, roles, branch
+    // Borra TODO de una sucursal en PostgreSQL
+    // Solo conserva: tenant, branch, subscription
     // ─────────────────────────────────────────────────────────
     router.post('/branch/:branchId', async (req, res) => {
         const client = await pool.connect();
@@ -130,7 +157,6 @@ module.exports = (pool) => {
                 });
             }
 
-            // Verificar que la sucursal pertenece al tenant
             const branchCheck = await client.query(
                 'SELECT id, name FROM branches WHERE id = $1 AND tenant_id = $2',
                 [branchId, tenantId]
@@ -146,21 +172,21 @@ module.exports = (pool) => {
             const branchName = branchCheck.rows[0].name;
             const resetAt = new Date();
 
-            console.log(`\n[DATA-RESET] 🔄 Reset de sucursal "${branchName}" (Branch ${branchId}, Tenant ${tenantId})`);
+            console.log(`\n[DATA-RESET] 🔄 Reset COMPLETO de "${branchName}" (Branch ${branchId}, Tenant ${tenantId})`);
 
             await client.query('BEGIN');
 
-            // 1. Borrar datos transaccionales INMEDIATAMENTE
-            console.log('[DATA-RESET] 🗑️ Borrando datos transaccionales...');
-            const deleted = await purgeTransactionalData(client, tenantId, [branchId]);
+            // 1. Borrar TODO inmediatamente
+            console.log('[DATA-RESET] 🗑️ Borrando todos los datos...');
+            const deleted = await purgeAllData(client, tenantId, [branchId]);
 
-            // 2. Marcar data_reset_at en la branch
+            // 2. Marcar data_reset_at
             await client.query(
                 'UPDATE branches SET data_reset_at = $1 WHERE id = $2 AND tenant_id = $3',
                 [resetAt, branchId, tenantId]
             );
 
-            // 3. Registrar en auditoría
+            // 3. Auditoría
             await client.query(`
                 INSERT INTO data_resets (tenant_id, branch_id, reset_scope, reset_at, purge_after, purged_at, requested_by_employee_id, requested_from, records_purged)
                 VALUES ($1, $2, 'branch', $3, $3, $3, $4, $5, $6)
@@ -169,18 +195,12 @@ module.exports = (pool) => {
             await client.query('COMMIT');
 
             const totalDeleted = Object.values(deleted).reduce((a, b) => a + b, 0);
-            console.log(`[DATA-RESET] ✅ Branch ${branchId} reseteada: ${totalDeleted} registros eliminados\n`);
+            console.log(`[DATA-RESET] ✅ Branch ${branchId} limpia: ${totalDeleted} registros eliminados\n`);
 
             res.json({
                 success: true,
                 message: `Sucursal "${branchName}" restablecida — ${totalDeleted} registros eliminados`,
-                data: {
-                    branchId,
-                    branchName,
-                    resetAt: resetAt.toISOString(),
-                    totalDeleted,
-                    deleted
-                }
+                data: { branchId, branchName, resetAt: resetAt.toISOString(), totalDeleted, deleted }
             });
 
         } catch (error) {
@@ -194,7 +214,7 @@ module.exports = (pool) => {
 
     // ─────────────────────────────────────────────────────────
     // POST /api/data-reset/tenant
-    // Borra INMEDIATAMENTE datos de TODAS las sucursales del tenant
+    // Borra TODO de TODAS las sucursales del tenant
     // ─────────────────────────────────────────────────────────
     router.post('/tenant', async (req, res) => {
         const client = await pool.connect();
@@ -204,37 +224,28 @@ module.exports = (pool) => {
             const source = req.body.source || 'desktop';
 
             if (!tenantId) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'tenantId es requerido'
-                });
+                return res.status(400).json({ success: false, message: 'tenantId es requerido' });
             }
 
-            const resetAt = new Date();
-
-            // Obtener todas las branches del tenant
             const branchesResult = await client.query(
-                'SELECT id, name FROM branches WHERE tenant_id = $1',
-                [tenantId]
+                'SELECT id, name FROM branches WHERE tenant_id = $1', [tenantId]
             );
             const branches = branchesResult.rows;
             const branchIds = branches.map(b => b.id);
+            const resetAt = new Date();
 
-            console.log(`\n[DATA-RESET] 🔄 Reset COMPLETO de tenant ${tenantId} (${branches.length} sucursales)`);
+            console.log(`\n[DATA-RESET] 🔄 Reset TOTAL tenant ${tenantId} (${branches.length} sucursales)`);
 
             await client.query('BEGIN');
 
-            // 1. Borrar datos transaccionales de TODAS las branches
-            console.log('[DATA-RESET] 🗑️ Borrando datos transaccionales de todas las sucursales...');
-            const deleted = await purgeTransactionalData(client, tenantId, branchIds);
+            console.log('[DATA-RESET] 🗑️ Borrando todos los datos del tenant...');
+            const deleted = await purgeAllData(client, tenantId, branchIds);
 
-            // 2. Marcar data_reset_at en TODAS las branches
             await client.query(
                 'UPDATE branches SET data_reset_at = $1 WHERE tenant_id = $2',
                 [resetAt, tenantId]
             );
 
-            // 3. Auditoría
             await client.query(`
                 INSERT INTO data_resets (tenant_id, branch_id, reset_scope, reset_at, purge_after, purged_at, requested_by_employee_id, requested_from, records_purged)
                 VALUES ($1, NULL, 'tenant', $2, $2, $2, $3, $4, $5)
@@ -243,18 +254,12 @@ module.exports = (pool) => {
             await client.query('COMMIT');
 
             const totalDeleted = Object.values(deleted).reduce((a, b) => a + b, 0);
-            console.log(`[DATA-RESET] ✅ Tenant ${tenantId} reseteado: ${totalDeleted} registros eliminados\n`);
+            console.log(`[DATA-RESET] ✅ Tenant ${tenantId} limpio: ${totalDeleted} registros eliminados\n`);
 
             res.json({
                 success: true,
                 message: `${branches.length} sucursales restablecidas — ${totalDeleted} registros eliminados`,
-                data: {
-                    tenantId,
-                    resetAt: resetAt.toISOString(),
-                    totalDeleted,
-                    deleted,
-                    branches: branches.map(b => ({ id: b.id, name: b.name }))
-                }
+                data: { tenantId, resetAt: resetAt.toISOString(), totalDeleted, deleted, branches: branches.map(b => ({ id: b.id, name: b.name })) }
             });
 
         } catch (error) {
@@ -268,7 +273,6 @@ module.exports = (pool) => {
 
     // ─────────────────────────────────────────────────────────
     // GET /api/data-reset/status/:tenantId
-    // Ver historial de resets del tenant
     // ─────────────────────────────────────────────────────────
     router.get('/status/:tenantId', async (req, res) => {
         try {
@@ -279,24 +283,15 @@ module.exports = (pool) => {
                 FROM data_resets dr
                 LEFT JOIN branches b ON dr.branch_id = b.id
                 WHERE dr.tenant_id = $1
-                ORDER BY dr.reset_at DESC
-                LIMIT 20
+                ORDER BY dr.reset_at DESC LIMIT 20
             `, [tenantId]);
 
             const branches = await pool.query(`
                 SELECT id, name, data_reset_at
-                FROM branches
-                WHERE tenant_id = $1
-                ORDER BY id
+                FROM branches WHERE tenant_id = $1 ORDER BY id
             `, [tenantId]);
 
-            res.json({
-                success: true,
-                data: {
-                    branches: branches.rows,
-                    resets: resets.rows
-                }
-            });
+            res.json({ success: true, data: { branches: branches.rows, resets: resets.rows } });
         } catch (error) {
             console.error('[DATA-RESET] ❌ Error:', error.message);
             res.status(500).json({ success: false, message: 'Error al obtener estado' });
