@@ -2452,6 +2452,26 @@ async function runMigrations() {
                 console.error(`[Schema] ⚠️ data_resets table error: ${resetTableErr.message}`);
             }
 
+            // Patch: Backfill employee_branches from employees.main_branch_id
+            try {
+                const backfillResult = await client.query(`
+                    INSERT INTO employee_branches (tenant_id, employee_id, branch_id, created_at, updated_at)
+                    SELECT e.tenant_id, e.id, e.main_branch_id, NOW(), NOW()
+                    FROM employees e
+                    WHERE e.main_branch_id IS NOT NULL
+                      AND e.is_active = true
+                      AND NOT EXISTS (
+                          SELECT 1 FROM employee_branches eb
+                          WHERE eb.employee_id = e.id AND eb.branch_id = e.main_branch_id
+                      )
+                `);
+                if (backfillResult.rowCount > 0) {
+                    console.log(`[Schema] ✅ employee_branches backfilled: ${backfillResult.rowCount} missing records inserted`);
+                }
+            } catch (ebErr) {
+                console.error(`[Schema] ⚠️ employee_branches backfill error: ${ebErr.message}`);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {
