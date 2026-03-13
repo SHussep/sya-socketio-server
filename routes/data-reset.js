@@ -1,13 +1,14 @@
 // ═══════════════════════════════════════════════════════════════
-// DATA RESET ROUTES - Restablecer datos por sucursal o tenant
-// Reutiliza las mismas tablas de scripts/db-cleanup.js
+// DATA RESET ROUTES
+// Opción 1: Restablecer datos (transaccional) — POST /branch/:branchId
+// Opción 2: Eliminar negocio (todo) — DELETE /tenant
 // ═══════════════════════════════════════════════════════════════
 
 const express = require('express');
 const { authenticateToken } = require('../middleware/auth');
-const { FULL_CLEANUP_TABLES, PARTIAL_CLEANUP_TABLES } = require('../utils/cleanupTables');
+const { PARTIAL_CLEANUP_TABLES } = require('../utils/cleanupTables');
 
-// Helpers (misma lógica que db-cleanup.js)
+// Helpers
 async function tableExists(client, tableName) {
     const result = await client.query(
         `SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = $1)`,
@@ -26,7 +27,7 @@ async function columnExists(client, tableName, columnName) {
 
 /**
  * Verifica que el empleado sea owner o admin del tenant.
- * Usa mobile_access_type del rol (NO role_id hardcodeado, ya que es auto-increment por tenant).
+ * Usa mobile_access_type del rol (NO role_id hardcodeado).
  */
 async function requireOwnerOrAdmin(pool, employeeId, tenantId) {
     const result = await pool.query(`
@@ -43,45 +44,14 @@ async function requireOwnerOrAdmin(pool, employeeId, tenantId) {
     return { allowed: true, isOwner: emp.is_owner };
 }
 
-async function removeGenericCustomerProtection(client, tenantId) {
-    try {
-        const result = await client.query(
-            `UPDATE customers SET is_system_generic = false WHERE tenant_id = $1 AND is_system_generic = true`,
-            [tenantId]
-        );
-        return result.rowCount;
-    } catch (err) {
-        return 0;
-    }
-}
-
 /**
- * Borra datos de un tenant
- * @param {string} mode - 'partial' = solo transaccional, 'full' = todo menos tenant/branches
+ * Borra datos transaccionales de un tenant (ventas, turnos, gastos, etc.)
+ * Conserva: empleados, clientes, productos, roles, config, estructura
  */
-async function deleteAllData(client, tenantId, mode = 'full') {
+async function deleteTransactionalData(client, tenantId) {
     const deleted = {};
 
-    // Seleccionar tablas según modo
-    let tables;
-    if (mode === 'partial') {
-        // Solo tablas transaccionales (ventas, turnos, gastos, etc.)
-        // Conserva: empleados, clientes, productos, roles, config
-        tables = PARTIAL_CLEANUP_TABLES;
-    } else {
-        // Todo excepto tenant y branches (structural)
-        tables = FULL_CLEANUP_TABLES.filter(t => !t.structural);
-    }
-
-    // Quitar protección del cliente genérico (solo en modo full que borra clientes)
-    if (mode === 'full') {
-        const genericRemoved = await removeGenericCustomerProtection(client, tenantId);
-        if (genericRemoved > 0) {
-            console.log(`[DATA-RESET]    🔓 ${genericRemoved} cliente(s) genérico(s) desprotegido(s)`);
-        }
-    }
-
-    for (const tableConfig of tables) {
+    for (const tableConfig of PARTIAL_CLEANUP_TABLES) {
         const sp = `sp_${tableConfig.name.replace(/[^a-z0-9_]/g, '')}`;
         try {
             await client.query(`SAVEPOINT ${sp}`);
@@ -94,10 +64,7 @@ async function deleteAllData(client, tenantId, mode = 'full') {
 
             let query, params;
 
-            if (tableConfig.isTenantTable) {
-                query = `DELETE FROM ${tableConfig.name} WHERE id = $1`;
-                params = [tenantId];
-            } else if (tableConfig.customQuery === 'employee_id') {
+            if (tableConfig.customQuery === 'employee_id') {
                 const hasCol = await columnExists(client, tableConfig.name, 'employee_id');
                 if (!hasCol) {
                     await client.query(`RELEASE SAVEPOINT ${sp}`);
@@ -132,13 +99,56 @@ async function deleteAllData(client, tenantId, mode = 'full') {
     return deleted;
 }
 
+/**
+ * Elimina los backups de Dropbox de un tenant (todas las sucursales)
+ * Estructura Dropbox: /SYA Backups/{email}/{tenant_id}/...
+ */
+async function deleteDropboxBackups(pool, tenantId) {
+    try {
+        // Obtener email del owner para construir la ruta
+        const ownerResult = await pool.query(
+            `SELECT email FROM employees WHERE tenant_id = $1 AND is_owner = true LIMIT 1`,
+            [tenantId]
+        );
+        if (ownerResult.rows.length === 0 || !ownerResult.rows[0].email) {
+            console.log(`[DATA-RESET] ⚠️ No se encontró email del owner, no se pueden borrar backups de Dropbox`);
+            return { deleted: false, reason: 'owner-not-found' };
+        }
+
+        const email = ownerResult.rows[0].email;
+        const sanitizedEmail = email.toLowerCase()
+            .replace('@', '_')
+            .replace(/[<>:"/\\|?*]/g, '_')
+            .replace(/\s+/g, '_')
+            .replace(/_+/g, '_')
+            .trim();
+
+        const dropboxFolderPath = `/SYA Backups/${sanitizedEmail}/${tenantId}`;
+
+        // Intentar borrar la carpeta completa del tenant (incluye todas las branches)
+        const dropboxManager = require('../utils/dropbox-manager');
+        await dropboxManager.deleteFile(dropboxFolderPath);
+
+        console.log(`[DATA-RESET] ✅ Backups de Dropbox eliminados: ${dropboxFolderPath}`);
+        return { deleted: true, path: dropboxFolderPath };
+    } catch (error) {
+        // 409 = path not found (no hay backups) — no es error real
+        if (error?.status === 409 || error?.error?.['.tag'] === 'path_lookup') {
+            console.log(`[DATA-RESET] ℹ️ No había backups en Dropbox para tenant ${tenantId}`);
+            return { deleted: false, reason: 'no-backups' };
+        }
+        console.error(`[DATA-RESET] ⚠️ Error borrando backups de Dropbox: ${error.message}`);
+        return { deleted: false, reason: error.message };
+    }
+}
+
 module.exports = (pool) => {
     const router = express.Router();
 
     // ─────────────────────────────────────────────────────────
     // POST /api/data-reset/branch/:branchId
-    // mode=partial: solo transaccional (ventas, turnos, etc.)
-    // mode=full: todo excepto tenant/branches
+    // Restablecer datos transaccionales (ventas, turnos, gastos)
+    // Conserva: empleados, clientes, productos, config
     // ─────────────────────────────────────────────────────────
     router.post('/branch/:branchId', authenticateToken, async (req, res) => {
         const client = await pool.connect();
@@ -147,13 +157,13 @@ module.exports = (pool) => {
             const tenantId = req.user.tenantId;
             const employeeId = req.body.employeeId;
             const source = req.body.source || 'desktop';
-            const mode = req.body.mode === 'partial' ? 'partial' : 'full';
 
             if (!branchId || !tenantId) {
+                client.release();
                 return res.status(400).json({ success: false, message: 'branchId y tenantId son requeridos' });
             }
 
-            // Role check: solo owner o admin pueden restablecer datos
+            // Role check: solo owner o admin
             const authCheck = await requireOwnerOrAdmin(pool, req.user.employeeId, tenantId);
             if (!authCheck.allowed) {
                 client.release();
@@ -165,39 +175,38 @@ module.exports = (pool) => {
                 [branchId, tenantId]
             );
             if (branchCheck.rows.length === 0) {
+                client.release();
                 return res.status(404).json({ success: false, message: 'Sucursal no encontrada' });
             }
 
             const branchName = branchCheck.rows[0].name;
             const resetAt = new Date();
 
-            console.log(`\n[DATA-RESET] 🔄 Reset ${mode.toUpperCase()} "${branchName}" (Branch ${branchId}, Tenant ${tenantId})`);
+            console.log(`\n[DATA-RESET] 🔄 Restablecer datos "${branchName}" (Branch ${branchId}, Tenant ${tenantId})`);
 
             await client.query('BEGIN');
 
-            const deleted = await deleteAllData(client, tenantId, mode);
+            const deleted = await deleteTransactionalData(client, tenantId);
 
-            // Marcar data_reset_at
             await client.query(
                 'UPDATE branches SET data_reset_at = $1 WHERE id = $2 AND tenant_id = $3',
                 [resetAt, branchId, tenantId]
             );
 
-            // Auditoría
             await client.query(`
                 INSERT INTO data_resets (tenant_id, branch_id, reset_scope, reset_at, purge_after, purged_at, requested_by_employee_id, requested_from, records_purged)
-                VALUES ($1, $2, $3, $4, $4, $4, $5, $6, $7)
-            `, [tenantId, branchId, `branch-${mode}`, resetAt, employeeId || null, source, JSON.stringify(deleted)]);
+                VALUES ($1, $2, 'reset-data', $3, $3, $3, $4, $5, $6)
+            `, [tenantId, branchId, resetAt, employeeId || null, source, JSON.stringify(deleted)]);
 
             await client.query('COMMIT');
 
             const totalDeleted = Object.values(deleted).reduce((a, b) => a + b, 0);
-            console.log(`[DATA-RESET] ✅ Tenant ${tenantId} (${mode}): ${totalDeleted} registros eliminados\n`);
+            console.log(`[DATA-RESET] ✅ Datos restablecidos: ${totalDeleted} registros eliminados\n`);
 
             res.json({
                 success: true,
-                message: `"${branchName}" restablecida (${mode}) — ${totalDeleted} registros eliminados`,
-                data: { branchId, branchName, mode, resetAt: resetAt.toISOString(), totalDeleted, deleted }
+                message: `"${branchName}" restablecida — ${totalDeleted} registros eliminados`,
+                data: { branchId, branchName, resetAt: resetAt.toISOString(), totalDeleted, deleted }
             });
         } catch (error) {
             await client.query('ROLLBACK').catch(() => {});
@@ -209,64 +218,86 @@ module.exports = (pool) => {
     });
 
     // ─────────────────────────────────────────────────────────
-    // POST /api/data-reset/tenant
-    // mode=partial o mode=full para TODAS las sucursales
+    // DELETE /api/data-reset/tenant
+    // ELIMINAR NEGOCIO COMPLETO:
+    //   1. Borrar backups de Dropbox
+    //   2. DELETE FROM tenants (CASCADE borra todo)
+    // Solo OWNER puede ejecutar esto
     // ─────────────────────────────────────────────────────────
-    router.post('/tenant', authenticateToken, async (req, res) => {
+    router.delete('/tenant', authenticateToken, async (req, res) => {
         const client = await pool.connect();
         try {
             const tenantId = req.user.tenantId;
-            const employeeId = req.body.employeeId;
-            const source = req.body.source || 'desktop';
-            const mode = req.body.mode === 'partial' ? 'partial' : 'full';
+            const employeeId = req.user.employeeId;
 
             if (!tenantId) {
+                client.release();
                 return res.status(400).json({ success: false, message: 'tenantId es requerido' });
             }
 
-            // Role check: solo owner o admin pueden restablecer datos
-            const authCheck = await requireOwnerOrAdmin(pool, req.user.employeeId, tenantId);
-            if (!authCheck.allowed) {
+            // OWNER-ONLY
+            const ownerCheck = await pool.query(
+                'SELECT is_owner FROM employees WHERE id = $1 AND tenant_id = $2 AND is_active = true',
+                [employeeId, tenantId]
+            );
+            if (!ownerCheck.rows[0]?.is_owner) {
                 client.release();
-                return res.status(403).json({ success: false, message: authCheck.reason });
+                return res.status(403).json({
+                    success: false,
+                    message: 'Solo el propietario puede eliminar el negocio'
+                });
             }
 
-            const branchesResult = await client.query(
-                'SELECT id, name FROM branches WHERE tenant_id = $1', [tenantId]
+            // Info del tenant para el log
+            const tenantInfo = await client.query(
+                'SELECT t.business_name, COUNT(b.id)::int as branch_count FROM tenants t LEFT JOIN branches b ON b.tenant_id = t.id WHERE t.id = $1 GROUP BY t.id',
+                [tenantId]
             );
-            const branches = branchesResult.rows;
-            const resetAt = new Date();
+            const businessName = tenantInfo.rows[0]?.business_name || `Tenant ${tenantId}`;
+            const branchCount = tenantInfo.rows[0]?.branch_count || 0;
 
-            console.log(`\n[DATA-RESET] 🔄 Reset ${mode.toUpperCase()} tenant ${tenantId} (${branches.length} sucursales)`);
+            console.log(`\n[DATA-RESET] 🗑️ ELIMINAR NEGOCIO "${businessName}" (Tenant ${tenantId}, ${branchCount} sucursales)`);
 
+            // Paso 1: Borrar backups de Dropbox (antes de borrar el tenant)
+            const dropboxResult = await deleteDropboxBackups(pool, tenantId);
+            console.log(`[DATA-RESET] Dropbox: ${JSON.stringify(dropboxResult)}`);
+
+            // Paso 2: Borrar tenant de PostgreSQL (CASCADE borra branches, empleados, todo)
             await client.query('BEGIN');
 
-            const deleted = await deleteAllData(client, tenantId, mode);
-
+            // Liberar licencias antes del CASCADE
             await client.query(
-                'UPDATE branches SET data_reset_at = $1 WHERE tenant_id = $2',
-                [resetAt, tenantId]
-            );
+                "UPDATE branch_licenses SET status = 'available', branch_id = NULL, updated_at = NOW() WHERE tenant_id = $1",
+                [tenantId]
+            ).catch(() => {});
 
-            await client.query(`
-                INSERT INTO data_resets (tenant_id, branch_id, reset_scope, reset_at, purge_after, purged_at, requested_by_employee_id, requested_from, records_purged)
-                VALUES ($1, NULL, $2, $3, $3, $3, $4, $5, $6)
-            `, [tenantId, `tenant-${mode}`, resetAt, employeeId || null, source, JSON.stringify(deleted)]);
+            // Nullificar FK en data_resets (evita constraint violation)
+            await client.query(
+                'UPDATE data_resets SET branch_id = NULL WHERE tenant_id = $1',
+                [tenantId]
+            ).catch(() => {});
+
+            await client.query('DELETE FROM tenants WHERE id = $1', [tenantId]);
 
             await client.query('COMMIT');
 
-            const totalDeleted = Object.values(deleted).reduce((a, b) => a + b, 0);
-            console.log(`[DATA-RESET] ✅ Tenant ${tenantId} (${mode}): ${totalDeleted} registros eliminados\n`);
+            console.log(`[DATA-RESET] ✅ Negocio "${businessName}" eliminado completamente\n`);
 
             res.json({
                 success: true,
-                message: `${branches.length} sucursales restablecidas (${mode}) — ${totalDeleted} registros eliminados`,
-                data: { tenantId, mode, resetAt: resetAt.toISOString(), totalDeleted, deleted, branches: branches.map(b => ({ id: b.id, name: b.name })) }
+                message: `"${businessName}" eliminado completamente — ${branchCount} sucursal(es), backups y todos los datos`,
+                data: {
+                    tenantId,
+                    businessName,
+                    branchCount,
+                    dropbox: dropboxResult,
+                    deletedAt: new Date().toISOString()
+                }
             });
         } catch (error) {
             await client.query('ROLLBACK').catch(() => {});
-            console.error('[DATA-RESET] ❌ Error:', error.message);
-            res.status(500).json({ success: false, message: 'Error al restablecer datos', error: error.message });
+            console.error('[DATA-RESET] ❌ Error eliminando negocio:', error.message);
+            res.status(500).json({ success: false, message: 'Error al eliminar negocio', error: error.message });
         } finally {
             client.release();
         }
@@ -279,7 +310,6 @@ module.exports = (pool) => {
         try {
             const tenantId = req.user.tenantId;
 
-            // Role check: solo owner o admin pueden ver historial de resets
             const authCheck = await requireOwnerOrAdmin(pool, req.user.employeeId, tenantId);
             if (!authCheck.allowed) {
                 return res.status(403).json({ success: false, message: authCheck.reason });
@@ -296,156 +326,6 @@ module.exports = (pool) => {
             res.json({ success: true, data: { branches: branches.rows, resets: resets.rows } });
         } catch (error) {
             res.status(500).json({ success: false, message: 'Error al obtener estado' });
-        }
-    });
-
-    // ─────────────────────────────────────────────────────────
-    // GET /api/data-reset/branch/:branchId/can-delete
-    // Pre-check: ¿se puede eliminar esta sucursal?
-    // ─────────────────────────────────────────────────────────
-    router.get('/branch/:branchId/can-delete', authenticateToken, async (req, res) => {
-        try {
-            const branchId = parseInt(req.params.branchId);
-            const tenantId = req.user.tenantId;
-
-            // Solo owner puede eliminar sucursales
-            const ownerCheck = await pool.query(
-                'SELECT is_owner FROM employees WHERE id = $1 AND tenant_id = $2 AND is_active = true',
-                [req.user.employeeId, tenantId]
-            );
-            if (!ownerCheck.rows[0]?.is_owner) {
-                return res.json({
-                    success: true,
-                    data: { canDelete: false, reason: 'Solo el propietario puede eliminar sucursales' }
-                });
-            }
-
-            const branchCheck = await pool.query(
-                'SELECT id, name FROM branches WHERE id = $1 AND tenant_id = $2',
-                [branchId, tenantId]
-            );
-            if (branchCheck.rows.length === 0) {
-                return res.status(404).json({ success: false, message: 'Sucursal no encontrada' });
-            }
-
-            const branchCount = await pool.query(
-                'SELECT COUNT(*)::int as count FROM branches WHERE tenant_id = $1',
-                [tenantId]
-            );
-
-            res.json({
-                success: true,
-                data: {
-                    canDelete: true,
-                    branchName: branchCheck.rows[0].name,
-                    isLastBranch: branchCount.rows[0].count <= 1,
-                    totalBranches: branchCount.rows[0].count
-                }
-            });
-        } catch (error) {
-            console.error('[DATA-RESET] ❌ Error en can-delete:', error.message);
-            res.status(500).json({ success: false, message: 'Error verificando eliminación' });
-        }
-    });
-
-    // ─────────────────────────────────────────────────────────
-    // DELETE /api/data-reset/branch/:branchId
-    // Elimina la sucursal PERMANENTEMENTE (estructura + datos)
-    // Solo OWNER puede ejecutar esto
-    // ─────────────────────────────────────────────────────────
-    router.delete('/branch/:branchId', authenticateToken, async (req, res) => {
-        const client = await pool.connect();
-        try {
-            const branchId = parseInt(req.params.branchId);
-            const tenantId = req.user.tenantId;
-            const employeeId = req.user.employeeId;
-
-            if (!branchId || !tenantId) {
-                client.release();
-                return res.status(400).json({ success: false, message: 'branchId y tenantId son requeridos' });
-            }
-
-            // OWNER-ONLY (más destructivo que reset)
-            const ownerCheck = await pool.query(
-                'SELECT is_owner FROM employees WHERE id = $1 AND tenant_id = $2 AND is_active = true',
-                [employeeId, tenantId]
-            );
-            if (!ownerCheck.rows[0]?.is_owner) {
-                client.release();
-                return res.status(403).json({
-                    success: false,
-                    message: 'Solo el propietario puede eliminar una sucursal'
-                });
-            }
-
-            // Verificar que el branch existe y pertenece al tenant
-            const branchCheck = await client.query(
-                'SELECT id, name FROM branches WHERE id = $1 AND tenant_id = $2',
-                [branchId, tenantId]
-            );
-            if (branchCheck.rows.length === 0) {
-                client.release();
-                return res.status(404).json({ success: false, message: 'Sucursal no encontrada' });
-            }
-            const branchName = branchCheck.rows[0].name;
-
-            // Contar branches del tenant
-            const branchCount = await client.query(
-                'SELECT COUNT(*)::int as count FROM branches WHERE tenant_id = $1',
-                [tenantId]
-            );
-            const isLastBranch = branchCount.rows[0].count <= 1;
-
-            console.log(`\n[DATA-RESET] 🗑️ DELETE BRANCH "${branchName}" (Branch ${branchId}, Tenant ${tenantId}, last=${isLastBranch})`);
-
-            await client.query('BEGIN');
-
-            const resetAt = new Date();
-
-            // Auditoría ANTES del delete (branch_id=NULL porque el branch se va a eliminar)
-            await client.query(`
-                INSERT INTO data_resets (tenant_id, branch_id, reset_scope, reset_at, purge_after, purged_at, requested_by_employee_id, requested_from, records_purged)
-                VALUES ($1, NULL, 'branch-delete', $2, $2, $2, $3, 'desktop', $4)
-            `, [tenantId, resetAt, employeeId,
-                JSON.stringify({ action: 'delete-branch', branchId, branchName, isLastBranch })]);
-
-            // Nullificar FK en data_resets previos para este branch (evita constraint violation)
-            await client.query(
-                'UPDATE data_resets SET branch_id = NULL WHERE branch_id = $1 AND tenant_id = $2',
-                [branchId, tenantId]
-            );
-
-            // Liberar licencias del branch antes del CASCADE
-            await client.query(
-                "UPDATE branch_licenses SET status = 'available', branch_id = NULL, updated_at = NOW() WHERE branch_id = $1 AND tenant_id = $2",
-                [branchId, tenantId]
-            ).catch(() => {}); // Tabla puede no existir
-
-            if (isLastBranch) {
-                // Última sucursal → eliminar tenant completo (CASCADE borra branches + todo)
-                await client.query('DELETE FROM tenants WHERE id = $1', [tenantId]);
-                console.log(`[DATA-RESET] 🗑️ Tenant ${tenantId} eliminado (última sucursal)`);
-            } else {
-                // Eliminar solo esta sucursal (CASCADE borra datos hijos)
-                await client.query('DELETE FROM branches WHERE id = $1 AND tenant_id = $2', [branchId, tenantId]);
-                console.log(`[DATA-RESET] 🗑️ Branch ${branchId} eliminado`);
-            }
-
-            await client.query('COMMIT');
-
-            res.json({
-                success: true,
-                message: isLastBranch
-                    ? `Sucursal "${branchName}" y todo el negocio eliminados (era la última sucursal)`
-                    : `Sucursal "${branchName}" eliminada permanentemente`,
-                data: { branchId, branchName, isLastBranch, deletedAt: resetAt.toISOString() }
-            });
-        } catch (error) {
-            await client.query('ROLLBACK').catch(() => {});
-            console.error('[DATA-RESET] ❌ Error eliminando sucursal:', error.message);
-            res.status(500).json({ success: false, message: 'Error al eliminar sucursal', error: error.message });
-        } finally {
-            client.release();
         }
     });
 
