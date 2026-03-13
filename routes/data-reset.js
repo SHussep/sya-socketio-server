@@ -402,12 +402,18 @@ module.exports = (pool) => {
 
             const resetAt = new Date();
 
-            // Auditoría ANTES del delete (FK se rompería después)
+            // Auditoría ANTES del delete (branch_id=NULL porque el branch se va a eliminar)
             await client.query(`
                 INSERT INTO data_resets (tenant_id, branch_id, reset_scope, reset_at, purge_after, purged_at, requested_by_employee_id, requested_from, records_purged)
-                VALUES ($1, $2, 'branch-delete', $3, $3, $3, $4, 'desktop', $5)
-            `, [tenantId, isLastBranch ? null : branchId, resetAt, employeeId,
-                JSON.stringify({ action: 'delete-branch', branchName, isLastBranch })]);
+                VALUES ($1, NULL, 'branch-delete', $2, $2, $2, $3, 'desktop', $4)
+            `, [tenantId, resetAt, employeeId,
+                JSON.stringify({ action: 'delete-branch', branchId, branchName, isLastBranch })]);
+
+            // Nullificar FK en data_resets previos para este branch (evita constraint violation)
+            await client.query(
+                'UPDATE data_resets SET branch_id = NULL WHERE branch_id = $1 AND tenant_id = $2',
+                [branchId, tenantId]
+            );
 
             // Liberar licencias del branch antes del CASCADE
             await client.query(
