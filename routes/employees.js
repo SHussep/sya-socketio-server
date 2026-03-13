@@ -1729,12 +1729,29 @@ module.exports = (pool) => {
                 const emailChanged = email !== undefined && email !== employee.email;
                 const mobileAccessEnabled = canUseMobileApp === true && employee.can_use_mobile_app === false;
                 const emailNotVerified = canUseMobileApp === true && !employee.email_verified;
+                const needsVerificationEmail = updatedEmployee.can_use_mobile_app && updatedEmployee.email && (emailChanged || mobileAccessEnabled || emailNotVerified) && emailVerified !== true;
 
-                if (updatedEmployee.can_use_mobile_app && updatedEmployee.email && (emailChanged || mobileAccessEnabled || emailNotVerified) && emailVerified !== true) {
+                if (needsVerificationEmail) {
                     console.log(`[Employees/Update] 📧 Enviando código de verificación a ${updatedEmployee.email} (emailChanged=${emailChanged}, mobileAccessEnabled=${mobileAccessEnabled}, emailNotVerified=${emailNotVerified})`);
                     verificationEmailSent = await generateAndSendVerificationCode(
                         client, updatedEmployee.id, tenantId, updatedEmployee.email, updatedFullName
                     );
+
+                    // Si el email falla, revertir can_use_mobile_app para no dejar al empleado en estado inconsistente
+                    if (!verificationEmailSent) {
+                        console.log(`[Employees/Update] ⚠️ Email falló, revirtiendo can_use_mobile_app a false para empleado ${employeeId}`);
+                        await client.query(
+                            `UPDATE employees SET can_use_mobile_app = false, email_verified = false, verification_code = NULL, verification_expires_at = NULL, updated_at = NOW() WHERE id = $1 AND tenant_id = $2`,
+                            [employeeId, tenantId]
+                        );
+
+                        return res.status(503).json({
+                            success: false,
+                            message: 'No se pudo enviar el correo de verificación. El acceso móvil no fue activado. Verifica que el correo electrónico sea válido e intenta de nuevo.',
+                            errorCode: 'EMAIL_SEND_FAILED',
+                            verificationEmailSent: false
+                        });
+                    }
                 }
 
                 // Emit socket event to notify Desktop of employee changes
