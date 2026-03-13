@@ -1717,7 +1717,7 @@ async function runMigrations() {
 
             // 3. Always run seeds (idempotent - uses ON CONFLICT)
             console.log('[Seeds] 📝 Running seeds.sql...');
-            const seedsPath = path.join(__dirname, 'seeds.sql');
+            const seedsPath = path.join(__dirname, '..', 'seeds.sql');
             if (fs.existsSync(seedsPath)) {
                 const seedsSql = fs.readFileSync(seedsPath, 'utf8');
                 await client.query('BEGIN');

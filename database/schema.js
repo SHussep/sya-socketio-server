@@ -741,6 +741,20 @@ async function initializeDatabase() {
         // CHECK constraints & missing indexes (hardening)
         // Each runs independently so one failure doesn't block others
         // ───────────────────────────────────────────────────────────
+        // Clean up invalid data before adding constraints
+        const dataFixes = [
+            // Fix invalid subscription_status values (e.g. 'Basic' → 'active')
+            `UPDATE tenants SET subscription_status = 'active' WHERE subscription_status NOT IN ('trial', 'active', 'expired', 'cancelled', 'suspended')`,
+            // Fix shifts where end_time < start_time (set end_time = start_time)
+            `UPDATE shifts SET end_time = start_time WHERE end_time IS NOT NULL AND end_time < start_time`,
+        ];
+        for (const sql of dataFixes) {
+            try {
+                const r = await client.query(sql);
+                if (r.rowCount > 0) console.log(`[DB] 🔧 Fixed ${r.rowCount} rows: ${sql.substring(0, 60)}...`);
+            } catch (e) { /* table may not exist yet */ }
+        }
+
         const checks = [
             // Montos no negativos
             `ALTER TABLE expenses ADD CONSTRAINT chk_expenses_amount CHECK (amount >= 0)`,
