@@ -55,19 +55,35 @@ module.exports = {
 
             const employee = employeeResult.rows[0];
 
-            if (!employee.main_branch_id) {
-                console.warn(`[Refresh Token] ⚠️ Empleado ${employee.email} sin sucursal principal asignada`);
-                return res.status(400).json({
-                    success: false,
-                    message: 'El empleado no tiene sucursal principal asignada'
-                });
+            let branchId = employee.main_branch_id;
+            if (!branchId) {
+                // Fallback: buscar primera branch del tenant y asignarla
+                const branchResult = await this.pool.query(
+                    'SELECT id FROM branches WHERE tenant_id = $1 ORDER BY id LIMIT 1',
+                    [employee.tenant_id]
+                );
+                if (branchResult.rows.length > 0) {
+                    branchId = branchResult.rows[0].id;
+                    // Auto-fix: asignar main_branch_id para futuros refreshes
+                    await this.pool.query(
+                        'UPDATE employees SET main_branch_id = $1 WHERE id = $2',
+                        [branchId, employee.id]
+                    );
+                    console.log(`[Refresh Token] 🔧 Auto-asignó main_branch_id=${branchId} a empleado ${employee.email}`);
+                } else {
+                    console.warn(`[Refresh Token] ⚠️ Empleado ${employee.email} sin sucursal disponible`);
+                    return res.status(400).json({
+                        success: false,
+                        message: 'No hay sucursales disponibles para este empleado'
+                    });
+                }
             }
 
             const newToken = jwt.sign(
                 {
                     employeeId: employee.id,
                     tenantId: employee.tenant_id,
-                    branchId: employee.main_branch_id,
+                    branchId: branchId,
                     roleId: employee.role_id,
                     email: employee.email
                 },
