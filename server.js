@@ -191,6 +191,64 @@ app.get('/health', async (req, res) => {
     }
 });
 
+// Diagnóstico SMTP (temporal - remover después de verificar)
+app.get('/api/test-email', async (req, res) => {
+    const to = req.query.to;
+    if (!to) return res.status(400).json({ error: 'Falta parametro ?to=email@example.com' });
+
+    const config = {
+        EMAIL_USER: process.env.EMAIL_USER ? '✅ configurado' : '❌ falta',
+        EMAIL_PASSWORD: process.env.EMAIL_PASSWORD ? '✅ configurado' : '❌ falta',
+        EMAIL_HOST: process.env.EMAIL_HOST || 'smtp.gmail.com (default)',
+        EMAIL_PORT: process.env.EMAIL_PORT || '465 (default)',
+        EMAIL_FROM: process.env.EMAIL_FROM || '(no configurado)',
+    };
+
+    console.log('[TEST-EMAIL] Config:', JSON.stringify(config));
+    console.log(`[TEST-EMAIL] Intentando enviar a: ${to}`);
+
+    try {
+        const nodemailer = require('nodemailer');
+        const port = parseInt(process.env.EMAIL_PORT || '465');
+        const secure = port === 465;
+
+        const transporter = nodemailer.createTransport({
+            host: process.env.EMAIL_HOST || 'smtp.gmail.com',
+            port,
+            secure,
+            auth: {
+                user: process.env.EMAIL_USER,
+                pass: process.env.EMAIL_PASSWORD
+            }
+        });
+
+        // Verificar conexión SMTP
+        await transporter.verify();
+        console.log('[TEST-EMAIL] ✅ Conexion SMTP verificada');
+
+        // Enviar email de prueba
+        const info = await transporter.sendMail({
+            from: process.env.EMAIL_FROM || '"SYA Test" <noreply@syatortillerias.com>',
+            to,
+            subject: 'Test SMTP - SYA Tortillerías',
+            html: '<h2>Email de prueba</h2><p>Si ves esto, el SMTP funciona correctamente.</p>'
+        });
+
+        console.log(`[TEST-EMAIL] ✅ Enviado: ${info.messageId}`);
+        res.json({ success: true, messageId: info.messageId, config });
+    } catch (err) {
+        console.error(`[TEST-EMAIL] ❌ Error:`, err.message);
+        console.error(`[TEST-EMAIL] ❌ Code:`, err.code);
+        console.error(`[TEST-EMAIL] ❌ Full:`, err);
+        res.status(500).json({
+            success: false,
+            error: err.message,
+            code: err.code,
+            config
+        });
+    }
+});
+
 // ═══════════════════════════════════════════════════════════════
 // SOCKET.IO SETUP
 // ═══════════════════════════════════════════════════════════════
