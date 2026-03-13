@@ -532,6 +532,31 @@ module.exports = (pool) => {
                     verificationEmailSent = await generateAndSendVerificationCode(
                         client, employee.id, tenantId, email, fullName
                     );
+
+                    // Si el email falla, revertir can_use_mobile_app para no dejar al empleado en estado inconsistente
+                    if (!verificationEmailSent) {
+                        console.log(`[Employees/Sync] ⚠️ Email falló, revirtiendo can_use_mobile_app a false para empleado ${employee.id}`);
+                        await client.query(
+                            `UPDATE employees SET can_use_mobile_app = false, email_verified = false, verification_code = NULL, verification_expires_at = NULL, updated_at = NOW() WHERE id = $1 AND tenant_id = $2`,
+                            [employee.id, tenantId]
+                        );
+                        // Actualizar el objeto employee para que la respuesta refleje el estado real
+                        employee.can_use_mobile_app = false;
+                        employee.email_verified = false;
+
+                        return res.status(503).json({
+                            success: false,
+                            message: 'Empleado creado, pero no se pudo enviar el correo de verificación. El acceso móvil no fue activado.',
+                            errorCode: 'EMAIL_SEND_FAILED',
+                            data: employee,
+                            id: employee.id,
+                            employeeId: employee.id,
+                            remoteId: employee.id,
+                            role: roleData,
+                            synced: true,
+                            verificationEmailSent: false
+                        });
+                    }
                 }
 
                 return res.json({
