@@ -271,9 +271,9 @@ module.exports = (pool) => {
                 [tenantId]
             ).catch(() => {});
 
-            // Nullificar FK en data_resets (evita constraint violation)
+            // Eliminar registros de data_resets del tenant (evita FK constraint violation)
             await client.query(
-                'UPDATE data_resets SET branch_id = NULL WHERE tenant_id = $1',
+                'DELETE FROM data_resets WHERE tenant_id = $1',
                 [tenantId]
             ).catch(() => {});
 
