@@ -1206,7 +1206,7 @@ async function runMigrations() {
                     console.log('[Schema] 📝 Adding offline-first columns to suppliers...');
                     await client.query(`
                         ALTER TABLE suppliers
-                        ADD COLUMN IF NOT EXISTS global_id UUID,
+                        ADD COLUMN IF NOT EXISTS global_id VARCHAR(255),
                         ADD COLUMN IF NOT EXISTS terminal_id VARCHAR(50),
                         ADD COLUMN IF NOT EXISTS local_op_seq INTEGER DEFAULT 0,
                         ADD COLUMN IF NOT EXISTS created_local_utc TIMESTAMP,
@@ -1243,6 +1243,18 @@ async function runMigrations() {
                         `);
                         console.log('[Schema] ✅ suppliers.terminal_id column size increased');
                     }
+                }
+
+                // Patch: Change suppliers.global_id from UUID to VARCHAR(255)
+                // Seed data uses string IDs like "SEED_SUPPLIER_PRODUCTOS_PROPIOS_0" which are not valid UUIDs
+                const checkSupplierGlobalIdType = await client.query(`
+                    SELECT data_type FROM information_schema.columns
+                    WHERE table_name = 'suppliers' AND column_name = 'global_id'
+                `);
+                if (checkSupplierGlobalIdType.rows.length > 0 && checkSupplierGlobalIdType.rows[0].data_type === 'uuid') {
+                    console.log('[Schema] 📝 Changing suppliers.global_id from UUID to VARCHAR(255)...');
+                    await client.query(`ALTER TABLE suppliers ALTER COLUMN global_id TYPE VARCHAR(255) USING global_id::text`);
+                    console.log('[Schema] ✅ suppliers.global_id changed to VARCHAR(255)');
                 }
             }
 

@@ -612,7 +612,7 @@ CREATE TABLE IF NOT EXISTS ventas (
         END) STORED,
 
     -- Offline-first columns (for idempotency and audit trail)
-    global_id UUID UNIQUE NOT NULL,
+    global_id VARCHAR(255) UNIQUE NOT NULL,
     terminal_id UUID NOT NULL,
     local_op_seq INTEGER NOT NULL,
     created_local_utc TEXT NOT NULL,
@@ -659,7 +659,7 @@ CREATE TABLE IF NOT EXISTS ventas_detalle (
     monto_manual_descuento NUMERIC(14,2) DEFAULT 0,
 
     -- Offline-first columns
-    global_id UUID UNIQUE NOT NULL,
+    global_id VARCHAR(255) UNIQUE NOT NULL,
     terminal_id UUID NOT NULL,
     local_op_seq INTEGER NOT NULL,
     created_local_utc TEXT NOT NULL,
@@ -711,7 +711,7 @@ CREATE TABLE IF NOT EXISTS repartidor_assignments (
     observaciones TEXT,
 
     -- Offline-first sync columns
-    global_id UUID UNIQUE NOT NULL,
+    global_id VARCHAR(255) UNIQUE NOT NULL,
     terminal_id UUID NOT NULL,
     local_op_seq INTEGER NOT NULL,
     created_local_utc TIMESTAMPTZ NOT NULL,
@@ -738,7 +738,7 @@ CREATE TABLE IF NOT EXISTS repartidor_returns (
     id SERIAL PRIMARY KEY,
 
     -- UUID for idempotency (offline-first)
-    global_id UUID UNIQUE NOT NULL,
+    global_id VARCHAR(255) UNIQUE NOT NULL,
 
     -- Relations and traceability
     assignment_id INTEGER NOT NULL REFERENCES repartidor_assignments(id) ON DELETE CASCADE,
