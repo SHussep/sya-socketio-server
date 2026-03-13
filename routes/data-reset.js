@@ -24,6 +24,25 @@ async function columnExists(client, tableName, columnName) {
     return result.rows.length > 0;
 }
 
+/**
+ * Verifica que el empleado sea owner o admin del tenant.
+ * Usa mobile_access_type del rol (NO role_id hardcodeado, ya que es auto-increment por tenant).
+ */
+async function requireOwnerOrAdmin(pool, employeeId, tenantId) {
+    const result = await pool.query(`
+        SELECT e.is_owner, r.mobile_access_type
+        FROM employees e
+        LEFT JOIN roles r ON e.role_id = r.id AND e.tenant_id = r.tenant_id
+        WHERE e.id = $1 AND e.tenant_id = $2 AND e.is_active = true
+    `, [employeeId, tenantId]);
+    if (result.rows.length === 0) return { allowed: false, reason: 'Empleado no encontrado o inactivo' };
+    const emp = result.rows[0];
+    if (!emp.is_owner && emp.mobile_access_type !== 'admin') {
+        return { allowed: false, reason: 'Solo el propietario o administradores pueden restablecer datos' };
+    }
+    return { allowed: true, isOwner: emp.is_owner };
+}
+
 async function removeGenericCustomerProtection(client, tenantId) {
     try {
         const result = await client.query(
@@ -134,6 +153,13 @@ module.exports = (pool) => {
                 return res.status(400).json({ success: false, message: 'branchId y tenantId son requeridos' });
             }
 
+            // Role check: solo owner o admin pueden restablecer datos
+            const authCheck = await requireOwnerOrAdmin(pool, req.user.employeeId, tenantId);
+            if (!authCheck.allowed) {
+                client.release();
+                return res.status(403).json({ success: false, message: authCheck.reason });
+            }
+
             const branchCheck = await client.query(
                 'SELECT id, name FROM branches WHERE id = $1 AND tenant_id = $2',
                 [branchId, tenantId]
@@ -198,6 +224,13 @@ module.exports = (pool) => {
                 return res.status(400).json({ success: false, message: 'tenantId es requerido' });
             }
 
+            // Role check: solo owner o admin pueden restablecer datos
+            const authCheck = await requireOwnerOrAdmin(pool, req.user.employeeId, tenantId);
+            if (!authCheck.allowed) {
+                client.release();
+                return res.status(403).json({ success: false, message: authCheck.reason });
+            }
+
             const branchesResult = await client.query(
                 'SELECT id, name FROM branches WHERE tenant_id = $1', [tenantId]
             );
@@ -245,6 +278,13 @@ module.exports = (pool) => {
     router.get('/status/:tenantId', authenticateToken, async (req, res) => {
         try {
             const tenantId = req.user.tenantId;
+
+            // Role check: solo owner o admin pueden ver historial de resets
+            const authCheck = await requireOwnerOrAdmin(pool, req.user.employeeId, tenantId);
+            if (!authCheck.allowed) {
+                return res.status(403).json({ success: false, message: authCheck.reason });
+            }
+
             const resets = await pool.query(`
                 SELECT dr.*, b.name as branch_name FROM data_resets dr
                 LEFT JOIN branches b ON dr.branch_id = b.id
@@ -256,6 +296,150 @@ module.exports = (pool) => {
             res.json({ success: true, data: { branches: branches.rows, resets: resets.rows } });
         } catch (error) {
             res.status(500).json({ success: false, message: 'Error al obtener estado' });
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
+    // GET /api/data-reset/branch/:branchId/can-delete
+    // Pre-check: ¿se puede eliminar esta sucursal?
+    // ─────────────────────────────────────────────────────────
+    router.get('/branch/:branchId/can-delete', authenticateToken, async (req, res) => {
+        try {
+            const branchId = parseInt(req.params.branchId);
+            const tenantId = req.user.tenantId;
+
+            // Solo owner puede eliminar sucursales
+            const ownerCheck = await pool.query(
+                'SELECT is_owner FROM employees WHERE id = $1 AND tenant_id = $2 AND is_active = true',
+                [req.user.employeeId, tenantId]
+            );
+            if (!ownerCheck.rows[0]?.is_owner) {
+                return res.json({
+                    success: true,
+                    data: { canDelete: false, reason: 'Solo el propietario puede eliminar sucursales' }
+                });
+            }
+
+            const branchCheck = await pool.query(
+                'SELECT id, name FROM branches WHERE id = $1 AND tenant_id = $2',
+                [branchId, tenantId]
+            );
+            if (branchCheck.rows.length === 0) {
+                return res.status(404).json({ success: false, message: 'Sucursal no encontrada' });
+            }
+
+            const branchCount = await pool.query(
+                'SELECT COUNT(*)::int as count FROM branches WHERE tenant_id = $1',
+                [tenantId]
+            );
+
+            res.json({
+                success: true,
+                data: {
+                    canDelete: true,
+                    branchName: branchCheck.rows[0].name,
+                    isLastBranch: branchCount.rows[0].count <= 1,
+                    totalBranches: branchCount.rows[0].count
+                }
+            });
+        } catch (error) {
+            console.error('[DATA-RESET] ❌ Error en can-delete:', error.message);
+            res.status(500).json({ success: false, message: 'Error verificando eliminación' });
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
+    // DELETE /api/data-reset/branch/:branchId
+    // Elimina la sucursal PERMANENTEMENTE (estructura + datos)
+    // Solo OWNER puede ejecutar esto
+    // ─────────────────────────────────────────────────────────
+    router.delete('/branch/:branchId', authenticateToken, async (req, res) => {
+        const client = await pool.connect();
+        try {
+            const branchId = parseInt(req.params.branchId);
+            const tenantId = req.user.tenantId;
+            const employeeId = req.user.employeeId;
+
+            if (!branchId || !tenantId) {
+                client.release();
+                return res.status(400).json({ success: false, message: 'branchId y tenantId son requeridos' });
+            }
+
+            // OWNER-ONLY (más destructivo que reset)
+            const ownerCheck = await pool.query(
+                'SELECT is_owner FROM employees WHERE id = $1 AND tenant_id = $2 AND is_active = true',
+                [employeeId, tenantId]
+            );
+            if (!ownerCheck.rows[0]?.is_owner) {
+                client.release();
+                return res.status(403).json({
+                    success: false,
+                    message: 'Solo el propietario puede eliminar una sucursal'
+                });
+            }
+
+            // Verificar que el branch existe y pertenece al tenant
+            const branchCheck = await client.query(
+                'SELECT id, name FROM branches WHERE id = $1 AND tenant_id = $2',
+                [branchId, tenantId]
+            );
+            if (branchCheck.rows.length === 0) {
+                client.release();
+                return res.status(404).json({ success: false, message: 'Sucursal no encontrada' });
+            }
+            const branchName = branchCheck.rows[0].name;
+
+            // Contar branches del tenant
+            const branchCount = await client.query(
+                'SELECT COUNT(*)::int as count FROM branches WHERE tenant_id = $1',
+                [tenantId]
+            );
+            const isLastBranch = branchCount.rows[0].count <= 1;
+
+            console.log(`\n[DATA-RESET] 🗑️ DELETE BRANCH "${branchName}" (Branch ${branchId}, Tenant ${tenantId}, last=${isLastBranch})`);
+
+            await client.query('BEGIN');
+
+            const resetAt = new Date();
+
+            // Auditoría ANTES del delete (FK se rompería después)
+            await client.query(`
+                INSERT INTO data_resets (tenant_id, branch_id, reset_scope, reset_at, purge_after, purged_at, requested_by_employee_id, requested_from, records_purged)
+                VALUES ($1, $2, 'branch-delete', $3, $3, $3, $4, 'desktop', $5)
+            `, [tenantId, isLastBranch ? null : branchId, resetAt, employeeId,
+                JSON.stringify({ action: 'delete-branch', branchName, isLastBranch })]);
+
+            // Liberar licencias del branch antes del CASCADE
+            await client.query(
+                "UPDATE branch_licenses SET status = 'available', branch_id = NULL, updated_at = NOW() WHERE branch_id = $1 AND tenant_id = $2",
+                [branchId, tenantId]
+            ).catch(() => {}); // Tabla puede no existir
+
+            if (isLastBranch) {
+                // Última sucursal → eliminar tenant completo (CASCADE borra branches + todo)
+                await client.query('DELETE FROM tenants WHERE id = $1', [tenantId]);
+                console.log(`[DATA-RESET] 🗑️ Tenant ${tenantId} eliminado (última sucursal)`);
+            } else {
+                // Eliminar solo esta sucursal (CASCADE borra datos hijos)
+                await client.query('DELETE FROM branches WHERE id = $1 AND tenant_id = $2', [branchId, tenantId]);
+                console.log(`[DATA-RESET] 🗑️ Branch ${branchId} eliminado`);
+            }
+
+            await client.query('COMMIT');
+
+            res.json({
+                success: true,
+                message: isLastBranch
+                    ? `Sucursal "${branchName}" y todo el negocio eliminados (era la última sucursal)`
+                    : `Sucursal "${branchName}" eliminada permanentemente`,
+                data: { branchId, branchName, isLastBranch, deletedAt: resetAt.toISOString() }
+            });
+        } catch (error) {
+            await client.query('ROLLBACK').catch(() => {});
+            console.error('[DATA-RESET] ❌ Error eliminando sucursal:', error.message);
+            res.status(500).json({ success: false, message: 'Error al eliminar sucursal', error: error.message });
+        } finally {
+            client.release();
         }
     });
 
