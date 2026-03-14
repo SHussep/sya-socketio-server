@@ -1027,6 +1027,34 @@ module.exports = (pool, io) => {
         }
     });
 
+    // GET /api/expenses/pending-review-count - Count total de gastos pendientes por branch
+    router.get('/pending-review-count', async (req, res) => {
+        try {
+            const { branch_id, tenant_id } = req.query;
+            if (!branch_id || !tenant_id) {
+                return res.status(400).json({ success: false, message: 'branch_id y tenant_id son requeridos' });
+            }
+
+            const result = await pool.query(`
+                SELECT COUNT(*) as count
+                FROM expenses e
+                JOIN shifts s ON e.id_turno = s.id
+                WHERE e.branch_id = $1
+                  AND e.tenant_id = $2
+                  AND e.reviewed_by_desktop = false
+                  AND e.is_active = true
+                  AND (e.local_op_seq IS NULL OR e.local_op_seq = 0)
+                  AND s.is_cash_cut_open = true
+            `, [branch_id, tenant_id]);
+
+            const count = parseInt(result.rows[0].count) || 0;
+            res.json({ success: true, count });
+        } catch (error) {
+            console.error('[Expenses/PendingReviewCount] Error:', error);
+            res.status(500).json({ success: false, message: 'Error al obtener conteo' });
+        }
+    });
+
     // PATCH /api/expenses/:global_id/approve - Aprobar gasto móvil
     router.patch('/:global_id/approve', async (req, res) => {
         try {
