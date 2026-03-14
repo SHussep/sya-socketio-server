@@ -64,7 +64,7 @@ module.exports = (pool) => {
                        credito_limite as credit_limit, saldo_deudor as current_balance, nota as notes, is_system_generic,
                        created_at, updated_at
                 FROM customers
-                WHERE tenant_id = $1
+                WHERE tenant_id = $1 AND activo = TRUE
             `;
 
             // Por defecto, ocultar el cliente genérico en listados
