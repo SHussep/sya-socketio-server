@@ -1459,7 +1459,7 @@ module.exports = (pool) => {
 
             // Verify employee exists and belongs to tenant
             const employeeCheck = await client.query(
-                `SELECT id, email, first_name, last_name, role_id, can_use_mobile_app, is_active, global_id, main_branch_id, is_owner FROM employees
+                `SELECT id, email, first_name, last_name, role_id, can_use_mobile_app, mobile_access_type, is_active, global_id, main_branch_id, is_owner FROM employees
                  WHERE id = $1 AND tenant_id = $2`,
                 [employeeId, tenantId]
             );
@@ -1487,7 +1487,7 @@ module.exports = (pool) => {
                         errorCode: 'OWNER_PROTECTED'
                     });
                 }
-                if (canUseMobileApp !== undefined) {
+                if (canUseMobileApp !== undefined && canUseMobileApp !== employee.can_use_mobile_app) {
                     console.log(`[Employees/Update] 🛡️ Intento de cambiar acceso móvil del owner: ${ownerName} (ID: ${employeeId})`);
                     return res.status(403).json({
                         success: false,
@@ -1495,7 +1495,7 @@ module.exports = (pool) => {
                         errorCode: 'OWNER_PROTECTED'
                     });
                 }
-                if (mobileAccessType !== undefined) {
+                if (mobileAccessType !== undefined && mobileAccessType !== employee.mobile_access_type) {
                     console.log(`[Employees/Update] 🛡️ Intento de cambiar tipo de acceso del owner: ${ownerName} (ID: ${employeeId})`);
                     return res.status(403).json({
                         success: false,
