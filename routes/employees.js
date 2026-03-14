@@ -1478,8 +1478,9 @@ module.exports = (pool) => {
             // ═════════════════════════════════════════════════════════════
             if (employee.is_owner === true) {
                 const ownerName = `${employee.first_name || ''} ${employee.last_name || ''}`.trim();
-                if (roleId !== undefined || roleName !== undefined) {
-                    console.log(`[Employees/Update] 🛡️ Intento de cambiar rol del owner: ${ownerName} (ID: ${employeeId})`);
+                // Solo bloquear si el rol REALMENTE cambia (no si simplemente viene en el payload sin cambiar)
+                if (roleId !== undefined && roleId !== employee.role_id) {
+                    console.log(`[Employees/Update] 🛡️ Intento de cambiar rol del owner: ${ownerName} (ID: ${employeeId}) de ${employee.role_id} a ${roleId}`);
                     return res.status(403).json({
                         success: false,
                         message: 'No se puede modificar el rol del propietario del sistema',
