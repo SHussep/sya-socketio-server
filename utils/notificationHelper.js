@@ -973,14 +973,15 @@ async function notifyPreparationModeDeactivated(tenantId, branchId, { operatorNa
  * @param {number} branchId - ID de la sucursal
  * @param {object} params - Datos del cambio
  */
-async function notifyManualWeightOverrideChanged(tenantId, branchId, { employeeName, branchName, isActivated, timestamp }) {
+async function notifyManualWeightOverrideChanged(tenantId, branchId, { employeeName, branchName, isActivated, timestamp, reason }) {
     try {
         const action = isActivated ? 'activó' : 'desactivó';
         const emoji = isActivated ? '⚠️' : '✅';
         const title = isActivated
             ? `⚠️ Peso Manual Activado [${branchName}]`
             : `✅ Peso Manual Desactivado [${branchName}]`;
-        const body = `${employeeName} ${action} el modo de peso manual`;
+        const reasonText = reason ? `. Razón: ${reason}` : '';
+        const body = `${employeeName} ${action} el modo de peso manual${reasonText}`;
 
         const result = await sendNotificationToAdminsInTenant(tenantId, {
             title,
@@ -992,7 +993,8 @@ async function notifyManualWeightOverrideChanged(tenantId, branchId, { employeeN
                 branchId: branchId.toString(),
                 tenantId: tenantId.toString(),
                 isActivated: isActivated.toString(),
-                timestamp: timestamp || new Date().toISOString()
+                timestamp: timestamp || new Date().toISOString(),
+                reason: reason || ''
             }
         }, { notificationType: 'notify_guardian' });
 
@@ -1007,7 +1009,7 @@ async function notifyManualWeightOverrideChanged(tenantId, branchId, { employeeN
             event_type: 'manual_weight_override_changed',
             title,
             body,
-            data: { employeeName, branchName, branchId, tenantId, isActivated, timestamp }
+            data: { employeeName, branchName, branchId, tenantId, isActivated, timestamp, reason }
         });
 
         return result;

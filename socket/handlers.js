@@ -476,6 +476,7 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
             console.log(`[PREPMODE]   Sucursal: ${data.branchName}`);
             console.log(`[PREPMODE]   Operador: ${data.operatorName}`);
             console.log(`[PREPMODE]   Duración: ${data.durationFormatted} (${data.severity})`);
+            if (data.razonCierre) console.log(`[PREPMODE]   Razón cierre: ${data.razonCierre}`);
 
             socket.to(roomName).emit('preparation_mode_deactivated', {
                 ...data,
@@ -524,6 +525,7 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
             console.log(`[WEIGHT-OVERRIDE] Peso Manual ${action} en sucursal ${data.branchId} (tenant ${data.tenantId})`);
             console.log(`[WEIGHT-OVERRIDE]   Sucursal: ${data.branchName}`);
             console.log(`[WEIGHT-OVERRIDE]   Empleado: ${data.employeeName} (ID: ${data.employeeId})`);
+            if (data.reason) console.log(`[WEIGHT-OVERRIDE]   Razón: ${data.reason}`);
 
             socket.to(roomName).emit('manual_weight_override_changed', {
                 ...data,
@@ -536,7 +538,8 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
                         employeeName: data.employeeName,
                         branchName: data.branchName,
                         isActivated: data.isActivated,
-                        timestamp: data.timestamp
+                        timestamp: data.timestamp,
+                        reason: data.reason
                     });
                     console.log(`[WEIGHT-OVERRIDE] Notificación FCM enviada a administradores del tenant ${data.tenantId}`);
                 } catch (error) {
