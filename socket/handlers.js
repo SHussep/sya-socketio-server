@@ -521,7 +521,7 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
             console.log(`[PREPMODE]   Sucursal: ${data.branchName}`);
             console.log(`[PREPMODE]   Operador: ${data.operatorName}`);
             console.log(`[PREPMODE]   Duración: ${data.durationFormatted} (${data.severity})`);
-            if (data.razonCierre) console.log(`[PREPMODE]   Razón cierre: ${data.razonCierre}`);
+            console.log(`[PREPMODE]   razonCierre: '${data.razonCierre || 'NULL'}' | reason: '${data.reason || 'NULL'}'`);
 
             socket.to(roomName).emit('preparation_mode_deactivated', {
                 ...data,
