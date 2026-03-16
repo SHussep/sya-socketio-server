@@ -435,7 +435,7 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
                 console.error(`[PREPMODE] Error cerrando huérfanos: ${e.message}`);
             }
 
-            io.to(roomName).emit('preparation_mode_activated', {
+            socket.to(roomName).emit('preparation_mode_activated', {
                 ...data,
                 receivedAt: new Date().toISOString()
             });
@@ -477,7 +477,7 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
             console.log(`[PREPMODE]   Operador: ${data.operatorName}`);
             console.log(`[PREPMODE]   Duración: ${data.durationFormatted} (${data.severity})`);
 
-            io.to(roomName).emit('preparation_mode_deactivated', {
+            socket.to(roomName).emit('preparation_mode_deactivated', {
                 ...data,
                 receivedAt: new Date().toISOString()
             });
@@ -525,7 +525,7 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
             console.log(`[WEIGHT-OVERRIDE]   Sucursal: ${data.branchName}`);
             console.log(`[WEIGHT-OVERRIDE]   Empleado: ${data.employeeName} (ID: ${data.employeeId})`);
 
-            io.to(roomName).emit('manual_weight_override_changed', {
+            socket.to(roomName).emit('manual_weight_override_changed', {
                 ...data,
                 receivedAt: new Date().toISOString()
             });

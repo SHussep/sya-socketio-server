@@ -302,8 +302,9 @@ async function sendNotificationToAdminsInTenant(tenantId, { title, body, data = 
         // Obtener dispositivos de empleados con acceso móvil de tipo 'admin'
         // Buscar por mobile_access_type en la tabla roles (NO por nombre de rol)
         // Filtrar por TENANT (todas las sucursales del negocio)
+        // DISTINCT ON (employee_id) para enviar solo 1 FCM por admin (el token más reciente)
         const query = excludeEmployeeId
-            ? `SELECT DISTINCT dt.device_token, dt.employee_id, b.name as branch_name
+            ? `SELECT DISTINCT ON (dt.employee_id) dt.device_token, dt.employee_id, b.name as branch_name
                FROM device_tokens dt
                JOIN employees e ON dt.employee_id = e.id
                JOIN roles r ON e.role_id = r.id
@@ -311,15 +312,17 @@ async function sendNotificationToAdminsInTenant(tenantId, { title, body, data = 
                WHERE b.tenant_id = $1
                  AND dt.is_active = true
                  AND r.mobile_access_type = 'admin'
-                 AND e.id != $2`
-            : `SELECT DISTINCT dt.device_token, dt.employee_id, b.name as branch_name
+                 AND e.id != $2
+               ORDER BY dt.employee_id, dt.updated_at DESC`
+            : `SELECT DISTINCT ON (dt.employee_id) dt.device_token, dt.employee_id, b.name as branch_name
                FROM device_tokens dt
                JOIN employees e ON dt.employee_id = e.id
                JOIN roles r ON e.role_id = r.id
                JOIN branches b ON dt.branch_id = b.id
                WHERE b.tenant_id = $1
                  AND dt.is_active = true
-                 AND r.mobile_access_type = 'admin'`;
+                 AND r.mobile_access_type = 'admin'
+               ORDER BY dt.employee_id, dt.updated_at DESC`;
 
         const result = excludeEmployeeId
             ? await pool.query(query, [tenantId, excludeEmployeeId])

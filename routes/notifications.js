@@ -89,6 +89,20 @@ router.post('/register-device', async (req, res) => {
             }
         }
 
+        // 3. Desactivar tokens anteriores del mismo empleado+plataforma
+        //    Evita FCM duplicados cuando Firebase renueva el token sin deviceId
+        if (employeeId && platform) {
+            const deactivatedByEmployee = await pool.query(
+                `UPDATE device_tokens
+                 SET is_active = false, updated_at = CURRENT_TIMESTAMP
+                 WHERE employee_id = $1 AND platform = $2 AND device_token != $3 AND is_active = true`,
+                [employeeId, platform, deviceToken]
+            );
+            if (deactivatedByEmployee.rowCount > 0) {
+                console.log(`[Notifications] 🧹 Deactivated ${deactivatedByEmployee.rowCount} old token(s) by employee ${employeeId}+${platform}`);
+            }
+        }
+
         // Obtener tenant_id: usar el proporcionado, o inferirlo del empleado
         let resolvedTenantId = tenantId;
         if (!resolvedTenantId) {
