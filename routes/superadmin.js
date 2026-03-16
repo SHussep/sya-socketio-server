@@ -439,6 +439,15 @@ module.exports = function(pool, io) {
                 ORDER BY bl.status DESC, bl.created_at ASC
             `, [id]);
 
+            // Último seguimiento enviado
+            const followupResult = await pool.query(`
+                SELECT id, sent_to, subject, scenario, sent_at
+                FROM followup_emails
+                WHERE tenant_id = $1
+                ORDER BY sent_at DESC
+                LIMIT 1
+            `, [id]);
+
             const now = new Date();
             const trialEndsAt = tenant.trial_ends_at ? new Date(tenant.trial_ends_at) : null;
             const daysRemaining = trialEndsAt ? Math.ceil((trialEndsAt - now) / (1000 * 60 * 60 * 24)) : null;
@@ -517,7 +526,13 @@ module.exports = function(pool, io) {
                     businessMetrics: {
                         totalSales: parseInt(salesResult.rows[0]?.total_sales || 0),
                         totalRevenue: parseFloat(salesResult.rows[0]?.total_revenue || 0)
-                    }
+                    },
+                    lastFollowup: followupResult.rows.length > 0 ? {
+                        subject: followupResult.rows[0].subject,
+                        sentTo: followupResult.rows[0].sent_to,
+                        scenario: followupResult.rows[0].scenario,
+                        sentAt: followupResult.rows[0].sent_at
+                    } : null
                 }
             });
 
@@ -665,7 +680,7 @@ module.exports = function(pool, io) {
     router.post('/tenants/:id/send-followup', async (req, res) => {
         try {
             const { id } = req.params;
-            const { subject, body } = req.body;
+            const { subject, body, scenario } = req.body;
 
             if (!subject || !body) {
                 return res.status(400).json({
@@ -712,6 +727,12 @@ module.exports = function(pool, io) {
                 });
             }
 
+            // Guardar registro del envío
+            await pool.query(`
+                INSERT INTO followup_emails (tenant_id, sent_to, subject, scenario)
+                VALUES ($1, $2, $3, $4)
+            `, [id, owner.email, subject, scenario || null]);
+
             console.log(`[Followup Email] ✉️ Enviado a ${owner.email} (tenant ${id}) — "${subject}"`);
 
             res.json({
@@ -726,6 +747,40 @@ module.exports = function(pool, io) {
                 success: false,
                 message: 'Error al enviar email de seguimiento',
                 error: undefined
+            });
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
+    // GET /api/superadmin/tenants/:id/followups
+    // Historial de emails de seguimiento enviados a un tenant
+    // ─────────────────────────────────────────────────────────
+    router.get('/tenants/:id/followups', async (req, res) => {
+        try {
+            const { id } = req.params;
+            const result = await pool.query(`
+                SELECT id, sent_to, subject, scenario, sent_at
+                FROM followup_emails
+                WHERE tenant_id = $1
+                ORDER BY sent_at DESC
+                LIMIT 20
+            `, [id]);
+
+            res.json({
+                success: true,
+                data: result.rows.map(r => ({
+                    id: r.id,
+                    sentTo: r.sent_to,
+                    subject: r.subject,
+                    scenario: r.scenario,
+                    sentAt: r.sent_at
+                }))
+            });
+        } catch (error) {
+            console.error('[Followup History] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al obtener historial de seguimientos'
             });
         }
     });

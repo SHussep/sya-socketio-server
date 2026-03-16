@@ -2535,6 +2535,29 @@ async function runMigrations() {
                 console.error(`[Schema] ⚠️ employee_branches backfill error: ${ebErr.message}`);
             }
 
+            // Patch: Create followup_emails table for tracking sent followup emails
+            try {
+                await client.query(`
+                    CREATE TABLE IF NOT EXISTS followup_emails (
+                        id SERIAL PRIMARY KEY,
+                        tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+                        sent_to VARCHAR(255) NOT NULL,
+                        subject TEXT NOT NULL,
+                        scenario VARCHAR(50),
+                        sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                `);
+                await client.query(`
+                    CREATE INDEX IF NOT EXISTS idx_followup_emails_tenant ON followup_emails(tenant_id)
+                `);
+                await client.query(`
+                    CREATE INDEX IF NOT EXISTS idx_followup_emails_sent_at ON followup_emails(sent_at DESC)
+                `);
+                console.log('[Schema] ✅ followup_emails table ready');
+            } catch (followupErr) {
+                console.error(`[Schema] ⚠️ followup_emails table error: ${followupErr.message}`);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {
