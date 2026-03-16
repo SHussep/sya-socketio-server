@@ -112,14 +112,15 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
                     if (socketId !== socket.id
                         && otherSocket.clientType === 'mobile'
                         && otherSocket.user?.employeeId === myEmployeeId) {
-                        console.log(`[SESSION] 🔒 Kicking duplicate mobile session ${socketId} for employee ${myEmployeeId}`);
+                        console.log(`[SESSION] 🔒 Sending force_logout to duplicate mobile session ${socketId} for employee ${myEmployeeId}`);
                         otherSocket.emit('force_logout', {
                             reason: 'Se inició sesión en otro dispositivo',
                             newSocketId: socket.id,
                             timestamp: new Date().toISOString()
                         });
-                        // Give client a moment to process before disconnecting
-                        setTimeout(() => otherSocket.disconnect(true), 1000);
+                        // No disconnect forzado — la app móvil maneja el logout
+                        // y cierra su propia conexión. Si la app no tiene el handler
+                        // aún, simplemente ignora el evento y no se crea un loop.
                     }
                 }
             }
