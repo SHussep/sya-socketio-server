@@ -272,7 +272,7 @@ app.use('/api/employees', employeesRoutes);
 app.use('/api/cancelaciones', cancelacionesRoutes(pool));
 app.use('/api/employee-roles', employeeRolesRoutes);
 app.use('/api/customers', customersRoutes(pool));
-app.use('/api/productos', productosRoutes(pool));
+app.use('/api/productos', productosRoutes(pool, io));
 app.use('/api/categorias-productos', categoriasProductosRoutes(pool));
 app.use('/api/credit-payments', creditPaymentsRoutes(pool));
 app.use('/api/suspicious-weighing-logs', suspiciousWeighingLogsRoutes(pool, io));

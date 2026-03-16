@@ -28,8 +28,29 @@ function authenticateToken(req, res, next) {
     });
 }
 
-module.exports = (pool) => {
+module.exports = (pool, io) => {
     const router = express.Router();
+
+    // ═══════════════════════════════════════════════════════════════
+    // HELPER: Emitir product_updated a todas las branches del tenant
+    // Productos son tenant-wide, se emite a TODAS las branches activas
+    // ═══════════════════════════════════════════════════════════════
+    async function emitProductUpdate(tenantId, productData, action) {
+        if (!io) return;
+        try {
+            const branches = await pool.query(
+                'SELECT id FROM branches WHERE tenant_id = $1 AND is_active = true',
+                [tenantId]
+            );
+            const payload = { ...productData, action, updatedAt: new Date().toISOString() };
+            for (const b of branches.rows) {
+                io.to(`branch_${b.id}`).emit('product_updated', payload);
+            }
+            console.log(`[Productos] 📡 product_updated emitido a ${branches.rows.length} branches (action=${action})`);
+        } catch (err) {
+            console.error('[Productos] ⚠️ Error emitting product_updated:', err.message);
+        }
+    }
 
     // ═══════════════════════════════════════════════════════════════
     // GET /api/productos - Lista de productos del tenant
@@ -417,6 +438,26 @@ module.exports = (pool) => {
 
             console.log(`[Productos/Sync] ✅ Producto ${action}: ${descripcion} (ID: ${producto.id}, ProveedorID: ${resolvedProveedorId})`);
 
+            // 📡 Emitir a Desktop/Mobile vía Socket.IO
+            await emitProductUpdate(tenant_id, {
+                id: producto.id,
+                id_producto: producto.id_producto,
+                global_id: producto.global_id,
+                descripcion: producto.descripcion,
+                categoria: producto.categoria,
+                precio_compra: parseFloat(producto.precio_compra || 0),
+                precio_venta: parseFloat(producto.precio_venta || 0),
+                produccion: producto.produccion,
+                inventariar: producto.inventariar,
+                notificar: producto.notificar,
+                minimo: parseFloat(producto.minimo || 0),
+                inventario: parseFloat(producto.inventario || 0),
+                bascula: producto.bascula,
+                is_pos_shortcut: producto.is_pos_shortcut,
+                image_url: producto.image_url,
+                eliminado: producto.eliminado,
+            }, producto.inserted ? 'created' : 'updated');
+
             res.json({
                 success: true,
                 message: `Producto ${action.toLowerCase()} correctamente`,
@@ -627,6 +668,13 @@ module.exports = (pool) => {
             }
 
             console.log(`[Productos] ✅ Producto eliminado (soft): ${result.rows[0].descripcion}`);
+
+            // 📡 Emitir a Desktop/Mobile vía Socket.IO
+            await emitProductUpdate(tenant_id, {
+                global_id,
+                eliminado: true,
+                descripcion: result.rows[0].descripcion,
+            }, 'deleted');
 
             res.json({
                 success: true,
@@ -941,6 +989,13 @@ module.exports = (pool) => {
             );
 
             console.log(`[Productos/UploadImage] ✅ Imagen subida: ${result.url}${isSeed ? ' (producto seed personalizado)' : ''}`);
+
+            // 📡 Emitir a Desktop/Mobile vía Socket.IO
+            await emitProductUpdate(tenant_id, {
+                global_id,
+                id_producto: product_id,
+                image_url: result.url,
+            }, 'image_updated');
 
             res.json({
                 success: true,
