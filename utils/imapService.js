@@ -1,9 +1,10 @@
 // ═══════════════════════════════════════════════════════════
-// SERVICIO IMAP - Lectura de bandeja de entrada (info@)
+// SERVICIO IMAP - Lectura de bandeja info@
 // Usa ImapFlow para conectar al buzón de EMAIL_INFO_USER
 // ═══════════════════════════════════════════════════════════
 
 const { ImapFlow } = require('imapflow');
+const { simpleParser } = require('mailparser');
 
 function getImapConfig() {
     return {
@@ -19,12 +20,13 @@ function getImapConfig() {
 }
 
 /**
- * Fetch recent inbox messages (headers + preview only).
- * @param {number} limit  Max messages to return (default 30)
- * @param {number} page   1-based page number
+ * Fetch recent messages from a mailbox folder.
+ * @param {string} folder  IMAP folder name (e.g. 'INBOX', 'Sent', 'INBOX.Sent')
+ * @param {number} limit   Max messages to return (default 30)
+ * @param {number} page    1-based page number
  * @returns {Promise<{messages: Array, total: number}>}
  */
-async function fetchInboxMessages(limit = 30, page = 1) {
+async function fetchMessages(folder = 'INBOX', limit = 30, page = 1) {
     if (!process.env.EMAIL_INFO_USER || !process.env.EMAIL_INFO_PASSWORD) {
         throw new Error('EMAIL_INFO_USER / EMAIL_INFO_PASSWORD no configurados');
     }
@@ -34,7 +36,7 @@ async function fetchInboxMessages(limit = 30, page = 1) {
     try {
         await client.connect();
 
-        const lock = await client.getMailboxLock('INBOX');
+        const lock = await client.getMailboxLock(folder);
         try {
             const mailbox = client.mailbox;
             const total = mailbox.exists || 0;
@@ -61,12 +63,15 @@ async function fetchInboxMessages(limit = 30, page = 1) {
             })) {
                 const env = msg.envelope;
                 const from = env.from && env.from[0] ? env.from[0] : {};
+                const to = env.to && env.to[0] ? env.to[0] : {};
 
                 messages.push({
                     uid: msg.uid,
                     seq: msg.seq,
                     from: from.address || '',
                     fromName: from.name || from.address || '',
+                    to: to.address || '',
+                    toName: to.name || to.address || '',
                     subject: env.subject || '(sin asunto)',
                     date: env.date ? env.date.toISOString() : null,
                     isSeen: msg.flags.has('\\Seen'),
@@ -88,10 +93,11 @@ async function fetchInboxMessages(limit = 30, page = 1) {
 
 /**
  * Fetch a single email by UID with full body.
- * @param {number} uid  The IMAP UID
+ * @param {number} uid     The IMAP UID
+ * @param {string} folder  IMAP folder (default 'INBOX')
  * @returns {Promise<Object>}
  */
-async function fetchEmailByUid(uid) {
+async function fetchEmailByUid(uid, folder = 'INBOX') {
     if (!process.env.EMAIL_INFO_USER || !process.env.EMAIL_INFO_PASSWORD) {
         throw new Error('EMAIL_INFO_USER / EMAIL_INFO_PASSWORD no configurados');
     }
@@ -101,9 +107,8 @@ async function fetchEmailByUid(uid) {
     try {
         await client.connect();
 
-        const lock = await client.getMailboxLock('INBOX');
+        const lock = await client.getMailboxLock(folder);
         try {
-            // Fetch envelope + full source
             const msg = await client.fetchOne(uid, {
                 envelope: true,
                 flags: true,
@@ -118,8 +123,6 @@ async function fetchEmailByUid(uid) {
             const from = env.from && env.from[0] ? env.from[0] : {};
             const to = env.to && env.to[0] ? env.to[0] : {};
 
-            // Parse the raw source to extract html and text parts
-            const { simpleParser } = require('mailparser');
             const parsed = await simpleParser(msg.source);
 
             return {
@@ -127,6 +130,7 @@ async function fetchEmailByUid(uid) {
                 from: from.address || '',
                 fromName: from.name || from.address || '',
                 to: to.address || '',
+                toName: to.name || to.address || '',
                 subject: env.subject || '(sin asunto)',
                 date: env.date ? env.date.toISOString() : null,
                 isSeen: msg.flags.has('\\Seen'),
@@ -141,4 +145,17 @@ async function fetchEmailByUid(uid) {
     }
 }
 
-module.exports = { fetchInboxMessages, fetchEmailByUid };
+// Convenience wrappers
+const fetchInboxMessages = (limit, page) => fetchMessages('INBOX', limit, page);
+const fetchSentMessages = (limit, page) => fetchMessages('Sent', limit, page);
+const fetchInboxEmail = (uid) => fetchEmailByUid(uid, 'INBOX');
+const fetchSentEmail = (uid) => fetchEmailByUid(uid, 'Sent');
+
+module.exports = {
+    fetchMessages,
+    fetchEmailByUid,
+    fetchInboxMessages,
+    fetchSentMessages,
+    fetchInboxEmail,
+    fetchSentEmail,
+};

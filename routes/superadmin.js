@@ -7,7 +7,7 @@ const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const { superadminRateLimiter } = require('../middleware/rateLimiter');
 const { sendEmail, sendFollowupEmail } = require('../utils/emailService');
-const { fetchInboxMessages, fetchEmailByUid } = require('../utils/imapService');
+const { fetchInboxMessages, fetchSentMessages, fetchInboxEmail, fetchSentEmail } = require('../utils/imapService');
 
 // PIN hasheado (SHA256) - OBLIGATORIO via variable de entorno
 const SUPER_ADMIN_PIN_HASH = process.env.SUPER_ADMIN_PIN_HASH;
@@ -828,7 +828,7 @@ module.exports = function(pool, io) {
                 });
             }
 
-            const email = await fetchEmailByUid(uid);
+            const email = await fetchInboxEmail(uid);
 
             if (!email) {
                 return res.status(404).json({
@@ -846,6 +846,71 @@ module.exports = function(pool, io) {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener email',
+                error: error.message
+            });
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
+    // GET /api/superadmin/sent
+    // Bandeja de salida (correos enviados) del buzón info@
+    // ─────────────────────────────────────────────────────────
+    router.get('/sent', async (req, res) => {
+        try {
+            const limit = Math.min(parseInt(req.query.limit) || 30, 50);
+            const page = parseInt(req.query.page) || 1;
+
+            const result = await fetchSentMessages(limit, page);
+
+            res.json({
+                success: true,
+                data: result.messages,
+                total: result.total,
+                page,
+                limit
+            });
+        } catch (error) {
+            console.error('[Sent] Error fetching messages:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Error al obtener bandeja de salida',
+                error: error.message
+            });
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
+    // GET /api/superadmin/sent/:uid
+    // Detalle de un correo enviado por UID
+    // ─────────────────────────────────────────────────────────
+    router.get('/sent/:uid', async (req, res) => {
+        try {
+            const uid = parseInt(req.params.uid);
+            if (!uid || isNaN(uid)) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'UID inválido'
+                });
+            }
+
+            const email = await fetchSentEmail(uid);
+
+            if (!email) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Email no encontrado'
+                });
+            }
+
+            res.json({
+                success: true,
+                data: email
+            });
+        } catch (error) {
+            console.error('[Sent] Error fetching email:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Error al obtener email enviado',
                 error: error.message
             });
         }
