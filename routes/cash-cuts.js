@@ -439,7 +439,7 @@ module.exports = (pool) => {
                             total_repartidor_expenses = EXCLUDED.total_repartidor_expenses,
                             has_consolidated_liquidaciones = EXCLUDED.has_consolidated_liquidaciones,
                             consolidated_repartidor_names = EXCLUDED.consolidated_repartidor_names
-                        RETURNING *`,
+                        RETURNING *, (xmax = 0) AS was_inserted`,
                         [
                             effectiveTenantId, branchId, resolvedShiftId, shiftEmployeeId,
                             startTime, endTime,
@@ -476,11 +476,14 @@ module.exports = (pool) => {
 
                     await client.query('COMMIT');
 
-                    results.push({ success: true, data: insertResult.rows[0] });
-                    console.log(`[CashCuts/Sync] ✅ Cash cut synced for shift ${shiftId}`);
+                    const cashCutRow = insertResult.rows[0];
+                    const wasInserted = cashCutRow.was_inserted;
+                    results.push({ success: true, data: cashCutRow });
+                    console.log(`[CashCuts/Sync] ✅ Cash cut synced for shift ${shiftId} (${wasInserted ? 'INSERT' : 'UPDATE'})`);
 
                     // 🔔 ENVIAR NOTIFICACIÓN FCM SI ES CIERRE DE TURNO
-                    if (isClosed) {
+                    // ✅ Solo en INSERT real (wasInserted) - en re-sync/UPDATE no reenviar FCM
+                    if (wasInserted && isClosed) {
                         try {
                             // Obtener datos del empleado
                             const employeeData = await pool.query(

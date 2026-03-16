@@ -1168,7 +1168,8 @@ module.exports = (pool, io) => {
             }
 
             // 🔔 ENVIAR NOTIFICACIONES FCM SI ES CIERRE DE TURNO
-            if (is_cash_cut_open === false && end_time) {
+            // ✅ Solo en INSERT real (wasInserted) - en re-sync/UPDATE no reenviar FCM
+            if (wasInserted && is_cash_cut_open === false && end_time) {
                 console.log(`[Sync/Shifts] 📨 Detectado cierre de turno - Enviando notificaciones FCM`);
 
                 try {
