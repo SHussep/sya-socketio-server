@@ -425,6 +425,71 @@ module.exports = (pool) => {
             const totalDineroNoRegistrado = guardianKilosDetail.reduce((sum, item) => sum + item.totalAmountLost, 0);
 
             // ═══════════════════════════════════════════════════════════════
+            // PRODUCTO ESTRELLA - Producto más vendido por cantidad (kg)
+            // Se usa para estimar pérdida cuando los kilos no registrados
+            // no tienen producto asociado (additional_data_json sin ProductId)
+            // ═══════════════════════════════════════════════════════════════
+            let productoEstrella = null;
+            const totalKilosNoReg = parseFloat(guardianKilosResult.rows[0].total_kg);
+            if (totalKilosNoReg > 0 && totalDineroNoRegistrado === 0) {
+                let topProductQuery = `
+                    SELECT
+                        p.descripcion as product_name,
+                        COALESCE(pbp.precio_venta, p.precio_venta) as price_per_unit,
+                        SUM(vd.cantidad) as total_qty,
+                        SUM(vd.total_linea) as total_revenue
+                    FROM ventas v
+                    JOIN ventas_detalle vd ON vd.id_venta = v.id_venta
+                    JOIN productos p ON vd.id_producto = p.id AND p.tenant_id = v.tenant_id
+                    LEFT JOIN productos_branch_precios pbp ON
+                        pbp.producto_id = p.id
+                        AND pbp.branch_id = v.branch_id
+                        AND pbp.eliminado = FALSE
+                    LEFT JOIN units_of_measure um ON p.unidad_medida_id = um.id
+                    WHERE v.tenant_id = $1
+                    AND p.bascula = TRUE
+                    AND (
+                        (v.estado_venta_id = 3 AND ${dateFilter.replace(/fecha_venta_utc/g, 'v.fecha_venta_utc')})
+                        OR
+                        (v.estado_venta_id = 5 AND ${dateFilter.replace(/fecha_venta_utc/g, 'COALESCE(v.fecha_liquidacion_utc, v.fecha_venta_utc)')})
+                    )`;
+                let topProductParams = [tenantId];
+                let topProdParamIndex = 2;
+
+                if (shouldFilterByBranch) {
+                    topProductQuery += ` AND v.branch_id = $${topProdParamIndex}`;
+                    topProductParams.push(targetBranchId);
+                    topProdParamIndex++;
+                }
+
+                if (shift_id) {
+                    topProductQuery += ` AND v.id_turno = $${topProdParamIndex}`;
+                    topProductParams.push(parseInt(shift_id));
+                    topProdParamIndex++;
+                }
+
+                topProductQuery += ` GROUP BY p.id, p.descripcion, p.precio_venta, pbp.precio_venta
+                    ORDER BY total_qty DESC LIMIT 1`;
+
+                try {
+                    const topProductResult = await pool.query(topProductQuery, topProductParams);
+                    if (topProductResult.rows.length > 0) {
+                        const row = topProductResult.rows[0];
+                        const pricePerUnit = parseFloat(row.price_per_unit || 0);
+                        productoEstrella = {
+                            name: row.product_name,
+                            pricePerKg: pricePerUnit,
+                            totalQtySold: parseFloat(row.total_qty),
+                            estimatedLoss: pricePerUnit * totalKilosNoReg
+                        };
+                        console.log(`[Dashboard Summary] Producto estrella: ${productoEstrella.name} @ $${pricePerUnit}/kg, estimated loss: $${productoEstrella.estimatedLoss}`);
+                    }
+                } catch (err) {
+                    console.error(`[Dashboard Summary] Error fetching producto estrella:`, err.message);
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════════════
             // EVENTOS GUARDIAN NO LEÍDOS - Para badge de alertas
             // Tabla: suspicious_weighing_logs (usa is_hidden para determinar si fue "leído")
             // ═══════════════════════════════════════════════════════════════
@@ -610,6 +675,7 @@ module.exports = (pool) => {
                     totalKilosNoRegistrados: parseFloat(guardianKilosResult.rows[0].total_kg),
                     totalDineroNoRegistrado: totalDineroNoRegistrado,
                     kilosNoRegistradosDetail: guardianKilosDetail,
+                    productoEstrella: productoEstrella,
                     totalAssignments: parseInt(assignmentsResult.rows[0].total_assignments),
                     activeAssignments: parseInt(assignmentsResult.rows[0].active_assignments),
                     activeAssignmentsAmount: parseFloat(assignmentsResult.rows[0].active_amount),

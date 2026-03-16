@@ -87,6 +87,17 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
             if (data.type === 'desktop') stats.desktopClients++;
             else if (data.type === 'mobile') stats.mobileClients++;
             console.log(`[IDENTIFY] ${socket.id} → ${data.type} (Sucursal: ${socket.branchId})`);
+
+            // Broadcast desktop online status to the branch room
+            if (data.type === 'desktop' && socket.branchId) {
+                io.to(`branch_${socket.branchId}`).emit('desktop_status_changed', {
+                    branchId: parseInt(socket.branchId),
+                    online: true,
+                    socketId: socket.id,
+                    timestamp: new Date().toISOString()
+                });
+                console.log(`[IDENTIFY] 📡 desktop_status_changed → branch_${socket.branchId} online=true`);
+            }
         });
 
         socket.on('scale_alert', async (data) => {
@@ -768,6 +779,17 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
         // ═══════════════════════════════════════════════════════════════
 
         socket.on('disconnect', () => {
+            // Broadcast desktop offline status BEFORE decrementing stats
+            if (socket.clientType === 'desktop' && socket.branchId) {
+                io.to(`branch_${socket.branchId}`).emit('desktop_status_changed', {
+                    branchId: parseInt(socket.branchId),
+                    online: false,
+                    socketId: socket.id,
+                    timestamp: new Date().toISOString()
+                });
+                console.log(`[DISCONNECT] 📡 desktop_status_changed → branch_${socket.branchId} online=false`);
+            }
+
             if (socket.clientType === 'desktop') stats.desktopClients = Math.max(0, stats.desktopClients - 1);
             else if (socket.clientType === 'mobile') stats.mobileClients = Math.max(0, stats.mobileClients - 1);
             console.log(`[DISCONNECT] ${socket.id} (${socket.clientType})`);
