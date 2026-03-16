@@ -42,7 +42,10 @@ module.exports = (pool, io) => {
                 'SELECT id FROM branches WHERE tenant_id = $1 AND is_active = true',
                 [tenantId]
             );
-            const payload = { ...productData, action, updatedAt: new Date().toISOString() };
+            // Normalizar id_producto a string (puede llegar como number desde upload-image)
+            const normalized = { ...productData };
+            if (normalized.id_producto != null) normalized.id_producto = String(normalized.id_producto);
+            const payload = { ...normalized, action, updatedAt: new Date().toISOString() };
             for (const b of branches.rows) {
                 io.to(`branch_${b.id}`).emit('product_updated', payload);
             }
