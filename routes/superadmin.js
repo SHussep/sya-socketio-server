@@ -6,6 +6,7 @@
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const { superadminRateLimiter } = require('../middleware/rateLimiter');
+const { sendEmail } = require('../utils/emailService');
 
 // PIN hasheado (SHA256) - OBLIGATORIO via variable de entorno
 const SUPER_ADMIN_PIN_HASH = process.env.SUPER_ADMIN_PIN_HASH;
@@ -652,6 +653,78 @@ module.exports = function(pool, io) {
             res.status(500).json({
                 success: false,
                 message: 'Error al actualizar tenant',
+                error: undefined
+            });
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
+    // POST /api/superadmin/tenants/:id/send-followup
+    // Enviar email de seguimiento al owner del tenant
+    // ─────────────────────────────────────────────────────────
+    router.post('/tenants/:id/send-followup', async (req, res) => {
+        try {
+            const { id } = req.params;
+            const { subject, body } = req.body;
+
+            if (!subject || !body) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Se requiere "subject" y "body"'
+                });
+            }
+
+            // Buscar el email del owner del tenant
+            const ownerResult = await pool.query(`
+                SELECT e.email, e.first_name, e.last_name
+                FROM employees e
+                WHERE e.tenant_id = $1
+                  AND e.is_owner = true
+                  AND e.is_active = true
+                LIMIT 1
+            `, [id]);
+
+            if (ownerResult.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'No se encontró un owner activo con email para este tenant'
+                });
+            }
+
+            const owner = ownerResult.rows[0];
+            if (!owner.email) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'El owner de este tenant no tiene email registrado'
+                });
+            }
+
+            const sent = await sendEmail({
+                to: owner.email,
+                subject,
+                html: body
+            });
+
+            if (!sent) {
+                return res.status(500).json({
+                    success: false,
+                    message: 'Error al enviar el email. Verifica la configuración SMTP.'
+                });
+            }
+
+            console.log(`[Followup Email] ✉️ Enviado a ${owner.email} (tenant ${id}) — "${subject}"`);
+
+            res.json({
+                success: true,
+                message: `Email enviado a ${owner.email}`,
+                data: { sentTo: owner.email }
+            });
+
+        } catch (error) {
+            console.error('[Followup Email] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al enviar email de seguimiento',
                 error: undefined
             });
         }

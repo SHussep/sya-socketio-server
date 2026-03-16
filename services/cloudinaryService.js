@@ -344,6 +344,94 @@ async function uploadBusinessLogo(base64Image, options) {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// MARKETING IMAGES (emails de seguimiento)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * IDs de las imágenes de marketing para emails de seguimiento.
+ *
+ * Sube cada imagen a Cloudinary con el public_id indicado y el sistema
+ * las referenciará automáticamente en los correos.
+ *
+ * Imágenes recomendadas:
+ *   hero-guardian    — Dashboard mostrando alertas de fraude detectadas
+ *   hero-repartidor  — Mapa con rastreo de repartidores en tiempo real
+ *   hero-reportes    — Vista general del panel de reportes/analíticas
+ *   hero-bascula     — Báscula conectada al sistema funcionando
+ *   alert-urgente    — Banner rojo de urgencia para pruebas por vencer
+ *   hero-app         — App móvil + escritorio lado a lado
+ */
+const MARKETING_IMAGES = {
+  'hero-guardian': 'sya-marketing/hero-guardian',
+  'hero-repartidor': 'sya-marketing/hero-repartidor',
+  'hero-reportes': 'sya-marketing/hero-reportes',
+  'hero-bascula': 'sya-marketing/hero-bascula',
+  'alert-urgente': 'sya-marketing/alert-urgente',
+  'hero-app': 'sya-marketing/hero-app',
+};
+
+/**
+ * Sube una imagen de marketing a Cloudinary
+ * @param {string} base64Image - Imagen en Base64
+ * @param {string} imageKey - Key del MARKETING_IMAGES (e.g. 'hero-guardian')
+ * @returns {Promise<{url: string, publicId: string}>}
+ */
+async function uploadMarketingImage(base64Image, imageKey) {
+  if (!isConfigured()) {
+    throw new Error('Cloudinary no está configurado');
+  }
+
+  const publicId = MARKETING_IMAGES[imageKey];
+  if (!publicId) {
+    throw new Error(`Imagen de marketing desconocida: ${imageKey}. Válidas: ${Object.keys(MARKETING_IMAGES).join(', ')}`);
+  }
+
+  let imageData = base64Image;
+  if (!base64Image.startsWith('data:')) {
+    imageData = `data:image/jpeg;base64,${base64Image}`;
+  }
+
+  console.log(`[Cloudinary] 📤 Subiendo imagen de marketing: ${publicId}...`);
+  const startTime = Date.now();
+
+  const result = await cloudinary.uploader.upload(imageData, {
+    public_id: publicId,
+    overwrite: true,
+    invalidate: true,
+    resource_type: 'image',
+    transformation: [
+      { width: 560, height: 300, crop: 'fill', gravity: 'center' },
+      { quality: 'auto:good' },
+      { fetch_format: 'auto' },
+    ],
+    tags: ['marketing', 'email', imageKey],
+  });
+
+  const elapsed = Date.now() - startTime;
+  console.log(`[Cloudinary] ✅ Imagen de marketing subida en ${elapsed}ms: ${result.secure_url}`);
+
+  return { url: result.secure_url, publicId: result.public_id };
+}
+
+/**
+ * Obtiene la URL optimizada de una imagen de marketing
+ * @param {string} imageKey - Key del MARKETING_IMAGES
+ * @returns {string|null} URL o null si no configurado
+ */
+function getMarketingImageUrl(imageKey) {
+  if (!isConfigured()) return null;
+  const publicId = MARKETING_IMAGES[imageKey];
+  if (!publicId) return null;
+  return cloudinary.url(publicId, {
+    width: 560,
+    crop: 'limit',
+    quality: 'auto:good',
+    fetch_format: 'auto',
+    secure: true,
+  });
+}
+
 module.exports = {
   // Receipts (gastos)
   uploadReceiptImage,
@@ -358,4 +446,8 @@ module.exports = {
   SEED_PRODUCT_IMAGES,
   // Logo de negocio
   uploadBusinessLogo,
+  // Marketing (emails)
+  uploadMarketingImage,
+  getMarketingImageUrl,
+  MARKETING_IMAGES,
 };
