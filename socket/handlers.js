@@ -10,6 +10,8 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
     const SCALE_FCM_DEBOUNCE_MS = 15000;
     const lastPrepModeFcm = new Map(); // key: "branchId:eventType" → timestamp
     const PREPMODE_FCM_DEBOUNCE_MS = 30000; // 30s — prep mode events are less frequent
+    const lastShiftFcm = new Map(); // key: "branchId:shift_started" → timestamp
+    const SHIFT_FCM_DEBOUNCE_MS = 30000; // 30s — evita doble FCM si se re-inicia turno
 
     function shouldSendScaleFcm(branchId, eventType) {
         const key = `${branchId}:${eventType}`;
@@ -20,6 +22,18 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
             return false;
         }
         lastScaleFcm.set(key, now);
+        return true;
+    }
+
+    function shouldSendShiftFcm(branchId, eventType) {
+        const key = `${branchId}:${eventType}`;
+        const now = Date.now();
+        const last = lastShiftFcm.get(key);
+        if (last && (now - last) < SHIFT_FCM_DEBOUNCE_MS) {
+            console.log(`[SHIFT] ⏭️ FCM debounce: ${eventType} para branch ${branchId} (${Math.round((now - last) / 1000)}s desde último)`);
+            return false;
+        }
+        lastShiftFcm.set(key, now);
         return true;
     }
 
@@ -243,14 +257,16 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
             const roomName = `branch_${data.branchId}`;
             console.log(`[USER-LOGIN] Sucursal ${data.branchId}: ${data.employeeName} (${data.employeeRole}) inició sesión`);
 
-            io.to(roomName).emit('user-login', { ...data, receivedAt: new Date().toISOString() });
+            // No reenviar scaleStatus en el broadcast — la app móvil consulta el estado por separado
+            const { scaleStatus, ...broadcastData } = data;
+            io.to(roomName).emit('user-login', { ...broadcastData, receivedAt: new Date().toISOString() });
 
             try {
                 await notificationHelper.notifyUserLogin(data.branchId, {
                     employeeId: data.employeeId,
                     employeeName: data.employeeName,
                     branchName: data.branchName,
-                    scaleStatus: data.scaleStatus || 'unknown',
+                    scaleStatus: scaleStatus || 'unknown',
                     isReviewMode: data.isReviewMode || false
                 });
                 console.log(`[FCM] 📨 Notificación de login enviada a sucursal ${data.branchId}${data.isReviewMode ? ' (modo consulta)' : ''}`);
@@ -285,14 +301,15 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
                 if (shiftResult.rows.length > 0) {
                     console.log(`[SHIFT] ✅ Turno #${data.shiftId} actualizado en PostgreSQL`);
 
-                    await notificationHelper.notifyShiftStarted(data.branchId, {
-                        employeeName: data.employeeName,
-                        branchName: data.branchName,
-                        initialAmount: data.initialAmount,
-                        startTime: data.startTime
-                    });
-
-                    console.log(`[FCM] 📨 Notificación de inicio de turno enviada a sucursal ${data.branchId}`);
+                    if (shouldSendShiftFcm(data.branchId, 'shift_started')) {
+                        await notificationHelper.notifyShiftStarted(data.branchId, {
+                            employeeName: data.employeeName,
+                            branchName: data.branchName,
+                            initialAmount: data.initialAmount,
+                            startTime: data.startTime
+                        });
+                        console.log(`[FCM] 📨 Notificación de inicio de turno enviada a sucursal ${data.branchId}`);
+                    }
                 } else {
                     console.log(`[SHIFT] ⚠️ No se encontró turno #${data.shiftId} en PostgreSQL`);
                 }
