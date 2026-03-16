@@ -80,7 +80,8 @@ module.exports = function(pool, io) {
                 telemetryResult,
                 scaleConfigResult,
                 recentTenantsResult,
-                subscriptionDistribution
+                subscriptionDistribution,
+                trialExtensionsResult
             ] = await Promise.all([
                 // Total tenants
                 pool.query('SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE is_active = true) as active FROM tenants'),
@@ -123,6 +124,27 @@ module.exports = function(pool, io) {
                     JOIN subscriptions s ON t.subscription_id = s.id
                     GROUP BY s.name
                     ORDER BY count DESC
+                `),
+
+                // Trial extensions tracking (followups with trialExpired scenario)
+                pool.query(`
+                    SELECT
+                        fe.tenant_id,
+                        fe.sent_to,
+                        fe.sent_at,
+                        t.business_name,
+                        t.subscription_status,
+                        EXISTS (
+                            SELECT 1 FROM telemetry_events te
+                            WHERE te.tenant_id = fe.tenant_id
+                              AND te.event_type = 'app_open'
+                              AND te.event_timestamp > fe.sent_at
+                        ) AS came_back,
+                        (t.subscription_status = 'active') AS converted
+                    FROM followup_emails fe
+                    JOIN tenants t ON t.id = fe.tenant_id
+                    WHERE fe.scenario = 'trialExpired'
+                    ORDER BY fe.sent_at DESC
                 `)
             ]);
 
@@ -163,6 +185,22 @@ module.exports = function(pool, io) {
                     statusDistribution: statusResult.rows,
                     alerts: {
                         trialsExpiringSoon: parseInt(expiringResult.rows[0].expiring_soon)
+                    },
+                    trialExtensions: {
+                        summary: {
+                            totalSent: trialExtensionsResult.rows.length,
+                            cameBack: trialExtensionsResult.rows.filter(r => r.came_back).length,
+                            converted: trialExtensionsResult.rows.filter(r => r.converted).length
+                        },
+                        tenants: trialExtensionsResult.rows.map(r => ({
+                            tenantId: r.tenant_id,
+                            businessName: r.business_name,
+                            sentTo: r.sent_to,
+                            sentAt: r.sent_at,
+                            cameBack: r.came_back,
+                            converted: r.converted,
+                            subscriptionStatus: r.subscription_status
+                        }))
                     }
                 }
             });
@@ -945,6 +983,65 @@ module.exports = function(pool, io) {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener suscripciones',
+                error: undefined
+            });
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
+    // POST /api/superadmin/subscriptions
+    // Crear nuevo plan de suscripción
+    // ─────────────────────────────────────────────────────────
+    router.post('/subscriptions', async (req, res) => {
+        try {
+            const {
+                name,
+                maxBranches,
+                maxDevices,
+                maxDevicesPerBranch,
+                maxEmployees,
+                features,
+                isActive
+            } = req.body;
+
+            if (!name || maxBranches === undefined || maxDevices === undefined || maxDevicesPerBranch === undefined) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Campos requeridos: name, maxBranches, maxDevices, maxDevicesPerBranch'
+                });
+            }
+
+            const result = await pool.query(`
+                INSERT INTO subscriptions (name, max_branches, max_devices, max_devices_per_branch, max_employees, features, is_active)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                RETURNING *
+            `, [
+                name,
+                maxBranches,
+                maxDevices,
+                maxDevicesPerBranch,
+                maxEmployees || null,
+                features ? JSON.stringify(features) : null,
+                isActive !== undefined ? isActive : true
+            ]);
+
+            res.status(201).json({
+                success: true,
+                message: 'Plan creado exitosamente',
+                data: result.rows[0]
+            });
+
+        } catch (error) {
+            console.error('[SuperAdmin Create Subscription] Error:', error);
+            if (error.code === '23505') {
+                return res.status(409).json({
+                    success: false,
+                    message: 'Ya existe un plan con ese nombre'
+                });
+            }
+            res.status(500).json({
+                success: false,
+                message: 'Error al crear suscripción',
                 error: undefined
             });
         }
