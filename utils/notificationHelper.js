@@ -851,14 +851,17 @@ async function notifyAssignmentCreated(employeeGlobalId, { assignmentId, quantit
  * @param {number} branchId - ID de la sucursal (para guardar en historial)
  * @param {object} params - Datos de la activación
  */
-async function notifyPreparationModeActivated(tenantId, branchId, { operatorName, authorizerName, branchName, reason, activatedAt }) {
+async function notifyPreparationModeActivated(tenantId, branchId, { operatorName, authorizerName, branchName, reason, activatedAt, title: customTitle, body: customBody }) {
     try {
         const reasonText = reason ? ` - ${reason}` : '';
 
+        const fcmTitle = customTitle || `Modo Preparacion [${branchName}]`;
+        const fcmBody = customBody || `${operatorName} activo el Modo Preparacion${authorizerName !== operatorName ? ` (autorizado por ${authorizerName})` : ''}${reasonText}`;
+
         // Enviar notificación a TODOS los administradores/encargados del TENANT
         const result = await sendNotificationToAdminsInTenant(tenantId, {
-            title: `Modo Preparacion [${branchName}]`,
-            body: `${operatorName} activo el Modo Preparacion${authorizerName !== operatorName ? ` (autorizado por ${authorizerName})` : ''}${reasonText}`,
+            title: fcmTitle,
+            body: fcmBody,
             data: {
                 type: 'preparation_mode_activated',
                 operatorName,
@@ -900,7 +903,7 @@ async function notifyPreparationModeActivated(tenantId, branchId, { operatorName
  * @param {number} branchId - ID de la sucursal
  * @param {object} params - Datos de la desactivación
  */
-async function notifyPreparationModeDeactivated(tenantId, branchId, { operatorName, branchName, durationFormatted, severity, deactivatedAt, reason, weighingCycleCount = 0, totalWeightKg = 0 }) {
+async function notifyPreparationModeDeactivated(tenantId, branchId, { operatorName, branchName, durationFormatted, severity, deactivatedAt, reason, weighingCycleCount = 0, totalWeightKg = 0, title: customTitle, body: customBody }) {
     try {
         // Determinar emoji/icono según severidad
         const severityInfo = {
@@ -912,15 +915,18 @@ async function notifyPreparationModeDeactivated(tenantId, branchId, { operatorNa
         const info = severityInfo[severity] || { emoji: '⚪', text: severity };
 
         // Construir body con datos de pesaje si los hay
-        let body = `${operatorName} finalizó - Duración: ${durationFormatted} (${info.emoji} ${info.text})`;
+        let defaultBody = `${operatorName} finalizó - Duración: ${durationFormatted} (${info.emoji} ${info.text})`;
         if (weighingCycleCount > 0) {
-            body += ` | Pesajes: ${weighingCycleCount}, Total: ${Number(totalWeightKg).toFixed(3)}kg`;
+            defaultBody += ` | Pesajes: ${weighingCycleCount}, Total: ${Number(totalWeightKg).toFixed(3)}kg`;
         }
+
+        const fcmTitle = customTitle || `Modo Preparacion Finalizado [${branchName}]`;
+        const fcmBody = customBody || defaultBody;
 
         // Enviar notificacion a TODOS los administradores/encargados del TENANT
         const result = await sendNotificationToAdminsInTenant(tenantId, {
-            title: `Modo Preparacion Finalizado [${branchName}]`,
-            body,
+            title: fcmTitle,
+            body: fcmBody,
             data: {
                 type: 'preparation_mode_deactivated',
                 operatorName,

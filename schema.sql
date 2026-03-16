@@ -1046,6 +1046,10 @@ CREATE TABLE IF NOT EXISTS scale_disconnection_logs (
     reviewed_at TIMESTAMPTZ,
     reviewed_by_employee_id INTEGER REFERENCES employees(id) ON DELETE SET NULL,
 
+    -- Operator Justification (suspicious reconnections)
+    operator_justification TEXT,
+    required_justification BOOLEAN DEFAULT FALSE,
+
     -- Visibility (soft delete)
     is_hidden BOOLEAN DEFAULT FALSE,
 

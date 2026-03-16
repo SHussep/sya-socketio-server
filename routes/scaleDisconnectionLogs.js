@@ -23,7 +23,9 @@ module.exports = (pool) => {
                 terminal_id,
                 local_op_seq,
                 created_local_utc,
-                device_event_raw
+                device_event_raw,
+                operator_justification,
+                required_justification
             } = req.body;
 
             // Validar campos requeridos
@@ -75,10 +77,12 @@ module.exports = (pool) => {
                     local_op_seq,
                     created_local_utc,
                     device_event_raw,
+                    operator_justification,
+                    required_justification,
                     created_at,
                     updated_at
                 ) VALUES (
-                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW()
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW(), NOW()
                 )
                 ON CONFLICT (global_id) DO UPDATE
                 SET
@@ -86,6 +90,8 @@ module.exports = (pool) => {
                     duration_minutes = EXCLUDED.duration_minutes,
                     disconnection_status = EXCLUDED.disconnection_status,
                     notes = EXCLUDED.notes,
+                    operator_justification = EXCLUDED.operator_justification,
+                    required_justification = EXCLUDED.required_justification,
                     updated_at = NOW()
                 RETURNING id, global_id, created_at`,
                 [
@@ -103,7 +109,9 @@ module.exports = (pool) => {
                     terminal_id,
                     local_op_seq,
                     created_local_utc,
-                    device_event_raw
+                    device_event_raw,
+                    operator_justification || null,
+                    required_justification || false
                 ]
             );
 

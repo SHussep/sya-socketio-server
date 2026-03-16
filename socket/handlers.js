@@ -412,16 +412,28 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
                 receivedAt: new Date().toISOString()
             });
 
-            if (shouldSendPrepModeFcm(data.branchId, 'activated')) {
+            // Enviar FCM: siempre si es fuera de ventana, o según debounce normal
+            const isSuspicious = data.fueraDeVentana === true;
+            if (isSuspicious || shouldSendPrepModeFcm(data.branchId, 'activated')) {
                 try {
+                    const hora = data.activatedAt ? new Date(data.activatedAt).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }) : 'N/A';
+                    const title = isSuspicious
+                        ? 'Guardian — Alistamiento fuera de horario'
+                        : 'Guardian — Alistamiento activado';
+                    const body = isSuspicious
+                        ? `${data.operatorName} activó alistamiento a las ${hora} (fuera de horario). Razón: ${data.razonActivacion || 'Sin razón'}`
+                        : `${data.operatorName} activó alistamiento. Autorizado por: ${data.authorizerName}`;
+
                     await notificationHelper.notifyPreparationModeActivated(data.tenantId, data.branchId, {
                         operatorName: data.operatorName,
                         authorizerName: data.authorizerName,
                         branchName: data.branchName,
-                        reason: data.reason,
-                        activatedAt: data.activatedAt
+                        reason: data.razonActivacion || data.reason,
+                        activatedAt: data.activatedAt,
+                        title,
+                        body
                     });
-                    console.log(`[PREPMODE] 📨 Notificación FCM enviada a administradores del tenant ${data.tenantId}`);
+                    console.log(`[PREPMODE] 📨 Notificación FCM enviada${isSuspicious ? ' (FUERA DE HORARIO)' : ''} al tenant ${data.tenantId}`);
                 } catch (error) {
                     console.error(`[PREPMODE] ⚠️ Error enviando notificación FCM:`, error.message);
                 }
@@ -442,19 +454,31 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
                 receivedAt: new Date().toISOString()
             });
 
-            if (shouldSendPrepModeFcm(data.branchId, 'deactivated')) {
+            // Enviar FCM: siempre si sesión < 3 min (sospechosa), o según debounce normal
+            const durationSecs = parseFloat(data.durationSeconds) || 0;
+            const isShortSession = durationSecs < 180; // < 3 minutos
+            if (isShortSession || shouldSendPrepModeFcm(data.branchId, 'deactivated')) {
                 try {
+                    const title = isShortSession
+                        ? `Guardian — Sesión muy corta (${data.severity})`
+                        : 'Guardian — Alistamiento desactivado';
+                    const body = isShortSession
+                        ? `${data.operatorName}: alistamiento de ${data.durationFormatted}. Razón: ${data.razonCierre || data.reason || 'Sin razón'}`
+                        : `${data.operatorName}: alistamiento de ${data.durationFormatted} (${data.severity})`;
+
                     await notificationHelper.notifyPreparationModeDeactivated(data.tenantId, data.branchId, {
                         operatorName: data.operatorName,
                         branchName: data.branchName,
                         durationFormatted: data.durationFormatted,
                         severity: data.severity,
                         deactivatedAt: data.deactivatedAt,
-                        reason: data.reason,
+                        reason: data.razonCierre || data.reason,
                         weighingCycleCount: data.weighingCycleCount || 0,
-                        totalWeightKg: data.totalWeightKg || 0
+                        totalWeightKg: data.totalWeightKg || 0,
+                        title,
+                        body
                     });
-                    console.log(`[PREPMODE] 📨 Notificación de desactivación FCM enviada a administradores del tenant ${data.tenantId}`);
+                    console.log(`[PREPMODE] 📨 FCM desactivación enviada${isShortSession ? ' (SESIÓN CORTA)' : ''} al tenant ${data.tenantId}`);
                 } catch (error) {
                     console.error(`[PREPMODE] ⚠️ Error enviando notificación FCM de desactivación:`, error.message);
                 }

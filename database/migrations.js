@@ -252,6 +252,26 @@ async function runMigrations() {
                 }
             }
 
+            // Patch: Add operator_justification fields to scale_disconnection_logs
+            if (checkDisconnectionTable.rows[0].exists) {
+                const checkJustification = await client.query(`
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'scale_disconnection_logs'
+                    AND column_name = 'operator_justification'
+                `);
+
+                if (checkJustification.rows.length === 0) {
+                    console.log('[Schema] 📝 Adding missing columns: scale_disconnection_logs.operator_justification, required_justification');
+                    await client.query(`
+                        ALTER TABLE scale_disconnection_logs
+                        ADD COLUMN operator_justification TEXT,
+                        ADD COLUMN required_justification BOOLEAN DEFAULT FALSE
+                    `);
+                    console.log('[Schema] ✅ Columns operator_justification + required_justification added successfully');
+                }
+            }
+
             // Patch: Create employee_debts table if missing (for cash drawer shortages)
             console.log('[Schema] 🔍 Checking employee_debts table...');
             const checkEmployeeDebtsTable = await client.query(`
@@ -1725,6 +1745,37 @@ async function runMigrations() {
                 console.log('[Schema] ✅ Severidades recalculadas para logs existentes');
             } catch (patchError) {
                 console.log('[Schema] ⚠️ Patch preparation_mode_logs:', patchError.message);
+            }
+
+            // Patch: Alistamiento improvements (v2) - justification fields + time windows
+            console.log('[Schema] 🔍 Patching preparation_mode_logs (alistamiento v2)...');
+            try {
+                await client.query(`ALTER TABLE preparation_mode_logs ADD COLUMN IF NOT EXISTS fuera_de_ventana BOOLEAN DEFAULT FALSE`);
+                await client.query(`ALTER TABLE preparation_mode_logs ADD COLUMN IF NOT EXISTS razon_activacion TEXT`);
+                await client.query(`ALTER TABLE preparation_mode_logs ADD COLUMN IF NOT EXISTS razon_cierre TEXT`);
+                await client.query(`ALTER TABLE preparation_mode_logs ADD COLUMN IF NOT EXISTS requirio_justificacion_activacion BOOLEAN DEFAULT FALSE`);
+                await client.query(`ALTER TABLE preparation_mode_logs ADD COLUMN IF NOT EXISTS requirio_justificacion_cierre BOOLEAN DEFAULT FALSE`);
+                await client.query(`ALTER TABLE preparation_mode_logs ADD COLUMN IF NOT EXISTS notificacion_enviada BOOLEAN DEFAULT FALSE`);
+                console.log('[Schema] ✅ Campos de alistamiento v2 verificados en preparation_mode_logs');
+
+                // Create preparation_mode_windows table
+                await client.query(`
+                    CREATE TABLE IF NOT EXISTS preparation_mode_windows (
+                        id SERIAL PRIMARY KEY,
+                        tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                        branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+                        name VARCHAR(100) NOT NULL,
+                        start_time TIME NOT NULL,
+                        end_time TIME NOT NULL,
+                        is_active BOOLEAN DEFAULT TRUE,
+                        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+                    )
+                `);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_prep_windows_tenant_branch ON preparation_mode_windows(tenant_id, branch_id)`);
+                console.log('[Schema] ✅ Tabla preparation_mode_windows verificada');
+            } catch (patchError) {
+                console.log('[Schema] ⚠️ Patch alistamiento v2:', patchError.message);
             }
 
             // 3. Always run seeds (idempotent - uses ON CONFLICT)

@@ -95,6 +95,8 @@ module.exports = function(pool, io) {
                             was_reviewed, review_notes, reviewed_at, reviewed_by_employee_id,
                             status,
                             weighing_cycle_count, total_weight_kg, cycle_weights_json,
+                            fuera_de_ventana, razon_activacion, razon_cierre,
+                            requirio_justificacion_activacion, requirio_justificacion_cierre, notificacion_enviada,
                             global_id, terminal_id, local_op_seq, device_event_raw, created_local_utc
                         ) VALUES (
                             $1, $2, $3,
@@ -104,7 +106,9 @@ module.exports = function(pool, io) {
                             $11, $12, $13, $14,
                             $15,
                             $16, $17, $18,
-                            $19, $20, $21, $22, $23
+                            $19, $20, $21,
+                            $22, $23, $24,
+                            $25, $26, $27, $28, $29
                         )
                         ON CONFLICT (global_id) DO UPDATE SET
                             deactivated_at = EXCLUDED.deactivated_at,
@@ -118,6 +122,9 @@ module.exports = function(pool, io) {
                             weighing_cycle_count = EXCLUDED.weighing_cycle_count,
                             total_weight_kg = EXCLUDED.total_weight_kg,
                             cycle_weights_json = EXCLUDED.cycle_weights_json,
+                            razon_cierre = EXCLUDED.razon_cierre,
+                            requirio_justificacion_cierre = EXCLUDED.requirio_justificacion_cierre,
+                            notificacion_enviada = EXCLUDED.notificacion_enviada,
                             updated_at = CURRENT_TIMESTAMP
                         RETURNING id, (xmax = 0) AS inserted, severity
                     `, [
@@ -139,6 +146,12 @@ module.exports = function(pool, io) {
                         log.weighing_cycle_count || 0,
                         log.total_weight_kg ? parseFloat(log.total_weight_kg) : 0,
                         log.cycle_weights_json || null,
+                        log.fuera_de_ventana || false,
+                        log.razon_activacion || null,
+                        log.razon_cierre || null,
+                        log.requirio_justificacion_activacion || false,
+                        log.requirio_justificacion_cierre || false,
+                        log.notificacion_enviada || false,
                         log.global_id,
                         log.terminal_id,
                         log.local_op_seq || 0,
@@ -639,6 +652,132 @@ module.exports = function(pool, io) {
                 success: false,
                 message: 'Error al eliminar log'
             });
+        }
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // PREPARATION MODE WINDOWS - CRUD para ventanas horarias de alistamiento
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    // GET /api/preparation-mode/windows - Listar ventanas de una sucursal
+    router.get('/windows', async (req, res) => {
+        try {
+            const { tenant_id, branch_id } = req.query;
+            if (!tenant_id || !branch_id) {
+                return res.status(400).json({ success: false, message: 'tenant_id y branch_id son requeridos' });
+            }
+
+            const result = await pool.query(
+                `SELECT * FROM preparation_mode_windows
+                 WHERE tenant_id = $1 AND branch_id = $2
+                 ORDER BY start_time`,
+                [parseInt(tenant_id), parseInt(branch_id)]
+            );
+
+            res.json({ success: true, data: result.rows });
+        } catch (error) {
+            console.error('[PrepMode/Windows] Error:', error.message);
+            res.status(500).json({ success: false, message: 'Error al obtener ventanas' });
+        }
+    });
+
+    // POST /api/preparation-mode/windows - Crear ventana
+    router.post('/windows', async (req, res) => {
+        try {
+            const { tenant_id, branch_id, name, start_time, end_time, is_active } = req.body;
+            if (!tenant_id || !branch_id || !name || !start_time || !end_time) {
+                return res.status(400).json({ success: false, message: 'Campos requeridos: tenant_id, branch_id, name, start_time, end_time' });
+            }
+
+            const result = await pool.query(
+                `INSERT INTO preparation_mode_windows (tenant_id, branch_id, name, start_time, end_time, is_active)
+                 VALUES ($1, $2, $3, $4, $5, $6)
+                 RETURNING *`,
+                [parseInt(tenant_id), parseInt(branch_id), name, start_time, end_time, is_active !== false]
+            );
+
+            const created = result.rows[0];
+            res.json({ success: true, data: created });
+
+            // Broadcast to branch so Desktop/Mobile stay in sync
+            if (io) {
+                io.to(`branch_${branch_id}`).emit('preparation_windows_updated', {
+                    action: 'created',
+                    branchId: parseInt(branch_id),
+                    window: created
+                });
+            }
+        } catch (error) {
+            console.error('[PrepMode/Windows] Error creando:', error.message);
+            res.status(500).json({ success: false, message: 'Error al crear ventana' });
+        }
+    });
+
+    // DELETE /api/preparation-mode/windows/:id - Eliminar ventana
+    router.delete('/windows/:id', async (req, res) => {
+        try {
+            const { id } = req.params;
+            const result = await pool.query(
+                'DELETE FROM preparation_mode_windows WHERE id = $1 RETURNING *',
+                [parseInt(id)]
+            );
+
+            if (result.rows.length === 0) {
+                return res.status(404).json({ success: false, message: 'Ventana no encontrada' });
+            }
+
+            const deleted = result.rows[0];
+            res.json({ success: true, data: deleted });
+
+            // Broadcast to branch
+            if (io) {
+                io.to(`branch_${deleted.branch_id}`).emit('preparation_windows_updated', {
+                    action: 'deleted',
+                    branchId: deleted.branch_id,
+                    windowId: deleted.id
+                });
+            }
+        } catch (error) {
+            console.error('[PrepMode/Windows] Error eliminando:', error.message);
+            res.status(500).json({ success: false, message: 'Error al eliminar ventana' });
+        }
+    });
+
+    // PATCH /api/preparation-mode/windows/:id - Actualizar ventana
+    router.patch('/windows/:id', async (req, res) => {
+        try {
+            const { id } = req.params;
+            const { name, start_time, end_time, is_active } = req.body;
+
+            const result = await pool.query(
+                `UPDATE preparation_mode_windows
+                 SET name = COALESCE($2, name),
+                     start_time = COALESCE($3, start_time),
+                     end_time = COALESCE($4, end_time),
+                     is_active = COALESCE($5, is_active)
+                 WHERE id = $1
+                 RETURNING *`,
+                [parseInt(id), name, start_time, end_time, is_active]
+            );
+
+            if (result.rows.length === 0) {
+                return res.status(404).json({ success: false, message: 'Ventana no encontrada' });
+            }
+
+            const updated = result.rows[0];
+            res.json({ success: true, data: updated });
+
+            // Broadcast to branch
+            if (io) {
+                io.to(`branch_${updated.branch_id}`).emit('preparation_windows_updated', {
+                    action: 'updated',
+                    branchId: updated.branch_id,
+                    window: updated
+                });
+            }
+        } catch (error) {
+            console.error('[PrepMode/Windows] Error actualizando:', error.message);
+            res.status(500).json({ success: false, message: 'Error al actualizar ventana' });
         }
     });
 
