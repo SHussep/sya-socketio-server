@@ -336,8 +336,9 @@ async function sendNotificationToAdminsInTenant(tenantId, { title, body, data = 
             deviceTokens = result.rows.map(row => row.device_token);
         }
 
-        // 🔍 DEBUG: Log cantidad de admins encontrados
-        console.log(`[NotificationHelper] 👥 Admins/Encargados en tenant ${tenantId}: ${deviceTokens.length} dispositivo(s)${excludeEmployeeId ? ` (excluyendo employee ${excludeEmployeeId})` : ''}`);
+        // 🔍 DEBUG: Log cantidad de admins encontrados y detalle de employee_ids
+        const employeeIds = result.rows.map(r => `emp${r.employee_id}:${r.device_token?.substring(0,8)}...`);
+        console.log(`[NotificationHelper] 👥 Admins en tenant ${tenantId}: ${result.rows.length} row(s) → ${deviceTokens.length} token(s) después de filtro [${employeeIds.join(', ')}]`);
 
         if (deviceTokens.length === 0) {
             console.log(`[NotificationHelper] ℹ️ No hay administradores/encargados con dispositivos activos en tenant ${tenantId}`);
