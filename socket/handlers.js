@@ -489,12 +489,11 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
             const isSuspicious = data.fueraDeVentana === true;
             if (isSuspicious || shouldSendPrepModeFcm(data.branchId, 'activated')) {
                 try {
-                    const hora = data.activatedAt ? new Date(data.activatedAt).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Mexico_City' }) : 'N/A';
                     const title = isSuspicious
                         ? 'Guardian — Alistamiento fuera de horario'
                         : 'Guardian — Alistamiento activado';
                     const body = isSuspicious
-                        ? `${data.operatorName} activó alistamiento a las ${hora} (fuera de horario). Razón: ${data.razonActivacion || 'Sin razón'}`
+                        ? `${data.operatorName} activó alistamiento fuera de horario. Razón: ${data.razonActivacion || 'Sin razón'}`
                         : `${data.operatorName} activó alistamiento. Autorizado por: ${data.authorizerName}`;
 
                     await notificationHelper.notifyPreparationModeActivated(data.tenantId, data.branchId, {
