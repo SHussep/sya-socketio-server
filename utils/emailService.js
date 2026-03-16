@@ -203,15 +203,30 @@ async function sendFollowupEmail({ to, subject, html, text = null }) {
             }
         });
 
-        const info = await transporter.sendMail({
+        const mailOptions = {
             from: `"SYA Tortillerías" <${process.env.EMAIL_INFO_USER}>`,
             to,
             subject,
             text,
             html
-        });
+        };
+
+        const info = await transporter.sendMail(mailOptions);
 
         console.log(`✅ Followup email enviado a ${to}: messageId=${info.messageId}`);
+
+        // Append to IMAP Sent folder so it appears in the outbox
+        try {
+            const { appendToSent } = require('./imapService');
+            const MailComposer = require('nodemailer/lib/mail-composer');
+            const mail = new MailComposer(mailOptions);
+            const rawMessage = await mail.compile().build();
+            await appendToSent(rawMessage);
+        } catch (appendErr) {
+            // Non-fatal: email was sent, just not saved to Sent folder
+            console.error('[Followup] Could not save to Sent folder:', appendErr.message);
+        }
+
         return true;
     } catch (err) {
         console.error(`❌ Error enviando followup email a ${to}:`, err.message);

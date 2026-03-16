@@ -145,6 +145,46 @@ async function fetchEmailByUid(uid, folder = 'INBOX') {
     }
 }
 
+/**
+ * Append a sent message to the Sent folder so it shows in IMAP.
+ * @param {string} rawMessage  The full RFC822 message source
+ */
+async function appendToSent(rawMessage) {
+    if (!process.env.EMAIL_INFO_USER || !process.env.EMAIL_INFO_PASSWORD) {
+        console.error('[IMAP] Cannot append to Sent: EMAIL_INFO credentials not configured');
+        return;
+    }
+
+    const client = new ImapFlow(getImapConfig());
+
+    try {
+        await client.connect();
+
+        // Try common Sent folder names (Hostinger uses "Sent")
+        const folders = ['Sent', 'INBOX.Sent', 'Sent Messages', 'Sent Items'];
+        let appended = false;
+
+        for (const folder of folders) {
+            try {
+                await client.append(folder, rawMessage, ['\\Seen'], new Date());
+                console.log(`[IMAP] Message appended to ${folder}`);
+                appended = true;
+                break;
+            } catch (e) {
+                // Folder doesn't exist, try next
+            }
+        }
+
+        if (!appended) {
+            console.error('[IMAP] Could not find Sent folder to append message');
+        }
+    } catch (err) {
+        console.error('[IMAP] Error appending to Sent:', err.message);
+    } finally {
+        await client.logout();
+    }
+}
+
 // Convenience wrappers
 const fetchInboxMessages = (limit, page) => fetchMessages('INBOX', limit, page);
 const fetchSentMessages = (limit, page) => fetchMessages('Sent', limit, page);
@@ -158,4 +198,5 @@ module.exports = {
     fetchSentMessages,
     fetchInboxEmail,
     fetchSentEmail,
+    appendToSent,
 };
