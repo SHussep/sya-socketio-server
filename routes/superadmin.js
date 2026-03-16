@@ -6,7 +6,7 @@
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const { superadminRateLimiter } = require('../middleware/rateLimiter');
-const { sendEmail, sendFollowupEmail } = require('../utils/emailService');
+const { sendEmail, sendFollowupEmail, sanitizeEmailHeader } = require('../utils/emailService');
 const { fetchInboxMessages, fetchSentMessages, fetchInboxEmail, fetchSentEmail } = require('../utils/imapService');
 
 // PIN hasheado (SHA256) - OBLIGATORIO via variable de entorno
@@ -681,14 +681,17 @@ module.exports = function(pool, io) {
     router.post('/tenants/:id/send-followup', async (req, res) => {
         try {
             const { id } = req.params;
-            const { subject, body, scenario } = req.body;
+            const { subject: rawSubject, body, scenario } = req.body;
 
-            if (!subject || !body) {
+            if (!rawSubject || !body) {
                 return res.status(400).json({
                     success: false,
                     message: 'Se requiere "subject" y "body"'
                 });
             }
+
+            // Sanitize subject to prevent email header injection
+            const subject = sanitizeEmailHeader(rawSubject);
 
             // Buscar el email del owner del tenant
             const ownerResult = await pool.query(`
@@ -808,8 +811,7 @@ module.exports = function(pool, io) {
             console.error('[Inbox] Error fetching messages:', error.message);
             res.status(500).json({
                 success: false,
-                message: 'Error al obtener bandeja de entrada',
-                error: error.message
+                message: 'Error al obtener bandeja de entrada'
             });
         }
     });
@@ -845,8 +847,7 @@ module.exports = function(pool, io) {
             console.error('[Inbox] Error fetching email:', error.message);
             res.status(500).json({
                 success: false,
-                message: 'Error al obtener email',
-                error: error.message
+                message: 'Error al obtener email'
             });
         }
     });
@@ -873,8 +874,7 @@ module.exports = function(pool, io) {
             console.error('[Sent] Error fetching messages:', error.message);
             res.status(500).json({
                 success: false,
-                message: 'Error al obtener bandeja de salida',
-                error: error.message
+                message: 'Error al obtener bandeja de salida'
             });
         }
     });
@@ -910,8 +910,7 @@ module.exports = function(pool, io) {
             console.error('[Sent] Error fetching email:', error.message);
             res.status(500).json({
                 success: false,
-                message: 'Error al obtener email enviado',
-                error: error.message
+                message: 'Error al obtener email enviado'
             });
         }
     });
