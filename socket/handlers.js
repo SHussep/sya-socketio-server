@@ -100,7 +100,29 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
             socket.deviceInfo = data.deviceInfo || {};
             if (data.type === 'desktop') stats.desktopClients++;
             else if (data.type === 'mobile') stats.mobileClients++;
-            console.log(`[IDENTIFY] ${socket.id} → ${data.type} (Sucursal: ${socket.branchId})`);
+            console.log(`[IDENTIFY] ${socket.id} → ${data.type} (Sucursal: ${socket.branchId}, Employee: ${socket.user?.employeeId})`);
+
+            // ═══════════════════════════════════════════════════════════════
+            // SINGLE SESSION ENFORCEMENT: Kick other mobile sessions of same employee
+            // Exception: masterLogin (superadmin) does NOT kick existing sessions
+            // ═══════════════════════════════════════════════════════════════
+            if (data.type === 'mobile' && socket.user?.employeeId && !socket.user?.isMasterLogin) {
+                const myEmployeeId = socket.user.employeeId;
+                for (const [socketId, otherSocket] of io.sockets.sockets) {
+                    if (socketId !== socket.id
+                        && otherSocket.clientType === 'mobile'
+                        && otherSocket.user?.employeeId === myEmployeeId) {
+                        console.log(`[SESSION] 🔒 Kicking duplicate mobile session ${socketId} for employee ${myEmployeeId}`);
+                        otherSocket.emit('force_logout', {
+                            reason: 'Se inició sesión en otro dispositivo',
+                            newSocketId: socket.id,
+                            timestamp: new Date().toISOString()
+                        });
+                        // Give client a moment to process before disconnecting
+                        setTimeout(() => otherSocket.disconnect(true), 1000);
+                    }
+                }
+            }
 
             // Broadcast desktop online status to the branch room
             if (data.type === 'desktop' && socket.branchId) {
@@ -111,6 +133,28 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
                     timestamp: new Date().toISOString()
                 });
                 console.log(`[IDENTIFY] 📡 desktop_status_changed → branch_${socket.branchId} online=true`);
+            }
+
+            // When a new mobile client joins, send current desktop status immediately
+            // so it doesn't have to wait for the next desktop heartbeat
+            if (data.type === 'mobile' && socket.branchId) {
+                let desktopOnline = false;
+                let desktopSocketId = null;
+                for (const [socketId, otherSocket] of io.sockets.sockets) {
+                    if (otherSocket.clientType === 'desktop'
+                        && otherSocket.branchId === socket.branchId) {
+                        desktopOnline = true;
+                        desktopSocketId = socketId;
+                        break;
+                    }
+                }
+                socket.emit('desktop_status_changed', {
+                    branchId: parseInt(socket.branchId),
+                    online: desktopOnline,
+                    socketId: desktopSocketId,
+                    timestamp: new Date().toISOString()
+                });
+                console.log(`[IDENTIFY] 📡 Sent desktop status to new mobile: online=${desktopOnline}`);
             }
         });
 
