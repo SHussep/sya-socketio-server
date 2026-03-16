@@ -173,8 +173,49 @@ async function sendVerificationEmail({ to, recipientName, code }) {
     return await sendEmail({ to, subject, html });
 }
 
+/**
+ * Enviar email de seguimiento (followup) desde info@
+ * Usa credenciales separadas: EMAIL_INFO_USER / EMAIL_INFO_PASSWORD
+ */
+async function sendFollowupEmail({ to, subject, html, text = null }) {
+    try {
+        if (!process.env.EMAIL_INFO_USER || !process.env.EMAIL_INFO_PASSWORD) {
+            console.error('❌ EMAIL_INFO_USER o EMAIL_INFO_PASSWORD no están configurados');
+            return false;
+        }
+
+        const port = parseInt(process.env.EMAIL_PORT || '465');
+        const secure = port === 465;
+
+        const transporter = nodemailer.createTransport({
+            host: process.env.EMAIL_HOST || 'smtp.hostinger.com',
+            port,
+            secure,
+            auth: {
+                user: process.env.EMAIL_INFO_USER,
+                pass: process.env.EMAIL_INFO_PASSWORD
+            }
+        });
+
+        const info = await transporter.sendMail({
+            from: `"SYA Tortillerías" <${process.env.EMAIL_INFO_USER}>`,
+            to,
+            subject,
+            text,
+            html
+        });
+
+        console.log(`✅ Followup email enviado a ${to} desde ${process.env.EMAIL_INFO_USER}: messageId=${info.messageId}`);
+        return true;
+    } catch (err) {
+        console.error(`❌ Error enviando followup email a ${to}:`, err.message);
+        return false;
+    }
+}
+
 module.exports = {
     sendEmail,
     sendPasswordResetEmail,
-    sendVerificationEmail
+    sendVerificationEmail,
+    sendFollowupEmail
 };
