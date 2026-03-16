@@ -440,7 +440,7 @@ module.exports = (pool) => {
                         SUM(vd.total_linea) as total_revenue
                     FROM ventas v
                     JOIN ventas_detalle vd ON vd.id_venta = v.id_venta
-                    JOIN productos p ON vd.id_producto = p.id AND p.tenant_id = v.tenant_id
+                    JOIN productos p ON vd.id_producto = p.id_producto AND p.tenant_id = v.tenant_id
                     LEFT JOIN productos_branch_precios pbp ON
                         pbp.producto_id = p.id
                         AND pbp.branch_id = v.branch_id
