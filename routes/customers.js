@@ -45,8 +45,29 @@ function optionalAuthenticateToken(req, res, next) {
     });
 }
 
-module.exports = (pool) => {
+module.exports = (pool, io) => {
     const router = express.Router();
+
+    // ═══════════════════════════════════════════════════════════════
+    // HELPER: Emitir customer_updated a todas las branches del tenant
+    // Clientes son tenant-wide, se emite a TODAS las branches activas
+    // ═══════════════════════════════════════════════════════════════
+    async function emitCustomerUpdate(tenantId, customerData, action) {
+        if (!io) return;
+        try {
+            const branches = await pool.query(
+                'SELECT id FROM branches WHERE tenant_id = $1 AND is_active = true',
+                [tenantId]
+            );
+            const payload = { ...customerData, action, updatedAt: new Date().toISOString() };
+            for (const b of branches.rows) {
+                io.to(`branch_${b.id}`).emit('customer_updated', payload);
+            }
+            console.log(`[Customers] 📡 customer_updated emitido a ${branches.rows.length} branches (action=${action})`);
+        } catch (err) {
+            console.error('[Customers] ⚠️ Error emitting customer_updated:', err.message);
+        }
+    }
 
     // GET /api/customers - Lista de clientes del tenant
     router.get('/', authenticateToken, async (req, res) => {
@@ -253,6 +274,26 @@ module.exports = (pool) => {
 
             console.log(`[Sync/Customers] ✅ Cliente sincronizado: ${customer.nombre} (ID: ${customer.id})`);
 
+            // Emitir socket para creación/actualización en tiempo real
+            await emitCustomerUpdate(tenant_id, {
+                id: customer.id,
+                global_id: customer.global_id,
+                nombre: customer.nombre,
+                telefono: customer.telefono,
+                telefono_secundario: customer.telefono_secundario,
+                correo: customer.correo,
+                direccion: customer.direccion,
+                tiene_credito: customer.tiene_credito,
+                credito_limite: parseFloat(customer.credito_limite || 0),
+                saldo_deudor: parseFloat(customer.saldo_deudor || 0),
+                nota: customer.nota,
+                tipo_descuento: customer.tipo_descuento || 0,
+                porcentaje_descuento: parseFloat(customer.porcentaje_descuento || 0),
+                monto_descuento_fijo: parseFloat(customer.monto_descuento_fijo || 0),
+                aplicar_redondeo: customer.aplicar_redondeo || false,
+                activo: customer.activo
+            }, 'created');
+
             res.json({
                 success: true,
                 data: {
@@ -410,6 +451,26 @@ module.exports = (pool) => {
 
             console.log(`[Customers/Update] ✅ Cliente ${customer.nombre} (ID: ${customer.id}) actualizado exitosamente`);
             console.log(`[Customers/Update] 💳 tiene_credito: ${customer.tiene_credito}, credito_limite: ${customer.credito_limite}`);
+
+            // Emitir socket para actualización en tiempo real
+            await emitCustomerUpdate(tenant_id, {
+                id: customer.id,
+                global_id: customer.global_id,
+                nombre: customer.nombre,
+                telefono: customer.telefono,
+                telefono_secundario: customer.telefono_secundario,
+                correo: customer.correo,
+                direccion: customer.direccion,
+                tiene_credito: customer.tiene_credito,
+                credito_limite: parseFloat(customer.credito_limite || 0),
+                saldo_deudor: parseFloat(customer.saldo_deudor || 0),
+                nota: customer.nota,
+                tipo_descuento: customer.tipo_descuento || 0,
+                porcentaje_descuento: parseFloat(customer.porcentaje_descuento || 0),
+                monto_descuento_fijo: parseFloat(customer.monto_descuento_fijo || 0),
+                aplicar_redondeo: customer.aplicar_redondeo || false,
+                activo: customer.activo
+            }, 'updated');
 
             res.json({
                 success: true,
@@ -595,6 +656,14 @@ module.exports = (pool) => {
             const customer = result.rows[0];
 
             console.log(`[Customers/Deactivate] ✅ Cliente ${customer.nombre} (ID: ${customer.id}) desactivado exitosamente`);
+
+            // Emitir socket para desactivación en tiempo real
+            await emitCustomerUpdate(tenant_id, {
+                id: customer.id,
+                global_id: customer.global_id,
+                nombre: customer.nombre,
+                activo: false
+            }, 'deactivated');
 
             res.json({
                 success: true,
