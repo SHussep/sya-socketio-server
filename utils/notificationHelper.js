@@ -974,7 +974,7 @@ async function notifyPreparationModeDeactivated(tenantId, branchId, { operatorNa
  * @param {number} branchId - ID de la sucursal
  * @param {object} params - Datos del cambio
  */
-async function notifyManualWeightOverrideChanged(tenantId, branchId, { employeeName, branchName, isActivated, timestamp, reason }) {
+async function notifyManualWeightOverrideChanged(tenantId, branchId, { employeeName, branchName, isActivated, timestamp, reason, durationFormatted }) {
     try {
         const action = isActivated ? 'activó' : 'desactivó';
         const emoji = isActivated ? '⚠️' : '✅';
@@ -982,7 +982,8 @@ async function notifyManualWeightOverrideChanged(tenantId, branchId, { employeeN
             ? `⚠️ Peso Manual Activado [${branchName}]`
             : `✅ Peso Manual Desactivado [${branchName}]`;
         const reasonText = reason ? `. Razón: ${reason}` : '';
-        const body = `${employeeName} ${action} el modo de peso manual${reasonText}`;
+        const durationText = (!isActivated && durationFormatted) ? ` (${durationFormatted})` : '';
+        const body = `${employeeName} ${action} el modo de peso manual${durationText}${reasonText}`;
 
         const result = await sendNotificationToAdminsInTenant(tenantId, {
             title,
@@ -995,7 +996,8 @@ async function notifyManualWeightOverrideChanged(tenantId, branchId, { employeeN
                 tenantId: tenantId.toString(),
                 isActivated: isActivated.toString(),
                 timestamp: timestamp || new Date().toISOString(),
-                reason: reason || ''
+                reason: reason || '',
+                durationFormatted: durationFormatted || ''
             }
         }, { notificationType: 'notify_guardian' });
 
@@ -1010,7 +1012,7 @@ async function notifyManualWeightOverrideChanged(tenantId, branchId, { employeeN
             event_type: 'manual_weight_override_changed',
             title,
             body,
-            data: { employeeName, branchName, branchId, tenantId, isActivated, timestamp, reason }
+            data: { employeeName, branchName, branchId, tenantId, isActivated, timestamp, reason, durationFormatted }
         });
 
         return result;

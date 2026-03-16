@@ -571,6 +571,7 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
             console.log(`[WEIGHT-OVERRIDE]   Sucursal: ${data.branchName}`);
             console.log(`[WEIGHT-OVERRIDE]   Empleado: ${data.employeeName} (ID: ${data.employeeId})`);
             if (data.reason) console.log(`[WEIGHT-OVERRIDE]   Razón: ${data.reason}`);
+            if (data.durationFormatted) console.log(`[WEIGHT-OVERRIDE]   Duración: ${data.durationFormatted}`);
 
             socket.to(roomName).emit('manual_weight_override_changed', {
                 ...data,
@@ -584,7 +585,8 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
                         branchName: data.branchName,
                         isActivated: data.isActivated,
                         timestamp: data.timestamp,
-                        reason: data.reason
+                        reason: data.reason,
+                        durationFormatted: data.durationFormatted
                     });
                     console.log(`[WEIGHT-OVERRIDE] Notificación FCM enviada a administradores del tenant ${data.tenantId}`);
                 } catch (error) {
