@@ -2558,6 +2558,19 @@ async function runMigrations() {
                 console.error(`[Schema] ⚠️ followup_emails table error: ${followupErr.message}`);
             }
 
+            // ── Patch: Add location fields to customers ──
+            try {
+                await client.query(`
+                    ALTER TABLE customers
+                        ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION,
+                        ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION,
+                        ADD COLUMN IF NOT EXISTS google_maps_url TEXT
+                `);
+                console.log('[Schema] ✅ customers location columns ready');
+            } catch (locErr) {
+                console.error(`[Schema] ⚠️ customers location columns error: ${locErr.message}`);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {

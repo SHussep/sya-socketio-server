@@ -83,6 +83,7 @@ module.exports = (pool, io) => {
             let query = `
                 SELECT id, global_id, tenant_id, nombre as name, telefono as phone, correo as email, direccion as address,
                        credito_limite as credit_limit, saldo_deudor as current_balance, nota as notes, is_system_generic,
+                       latitude, longitude, google_maps_url,
                        created_at, updated_at
                 FROM customers
                 WHERE tenant_id = $1 AND activo = TRUE
@@ -142,6 +143,7 @@ module.exports = (pool, io) => {
                     nota as notes,
                     activo as is_active,
                     is_system_generic,
+                    latitude, longitude, google_maps_url,
                     created_at,
                     updated_at
                 FROM customers
@@ -199,6 +201,10 @@ module.exports = (pool, io) => {
                 notes,
                 is_wholesale,
                 discount_percentage,
+                // Location (Google Places)
+                latitude,
+                longitude,
+                google_maps_url,
                 // ✅ OFFLINE-FIRST FIELDS
                 global_id,
                 terminal_id,
@@ -235,10 +241,11 @@ module.exports = (pool, io) => {
                 `INSERT INTO customers (
                     tenant_id, nombre, telefono, telefono_secundario, correo, direccion,
                     tiene_credito, credito_limite, nota, porcentaje_descuento,
+                    latitude, longitude, google_maps_url,
                     global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw,
                     is_system_generic, created_at, updated_at
                  )
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::uuid, $12::uuid, $13, $14, $15, FALSE, NOW(), NOW())
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::uuid, $15::uuid, $16, $17, $18, FALSE, NOW(), NOW())
                  ON CONFLICT (global_id) DO UPDATE
                  SET nombre = EXCLUDED.nombre,
                      telefono = EXCLUDED.telefono,
@@ -249,6 +256,9 @@ module.exports = (pool, io) => {
                      credito_limite = EXCLUDED.credito_limite,
                      nota = EXCLUDED.nota,
                      porcentaje_descuento = EXCLUDED.porcentaje_descuento,
+                     latitude = EXCLUDED.latitude,
+                     longitude = EXCLUDED.longitude,
+                     google_maps_url = EXCLUDED.google_maps_url,
                      updated_at = NOW()
                  RETURNING *`,
                 [
@@ -262,6 +272,9 @@ module.exports = (pool, io) => {
                     credit_limit || 0,
                     notes || null,
                     discount_percentage || 0,
+                    latitude || null,
+                    longitude || null,
+                    google_maps_url || null,
                     global_id,
                     terminal_id || null,
                     local_op_seq || null,
@@ -291,6 +304,9 @@ module.exports = (pool, io) => {
                 porcentaje_descuento: parseFloat(customer.porcentaje_descuento || 0),
                 monto_descuento_fijo: parseFloat(customer.monto_descuento_fijo || 0),
                 aplicar_redondeo: customer.aplicar_redondeo || false,
+                latitude: customer.latitude ? parseFloat(customer.latitude) : null,
+                longitude: customer.longitude ? parseFloat(customer.longitude) : null,
+                google_maps_url: customer.google_maps_url,
                 activo: customer.activo
             }, 'created');
 
@@ -361,6 +377,9 @@ module.exports = (pool, io) => {
                 tipo_descuento,
                 monto_descuento_fijo,
                 aplicar_redondeo,
+                latitude,
+                longitude,
+                google_maps_url,
                 last_modified_local_utc
             } = req.body;
 
@@ -426,8 +445,11 @@ module.exports = (pool, io) => {
                      tipo_descuento = $10,
                      monto_descuento_fijo = $11,
                      aplicar_redondeo = $12,
+                     latitude = $13,
+                     longitude = $14,
+                     google_maps_url = $15,
                      updated_at = NOW()
-                 WHERE id = $13 AND tenant_id = $14
+                 WHERE id = $16 AND tenant_id = $17
                  RETURNING *`,
                 [
                     name,
@@ -442,7 +464,10 @@ module.exports = (pool, io) => {
                     tipo_descuento || 0,
                     monto_descuento_fijo || 0,
                     aplicar_redondeo || false,
-                    customerId,  // Usar el ID numérico resuelto
+                    latitude || null,
+                    longitude || null,
+                    google_maps_url || null,
+                    customerId,
                     tenant_id
                 ]
             );
@@ -469,6 +494,9 @@ module.exports = (pool, io) => {
                 porcentaje_descuento: parseFloat(customer.porcentaje_descuento || 0),
                 monto_descuento_fijo: parseFloat(customer.monto_descuento_fijo || 0),
                 aplicar_redondeo: customer.aplicar_redondeo || false,
+                latitude: customer.latitude ? parseFloat(customer.latitude) : null,
+                longitude: customer.longitude ? parseFloat(customer.longitude) : null,
+                google_maps_url: customer.google_maps_url,
                 activo: customer.activo
             }, 'updated');
 

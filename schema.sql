@@ -442,6 +442,11 @@ CREATE TABLE IF NOT EXISTS customers (
     monto_descuento_fijo NUMERIC(10,2) DEFAULT 0,
     aplicar_redondeo BOOLEAN DEFAULT FALSE,
 
+    -- Location (Google Places)
+    latitude DOUBLE PRECISION,
+    longitude DOUBLE PRECISION,
+    google_maps_url TEXT,
+
     -- Generic customer (Público en General)
     is_system_generic BOOLEAN DEFAULT FALSE,
 
