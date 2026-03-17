@@ -473,6 +473,9 @@ module.exports = {
                 id: branch.id,
                 name: branch.name,
                 address: branch.address,
+                phone: branch.phone || null,
+                rfc: branch.rfc || null,
+                logo_url: branch.logo_url || null,
                 api_base_url: branch.api_url,
                 is_active: branch.is_active,
                 last_sync_date: new Date().toISOString(),
@@ -543,6 +546,7 @@ module.exports = {
                         id: tenant.id,
                         name: tenant.name,
                         businessName: tenant.business_name,
+                        logoUrl: tenant.logo_url || null,
                         subscription: tenant.subscription_name,
                         license: {
                             expiresAt: trialEndsAt ? trialEndsAt.toISOString() : null,

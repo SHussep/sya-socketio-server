@@ -2571,6 +2571,17 @@ async function runMigrations() {
                 console.error(`[Schema] ⚠️ customers location columns error: ${locErr.message}`);
             }
 
+            // ── Patch: Add logo_url to branches ──
+            try {
+                await client.query(`
+                    ALTER TABLE branches
+                        ADD COLUMN IF NOT EXISTS logo_url TEXT
+                `);
+                console.log('[Schema] ✅ branches.logo_url column ready');
+            } catch (logoErr) {
+                console.error(`[Schema] ⚠️ branches.logo_url error: ${logoErr.message}`);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {
