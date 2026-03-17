@@ -2582,6 +2582,19 @@ async function runMigrations() {
                 console.error(`[Schema] ⚠️ branches.logo_url error: ${logoErr.message}`);
             }
 
+            // ── Patch: Add location fields to branches ──
+            try {
+                await client.query(`
+                    ALTER TABLE branches
+                        ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION,
+                        ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION,
+                        ADD COLUMN IF NOT EXISTS google_maps_url TEXT
+                `);
+                console.log('[Schema] ✅ branches location columns ready');
+            } catch (brLocErr) {
+                console.error(`[Schema] ⚠️ branches location columns error: ${brLocErr.message}`);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {

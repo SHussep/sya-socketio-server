@@ -312,7 +312,7 @@ module.exports = (pool, io, scaleStatusByBranch) => {
 
         try {
             const result = await pool.query(
-                'SELECT id, name, address, phone, rfc, logo_url FROM branches WHERE id = $1 AND tenant_id = $2',
+                'SELECT id, name, address, phone, rfc, logo_url, latitude, longitude, google_maps_url FROM branches WHERE id = $1 AND tenant_id = $2',
                 [branchId, tenantId]
             );
 
@@ -328,7 +328,10 @@ module.exports = (pool, io, scaleStatusByBranch) => {
                     address: branch.address,
                     phone: branch.phone,
                     rfc: branch.rfc,
-                    logo_url: branch.logo_url
+                    logo_url: branch.logo_url,
+                    latitude: branch.latitude,
+                    longitude: branch.longitude,
+                    google_maps_url: branch.google_maps_url
                 }
             });
         } catch (error) {
@@ -339,7 +342,7 @@ module.exports = (pool, io, scaleStatusByBranch) => {
 
     // POST /api/branches/sync-info - Sincronizar info de sucursal desde Desktop
     router.post('/sync-info', validateTenant, async (req, res) => {
-        const { tenantId, branchId, name, address, phone, rfc, logo_base64, existing_logo_url } = req.body;
+        const { tenantId, branchId, name, address, phone, rfc, logo_base64, existing_logo_url, latitude, longitude, google_maps_url } = req.body;
         const cloudinaryService = require('../services/cloudinaryService');
 
         console.log(`[Branch Sync] 📥 Recibida solicitud: tenantId=${tenantId}, branchId=${branchId}, name=${name}, hasLogo=${!!logo_base64}`);
@@ -396,10 +399,13 @@ module.exports = (pool, io, scaleStatusByBranch) => {
                     phone = COALESCE($3, phone),
                     rfc = COALESCE($4, rfc),
                     logo_url = COALESCE($7, logo_url),
+                    latitude = COALESCE($8, latitude),
+                    longitude = COALESCE($9, longitude),
+                    google_maps_url = COALESCE($10, google_maps_url),
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = $5 AND tenant_id = $6
                 RETURNING *
-            `, [name, address, phone, rfc, branchId, tenantId, logoUrl]);
+            `, [name, address, phone, rfc, branchId, tenantId, logoUrl, latitude || null, longitude || null, google_maps_url || null]);
 
             const branch = result.rows[0];
             console.log(`[Branch Sync] ✅ Sucursal actualizada: ${branch.name} (RFC: ${branch.rfc || 'N/A'}, Logo: ${branch.logo_url ? 'Sí' : 'No'})`);
@@ -456,6 +462,9 @@ module.exports = (pool, io, scaleStatusByBranch) => {
                 phone: branch.phone,
                 rfc: branch.rfc,
                 logoUrl: branch.logo_url,
+                latitude: branch.latitude,
+                longitude: branch.longitude,
+                googleMapsUrl: branch.google_maps_url,
                 updatedAt: branch.updated_at,
                 receivedAt: new Date().toISOString()
             });
@@ -473,6 +482,9 @@ module.exports = (pool, io, scaleStatusByBranch) => {
                     phone: branch.phone,
                     rfc: branch.rfc,
                     logo_url: branch.logo_url,
+                    latitude: branch.latitude,
+                    longitude: branch.longitude,
+                    google_maps_url: branch.google_maps_url,
                     tenantUpdated: tenantUpdated,
                     updatedAt: branch.updated_at
                 }
