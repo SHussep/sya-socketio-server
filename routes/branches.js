@@ -271,6 +271,10 @@ module.exports = (pool, io, scaleStatusByBranch) => {
                 address: branch.address,
                 phone: branch.phone,
                 rfc: branch.rfc,
+                logoUrl: branch.logo_url,
+                latitude: branch.latitude,
+                longitude: branch.longitude,
+                googleMapsUrl: branch.google_maps_url,
                 updatedAt: branch.updated_at,
                 receivedAt: new Date().toISOString()
             });
