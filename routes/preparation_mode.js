@@ -464,6 +464,99 @@ module.exports = function(pool, io) {
     });
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // GET /api/preparation-mode/analytics - Hourly distribution + weight stats
+    // ═══════════════════════════════════════════════════════════════════════════
+    router.get('/analytics', async (req, res) => {
+        try {
+            const tenantId = req.query.tenantId || req.query.tenant_id;
+            const branchId = req.query.branchId || req.query.branch_id;
+            const startDate = req.query.start_date;
+            const endDate = req.query.end_date;
+
+            if (!tenantId) {
+                return res.status(400).json({ success: false, message: 'tenantId es requerido' });
+            }
+
+            let branchFilter = '';
+            let dateFilter = '';
+            const params = [parseInt(tenantId)];
+            let paramIndex = 2;
+
+            if (branchId) {
+                branchFilter = ` AND pm.branch_id = $${paramIndex}`;
+                params.push(parseInt(branchId));
+                paramIndex++;
+            }
+            if (startDate) {
+                dateFilter += ` AND pm.activated_at >= $${paramIndex}`;
+                params.push(startDate);
+                paramIndex++;
+            }
+            if (endDate) {
+                dateFilter += ` AND pm.activated_at <= $${paramIndex}`;
+                params.push(endDate);
+                paramIndex++;
+            }
+
+            // Activations by hour of day (0-23)
+            const hourlyResult = await pool.query(`
+                SELECT
+                    EXTRACT(HOUR FROM pm.activated_at AT TIME ZONE 'America/Mexico_City') AS hour,
+                    COUNT(*) AS activations,
+                    COALESCE(SUM(pm.total_weight_kg), 0) AS total_weight_kg,
+                    COALESCE(AVG(NULLIF(pm.total_weight_kg, 0)), 0) AS avg_weight_kg,
+                    COALESCE(AVG(pm.duration_seconds), 0) AS avg_duration_seconds
+                FROM preparation_mode_logs pm
+                WHERE pm.tenant_id = $1 ${branchFilter} ${dateFilter}
+                GROUP BY EXTRACT(HOUR FROM pm.activated_at AT TIME ZONE 'America/Mexico_City')
+                ORDER BY hour
+            `, params);
+
+            // Top operators with weight stats
+            const operatorWeightResult = await pool.query(`
+                SELECT
+                    pm.operator_employee_id,
+                    CONCAT(e.first_name, ' ', e.last_name) AS operator_name,
+                    COUNT(*) AS activations,
+                    COALESCE(SUM(pm.total_weight_kg), 0) AS total_weight_kg,
+                    COALESCE(AVG(NULLIF(pm.total_weight_kg, 0)), 0) AS avg_weight_kg,
+                    COALESCE(SUM(pm.weighing_cycle_count), 0) AS total_cycles,
+                    COALESCE(AVG(pm.duration_seconds), 0) AS avg_duration_seconds
+                FROM preparation_mode_logs pm
+                JOIN employees e ON pm.operator_employee_id = e.id
+                WHERE pm.tenant_id = $1 ${branchFilter} ${dateFilter}
+                GROUP BY pm.operator_employee_id, e.first_name, e.last_name
+                ORDER BY total_weight_kg DESC
+                LIMIT 10
+            `, params);
+
+            // Overall weight stats
+            const weightStatsResult = await pool.query(`
+                SELECT
+                    COALESCE(SUM(pm.total_weight_kg), 0) AS total_weight_kg,
+                    COALESCE(AVG(NULLIF(pm.total_weight_kg, 0)), 0) AS avg_weight_per_session,
+                    COALESCE(SUM(pm.weighing_cycle_count), 0) AS total_cycles,
+                    COUNT(*) FILTER (WHERE pm.total_weight_kg > 0) AS sessions_with_weight
+                FROM preparation_mode_logs pm
+                WHERE pm.tenant_id = $1 ${branchFilter} ${dateFilter}
+            `, params);
+
+            res.json({
+                success: true,
+                data: {
+                    hourly: hourlyResult.rows,
+                    operators: operatorWeightResult.rows,
+                    weight_stats: weightStatsResult.rows[0]
+                }
+            });
+
+        } catch (error) {
+            console.error('[PrepMode/Analytics] Error:', error.message);
+            res.status(500).json({ success: false, message: 'Error al obtener analytics' });
+        }
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // GET /api/preparation-mode/active - Sesiones activas actuales
     // ═══════════════════════════════════════════════════════════════════════════
     router.get('/active', async (req, res) => {
