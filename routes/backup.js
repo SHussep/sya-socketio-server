@@ -154,7 +154,7 @@ router.post('/upload-desktop', async (req, res) => {
         const {
             tenant_id,
             branch_id,
-            employee_id,
+            // employee_id se ignora — Desktop envía ID local (SQLite) que no existe en PG
             backup_filename,
             backup_base64, // Backup en Base64 (Desktop lo envía así)
             device_name,
@@ -210,7 +210,7 @@ router.post('/upload-desktop', async (req, res) => {
 
             console.log(`[Backup Upload Desktop] ✅ Subido a Dropbox: ${dropboxPath}`);
 
-            // Registrar metadata en PostgreSQL
+            // Registrar metadata en PostgreSQL (employee_id = null, Desktop no tiene ID de PG)
             const metadataResult = await pool.query(
                 `INSERT INTO backup_metadata (
                     tenant_id, branch_id, employee_id, backup_filename, backup_path,
@@ -220,7 +220,7 @@ router.post('/upload-desktop', async (req, res) => {
                 [
                     tenant_id,
                     branch_id,
-                    employee_id || null,
+                    null,
                     simpleFilename,
                     dropboxPath,
                     file_size_bytes,
@@ -270,7 +270,7 @@ router.post('/upload-desktop', async (req, res) => {
                         file_size_bytes, device_name, device_id, is_automatic, encryption_enabled
                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                     RETURNING *`,
-                    [tenant_id, branch_id, employee_id || null, simpleFilename, dropboxPath, file_size_bytes,
+                    [tenant_id, branch_id, null, simpleFilename, dropboxPath, file_size_bytes,
                      device_name || 'Desktop', device_id || 'unknown', true, false]
                 );
 
