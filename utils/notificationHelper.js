@@ -956,7 +956,7 @@ async function notifyPreparationModeDeactivated(tenantId, branchId, { operatorNa
             category: 'security',
             event_type: 'preparation_mode_deactivated',
             title: `✅ Modo Preparación Finalizado [${branchName}]`,
-            body,
+            body: fcmBody,
             data: { operatorName, branchName, branchId, tenantId, durationFormatted, severity, deactivatedAt, reason, weighingCycleCount, totalWeightKg }
         });
 
