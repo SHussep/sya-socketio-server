@@ -321,14 +321,16 @@ module.exports = (pool, io) => {
                 }
             }
 
-            // Lookup map_icon for marker customization
+            // Lookup employee name + map_icon for marker customization
             let mapIcon = 'two_wheeler';
+            let employeeName = null;
             try {
                 const iconResult = await client.query(
-                    `SELECT map_icon FROM employees WHERE id = $1`, [empId]
+                    `SELECT name, map_icon FROM employees WHERE id = $1`, [empId]
                 );
-                if (iconResult.rows.length > 0 && iconResult.rows[0].map_icon) {
-                    mapIcon = iconResult.rows[0].map_icon;
+                if (iconResult.rows.length > 0) {
+                    if (iconResult.rows[0].map_icon) mapIcon = iconResult.rows[0].map_icon;
+                    if (iconResult.rows[0].name) employeeName = iconResult.rows[0].name;
                 }
             } catch (_) { /* non-blocking */ }
 
@@ -343,6 +345,7 @@ module.exports = (pool, io) => {
                 shiftId: shift_id ?? null,
                 deviceId: device_id ?? null,
                 recordedAt: recorded_at ?? new Date().toISOString(),
+                employeeName,
                 mapIcon
             });
 
@@ -429,14 +432,16 @@ module.exports = (pool, io) => {
 
             await client.query('COMMIT');
 
-            // Lookup map_icon for marker customization
+            // Lookup employee name + map_icon for marker customization
             let batchMapIcon = 'two_wheeler';
+            let batchEmployeeName = null;
             try {
                 const iconResult = await client.query(
-                    `SELECT map_icon FROM employees WHERE id = $1`, [empId]
+                    `SELECT name, map_icon FROM employees WHERE id = $1`, [empId]
                 );
-                if (iconResult.rows.length > 0 && iconResult.rows[0].map_icon) {
-                    batchMapIcon = iconResult.rows[0].map_icon;
+                if (iconResult.rows.length > 0) {
+                    if (iconResult.rows[0].map_icon) batchMapIcon = iconResult.rows[0].map_icon;
+                    if (iconResult.rows[0].name) batchEmployeeName = iconResult.rows[0].name;
                 }
             } catch (_) { /* non-blocking */ }
 
@@ -452,6 +457,7 @@ module.exports = (pool, io) => {
                 shiftId: shift_id ?? null,
                 deviceId: device_id ?? null,
                 recordedAt: latest.recorded_at ?? new Date().toISOString(),
+                employeeName: batchEmployeeName,
                 mapIcon: batchMapIcon
             });
 
