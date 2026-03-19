@@ -99,8 +99,12 @@ function buildDropboxPath(ownerEmail, tenant_id, branch_id, filename) {
 
 function getDropboxClient() {
     if (!dropboxClient) {
+        const token = process.env.DROPBOX_ACCESS_TOKEN;
+        if (!token) {
+            throw new Error('DROPBOX_ACCESS_TOKEN no está configurado');
+        }
         dropboxClient = new Dropbox({
-            accessToken: process.env.DROPBOX_ACCESS_TOKEN,
+            accessToken: token,
             fetch: fetch
         });
     }
@@ -237,19 +241,19 @@ router.post('/upload-desktop', async (req, res) => {
                     backup_id: metadata.id,
                     dropbox_path: dropboxPath,
                     file_size_bytes: metadata.file_size_bytes,
-                    created_at: metadata.created_at,
-                    expires_at: metadata.expires_at
+                    created_at: metadata.created_at
                 },
                 message: 'Backup subido exitosamente desde Desktop'
             });
 
         } catch (dropboxError) {
-            // Si el token expiró, intentar refrescarlo
-            if (dropboxError.status === 401) {
-                console.log('[Backup Upload Desktop] Token expirado, refrescando...');
+            // Intentar refrescar token y reintentar para cualquier error de Dropbox
+            console.log(`[Backup Upload Desktop] ❌ Error Dropbox (status: ${dropboxError.status || 'N/A'}): ${dropboxError.message || dropboxError}`);
+            console.log('[Backup Upload Desktop] Intentando refrescar token y reintentar...');
+
+            try {
                 await refreshDropboxToken();
 
-                // Reintentar la subida
                 const dbx = getDropboxClient();
                 const uploadResult = await dbx.filesUpload({
                     path: dropboxPath,
@@ -260,7 +264,6 @@ router.post('/upload-desktop', async (req, res) => {
 
                 console.log(`[Backup Upload Desktop] ✅ Subido a Dropbox (reintento): ${dropboxPath}`);
 
-                // Registrar metadata
                 const metadataResult = await pool.query(
                     `INSERT INTO backup_metadata (
                         tenant_id, branch_id, employee_id, backup_filename, backup_path,
@@ -279,22 +282,22 @@ router.post('/upload-desktop', async (req, res) => {
                         backup_id: metadata.id,
                         dropbox_path: dropboxPath,
                         file_size_bytes: metadata.file_size_bytes,
-                        created_at: metadata.created_at,
-                        expires_at: metadata.expires_at
+                        created_at: metadata.created_at
                     },
                     message: 'Backup subido exitosamente desde Desktop (tras refrescar token)'
                 });
-            } else {
-                throw dropboxError;
+            } catch (retryError) {
+                console.error('[Backup Upload Desktop] ❌ Falló también el reintento:', retryError.message || retryError);
+                throw retryError;
             }
         }
 
     } catch (error) {
-        console.error('[Backup Upload Desktop] ❌ Error:', error);
+        console.error('[Backup Upload Desktop] ❌ Error:', error.message || error);
         res.status(500).json({
             success: false,
             message: 'Error al subir backup desde Desktop',
-            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+            error: error.message || 'Error interno del servidor'
         });
     }
 });
@@ -434,9 +437,10 @@ router.get('/download-desktop/:tenant_id/:branch_id/:id', async (req, res) => {
             });
 
         } catch (dropboxError) {
-            // Si el token expiró, refrescarlo y reintentar
-            if (dropboxError.status === 401) {
-                console.log('[Backup Download Desktop] Token expirado, refrescando...');
+            console.log(`[Backup Download Desktop] ❌ Error Dropbox (status: ${dropboxError.status || 'N/A'}): ${dropboxError.message || dropboxError}`);
+            console.log('[Backup Download Desktop] Intentando refrescar token y reintentar...');
+
+            try {
                 await refreshDropboxToken();
 
                 const dbx = getDropboxClient();
@@ -460,17 +464,18 @@ router.get('/download-desktop/:tenant_id/:branch_id/:id', async (req, res) => {
                     },
                     message: 'Backup descargado exitosamente'
                 });
-            } else {
-                throw dropboxError;
+            } catch (retryError) {
+                console.error('[Backup Download Desktop] ❌ Falló también el reintento:', retryError.message || retryError);
+                throw retryError;
             }
         }
 
     } catch (error) {
-        console.error('[Backup Download Desktop] ❌ Error:', error);
+        console.error('[Backup Download Desktop] ❌ Error:', error.message || error);
         res.status(500).json({
             success: false,
             message: 'Error al descargar backup desde Desktop',
-            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+            error: error.message || 'Error interno del servidor'
         });
     }
 });
@@ -555,19 +560,18 @@ router.post('/upload', authenticateToken, async (req, res) => {
                     backup_id: metadata.id,
                     dropbox_path: dropboxPath,
                     file_size_bytes: metadata.file_size_bytes,
-                    created_at: metadata.created_at,
-                    expires_at: metadata.expires_at
+                    created_at: metadata.created_at
                 },
                 message: 'Backup subido exitosamente'
             });
 
         } catch (dropboxError) {
-            // Si el token expiró, intentar refrescarlo
-            if (dropboxError.status === 401) {
-                console.log('[Backup Upload] Token expirado, refrescando...');
+            console.log(`[Backup Upload] ❌ Error Dropbox (status: ${dropboxError.status || 'N/A'}): ${dropboxError.message || dropboxError}`);
+            console.log('[Backup Upload] Intentando refrescar token y reintentar...');
+
+            try {
                 await refreshDropboxToken();
 
-                // Reintentar la subida
                 const dbx = getDropboxClient();
                 const uploadResult = await dbx.filesUpload({
                     path: dropboxPath,
@@ -577,7 +581,6 @@ router.post('/upload', authenticateToken, async (req, res) => {
 
                 console.log(`[Backup Upload] ✅ Subido a Dropbox (reintento): ${dropboxPath}`);
 
-                // Registrar metadata
                 const metadataResult = await pool.query(
                     `INSERT INTO backup_metadata (
                         tenant_id, branch_id, employee_id, backup_filename, backup_path,
@@ -596,22 +599,22 @@ router.post('/upload', authenticateToken, async (req, res) => {
                         backup_id: metadata.id,
                         dropbox_path: dropboxPath,
                         file_size_bytes: metadata.file_size_bytes,
-                        created_at: metadata.created_at,
-                        expires_at: metadata.expires_at
+                        created_at: metadata.created_at
                     },
                     message: 'Backup subido exitosamente (tras refrescar token)'
                 });
-            } else {
-                throw dropboxError;
+            } catch (retryError) {
+                console.error('[Backup Upload] ❌ Falló también el reintento:', retryError.message || retryError);
+                throw retryError;
             }
         }
 
     } catch (error) {
-        console.error('[Backup Upload] ❌ Error:', error);
+        console.error('[Backup Upload] ❌ Error:', error.message || error);
         res.status(500).json({
             success: false,
             message: 'Error al subir backup',
-            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+            error: error.message || 'Error interno del servidor'
         });
     }
 });
@@ -649,7 +652,6 @@ router.get('/list', authenticateToken, async (req, res) => {
                 device_id: backup.device_id,
                 encryption_enabled: backup.encryption_enabled,
                 created_at: backup.created_at,
-                expires_at: backup.expires_at,
                 hours_ago: Math.round(parseFloat(backup.hours_ago))
             }))
         });
@@ -705,7 +707,6 @@ router.get('/latest', authenticateToken, async (req, res) => {
                 device_id: backup.device_id,
                 encryption_enabled: backup.encryption_enabled,
                 created_at: backup.created_at,
-                expires_at: backup.expires_at,
                 hours_ago: Math.round(parseFloat(backup.hours_ago))
             }
         });
@@ -762,9 +763,10 @@ router.get('/download/:id', authenticateToken, async (req, res) => {
             res.send(fileBuffer);
 
         } catch (dropboxError) {
-            // Si el token expiró, refrescarlo y reintentar
-            if (dropboxError.status === 401) {
-                console.log('[Backup Download] Token expirado, refrescando...');
+            console.log(`[Backup Download] ❌ Error Dropbox (status: ${dropboxError.status || 'N/A'}): ${dropboxError.message || dropboxError}`);
+            console.log('[Backup Download] Intentando refrescar token y reintentar...');
+
+            try {
                 await refreshDropboxToken();
 
                 const dbx = getDropboxClient();
@@ -778,17 +780,18 @@ router.get('/download/:id', authenticateToken, async (req, res) => {
                 console.log(`[Backup Download] ✅ Descargado (reintento): ${(fileBuffer.length / 1024 / 1024).toFixed(2)} MB`);
 
                 return res.send(fileBuffer);
-            } else {
-                throw dropboxError;
+            } catch (retryError) {
+                console.error('[Backup Download] ❌ Falló también el reintento:', retryError.message || retryError);
+                throw retryError;
             }
         }
 
     } catch (error) {
-        console.error('[Backup Download] ❌ Error:', error);
+        console.error('[Backup Download] ❌ Error:', error.message || error);
         res.status(500).json({
             success: false,
             message: 'Error al descargar backup',
-            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+            error: error.message || 'Error interno del servidor'
         });
     }
 });
