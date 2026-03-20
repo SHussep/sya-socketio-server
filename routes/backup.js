@@ -39,6 +39,36 @@ function authenticateToken(req, res, next) {
 let dropboxClient = null;
 
 // ═══════════════════════════════════════════════════════════════
+// RATE LIMITING - Evitar loops de backup duplicado
+// ═══════════════════════════════════════════════════════════════
+
+const recentUploads = new Map(); // key: "tenant_branch" -> timestamp
+const UPLOAD_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutos entre backups del mismo tenant+branch
+
+function isUploadThrottled(tenant_id, branch_id) {
+    const key = `${tenant_id}_${branch_id}`;
+    const lastUpload = recentUploads.get(key);
+    if (lastUpload && (Date.now() - lastUpload) < UPLOAD_COOLDOWN_MS) {
+        const secsLeft = Math.ceil((UPLOAD_COOLDOWN_MS - (Date.now() - lastUpload)) / 1000);
+        return secsLeft;
+    }
+    return 0;
+}
+
+function markUploaded(tenant_id, branch_id) {
+    const key = `${tenant_id}_${branch_id}`;
+    recentUploads.set(key, Date.now());
+}
+
+// Limpiar entradas viejas cada 30 minutos
+setInterval(() => {
+    const now = Date.now();
+    for (const [key, ts] of recentUploads) {
+        if (now - ts > UPLOAD_COOLDOWN_MS * 2) recentUploads.delete(key);
+    }
+}, 30 * 60 * 1000);
+
+// ═══════════════════════════════════════════════════════════════
 // HELPERS PARA ORGANIZACIÓN DE CARPETAS EN DROPBOX
 // ═══════════════════════════════════════════════════════════════
 
@@ -163,6 +193,17 @@ router.post('/upload-desktop', async (req, res) => {
 
         console.log(`[Backup Upload Desktop] Request - Tenant: ${tenant_id}, Branch: ${branch_id}, Device: ${device_name}`);
 
+        // Rate limiting: evitar loops de backup duplicado
+        const throttledSecs = isUploadThrottled(tenant_id, branch_id);
+        if (throttledSecs > 0) {
+            console.log(`[Backup Upload Desktop] ⛔ THROTTLED - Tenant: ${tenant_id}, Branch: ${branch_id} (esperar ${throttledSecs}s)`);
+            return res.status(429).json({
+                success: false,
+                message: `Backup reciente ya existe. Espera ${Math.ceil(throttledSecs / 60)} minutos antes de subir otro.`,
+                retry_after_seconds: throttledSecs
+            });
+        }
+
         // Validar datos requeridos
         if (!tenant_id || !branch_id || !backup_filename || !backup_base64) {
             return res.status(400).json({
@@ -235,6 +276,9 @@ router.post('/upload-desktop', async (req, res) => {
 
             console.log(`[Backup Upload Desktop] ✅ Metadata registrada - ID: ${metadata.id}`);
 
+            // Marcar upload exitoso para rate limiting
+            markUploaded(tenant_id, branch_id);
+
             res.json({
                 success: true,
                 data: {
@@ -275,6 +319,8 @@ router.post('/upload-desktop', async (req, res) => {
                 );
 
                 const metadata = metadataResult.rows[0];
+
+                markUploaded(tenant_id, branch_id);
 
                 return res.json({
                     success: true,
