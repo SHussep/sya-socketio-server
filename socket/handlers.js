@@ -328,6 +328,15 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
             io.to(roomName).emit('shift_started', { ...data, receivedAt: new Date().toISOString() });
 
             try {
+                // Verificar si el turno YA estaba abierto antes de actualizar
+                // Si ya estaba abierto, es una sesión reanudada → no enviar FCM
+                const checkQuery = `
+                    SELECT is_cash_cut_open FROM shifts
+                    WHERE id = $1 AND tenant_id = $2;
+                `;
+                const checkResult = await pool.query(checkQuery, [data.shiftId, data.tenantId]);
+                const wasAlreadyOpen = checkResult.rows[0]?.is_cash_cut_open === true;
+
                 const updateShiftQuery = `
                     UPDATE shifts
                     SET is_cash_cut_open = true,
@@ -346,7 +355,9 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
                 if (shiftResult.rows.length > 0) {
                     console.log(`[SHIFT] ✅ Turno #${data.shiftId} actualizado en PostgreSQL`);
 
-                    if (shouldSendShiftFcm(data.branchId, 'shift_started')) {
+                    if (wasAlreadyOpen) {
+                        console.log(`[SHIFT] ⏭️ Turno #${data.shiftId} ya estaba abierto - NO se envía FCM (sesión reanudada)`);
+                    } else if (shouldSendShiftFcm(data.branchId, 'shift_started')) {
                         await notificationHelper.notifyShiftStarted(data.branchId, {
                             employeeName: data.employeeName,
                             branchName: data.branchName,
