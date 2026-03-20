@@ -216,6 +216,29 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
             stats.totalEvents++;
             const roomName = `branch_${data.branchId}`;
             console.log(`[SCALE] Sucursal ${data.branchId}: Báscula conectada (raw data keys: ${Object.keys(data).join(', ')}, branchId type: ${typeof data.branchId})`);
+
+            // Verificar si la báscula YA estaba conectada antes de actualizar
+            // Si ya estaba conectada, es un re-login/sesión reanudada → no enviar FCM
+            let wasAlreadyConnected = false;
+            const previousStatus = scaleStatusByBranch.get(Number(data.branchId));
+            if (previousStatus) {
+                wasAlreadyConnected = previousStatus.status === 'connected';
+            } else {
+                // Fallback a DB (sobrevive reinicios de Render)
+                try {
+                    const dbCheck = await pool.query(
+                        `SELECT scale_status FROM branches WHERE id = $1`,
+                        [Number(data.branchId)]
+                    );
+                    wasAlreadyConnected = dbCheck.rows[0]?.scale_status === 'connected';
+                    if (wasAlreadyConnected) {
+                        console.log(`[SCALE] 🔍 Estado previo recuperado de DB: connected (branch ${data.branchId})`);
+                    }
+                } catch (e) {
+                    console.error(`[SCALE] Error consultando estado previo: ${e.message}`);
+                }
+            }
+
             scaleStatusByBranch.set(Number(data.branchId), {
                 status: 'connected',
                 connectedAt: data.connectedAt || new Date().toISOString(),
@@ -247,7 +270,9 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
                 console.error(`[SCALE] Error cerrando logs huérfanos: ${e.message}`);
             }
 
-            if (shouldSendScaleFcm(data.branchId, 'connected')) {
+            if (wasAlreadyConnected) {
+                console.log(`[SCALE] ⏭️ Báscula ya estaba conectada en branch ${data.branchId} - NO se envía FCM (re-login/sesión reanudada)`);
+            } else if (shouldSendScaleFcm(data.branchId, 'connected')) {
                 try {
                     await notificationHelper.notifyScaleConnection(data.branchId, { message: data.message });
                 } catch (e) {
