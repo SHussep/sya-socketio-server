@@ -183,21 +183,20 @@ module.exports = (pool, io) => {
                     console.error(`[Sync/GuardianLogs] ⚠️ Error obteniendo nombre de empleado: ${empError.message}`);
                 }
 
-                // ❌ Socket.IO emit comentado - no soporta filtrado por rol
-                // Solo usamos notificaciones FCM que ya están filtradas por rol (admins/encargados)
-                // io.to(`branch_${branch_id}`).emit('scale_alert', {
-                //     branchId: branch_id,
-                //     alertId: log.id,
-                //     severity: severity || 'medium',
-                //     eventType: event_type,
-                //     weightDetected: weight_detected || 0,
-                //     details: details || '',
-                //     timestamp: timestamp || new Date().toISOString(),
-                //     employeeName: employeeName,
-                //     receivedAt: new Date().toISOString(),
-                //     source: 'sync'
-                // });
-                // console.log(`[Sync/GuardianLogs] 📡 Evento 'scale_alert' emitido a branch_${branch_id} para app móvil (${employeeName})`);
+                // ✅ Socket.IO: emitir evento en tiempo real para que la app móvil actualice al instante
+                io.to(`branch_${branch_id}`).emit('scale_alert', {
+                    branchId: branch_id,
+                    alertId: log.id,
+                    severity: severity || 'medium',
+                    eventType: event_type,
+                    weightDetected: weight_detected || 0,
+                    details: details || '',
+                    timestamp: timestamp || new Date().toISOString(),
+                    employeeName: employeeName,
+                    receivedAt: new Date().toISOString(),
+                    source: 'sync'
+                });
+                console.log(`[Sync/GuardianLogs] 📡 Evento 'scale_alert' emitido a branch_${branch_id} para app móvil (${employeeName})`);
 
                 // ✅ Enviar notificación FCM a admins/encargados
                 try {
