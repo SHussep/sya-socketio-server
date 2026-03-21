@@ -27,6 +27,14 @@ function createEmployeeDebtsRoutes(io) {
     try {
       const debts = Array.isArray(req.body) ? req.body : [req.body];
 
+      // Rate limit: max 200 items per batch
+      if (Array.isArray(debts) && debts.length > 200) {
+        return res.status(400).json({
+          success: false,
+          message: `Batch demasiado grande (${debts.length} items). Máximo 200 por request.`
+        });
+      }
+
       if (debts.length === 0 || !debts[0].tenantId) {
         return res.status(400).json({ success: false, message: 'tenantId es requerido' });
       }

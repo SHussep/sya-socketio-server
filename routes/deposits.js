@@ -134,6 +134,14 @@ module.exports = (pool) => {
         try {
             const deposits = Array.isArray(req.body) ? req.body : [req.body];
 
+            // Rate limit: max 200 items per batch
+            if (Array.isArray(deposits) && deposits.length > 200) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Batch demasiado grande (${deposits.length} items). Máximo 200 por request.`
+                });
+            }
+
             // Obtener tenantId del primer depósito
             if (deposits.length === 0 || !deposits[0].tenantId) {
                 return res.status(400).json({ success: false, message: 'tenantId es requerido' });

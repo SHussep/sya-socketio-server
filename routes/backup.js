@@ -540,6 +540,17 @@ router.post('/upload', authenticateToken, async (req, res) => {
 
         console.log(`[Backup Upload] Request - Branch: ${branchId}, Device: ${device_name}`);
 
+        // Rate limiting: evitar loops de backup duplicado
+        const throttledSecs = isUploadThrottled(tenantId, branchId);
+        if (throttledSecs > 0) {
+            console.log(`[Backup Upload] ⛔ THROTTLED - Tenant: ${tenantId}, Branch: ${branchId} (esperar ${throttledSecs}s)`);
+            return res.status(429).json({
+                success: false,
+                message: `Backup reciente ya existe. Espera ${Math.ceil(throttledSecs / 60)} minutos antes de subir otro.`,
+                retry_after_seconds: throttledSecs
+            });
+        }
+
         if (!backup_filename || !backup_base64) {
             return res.status(400).json({
                 success: false,
@@ -600,6 +611,9 @@ router.post('/upload', authenticateToken, async (req, res) => {
 
             console.log(`[Backup Upload] ✅ Metadata registrada - ID: ${metadata.id}`);
 
+            // Marcar upload exitoso para rate limiting
+            markUploaded(tenantId, branchId);
+
             res.json({
                 success: true,
                 data: {
@@ -638,6 +652,8 @@ router.post('/upload', authenticateToken, async (req, res) => {
                 );
 
                 const metadata = metadataResult.rows[0];
+
+                markUploaded(tenantId, branchId);
 
                 return res.json({
                     success: true,

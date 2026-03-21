@@ -498,6 +498,14 @@ module.exports = (pool, io) => {
                 });
             }
 
+            // Rate limit: max 200 items per batch
+            if (productos.length > 200) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Batch demasiado grande (${productos.length} items). Máximo 200 por request.`
+                });
+            }
+
             console.log(`[Productos/SyncBatch] 🔄 Sincronizando ${productos.length} productos - Tenant: ${tenant_id}`);
 
             const results = {

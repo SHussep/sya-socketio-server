@@ -192,6 +192,14 @@ module.exports = (pool) => {
                 });
             }
 
+            // Rate limit: max 200 items per batch
+            if (cancelaciones.length > 200) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Batch demasiado grande (${cancelaciones.length} items). Máximo 200 por request.`
+                });
+            }
+
             console.log(`[Sync/Cancelaciones/Batch] 🔄 Sincronizando ${cancelaciones.length} cancelaciones...`);
 
             const results = [];

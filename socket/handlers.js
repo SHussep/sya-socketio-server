@@ -49,6 +49,39 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
         return true;
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // CLEANUP: Limpiar entradas viejas de debounce Maps cada 30 minutos
+    // Evita memory leaks en procesos de larga duración
+    // ═══════════════════════════════════════════════════════════════
+    const DEBOUNCE_CLEANUP_MAX_AGE_MS = 60 * 60 * 1000; // 1 hora
+    setInterval(() => {
+        const now = Date.now();
+        let cleaned = 0;
+
+        // Limpiar FCM debounce maps (almacenan timestamps de Date.now())
+        for (const [key, ts] of lastScaleFcm) {
+            if (now - ts > DEBOUNCE_CLEANUP_MAX_AGE_MS) { lastScaleFcm.delete(key); cleaned++; }
+        }
+        for (const [key, ts] of lastPrepModeFcm) {
+            if (now - ts > DEBOUNCE_CLEANUP_MAX_AGE_MS) { lastPrepModeFcm.delete(key); cleaned++; }
+        }
+        for (const [key, ts] of lastShiftFcm) {
+            if (now - ts > DEBOUNCE_CLEANUP_MAX_AGE_MS) { lastShiftFcm.delete(key); cleaned++; }
+        }
+
+        // Limpiar scaleStatusByBranch (almacena objetos con updatedAt ISO string)
+        for (const [key, val] of scaleStatusByBranch) {
+            if (val.updatedAt && (now - new Date(val.updatedAt).getTime()) > DEBOUNCE_CLEANUP_MAX_AGE_MS) {
+                scaleStatusByBranch.delete(key);
+                cleaned++;
+            }
+        }
+
+        if (cleaned > 0) {
+            console.log(`[CLEANUP] 🧹 ${cleaned} entradas viejas eliminadas de debounce Maps`);
+        }
+    }, 30 * 60 * 1000);
+
     io.on('connection', (socket) => {
         console.log(`[${new Date().toISOString()}] Cliente conectado: ${socket.id} (auth: ${socket.authenticated ? 'yes' : 'no'})`);
 

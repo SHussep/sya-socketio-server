@@ -338,6 +338,14 @@ module.exports = (pool) => {
         try {
             const cashCuts = Array.isArray(req.body) ? req.body : [req.body];
 
+            // Rate limit: max 200 items per batch
+            if (Array.isArray(cashCuts) && cashCuts.length > 200) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Batch demasiado grande (${cashCuts.length} items). Máximo 200 por request.`
+                });
+            }
+
             // Obtener tenantId del primer cash cut
             if (cashCuts.length === 0 || !cashCuts[0].tenantId) {
                 return res.status(400).json({ success: false, message: 'tenantId es requerido' });
