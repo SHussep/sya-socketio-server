@@ -7,13 +7,14 @@
 
 const express = require('express');
 const router = express.Router();
+const { authenticateToken } = require('../middleware/auth');
 
 module.exports = function(pool) {
 
     // ═══════════════════════════════════════════════════════════════════════════
     // POST /api/notas-credito/sync - Sincronizar NC desde Desktop
     // ═══════════════════════════════════════════════════════════════════════════
-    router.post('/sync', async (req, res) => {
+    router.post('/sync', authenticateToken, async (req, res) => {
         const client = await pool.connect();
         try {
             // Soportar tanto formato batch (notas_credito array) como single (objeto directo)

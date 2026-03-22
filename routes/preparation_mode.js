@@ -10,6 +10,7 @@
 
 const express = require('express');
 const router = express.Router();
+const { authenticateToken } = require('../middleware/auth');
 // Las notificaciones FCM se envían directamente vía Socket.IO desde el desktop.
 // El sync endpoint solo persiste datos en PostgreSQL.
 
@@ -18,7 +19,7 @@ module.exports = function(pool, io) {
     // ═══════════════════════════════════════════════════════════════════════════
     // POST /api/preparation-mode/sync - Sincronizar logs desde Desktop
     // ═══════════════════════════════════════════════════════════════════════════
-    router.post('/sync', async (req, res) => {
+    router.post('/sync', authenticateToken, async (req, res) => {
         const client = await pool.connect();
         try {
             const { logs = [] } = req.body;

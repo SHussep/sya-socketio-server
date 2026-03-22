@@ -14,6 +14,7 @@
 
 const express = require('express');
 const { pool } = require('../database');
+const { authenticateToken } = require('../middleware/auth');
 
 function createEmployeeDebtsRoutes(io) {
   const router = express.Router();
@@ -23,7 +24,7 @@ function createEmployeeDebtsRoutes(io) {
   // Sincronizar deudas desde Desktop (sin autenticación - offline-first)
   // ✅ Usa GlobalIds para resolver relaciones (idempotencia)
   // ═══════════════════════════════════════════════════════════════
-  router.post('/sync', async (req, res) => {
+  router.post('/sync', authenticateToken, async (req, res) => {
     try {
       const debts = Array.isArray(req.body) ? req.body : [req.body];
 

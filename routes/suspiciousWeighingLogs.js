@@ -5,12 +5,13 @@
 const express = require('express');
 const notificationHelper = require('../utils/notificationHelper');
 const { formatDurationsInText } = require('../utils/durationFormatter');
+const { authenticateToken } = require('../middleware/auth');
 
 module.exports = (pool, io) => {
     const router = express.Router();
 
     // POST /api/suspicious-weighing-logs/sync - Sincronizar log desde Desktop (offline-first idempotente)
-    router.post('/sync', async (req, res) => {
+    router.post('/sync', authenticateToken, async (req, res) => {
         try {
             const {
                 tenant_id,

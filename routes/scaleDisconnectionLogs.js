@@ -1,12 +1,13 @@
 const express = require('express');
 const router = express.Router();
+const { authenticateToken } = require('../middleware/auth');
 
 module.exports = (pool) => {
     // ============================================================================
     // POST /api/scale-disconnection-logs/sync
     // Sincronizar evento de desconexión desde Desktop (offline-first idempotente)
     // ============================================================================
-    router.post('/sync', async (req, res) => {
+    router.post('/sync', authenticateToken, async (req, res) => {
         try {
             const {
                 tenant_id,

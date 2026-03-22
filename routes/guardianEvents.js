@@ -58,7 +58,7 @@ module.exports = (pool, io) => {
     // ⚠️ NOTA: La tabla guardian_events fue refactorizada
     // Los eventos ahora se agregan como contadores en cash_cuts
     // Este endpoint acepta el evento pero solo emite notificaciones Socket.IO/FCM (no persiste en DB)
-    router.post('/', async (req, res) => {
+    router.post('/', authenticateToken, async (req, res) => {
         try {
             const { tenantId, branchId, employeeId, eventType, severity, title, description, weightKg, scaleId, metadata, employeeName } = req.body;
 

@@ -86,8 +86,8 @@ module.exports = (pool) => {
         }
     });
 
-    // POST /api/withdrawals - Create new withdrawal (SIN AUTENTICACIÓN - para Desktop offline-first)
-    router.post('/', async (req, res) => {
+    // POST /api/withdrawals - Create new withdrawal
+    router.post('/', authenticateToken, async (req, res) => {
         try {
             const { tenantId, branchId, employeeId, amount, description, shiftId } = req.body;
 
@@ -126,9 +126,9 @@ module.exports = (pool) => {
         }
     });
 
-    // POST /api/withdrawals/sync - Sync withdrawals from mobile/desktop (SIN AUTENTICACIÓN - para Desktop offline-first)
+    // POST /api/withdrawals/sync - Sync withdrawals from mobile/desktop
     // ✅ ACTUALIZADO: Soporta resolución de GlobalIds para relaciones
-    router.post('/sync', async (req, res) => {
+    router.post('/sync', authenticateToken, async (req, res) => {
         try {
             const withdrawals = Array.isArray(req.body) ? req.body : [req.body];
 

@@ -487,7 +487,7 @@ module.exports = (pool, io) => {
     // POST /api/productos/sync-batch - Sincronizar múltiples productos
     // Más eficiente para sincronización inicial
     // ═══════════════════════════════════════════════════════════════
-    router.post('/sync-batch', async (req, res) => {
+    router.post('/sync-batch', authenticateToken, async (req, res) => {
         try {
             const { tenant_id, productos } = req.body;
 

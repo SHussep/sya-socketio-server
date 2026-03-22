@@ -333,8 +333,8 @@ module.exports = (pool) => {
         }
     });
 
-    // POST /api/cash-cuts/sync - Sync cash cuts from mobile/desktop (SIN AUTENTICACIÓN - para Desktop offline-first)
-    router.post('/sync', async (req, res) => {
+    // POST /api/cash-cuts/sync - Sync cash cuts from mobile/desktop
+    router.post('/sync', authenticateToken, async (req, res) => {
         try {
             const cashCuts = Array.isArray(req.body) ? req.body : [req.body];
 

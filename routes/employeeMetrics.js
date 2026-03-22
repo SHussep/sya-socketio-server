@@ -1,12 +1,13 @@
 const express = require('express');
 const router = express.Router();
+const { authenticateToken } = require('../middleware/auth');
 
 module.exports = (pool) => {
     // ============================================================================
     // POST /api/employee-metrics/daily
     // Sincronizar métricas diarias desde Desktop (offline-first idempotente)
     // ============================================================================
-    router.post('/daily', async (req, res) => {
+    router.post('/daily', authenticateToken, async (req, res) => {
         try {
             const {
                 tenant_id,

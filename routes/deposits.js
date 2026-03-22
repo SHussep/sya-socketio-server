@@ -87,8 +87,8 @@ module.exports = (pool) => {
         }
     });
 
-    // POST /api/deposits - Create new deposit (SIN AUTENTICACIÓN - para Desktop offline-first)
-    router.post('/', async (req, res) => {
+    // POST /api/deposits - Create new deposit
+    router.post('/', authenticateToken, async (req, res) => {
         try {
             const { tenantId, branchId, employeeId, amount, description, shiftId } = req.body;
 
@@ -127,10 +127,10 @@ module.exports = (pool) => {
         }
     });
 
-    // POST /api/deposits/sync - Sync deposits from mobile/desktop (SIN AUTENTICACIÓN - para Desktop offline-first)
+    // POST /api/deposits/sync - Sync deposits from mobile/desktop
     // ✅ Soporte completo para idempotencia con global_id
     // ✅ ACTUALIZADO: Soporta resolución de GlobalIds para relaciones
-    router.post('/sync', async (req, res) => {
+    router.post('/sync', authenticateToken, async (req, res) => {
         try {
             const deposits = Array.isArray(req.body) ? req.body : [req.body];
 

@@ -93,9 +93,9 @@ module.exports = (pool) => {
         }
     });
 
-    // POST /api/credit-payments/sync - Sincronizar pagos desde Desktop (SIN AUTENTICACIÓN - offline-first)
+    // POST /api/credit-payments/sync - Sincronizar pagos desde Desktop
     // ✅ ACTUALIZADO: Soporta resolución de GlobalIds para relaciones
-    router.post('/sync', async (req, res) => {
+    router.post('/sync', authenticateToken, async (req, res) => {
         try {
             const payments = Array.isArray(req.body) ? req.body : [req.body];
 

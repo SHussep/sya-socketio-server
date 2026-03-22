@@ -4,6 +4,7 @@
 
 const express = require('express');
 const router = express.Router();
+const { authenticateToken } = require('../middleware/auth');
 
 module.exports = (pool) => {
     // ============================================================================
@@ -11,7 +12,7 @@ module.exports = (pool) => {
     // Sincronizar cancelación desde POS (offline-first idempotente)
     // Soporta tanto IDs numéricos como GlobalIds para compatibilidad offline
     // ============================================================================
-    router.post('/sync', async (req, res) => {
+    router.post('/sync', authenticateToken, async (req, res) => {
         try {
             const {
                 tenant_id,
@@ -181,7 +182,7 @@ module.exports = (pool) => {
     // POST /api/cancelaciones/sync-batch
     // Sincronizar múltiples cancelaciones en batch (soporta GlobalIds)
     // ============================================================================
-    router.post('/sync-batch', async (req, res) => {
+    router.post('/sync-batch', authenticateToken, async (req, res) => {
         try {
             const { cancelaciones } = req.body;
 
