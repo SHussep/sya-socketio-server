@@ -376,23 +376,15 @@ module.exports = {
             const now = new Date();
             const trialEndsAt = tenant.trial_ends_at ? new Date(tenant.trial_ends_at) : null;
 
-            if (trialEndsAt && trialEndsAt < now) {
-                const daysExpired = Math.ceil((now - trialEndsAt) / (1000 * 60 * 60 * 24));
-                console.log(`[Mobile Login] ❌ Licencia vencida para tenant ${tenant.id}. Expiró hace ${daysExpired} días.`);
-                return res.status(403).json({
-                    success: false,
-                    message: 'Su licencia ha caducado. Por favor, contacte con soporte para renovar.',
-                    error: 'LICENSE_EXPIRED',
-                    licenseInfo: {
-                        expiresAt: trialEndsAt.toISOString(),
-                        daysExpired: daysExpired,
-                        businessName: tenant.business_name
-                    }
-                });
-            }
-
+            // Allow login even if expired — app shows read-only state.
+            // Desktop controls the subscription; mobile just reflects it.
             const daysRemaining = trialEndsAt ? Math.ceil((trialEndsAt - now) / (1000 * 60 * 60 * 24)) : null;
-            console.log(`[Mobile Login] Licencia válida. Días restantes: ${daysRemaining || 'ilimitado'}`);
+            const isExpired = trialEndsAt && trialEndsAt < now;
+            if (isExpired) {
+                console.log(`[Mobile Login] ⚠️ Licencia vencida para tenant ${tenant.id} (hace ${Math.abs(daysRemaining)} días) — permitiendo acceso en modo lectura`);
+            } else {
+                console.log(`[Mobile Login] Licencia válida. Días restantes: ${daysRemaining || 'ilimitado'}`);
+            }
 
             // Query simplificado - sin columnas de permisos que pueden no existir
             const branchesResult = await this.pool.query(`
@@ -531,7 +523,7 @@ module.exports = {
                 // Non-blocking — login continues even if kick fails
             }
 
-            console.log(`[Mobile Login] ✅ Login exitoso: ${employee.email} (can_use_mobile_app=true)`);
+            console.log(`[Mobile Login] ✅ Login exitoso: ${employee.email} (can_use_mobile_app=true)${isExpired ? ' [EXPIRED LICENSE]' : ''}`);
 
             return res.json({
                 success: true,
@@ -551,7 +543,8 @@ module.exports = {
                         license: {
                             expiresAt: trialEndsAt ? trialEndsAt.toISOString() : null,
                             daysRemaining: daysRemaining,
-                            status: daysRemaining === null ? 'unlimited' : (daysRemaining <= 7 ? 'expiring_soon' : 'active')
+                            isExpired: isExpired || false,
+                            status: isExpired ? 'expired' : (daysRemaining === null ? 'unlimited' : (daysRemaining <= 7 ? 'expiring_soon' : 'active'))
                         }
                     }
                 }
