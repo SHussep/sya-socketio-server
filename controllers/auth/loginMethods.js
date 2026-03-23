@@ -562,7 +562,7 @@ module.exports = {
             return res.status(500).json({
                 success: false,
                 message: 'Error del servidor',
-                ...(process.env.NODE_ENV !== 'production' && { error: error.message })
+                debug: error.message
             });
         }
     }
