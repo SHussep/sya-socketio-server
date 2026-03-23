@@ -531,7 +531,7 @@ module.exports = {
                 // Non-blocking — login continues even if kick fails
             }
 
-            console.log(`[Mobile Login] ✅ Login exitoso: ${employee.email} (can_use_mobile_app=true)${isExpired ? ' [EXPIRED LICENSE]' : ''}`);
+            console.log(`[Mobile Login] ✅ Login exitoso: ${employee.email} (can_use_mobile_app=true)`);
 
             return res.json({
                 success: true,
@@ -561,8 +561,7 @@ module.exports = {
             console.error('[Mobile Login] Error:', error);
             return res.status(500).json({
                 success: false,
-                message: 'Error del servidor',
-                debug: error.message
+                message: 'Error del servidor'
             });
         }
     }
