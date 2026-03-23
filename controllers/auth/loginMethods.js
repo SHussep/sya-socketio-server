@@ -376,15 +376,23 @@ module.exports = {
             const now = new Date();
             const trialEndsAt = tenant.trial_ends_at ? new Date(tenant.trial_ends_at) : null;
 
-            // Allow login even if expired — app shows read-only state.
-            // Desktop controls the subscription; mobile just reflects it.
-            const daysRemaining = trialEndsAt ? Math.ceil((trialEndsAt - now) / (1000 * 60 * 60 * 24)) : null;
-            const isExpired = trialEndsAt && trialEndsAt < now;
-            if (isExpired) {
-                console.log(`[Mobile Login] ⚠️ Licencia vencida para tenant ${tenant.id} (hace ${Math.abs(daysRemaining)} días) — permitiendo acceso en modo lectura`);
-            } else {
-                console.log(`[Mobile Login] Licencia válida. Días restantes: ${daysRemaining || 'ilimitado'}`);
+            if (trialEndsAt && trialEndsAt < now) {
+                const daysExpired = Math.ceil((now - trialEndsAt) / (1000 * 60 * 60 * 24));
+                console.log(`[Mobile Login] ❌ Licencia vencida para tenant ${tenant.id}. Expiró hace ${daysExpired} días.`);
+                return res.status(403).json({
+                    success: false,
+                    message: 'Tu periodo de prueba ha finalizado.',
+                    error: 'LICENSE_EXPIRED',
+                    licenseInfo: {
+                        expiresAt: trialEndsAt.toISOString(),
+                        daysExpired: daysExpired,
+                        businessName: tenant.business_name
+                    }
+                });
             }
+
+            const daysRemaining = trialEndsAt ? Math.ceil((trialEndsAt - now) / (1000 * 60 * 60 * 24)) : null;
+            console.log(`[Mobile Login] Licencia válida. Días restantes: ${daysRemaining || 'ilimitado'}`);
 
             // Query simplificado - sin columnas de permisos que pueden no existir
             const branchesResult = await this.pool.query(`
@@ -543,8 +551,7 @@ module.exports = {
                         license: {
                             expiresAt: trialEndsAt ? trialEndsAt.toISOString() : null,
                             daysRemaining: daysRemaining,
-                            isExpired: isExpired || false,
-                            status: isExpired ? 'expired' : (daysRemaining === null ? 'unlimited' : (daysRemaining <= 7 ? 'expiring_soon' : 'active'))
+                            status: daysRemaining === null ? 'unlimited' : (daysRemaining <= 7 ? 'expiring_soon' : 'active')
                         }
                     }
                 }
