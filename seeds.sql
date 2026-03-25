@@ -31,6 +31,7 @@ VALUES
     (2, 'Encargado', 'Gerente de turno - permisos extensos', NOW()),
     (3, 'Repartidor', 'Acceso limitado como repartidor', NOW()),
     (4, 'Ayudante', 'Soporte - acceso limitado', NOW()),
+    (5, 'Cajero', 'Cajero de punto de venta', NOW()),
     (99, 'Otro', 'Rol genérico para roles personalizados desde Desktop', NOW())
 ON CONFLICT (id) DO UPDATE SET updated_at = NOW();
 

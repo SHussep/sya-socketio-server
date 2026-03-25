@@ -17,6 +17,8 @@ const deriveMobileAccessType = (roleId, canUseMobileApp) => {
             return 'admin';
         case 3:
             return 'distributor';
+        case 5:
+            return 'cashier';
         case 4:
         case 99:
         default:
