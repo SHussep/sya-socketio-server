@@ -3,6 +3,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 const express = require('express');
+const { v4: uuidv4 } = require('uuid');
 const jwt = require('jsonwebtoken');
 const JWT_SECRET = process.env.JWT_SECRET;
 
@@ -153,11 +154,12 @@ module.exports = (pool) => {
 
             const numericAmount = parseFloat(amount);
 
+            const globalId = uuidv4();
             const result = await pool.query(
-                `INSERT INTO deposits (tenant_id, branch_id, shift_id, employee_id, amount, description, deposit_date)
-                 VALUES ($1, $2, $3, $4, $5, $6, NOW())
+                `INSERT INTO deposits (tenant_id, branch_id, shift_id, employee_id, amount, description, deposit_date, global_id)
+                 VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7)
                  RETURNING *`,
-                [tenantId, branchId, shiftId || null, employeeId, numericAmount, description || '']
+                [tenantId, branchId, shiftId || null, employeeId, numericAmount, description || '', globalId]
             );
 
             const deposit = result.rows[0];
