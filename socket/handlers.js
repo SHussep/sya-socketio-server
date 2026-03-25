@@ -346,8 +346,22 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
         socket.on('sale_completed', (data) => {
             stats.totalEvents++;
             const roomName = `branch_${data.branchId}`;
-            console.log(`[SALE] Sucursal ${data.branchId}: Ticket #${data.ticketNumber} - $${data.total}`);
+            console.log(`[SALE] Sucursal ${data.branchId}: Ticket #${data.ticketNumber} - $${data.total} (source: ${data.source || 'desktop'})`);
             io.to(roomName).emit('sale_completed', { ...data, receivedAt: new Date().toISOString() });
+        });
+
+        socket.on('deposit_created', (data) => {
+            stats.totalEvents++;
+            const roomName = `branch_${data.branchId}`;
+            console.log(`[DEPOSIT] Sucursal ${data.branchId}: $${data.amount} (source: ${data.source || 'desktop'})`);
+            io.to(roomName).emit('deposit_created', { ...data, receivedAt: new Date().toISOString() });
+        });
+
+        socket.on('withdrawal_created', (data) => {
+            stats.totalEvents++;
+            const roomName = `branch_${data.branchId}`;
+            console.log(`[WITHDRAWAL] Sucursal ${data.branchId}: $${data.amount} (source: ${data.source || 'desktop'})`);
+            io.to(roomName).emit('withdrawal_created', { ...data, receivedAt: new Date().toISOString() });
         });
 
         socket.on('weight_update', (data) => {

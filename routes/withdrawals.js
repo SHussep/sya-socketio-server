@@ -86,6 +86,57 @@ module.exports = (pool) => {
         }
     });
 
+    // GET /api/withdrawals/pull - Incremental sync for Desktop
+    router.get('/pull', authenticateToken, async (req, res) => {
+        try {
+            const { tenantId, branchId: userBranchId } = req.user;
+            const { since, branch_id, limit = 500 } = req.query;
+            const targetBranchId = branch_id ? parseInt(branch_id) : userBranchId;
+
+            let query = `
+                SELECT w.id, w.tenant_id, w.branch_id, w.shift_id, w.employee_id,
+                       w.amount, w.description, w.withdrawal_date, w.created_at,
+                       w.global_id, w.terminal_id, w.local_op_seq, w.device_event_raw, w.created_local_utc,
+                       CONCAT(emp.first_name, ' ', emp.last_name) as employee_name,
+                       s.global_id as shift_global_id,
+                       emp.global_id as employee_global_id
+                FROM withdrawals w
+                LEFT JOIN employees emp ON w.employee_id = emp.id
+                LEFT JOIN shifts s ON w.shift_id = s.id
+                WHERE w.tenant_id = $1 AND w.branch_id = $2
+            `;
+            const params = [tenantId, targetBranchId];
+            let paramIndex = 3;
+
+            if (since) {
+                query += ` AND w.created_at > $${paramIndex}`;
+                params.push(since);
+                paramIndex++;
+            }
+
+            query += ` ORDER BY w.created_at ASC LIMIT $${paramIndex}`;
+            params.push(parseInt(limit));
+
+            const result = await pool.query(query, params);
+
+            const withdrawals = result.rows.map(row => ({
+                ...row,
+                amount: parseFloat(row.amount),
+                withdrawal_date: row.withdrawal_date ? new Date(row.withdrawal_date).toISOString() : null,
+                created_at: row.created_at ? new Date(row.created_at).toISOString() : null
+            }));
+
+            res.json({
+                success: true,
+                data: { withdrawals, last_sync: new Date().toISOString() },
+                count: withdrawals.length
+            });
+        } catch (error) {
+            console.error('[Withdrawals/Pull] ❌ Error:', error.message);
+            res.status(500).json({ success: false, message: 'Error pulling withdrawals' });
+        }
+    });
+
     // POST /api/withdrawals - Create new withdrawal
     router.post('/', authenticateToken, async (req, res) => {
         try {

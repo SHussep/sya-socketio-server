@@ -87,6 +87,57 @@ module.exports = (pool) => {
         }
     });
 
+    // GET /api/deposits/pull - Incremental sync for Desktop
+    router.get('/pull', authenticateToken, async (req, res) => {
+        try {
+            const { tenantId, branchId: userBranchId } = req.user;
+            const { since, branch_id, limit = 500 } = req.query;
+            const targetBranchId = branch_id ? parseInt(branch_id) : userBranchId;
+
+            let query = `
+                SELECT d.id, d.tenant_id, d.branch_id, d.shift_id, d.employee_id,
+                       d.amount, d.description, d.deposit_date, d.created_at,
+                       d.global_id, d.terminal_id, d.local_op_seq, d.device_event_raw, d.created_local_utc,
+                       CONCAT(emp.first_name, ' ', emp.last_name) as employee_name,
+                       s.global_id as shift_global_id,
+                       emp.global_id as employee_global_id
+                FROM deposits d
+                LEFT JOIN employees emp ON d.employee_id = emp.id
+                LEFT JOIN shifts s ON d.shift_id = s.id
+                WHERE d.tenant_id = $1 AND d.branch_id = $2
+            `;
+            const params = [tenantId, targetBranchId];
+            let paramIndex = 3;
+
+            if (since) {
+                query += ` AND d.created_at > $${paramIndex}`;
+                params.push(since);
+                paramIndex++;
+            }
+
+            query += ` ORDER BY d.created_at ASC LIMIT $${paramIndex}`;
+            params.push(parseInt(limit));
+
+            const result = await pool.query(query, params);
+
+            const deposits = result.rows.map(row => ({
+                ...row,
+                amount: parseFloat(row.amount),
+                deposit_date: row.deposit_date ? new Date(row.deposit_date).toISOString() : null,
+                created_at: row.created_at ? new Date(row.created_at).toISOString() : null
+            }));
+
+            res.json({
+                success: true,
+                data: { deposits, last_sync: new Date().toISOString() },
+                count: deposits.length
+            });
+        } catch (error) {
+            console.error('[Deposits/Pull] ❌ Error:', error.message);
+            res.status(500).json({ success: false, message: 'Error pulling deposits' });
+        }
+    });
+
     // POST /api/deposits - Create new deposit
     router.post('/', authenticateToken, async (req, res) => {
         try {
