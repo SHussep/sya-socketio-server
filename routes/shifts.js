@@ -52,12 +52,16 @@ module.exports = (pool, io) => {
                 console.log(`[Shifts] 🧹 Auto-cerrados ${autoCloseResult.rows.length} turnos previos del empleado ${employeeId}: ${autoCloseResult.rows.map(r => `ID ${r.id} (branch ${r.branch_id})`).join(', ')}`);
             }
 
-            // Crear nuevo turno
+            // Crear nuevo turno (include offline-first columns required by schema)
+            const shiftGlobalId = require('crypto').randomUUID();
+            const terminalId = 'mobile-' + require('crypto').randomUUID().substring(0, 8);
+            const createdLocalUtc = new Date().toISOString();
+
             const result = await pool.query(
-                `INSERT INTO shifts (tenant_id, branch_id, employee_id, start_time, initial_amount, transaction_counter, is_cash_cut_open)
-                 VALUES ($1, $2, $3, CURRENT_TIMESTAMP, $4, 0, true)
-                 RETURNING id, tenant_id, branch_id, employee_id, start_time, initial_amount, transaction_counter, is_cash_cut_open, created_at`,
-                [tenantId, branchId, employeeId, initialAmount || 0]
+                `INSERT INTO shifts (tenant_id, branch_id, employee_id, start_time, initial_amount, transaction_counter, is_cash_cut_open, global_id, terminal_id, local_op_seq, created_local_utc)
+                 VALUES ($1, $2, $3, CURRENT_TIMESTAMP, $4, 0, true, $5, $6, 1, $7)
+                 RETURNING id, tenant_id, branch_id, employee_id, start_time, initial_amount, transaction_counter, is_cash_cut_open, global_id, created_at`,
+                [tenantId, branchId, employeeId, initialAmount || 0, shiftGlobalId, terminalId, createdLocalUtc]
             );
 
             const shift = result.rows[0];
