@@ -78,25 +78,32 @@ module.exports = (pool, io) => {
                 return res.status(400).json({ success: false, message: 'Se requiere tenantId' });
             }
 
-            const { include_generic = 'false' } = req.query;
+            const { include_generic = 'false', search } = req.query;
 
             let query = `
                 SELECT id, global_id, tenant_id, nombre as name, telefono as phone, correo as email, direccion as address,
                        credito_limite as credit_limit, saldo_deudor as current_balance, nota as notes, is_system_generic,
-                       latitude, longitude, google_maps_url,
+                       tiene_credito, latitude, longitude, google_maps_url,
                        created_at, updated_at
                 FROM customers
                 WHERE tenant_id = $1 AND activo = TRUE
             `;
+            const params = [tenantId];
+
+            // Search by name or phone
+            if (search && search.trim().length > 0) {
+                params.push(`%${search.trim()}%`);
+                query += ` AND (nombre ILIKE $${params.length} OR telefono ILIKE $${params.length})`;
+            }
 
             // Por defecto, ocultar el cliente genérico en listados
             if (include_generic !== 'true') {
                 query += ' AND (is_system_generic = FALSE OR is_system_generic IS NULL)';
             }
 
-            query += ' ORDER BY name ASC';
+            query += ' ORDER BY is_system_generic DESC, name ASC LIMIT 20';
 
-            const result = await pool.query(query, [tenantId]);
+            const result = await pool.query(query, params);
 
             console.log(`[Customers] ✅ ${result.rows.length} clientes encontrados para tenant ${tenantId}`);
 
