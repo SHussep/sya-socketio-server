@@ -2036,5 +2036,94 @@ module.exports = (pool, io) => {
         }
     });
 
+    // GET /api/shifts/:id/summary - Resumen de un turno específico para corte de caja
+    // Must be AFTER all named GET routes to avoid /:id capturing "summary", "current", etc.
+    router.get('/:id/summary', authenticateToken, async (req, res) => {
+        try {
+            const { tenantId } = req.user;
+            const shiftId = parseInt(req.params.id);
+
+            // NaN guard
+            if (isNaN(shiftId)) {
+                return res.status(400).json({ success: false, message: 'ID de turno inválido' });
+            }
+
+            // Verify shift belongs to tenant
+            const shiftResult = await pool.query(
+                'SELECT id, initial_amount, branch_id, employee_id, start_time FROM shifts WHERE id = $1 AND tenant_id = $2',
+                [shiftId, tenantId]
+            );
+            if (shiftResult.rows.length === 0) {
+                return res.status(404).json({ success: false, message: 'Turno no encontrado' });
+            }
+            const shift = shiftResult.rows[0];
+
+            // Sales by payment type — include estado_venta_id 3 (completed) and 5 (settled credit)
+            const salesResult = await pool.query(`
+                SELECT
+                    tipo_pago_id,
+                    COUNT(*)::int as count,
+                    COALESCE(SUM(total), 0) as total
+                FROM ventas
+                WHERE id_turno = $1 AND tenant_id = $2 AND estado_venta_id IN (3, 5)
+                GROUP BY tipo_pago_id
+            `, [shiftId, tenantId]);
+
+            // tipo_pago_id mapping: 1=cash, 2=card, 3=credit, 4=transfer
+            // Note: cash_cuts table has no total_transfer_sales column — transfers tracked under card_sales
+            const salesByPayment = { cash: { count: 0, total: 0 }, card: { count: 0, total: 0 }, transfer: { count: 0, total: 0 }, credit: { count: 0, total: 0 } };
+            let totalSales = 0;
+            for (const row of salesResult.rows) {
+                totalSales += row.count;
+                switch (parseInt(row.tipo_pago_id)) {
+                    case 1: salesByPayment.cash = { count: row.count, total: parseFloat(row.total) }; break;
+                    case 2: salesByPayment.card = { count: row.count, total: parseFloat(row.total) }; break;
+                    case 3: salesByPayment.credit = { count: row.count, total: parseFloat(row.total) }; break;
+                    case 4: salesByPayment.transfer = { count: row.count, total: parseFloat(row.total) }; break;
+                }
+            }
+
+            // Expenses — column is `id_turno` NOT `shift_id`
+            const expResult = await pool.query(
+                'SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE id_turno = $1 AND tenant_id = $2 AND is_active = true',
+                [shiftId, tenantId]
+            );
+            const totalExpenses = parseFloat(expResult.rows[0].total);
+
+            // Deposits — column is `shift_id`, has tenant_id
+            const depResult = await pool.query(
+                'SELECT COALESCE(SUM(amount), 0) as total FROM deposits WHERE shift_id = $1 AND tenant_id = $2',
+                [shiftId, tenantId]
+            );
+            const totalDeposits = parseFloat(depResult.rows[0].total);
+
+            // Withdrawals — column is `shift_id`, has tenant_id
+            const wdResult = await pool.query(
+                'SELECT COALESCE(SUM(amount), 0) as total FROM withdrawals WHERE shift_id = $1 AND tenant_id = $2',
+                [shiftId, tenantId]
+            );
+            const totalWithdrawals = parseFloat(wdResult.rows[0].total);
+
+            const initialAmount = parseFloat(shift.initial_amount) || 0;
+            const expectedCash = initialAmount + salesByPayment.cash.total - totalExpenses + totalDeposits - totalWithdrawals;
+
+            res.json({
+                success: true,
+                data: {
+                    total_sales: totalSales,
+                    sales_by_payment: salesByPayment,
+                    initial_amount: initialAmount,
+                    total_expenses: totalExpenses,
+                    total_deposits: totalDeposits,
+                    total_withdrawals: totalWithdrawals,
+                    expected_cash: expectedCash
+                }
+            });
+        } catch (error) {
+            console.error('[Shifts] Error getting shift summary:', error);
+            res.status(500).json({ success: false, message: 'Error al obtener resumen del turno' });
+        }
+    });
+
     return router;
 };
