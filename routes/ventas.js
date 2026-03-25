@@ -463,6 +463,24 @@ module.exports = function(pool) {
             try {
                 await client.query('BEGIN');
 
+                // Idempotency check: if global_id already exists, return existing record
+                if (global_id) {
+                    const existingResult = await client.query(
+                        'SELECT id_venta, global_id, ticket_number, total FROM ventas WHERE global_id = $1 AND tenant_id = $2',
+                        [global_id, tenant_id]
+                    );
+                    if (existingResult.rows.length > 0) {
+                        await client.query('COMMIT');
+                        client.release();
+                        console.log(`[Ventas/Create] ⏭️ Venta already exists with global_id: ${global_id} (idempotent)`);
+                        return res.json({
+                            success: true,
+                            data: existingResult.rows[0],
+                            message: 'Venta ya existía (operación idempotente)'
+                        });
+                    }
+                }
+
                 // Calcular montos de pago si no vienen explícitos
                 let finalCashAmount = cash_amount;
                 let finalCardAmount = card_amount;
@@ -504,50 +522,60 @@ module.exports = function(pool) {
                 const nowUtcText = new Date().toISOString();
                 const nowEpochMs = Date.now();
 
-                // Insertar venta
-                // NOTE: fecha_venta_utc is GENERATED ALWAYS from fecha_venta_raw, so we use fecha_venta_raw
-                const insertResult = await client.query(`
-                    INSERT INTO ventas (
-                        tenant_id, branch_id, id_empleado, id_turno, id_cliente,
-                        estado_venta_id, venta_tipo_id, tipo_pago_id,
-                        ticket_number, subtotal, total_descuentos, total, monto_pagado,
-                        credito_original, notas, global_id,
-                        cash_amount, card_amount, credit_amount,
-                        terminal_id, local_op_seq, created_local_utc, fecha_venta_raw
-                    ) VALUES (
-                        $1, $2, $3, $4, $5,
-                        $6, $7, $8,
-                        $9, $10, $11, $12, $13,
-                        $14, $15, $16,
-                        $17, $18, $19,
-                        $20, 1, $21, $22
-                    )
-                    ON CONFLICT (global_id) DO UPDATE SET
-                        estado_venta_id = EXCLUDED.estado_venta_id,
-                        monto_pagado = EXCLUDED.monto_pagado,
-                        cash_amount = EXCLUDED.cash_amount,
-                        card_amount = EXCLUDED.card_amount,
-                        credit_amount = EXCLUDED.credit_amount,
-                        updated_at = CURRENT_TIMESTAMP
-                    RETURNING id_venta, global_id
-                `, [
-                    tenant_id, branch_id, id_empleado, id_turno, id_cliente,
-                    estado_venta_id, venta_tipo_id, tipo_pago_id,
-                    ticket_number,
-                    parseFloat(subtotal) || 0,
-                    parseFloat(total_descuentos) || 0,
-                    parseFloat(total),
-                    parseFloat(monto_pagado) || parseFloat(total),
-                    tipo_pago_id === 3 ? parseFloat(total) : 0, // credito_original
-                    notas || null,
-                    finalGlobalId,
-                    parseFloat(finalCashAmount) || 0,
-                    parseFloat(finalCardAmount) || 0,
-                    parseFloat(finalCreditAmount) || 0,
-                    mobileTerminalId,
-                    nowUtcText,
-                    nowEpochMs
-                ]);
+                // Insert venta with SAVEPOINT for ticket collision retry
+                let insertResult;
+                let currentTicket = ticket_number;
+                for (let attempt = 0; attempt < 3; attempt++) {
+                    try {
+                        await client.query('SAVEPOINT ticket_retry');
+                        insertResult = await client.query(`
+                            INSERT INTO ventas (
+                                tenant_id, branch_id, id_empleado, id_turno, id_cliente,
+                                estado_venta_id, venta_tipo_id, tipo_pago_id,
+                                ticket_number, subtotal, total_descuentos, total, monto_pagado,
+                                credito_original, notas, global_id,
+                                cash_amount, card_amount, credit_amount,
+                                terminal_id, local_op_seq, created_local_utc, fecha_venta_raw
+                            ) VALUES (
+                                $1, $2, $3, $4, $5,
+                                $6, $7, $8,
+                                $9, $10, $11, $12, $13,
+                                $14, $15, $16,
+                                $17, $18, $19,
+                                $20, 1, $21, $22
+                            )
+                            ON CONFLICT (global_id) DO NOTHING
+                            RETURNING id_venta, global_id
+                        `, [
+                            tenant_id, branch_id, id_empleado, id_turno, id_cliente,
+                            estado_venta_id, venta_tipo_id, tipo_pago_id,
+                            currentTicket,
+                            parseFloat(subtotal) || 0,
+                            parseFloat(total_descuentos) || 0,
+                            parseFloat(total),
+                            parseFloat(monto_pagado) || parseFloat(total),
+                            tipo_pago_id === 3 ? parseFloat(total) : 0,
+                            notas || null,
+                            finalGlobalId,
+                            parseFloat(finalCashAmount) || 0,
+                            parseFloat(finalCardAmount) || 0,
+                            parseFloat(finalCreditAmount) || 0,
+                            mobileTerminalId,
+                            nowUtcText,
+                            nowEpochMs
+                        ]);
+                        await client.query('RELEASE SAVEPOINT ticket_retry');
+                        break;
+                    } catch (insertErr) {
+                        await client.query('ROLLBACK TO SAVEPOINT ticket_retry');
+                        if (insertErr.code === '23505' && insertErr.constraint && insertErr.constraint.includes('ticket') && attempt < 2) {
+                            currentTicket = currentTicket + 1;
+                            console.log(`[Ventas/Create] ⚠️ Ticket collision, retrying with ${currentTicket}`);
+                            continue;
+                        }
+                        throw insertErr;
+                    }
+                }
 
                 const newVenta = insertResult.rows[0];
                 console.log(`[Ventas/Create] ✅ Venta creada: ID=${newVenta.id_venta}, GlobalId=${newVenta.global_id}`);
@@ -619,7 +647,7 @@ module.exports = function(pool) {
                     data: {
                         id_venta: newVenta.id_venta,
                         global_id: newVenta.global_id,
-                        ticket_number: ticket_number
+                        ticket_number: currentTicket
                     }
                 });
 
