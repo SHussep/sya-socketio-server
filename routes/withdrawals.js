@@ -155,10 +155,10 @@ module.exports = (pool) => {
 
             const globalId = uuidv4();
             const result = await pool.query(
-                `INSERT INTO withdrawals (tenant_id, branch_id, shift_id, employee_id, amount, description, withdrawal_date, global_id)
-                 VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7)
+                `INSERT INTO withdrawals (tenant_id, branch_id, shift_id, employee_id, amount, description, withdrawal_date, global_id, terminal_id, local_op_seq, device_event_raw, created_local_utc)
+                 VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7, $8, 0, 0, $9)
                  RETURNING *`,
-                [tenantId, branchId, shiftId || null, employeeId, numericAmount, description || '', globalId]
+                [tenantId, branchId, shiftId || null, employeeId, numericAmount, description || '', globalId, 'mobile-pos', new Date().toISOString()]
             );
 
             const withdrawal = result.rows[0];
