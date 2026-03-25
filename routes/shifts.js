@@ -90,13 +90,13 @@ module.exports = (pool, io) => {
     router.post('/close', authenticateToken, async (req, res) => {
         try {
             const { tenantId, employeeId, branchId } = req.user;
-            const { shiftId, finalAmount } = req.body;
+            const { shiftId, finalAmount, counted_cash, expected_cash, difference, notes } = req.body;
 
             // Verificar que el turno existe, pertenece al empleado y está abierto
             const shiftCheck = await pool.query(
-                `SELECT id, start_time FROM shifts
-                 WHERE id = $1 AND tenant_id = $2 AND branch_id = $3 AND employee_id = $4 AND is_cash_cut_open = true`,
-                [shiftId, tenantId, branchId, employeeId]
+                `SELECT id, start_time, branch_id, initial_amount FROM shifts
+                 WHERE id = $1 AND tenant_id = $2 AND employee_id = $3 AND is_cash_cut_open = true`,
+                [shiftId, tenantId, employeeId]
             );
 
             if (shiftCheck.rows.length === 0) {
@@ -106,11 +106,13 @@ module.exports = (pool, io) => {
                 });
             }
 
+            const shiftBranchId = shiftCheck.rows[0].branch_id;
+
             // Validar consolidación: si está activa, no cerrar si hay otros turnos abiertos
             try {
                 const branchSetting = await pool.query(
                     'SELECT cajero_consolida_liquidaciones FROM branches WHERE id = $1',
-                    [branchId]
+                    [shiftBranchId]
                 );
                 const cajeroConsolida = branchSetting.rows[0]?.cajero_consolida_liquidaciones === true;
 
@@ -124,7 +126,7 @@ module.exports = (pool, io) => {
                           AND s.is_cash_cut_open = true
                         ORDER BY s.start_time ASC
                         LIMIT 1
-                    `, [branchId, tenantId]);
+                    `, [shiftBranchId, tenantId]);
 
                     const isConsolidator = oldestShift.rows[0]?.id === shiftId;
 
@@ -139,7 +141,7 @@ module.exports = (pool, io) => {
                               AND s.tenant_id = $2
                               AND s.is_cash_cut_open = true
                               AND s.id != $3
-                        `, [branchId, tenantId, shiftId]);
+                        `, [shiftBranchId, tenantId, shiftId]);
 
                         if (otherOpenShifts.rows.length > 0) {
                             const nombres = otherOpenShifts.rows.map(s => s.employee_name).join(', ');
@@ -170,6 +172,90 @@ module.exports = (pool, io) => {
             const shift = result.rows[0];
             console.log(`[Shifts] 🔒 Turno cerrado: ID ${shift.id} - Empleado ${employeeId}`);
 
+            // Create CashDrawerSession if cash cut data provided
+            if (counted_cash !== undefined) {
+                try {
+                    const crypto = require('crypto');
+
+                    // Aggregate sales by payment type (same as GET /:id/summary)
+                    const salesResult = await pool.query(`
+                        SELECT tipo_pago_id, COALESCE(SUM(total), 0) as total
+                        FROM ventas
+                        WHERE id_turno = $1 AND tenant_id = $2 AND estado_venta_id IN (3, 5)
+                        GROUP BY tipo_pago_id
+                    `, [shiftId, tenantId]);
+
+                    let totalCashSales = 0, totalCardSales = 0, totalCreditSales = 0;
+                    for (const row of salesResult.rows) {
+                        switch (parseInt(row.tipo_pago_id)) {
+                            case 1: totalCashSales = parseFloat(row.total); break;
+                            case 2: totalCardSales += parseFloat(row.total); break;
+                            case 3: totalCreditSales = parseFloat(row.total); break;
+                            case 4: totalCardSales += parseFloat(row.total); break; // transfer → card
+                        }
+                    }
+
+                    // Expenses (column is id_turno)
+                    const expResult = await pool.query(
+                        'SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE id_turno = $1 AND tenant_id = $2 AND is_active = true',
+                        [shiftId, tenantId]
+                    );
+                    const totalExpenses = parseFloat(expResult.rows[0].total);
+
+                    // Deposits (column is shift_id)
+                    const depResult = await pool.query(
+                        'SELECT COALESCE(SUM(amount), 0) as total FROM deposits WHERE shift_id = $1 AND tenant_id = $2',
+                        [shiftId, tenantId]
+                    );
+                    const totalDeposits = parseFloat(depResult.rows[0].total);
+
+                    // Withdrawals (column is shift_id)
+                    const wdResult = await pool.query(
+                        'SELECT COALESCE(SUM(amount), 0) as total FROM withdrawals WHERE shift_id = $1 AND tenant_id = $2',
+                        [shiftId, tenantId]
+                    );
+                    const totalWithdrawals = parseFloat(wdResult.rows[0].total);
+
+                    const shiftInitialAmount = parseFloat(shiftCheck.rows[0].initial_amount) || 0;
+
+                    await pool.query(`
+                        INSERT INTO cash_cuts (
+                            tenant_id, branch_id, employee_id, shift_id,
+                            start_time, end_time, cut_date,
+                            initial_amount,
+                            total_cash_sales, total_card_sales, total_credit_sales,
+                            total_expenses, total_deposits, total_withdrawals,
+                            expected_cash_in_drawer, counted_cash, difference,
+                            notes, is_closed,
+                            global_id, terminal_id, local_op_seq, created_local_utc
+                        ) VALUES (
+                            $1, $2, $3, $4,
+                            $5, NOW(), NOW(),
+                            $6,
+                            $7, $8, $9,
+                            $10, $11, $12,
+                            $13, $14, $15,
+                            $16, TRUE,
+                            $17, $18, 1, $19
+                        )
+                    `, [
+                        tenantId, shiftBranchId, employeeId, shiftId,
+                        shiftCheck.rows[0].start_time,
+                        shiftInitialAmount,
+                        totalCashSales, totalCardSales, totalCreditSales,
+                        totalExpenses, totalDeposits, totalWithdrawals,
+                        parseFloat(expected_cash) || 0, parseFloat(counted_cash) || 0, parseFloat(difference) || 0,
+                        notes || null,
+                        crypto.randomUUID(), 'mobile-' + crypto.randomUUID().substring(0, 8), new Date().toISOString()
+                    ]);
+
+                    console.log(`[Shifts] 📊 CashDrawerSession created for shift ${shiftId}`);
+                } catch (cashCutErr) {
+                    console.error(`[Shifts] ⚠️ Error creating CashDrawerSession: ${cashCutErr.message}`);
+                    // Don't fail the close — the shift is already closed
+                }
+            }
+
             // 🧹 Limpiar otros turnos huérfanos del mismo empleado
             try {
                 const orphanCleanup = await pool.query(
@@ -187,12 +273,12 @@ module.exports = (pool, io) => {
 
             // 🔌 EMIT Socket.IO para actualizar app móvil en tiempo real
             if (io) {
-                const roomName = `branch_${branchId}`;
+                const roomName = `branch_${shiftBranchId}`;
                 console.log(`[Shifts] 📡 Emitiendo 'shift_ended' a ${roomName}`);
                 io.to(roomName).emit('shift_ended', {
                     shiftId: shift.id,
                     employeeId: employeeId,
-                    branchId: branchId,
+                    branchId: shiftBranchId,
                     endTime: shift.end_time ? new Date(shift.end_time).toISOString() : new Date().toISOString(),
                     finalAmount: parseFloat(shift.final_amount || 0),
                     source: 'post_close'
