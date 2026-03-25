@@ -122,7 +122,14 @@ module.exports = function(pool) {
                 });
             }
 
-            console.log(`[Ventas/Pull] 📥 Descargando ventas - Tenant: ${tenantIdNum}, Branch: ${branchIdNum}, Since: ${since || 'ALL'}`);
+            console.log(`[Ventas/Pull] 📥 Descargando ventas - Tenant: ${tenantIdNum}, Branch: ${branchIdNum}, Since: ${since || 'ALL'} (type: ${typeof since})`);
+
+            // Debug: count total ventas for this branch
+            const countResult = await pool.query(
+                'SELECT COUNT(*) as total, MAX(updated_at) as max_updated FROM ventas WHERE tenant_id = $1 AND branch_id = $2',
+                [tenantIdNum, branchIdNum]
+            );
+            console.log(`[Ventas/Pull] 📊 Total ventas en branch: ${countResult.rows[0].total}, último updated_at: ${countResult.rows[0].max_updated}`);
 
             // Verificar si la branch tiene data_reset_at (soft reset)
             const branchInfo = await pool.query(
@@ -139,6 +146,7 @@ module.exports = function(pool) {
                 SELECT
                     v.id_venta, v.global_id, v.tenant_id, v.branch_id, v.ticket_number,
                     v.subtotal, v.total_descuentos, v.total, v.monto_pagado, v.credito_original,
+                    v.cash_amount, v.card_amount, v.credit_amount,
                     v.estado_venta_id, v.venta_tipo_id, v.tipo_pago_id, v.fecha_venta_utc,
                     v.fecha_liquidacion_utc, v.notas, v.terminal_id, v.local_op_seq,
                     v.created_local_utc, v.created_at, v.updated_at, v.has_nota_credito,
