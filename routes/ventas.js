@@ -499,7 +499,13 @@ module.exports = function(pool) {
                     }
                 }
 
+                // Generate a mobile terminal UUID for offline-first columns
+                const mobileTerminalId = require('crypto').randomUUID();
+                const nowUtcText = new Date().toISOString();
+                const nowEpochMs = Date.now();
+
                 // Insertar venta
+                // NOTE: fecha_venta_utc is GENERATED ALWAYS from fecha_venta_raw, so we use fecha_venta_raw
                 const insertResult = await client.query(`
                     INSERT INTO ventas (
                         tenant_id, branch_id, id_empleado, id_turno, id_cliente,
@@ -507,14 +513,14 @@ module.exports = function(pool) {
                         ticket_number, subtotal, total_descuentos, total, monto_pagado,
                         credito_original, notas, global_id,
                         cash_amount, card_amount, credit_amount,
-                        terminal_id, fecha_venta_utc, created_local_utc
+                        terminal_id, local_op_seq, created_local_utc, fecha_venta_raw
                     ) VALUES (
                         $1, $2, $3, $4, $5,
                         $6, $7, $8,
                         $9, $10, $11, $12, $13,
                         $14, $15, $16,
                         $17, $18, $19,
-                        'MOBILE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                        $20, 1, $21, $22
                     )
                     ON CONFLICT (global_id) DO UPDATE SET
                         estado_venta_id = EXCLUDED.estado_venta_id,
@@ -537,7 +543,10 @@ module.exports = function(pool) {
                     finalGlobalId,
                     parseFloat(finalCashAmount) || 0,
                     parseFloat(finalCardAmount) || 0,
-                    parseFloat(finalCreditAmount) || 0
+                    parseFloat(finalCreditAmount) || 0,
+                    mobileTerminalId,
+                    nowUtcText,
+                    nowEpochMs
                 ]);
 
                 const newVenta = insertResult.rows[0];
@@ -545,7 +554,9 @@ module.exports = function(pool) {
 
                 // Insertar detalles si vienen
                 if (items && items.length > 0) {
+                    let detailSeq = 0;
                     for (const item of items) {
+                        detailSeq++;
                         // Resolver producto
                         let id_producto = item.id_producto;
                         if (item.producto_global_id && !id_producto) {
@@ -558,13 +569,28 @@ module.exports = function(pool) {
                             }
                         }
 
+                        if (!id_producto) {
+                            console.warn(`[Ventas/Create] ⚠️ Producto no encontrado: ${item.producto_global_id}, buscando por tenant...`);
+                            // Fallback: try finding by description within tenant
+                            const descResult = await client.query(
+                                'SELECT id FROM productos WHERE tenant_id = $1 AND descripcion ILIKE $2 LIMIT 1',
+                                [tenant_id, item.descripcion_producto || item.nombre_producto || '']
+                            );
+                            if (descResult.rows.length > 0) {
+                                id_producto = descResult.rows[0].id;
+                                console.log(`[Ventas/Create] ✅ Producto encontrado por descripcion: ${id_producto}`);
+                            } else {
+                                throw new Error(`Producto no encontrado: ${item.producto_global_id || item.descripcion_producto}. Verifique que los productos estén sincronizados.`);
+                            }
+                        }
+
                         await client.query(`
                             INSERT INTO ventas_detalle (
                                 id_venta, id_producto, descripcion_producto,
                                 cantidad, precio_unitario, precio_lista, total_linea,
                                 monto_cliente_descuento, monto_manual_descuento,
-                                global_id
-                            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                                global_id, terminal_id, local_op_seq, created_local_utc
+                            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                             ON CONFLICT (global_id) DO NOTHING
                         `, [
                             newVenta.id_venta,
@@ -576,7 +602,10 @@ module.exports = function(pool) {
                             parseFloat(item.total_linea) || 0,
                             parseFloat(item.monto_cliente_descuento) || 0,
                             parseFloat(item.monto_manual_descuento) || 0,
-                            item.global_id || require('crypto').randomUUID()
+                            item.global_id || require('crypto').randomUUID(),
+                            mobileTerminalId,
+                            detailSeq + 1, // local_op_seq (1-based, after parent venta seq=1)
+                            nowUtcText
                         ]);
                     }
                     console.log(`[Ventas/Create] ✅ ${items.length} detalles insertados`);
@@ -605,8 +634,7 @@ module.exports = function(pool) {
             console.error('[Ventas/Create] ❌ Error:', error);
             res.status(500).json({
                 success: false,
-                message: 'Error al crear venta',
-                error: undefined
+                message: error.message || 'Error al crear venta'
             });
         }
     });
