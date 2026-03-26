@@ -529,7 +529,7 @@ module.exports = {
             let activeSessionConflict = null;
             try {
                 console.log(`[Mobile Login] 🔍 Checking session conflict for employee ${employee.id}...`);
-                activeSessionConflict = await checkSessionConflict(employee.id, this.pool);
+                activeSessionConflict = await checkSessionConflict(employee.id, this.pool, 'mobile');
                 console.log(`[Mobile Login] 🔍 Conflict result:`, JSON.stringify(activeSessionConflict));
             } catch (conflictErr) {
                 console.error('[Mobile Login] Error checking session conflict:', conflictErr.message, conflictErr.stack);
@@ -579,10 +579,14 @@ module.exports = {
 //          POST /api/auth/mobile-login (embedded in response)
 // Exported separately — utility function, not an HTTP handler.
 // ═══════════════════════════════════════════════════════════════
-async function checkSessionConflict(employeeId, pool) {
+async function checkSessionConflict(employeeId, pool, callerDeviceType) {
     const activeDeviceSessions = require('../../socket/activeDeviceSessions');
 
-    console.log(`[SessionConflict] Checking employee ${employeeId}. Map size: ${activeDeviceSessions.size}, Map keys: [${[...activeDeviceSessions.keys()].join(', ')}]`);
+    // Determine which device type to look for (the OTHER one)
+    const otherType = callerDeviceType === 'mobile' ? 'desktop' : 'mobile';
+    const otherKey = `${employeeId}_${otherType}`;
+
+    console.log(`[SessionConflict] Checking employee ${employeeId} (caller: ${callerDeviceType || 'unknown'}, looking for: ${otherType}). Map size: ${activeDeviceSessions.size}`);
 
     let hasConflict = false;
     let otherDeviceType = null;
@@ -590,9 +594,9 @@ async function checkSessionConflict(employeeId, pool) {
     let shiftBranchName = null;
     let shiftStartTime = null;
 
-    // 1. Check in-memory registry for online device
-    const existingSession = activeDeviceSessions.get(employeeId);
-    console.log(`[SessionConflict] Map lookup for ${employeeId}:`, existingSession ? JSON.stringify(existingSession) : 'NOT FOUND');
+    // 1. Check in-memory registry for the OTHER device type
+    const existingSession = activeDeviceSessions.get(otherKey);
+    console.log(`[SessionConflict] Map lookup for ${otherKey}:`, existingSession ? JSON.stringify(existingSession) : 'NOT FOUND');
     if (existingSession) {
         hasConflict = true;
         otherDeviceType = existingSession.clientType;
@@ -614,15 +618,24 @@ async function checkSessionConflict(employeeId, pool) {
 
     if (shiftResult.rows.length > 0) {
         const shift = shiftResult.rows[0];
-        hasConflict = true;
         shiftBranchName = shift.branch_name;
         shiftStartTime = shift.start_time;
 
-        // If no online session, infer device type from terminal_id
-        if (!otherDeviceType) {
-            const terminalId = shift.terminal_id || '';
-            otherDeviceType = terminalId.startsWith('mobile-') ? 'mobile' : 'desktop';
+        // Infer device type from terminal_id
+        const terminalId = shift.terminal_id || '';
+        const shiftDeviceType = terminalId.startsWith('mobile-') ? 'mobile' : 'desktop';
+
+        // Only conflict if the shift was opened from a DIFFERENT device type
+        // or if we already found an online session from the other device
+        if (hasConflict) {
+            // Already found online conflict from Map, just add shift details
+            if (!otherDeviceType) otherDeviceType = shiftDeviceType;
+        } else if (shiftDeviceType !== callerDeviceType) {
+            // Shift opened from different device type and that device is offline
+            hasConflict = true;
+            otherDeviceType = shiftDeviceType;
         }
+        // If shiftDeviceType === callerDeviceType → it's the caller's own shift, not a conflict
     }
 
     console.log(`[SessionConflict] Result: hasConflict=${hasConflict}, otherDeviceType=${otherDeviceType}, otherDeviceOnline=${otherDeviceOnline}`);

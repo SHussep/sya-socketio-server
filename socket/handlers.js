@@ -164,14 +164,15 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
                         return; // Don't register in activeDeviceSessions
                     }
 
-                    // Register this device in the session registry
-                    activeDeviceSessions.set(employeeId, {
+                    // Register this device in the session registry (composite key: employeeId_deviceType)
+                    const sessionKey = `${employeeId}_${data.type}`;
+                    activeDeviceSessions.set(sessionKey, {
                         socketId: socket.id,
                         clientType: data.type,
                         branchId: socket.branchId || null,
                         connectedAt: Date.now()
                     });
-                    console.log(`[Socket] 📱 Employee ${employeeId} registered as ${data.type} (socket: ${socket.id})`);
+                    console.log(`[Socket] 📱 Employee ${employeeId} registered as ${data.type} (socket: ${socket.id}, key: ${sessionKey})`);
                 } catch (err) {
                     console.error(`[Socket] Error in session registry for employee ${employeeId}:`, err.message);
                 }
@@ -957,63 +958,57 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
                 return;
             }
 
-            console.log(`[Socket] 🔄 Force takeover requested by ${socket.clientType} for employee ${forceEmployeeId}`);
+            const callerType = socket.clientType || 'unknown';
+            const otherType = callerType === 'mobile' ? 'desktop' : 'mobile';
+            console.log(`[Socket] 🔄 Force takeover requested by ${callerType} for employee ${forceEmployeeId} (looking for ${otherType})`);
 
             try {
-                const existingSession = activeDeviceSessions.get(forceEmployeeId);
+                // Look for the OTHER device type's session (composite key)
+                const otherKey = `${forceEmployeeId}_${otherType}`;
+                const existingSession = activeDeviceSessions.get(otherKey);
 
-                if (existingSession && existingSession.socketId !== socket.id) {
-                    // Old device is ONLINE — send force_logout directly
+                if (existingSession) {
+                    // Other device is ONLINE — send force_logout directly
                     const oldSocket = io.sockets.sockets.get(existingSession.socketId);
                     if (oldSocket) {
                         oldSocket.emit('force_logout', {
                             reason: 'session_taken',
-                            takenByDevice: socket.clientType || 'unknown',
+                            takenByDevice: callerType,
                             message: 'Tu sesión fue tomada por otro dispositivo'
                         });
                         console.log(`[Socket] 📤 force_logout sent to ${existingSession.clientType} (socket: ${existingSession.socketId})`);
                     }
-                    activeDeviceSessions.delete(forceEmployeeId);
+                    activeDeviceSessions.delete(otherKey);
 
-                    // Register new device
-                    activeDeviceSessions.set(forceEmployeeId, {
+                    // Ensure caller is registered
+                    const callerKey = `${forceEmployeeId}_${callerType}`;
+                    activeDeviceSessions.set(callerKey, {
                         socketId: socket.id,
-                        clientType: socket.clientType || 'unknown',
+                        clientType: callerType,
                         branchId: socket.branchId || null,
                         connectedAt: Date.now()
                     });
 
                     socket.emit('force_takeover_result', { success: true, wasOnline: true });
                 } else {
-                    // Old device is OFFLINE — set revocation flag in DB
-                    let revokedDeviceType = 'unknown';
-                    const shiftResult = await pool.query(
-                        `SELECT terminal_id FROM shifts
-                         WHERE employee_id = $1 AND is_cash_cut_open = true
-                         ORDER BY start_time DESC LIMIT 1`,
-                        [forceEmployeeId]
-                    );
-                    if (shiftResult.rows.length > 0) {
-                        const terminalId = shiftResult.rows[0].terminal_id || '';
-                        revokedDeviceType = terminalId.startsWith('mobile-') ? 'mobile' : 'desktop';
-                    }
-
+                    // Other device is OFFLINE — set revocation flag in DB for the other device type
                     await pool.query(
                         `UPDATE employees
                          SET session_revoked_at = NOW(), session_revoked_for_device = $2
                          WHERE id = $1`,
-                        [forceEmployeeId, revokedDeviceType]
+                        [forceEmployeeId, otherType]
                     );
 
-                    // Register new device
-                    activeDeviceSessions.set(forceEmployeeId, {
+                    // Ensure caller is registered
+                    const callerKey = `${forceEmployeeId}_${callerType}`;
+                    activeDeviceSessions.set(callerKey, {
                         socketId: socket.id,
-                        clientType: socket.clientType || 'unknown',
+                        clientType: callerType,
                         branchId: socket.branchId || null,
                         connectedAt: Date.now()
                     });
 
-                    console.log(`[Socket] 📝 Session revocation flag set for employee ${forceEmployeeId} (${revokedDeviceType})`);
+                    console.log(`[Socket] 📝 Session revocation flag set for employee ${forceEmployeeId} (${otherType})`);
                     socket.emit('force_takeover_result', { success: true, wasOnline: false });
                 }
             } catch (err) {
@@ -1023,13 +1018,17 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
         });
 
         socket.on('disconnect', () => {
-            // Clean up session registry (only if this socket is the current entry)
+            // Clean up session registry (composite key: employeeId_deviceType)
             const empId = socket.user?.employeeId;
-            if (empId && activeDeviceSessions.has(empId)) {
-                const session = activeDeviceSessions.get(empId);
-                if (session.socketId === socket.id) {
-                    activeDeviceSessions.delete(empId);
-                    console.log(`[Socket] 🔌 Employee ${empId} removed from session registry (disconnect)`);
+            const deviceType = socket.clientType;
+            if (empId && deviceType) {
+                const sessionKey = `${empId}_${deviceType}`;
+                if (activeDeviceSessions.has(sessionKey)) {
+                    const session = activeDeviceSessions.get(sessionKey);
+                    if (session.socketId === socket.id) {
+                        activeDeviceSessions.delete(sessionKey);
+                        console.log(`[Socket] 🔌 Employee ${empId} (${deviceType}) removed from session registry (disconnect)`);
+                    }
                 }
             }
 
