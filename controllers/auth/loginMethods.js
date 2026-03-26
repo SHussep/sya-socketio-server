@@ -601,7 +601,7 @@ async function checkSessionConflict(employeeId, pool) {
 
     // 2. Check DB for open shift (even if no active socket session)
     const shiftResult = await pool.query(
-        `SELECT s.id, s.start_time, s.terminal_id, b.nombre as branch_name
+        `SELECT s.id, s.start_time, s.terminal_id, b.name as branch_name
          FROM shifts s
          LEFT JOIN branches b ON b.id = s.branch_id
          WHERE s.employee_id = $1 AND s.is_cash_cut_open = true
