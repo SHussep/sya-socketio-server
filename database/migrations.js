@@ -2595,6 +2595,28 @@ async function runMigrations() {
                 console.error(`[Schema] ⚠️ branches location columns error: ${brLocErr.message}`);
             }
 
+            // ── Patch: Add session revocation columns for mutual exclusion ──
+            try {
+                const checkSessionRevoked = await client.query(`
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name = 'employees' AND column_name = 'session_revoked_at'
+                `);
+                if (checkSessionRevoked.rows.length === 0) {
+                    console.log('[Schema] 📝 Adding session revocation columns to employees...');
+                    await client.query(`
+                        ALTER TABLE employees
+                        ADD COLUMN session_revoked_at TIMESTAMPTZ DEFAULT NULL
+                    `);
+                    await client.query(`
+                        ALTER TABLE employees
+                        ADD COLUMN session_revoked_for_device VARCHAR(20) DEFAULT NULL
+                    `);
+                    console.log('[Schema] ✅ Session revocation columns added');
+                }
+            } catch (err) {
+                console.error('[Schema] ⚠️ Error adding session revocation columns:', err.message);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {
