@@ -454,6 +454,10 @@ module.exports = {
                 ? employee.mobile_access_type
                 : (employee.role_mobile_access_type || 'none');
 
+            // Resolve mobile_access_types: new plural field takes priority, fallback to singular
+            const resolvedAccessTypes = employee.mobile_access_types
+                || (resolvedAccessType !== 'none' ? resolvedAccessType : null);
+
             const employeeData = {
                 id: employee.id,
                 global_id: employee.global_id,  // ✅ Necesario para preferencias de notificaciones
@@ -466,6 +470,7 @@ module.exports = {
                 isActive: employee.is_active,
                 canUseMobileApp: employee.can_use_mobile_app,
                 mobileAccessType: resolvedAccessType,
+                mobileAccessTypes: resolvedAccessTypes,
                 createdAt: employee.created_at
             };
 

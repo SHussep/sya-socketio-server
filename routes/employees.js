@@ -127,6 +127,7 @@ module.exports = (pool) => {
                 isOwner,
                 mainBranchId,
                 googleUserIdentifier,
+                mobileAccessTypes,    // Comma-separated: "cashier,distributor"
                 // ✅ OFFLINE-FIRST FIELDS
                 global_id,
                 terminal_id,
@@ -280,9 +281,10 @@ module.exports = (pool) => {
                              password_hash = COALESCE($6, password_hash),
                              password_updated_at = CASE WHEN $6 IS NOT NULL THEN NOW() ELSE password_updated_at END,
                              can_use_mobile_app = COALESCE($9, can_use_mobile_app),
+                             mobile_access_types = COALESCE($10, mobile_access_types),
                              updated_at = NOW()
                          WHERE id = $7 AND tenant_id = $8
-                         RETURNING id, tenant_id, first_name, last_name, username, email, main_branch_id, is_active, role_id, can_use_mobile_app, created_at, updated_at`,
+                         RETURNING id, tenant_id, first_name, last_name, username, email, main_branch_id, is_active, role_id, can_use_mobile_app, mobile_access_types, created_at, updated_at`,
                         [
                             firstName,
                             lastName,
@@ -292,7 +294,8 @@ module.exports = (pool) => {
                             hashedPasswordForUpdate,  // ✅ Always BCrypt hashed
                             existingId,
                             tenantId,
-                            explicitCanUseMobileApp ? canUseMobileApp : null  // NULL → COALESCE preserves existing value
+                            explicitCanUseMobileApp ? canUseMobileApp : null,  // NULL → COALESCE preserves existing value
+                            mobileAccessTypes || null  // $10: comma-separated access types
                         ]
                     );
 
@@ -428,8 +431,8 @@ module.exports = (pool) => {
 
                 const insertResult = await client.query(
                     `INSERT INTO employees
-                     (tenant_id, first_name, last_name, username, email, password_hash, main_branch_id, role_id, can_use_mobile_app, mobile_access_type, is_active, email_verified, global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw, updated_at, created_at)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $18, $10, $11, $12, $13, $14, $15, $16, NOW(), NOW())
+                     (tenant_id, first_name, last_name, username, email, password_hash, main_branch_id, role_id, can_use_mobile_app, mobile_access_type, is_active, email_verified, global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw, mobile_access_types, updated_at, created_at)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $18, $10, $11, $12, $13, $14, $15, $16, $19, NOW(), NOW())
                      ON CONFLICT (global_id) DO UPDATE
                      SET first_name = EXCLUDED.first_name,
                          last_name = EXCLUDED.last_name,
@@ -440,10 +443,11 @@ module.exports = (pool) => {
                          role_id = COALESCE(EXCLUDED.role_id, employees.role_id),
                          can_use_mobile_app = CASE WHEN $17 = true THEN EXCLUDED.can_use_mobile_app ELSE employees.can_use_mobile_app END,
                          mobile_access_type = CASE WHEN $17 = true THEN EXCLUDED.mobile_access_type ELSE employees.mobile_access_type END,
+                         mobile_access_types = COALESCE(EXCLUDED.mobile_access_types, employees.mobile_access_types),
                          is_active = COALESCE(EXCLUDED.is_active, employees.is_active),
                          email_verified = CASE WHEN EXCLUDED.email_verified = true THEN true ELSE employees.email_verified END,
                          updated_at = NOW()
-                     RETURNING id, tenant_id, first_name, last_name, username, email, main_branch_id, role_id, can_use_mobile_app, mobile_access_type, is_active, email_verified, created_at, updated_at`,
+                     RETURNING id, tenant_id, first_name, last_name, username, email, main_branch_id, role_id, can_use_mobile_app, mobile_access_type, mobile_access_types, is_active, email_verified, created_at, updated_at`,
                     [
                         tenantId,
                         firstName,
@@ -462,7 +466,8 @@ module.exports = (pool) => {
                         created_local_utc,    // ✅ OFFLINE-FIRST
                         device_event_raw,     // ✅ OFFLINE-FIRST
                         explicitCanUseMobileApp,  // $17: flag — only update can_use_mobile_app on conflict if explicitly sent
-                        mobileAccessType      // $18: mobile_access_type (admin/distributor/none)
+                        mobileAccessType,     // $18: mobile_access_type (admin/distributor/none)
+                        mobileAccessTypes || null  // $19: mobile_access_types (comma-separated)
                     ]
                 );
 
@@ -650,7 +655,7 @@ module.exports = (pool) => {
             const result = await pool.query(
                 `SELECT e.id, e.tenant_id, e.first_name, e.last_name, e.username, e.email, e.is_active,
                         e.role_id, r.name as role_name,
-                        e.main_branch_id, e.can_use_mobile_app, e.mobile_access_type, e.google_user_identifier,
+                        e.main_branch_id, e.can_use_mobile_app, e.mobile_access_type, e.mobile_access_types, e.google_user_identifier,
                         e.global_id, e.terminal_id, e.local_op_seq, e.created_local_utc, e.device_event_raw,
                         e.email_verified, e.is_owner, e.map_icon,
                         e.created_at, e.updated_at
@@ -706,6 +711,7 @@ module.exports = (pool) => {
                     r.name as role_name,
                     e.main_branch_id,
                     e.can_use_mobile_app as has_mobile_access,
+                    e.mobile_access_types,
                     e.is_owner,
                     e.email_verified,
                     e.password_hash,
@@ -1417,6 +1423,7 @@ module.exports = (pool) => {
                 roleName,  // Fallback si roleId es null (Desktop envía nombre del rol)
                 canUseMobileApp,
                 mobileAccessType,     // Per-employee mobile access type override (admin/distributor)
+                mobileAccessTypes,    // Comma-separated: "cashier,distributor"
                 fullName,
                 isActive,
                 email,
@@ -1665,6 +1672,13 @@ module.exports = (pool) => {
                 paramIndex++;
             }
 
+            // Update mobile_access_types (comma-separated: "cashier,distributor")
+            if (mobileAccessTypes !== undefined) {
+                updates.push(`mobile_access_types = $${paramIndex}`);
+                params.push(mobileAccessTypes || null);
+                paramIndex++;
+            }
+
             if (isActive !== undefined) {
                 updates.push(`is_active = $${paramIndex}`);
                 params.push(isActive);
@@ -1724,7 +1738,7 @@ module.exports = (pool) => {
             const query = `UPDATE employees
                           SET ${updates.join(', ')}
                           WHERE id = $${paramIndex} AND tenant_id = $${paramIndex + 1}
-                          RETURNING id, email, first_name, last_name, role_id, can_use_mobile_app, mobile_access_type, is_active, updated_at, tenant_id`;
+                          RETURNING id, email, first_name, last_name, role_id, can_use_mobile_app, mobile_access_type, mobile_access_types, is_active, updated_at, tenant_id`;
 
             const updateResult = await client.query(query, params);
 

@@ -549,6 +549,13 @@ async function initializeDatabase() {
         }
 
         try {
+            await client.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS mobile_access_types VARCHAR(255)`);
+            console.log('[DB] ✅ Columna employees.mobile_access_types verificada/agregada');
+        } catch (error) {
+            console.log('[DB] ⚠️ employees.mobile_access_types:', error.message);
+        }
+
+        try {
             await client.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS can_use_mobile_app BOOLEAN DEFAULT FALSE`);
             console.log('[DB] ✅ Columna employees.can_use_mobile_app verificada/agregada');
         } catch (error) {
