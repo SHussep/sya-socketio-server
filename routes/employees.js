@@ -1339,7 +1339,7 @@ module.exports = (pool) => {
             const result = await client.query(
                 `SELECT e.id, e.email, e.first_name, e.last_name, e.role_id, e.can_use_mobile_app,
                         e.is_owner, e.profile_photo_url, e.mobile_permissions,
-                        e.mobile_access_type, r.mobile_access_type as role_mobile_access_type
+                        e.mobile_access_type, e.mobile_access_types, r.mobile_access_type as role_mobile_access_type
                  FROM employees e
                  LEFT JOIN roles r ON e.role_id = r.id AND e.tenant_id = r.tenant_id
                  WHERE e.id = $1 AND e.tenant_id = $2 AND e.is_active = true`,
@@ -1389,6 +1389,7 @@ module.exports = (pool) => {
                     roleId: employee.role_id,
                     canUseMobileApp: employee.can_use_mobile_app,
                     mobileAccessType: accessType,
+                    mobileAccessTypes: employee.mobile_access_types || null,
                     hasMobileAccess: hasMobileAccess,
                     isOwner: isOwner,
                     mobilePermissions: mobilePermissions,
