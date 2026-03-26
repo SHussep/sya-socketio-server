@@ -48,6 +48,27 @@ module.exports = function (pool) {
     // Verify Admin Password (para reclamar rol de Equipo Principal)
     router.post('/verify-admin-password', loginRateLimiter, bind(authController.verifyAdminPassword));
 
+    // Session conflict check (used by Desktop before session start)
+    router.get('/session-conflict', loginRateLimiter, async (req, res) => {
+        try {
+            const employeeId = parseInt(req.query.employeeId);
+            if (!employeeId) {
+                return res.status(400).json({ success: false, error: 'employeeId query param required' });
+            }
+
+            const { checkSessionConflict } = require('../controllers/auth/loginMethods');
+            const conflict = await checkSessionConflict(employeeId, pool);
+
+            res.json({
+                success: true,
+                ...(conflict || { hasConflict: false })
+            });
+        } catch (err) {
+            console.error('[Auth] session-conflict error:', err.message);
+            res.status(500).json({ success: false, error: 'Internal error' });
+        }
+    });
+
     // Middleware: Verificar JWT Token
     // Se adjunta al router para mantener compatibilidad con el código existente
     router.authenticateToken = bind(authController.authenticateToken);

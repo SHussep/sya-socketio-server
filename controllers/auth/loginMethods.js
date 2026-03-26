@@ -507,17 +507,7 @@ module.exports = {
                         }
                     }).catch(err => console.log(`[Mobile Login] ⚠️ FCM kick failed: ${err.message}`));
 
-                    // 2. Emit socket event to branch room
-                    if (io) {
-                        const branchId = selectedBranch.id;
-                        io.to(`branch_${branchId}`).emit('employee:access_revoked', {
-                            employeeId: employee.id,
-                            employeeName: employeeData.fullName,
-                            reason: 'Se inició sesión desde otro dispositivo.',
-                            timestamp: new Date().toISOString()
-                        });
-                        console.log(`[Mobile Login] 📡 access_revoked emitido a branch_${branchId}`);
-                    }
+                    // 2. Socket emit removed — replaced by force_takeover mutual exclusion system
 
                     // 3. Deactivate ALL old device tokens (new device will register after login)
                     await this.pool.query(
@@ -533,6 +523,16 @@ module.exports = {
                 // Non-blocking — login continues even if kick fails
             }
 
+            // ═══════════════════════════════════════════════════════════════
+            // MUTUAL EXCLUSION: Check for active session on another device
+            // ═══════════════════════════════════════════════════════════════
+            let activeSessionConflict = null;
+            try {
+                activeSessionConflict = await checkSessionConflict(employee.id, this.pool);
+            } catch (conflictErr) {
+                console.error('[Mobile Login] Error checking session conflict:', conflictErr.message);
+            }
+
             console.log(`[Mobile Login] ✅ Login exitoso: ${employee.email} (can_use_mobile_app=true)`);
 
             return res.json({
@@ -541,6 +541,7 @@ module.exports = {
                 data: {
                     token,
                     refreshToken,
+                    activeSessionConflict,
                     employee: employeeData,
                     availableBranches: branchesData,
                     selectedBranch: selectedBranch,
@@ -569,3 +570,63 @@ module.exports = {
     }
 
 };
+
+// ═══════════════════════════════════════════════════════════════
+// SESSION CONFLICT DETECTION
+// Used by: GET /api/auth/session-conflict (Desktop)
+//          POST /api/auth/mobile-login (embedded in response)
+// Exported separately — utility function, not an HTTP handler.
+// ═══════════════════════════════════════════════════════════════
+async function checkSessionConflict(employeeId, pool) {
+    const activeDeviceSessions = require('../socket/activeDeviceSessions');
+
+    let hasConflict = false;
+    let otherDeviceType = null;
+    let otherDeviceOnline = false;
+    let shiftBranchName = null;
+    let shiftStartTime = null;
+
+    // 1. Check in-memory registry for online device
+    const existingSession = activeDeviceSessions.get(employeeId);
+    if (existingSession) {
+        hasConflict = true;
+        otherDeviceType = existingSession.clientType;
+        otherDeviceOnline = true;
+    }
+
+    // 2. Check DB for open shift (even if no active socket session)
+    const shiftResult = await pool.query(
+        `SELECT s.id, s.start_time, s.terminal_id, b.nombre as branch_name
+         FROM shifts s
+         LEFT JOIN branches b ON b.id = s.branch_id
+         WHERE s.employee_id = $1 AND s.is_cash_cut_open = true
+         ORDER BY s.start_time DESC
+         LIMIT 1`,
+        [employeeId]
+    );
+
+    if (shiftResult.rows.length > 0) {
+        const shift = shiftResult.rows[0];
+        hasConflict = true;
+        shiftBranchName = shift.branch_name;
+        shiftStartTime = shift.start_time;
+
+        // If no online session, infer device type from terminal_id
+        if (!otherDeviceType) {
+            const terminalId = shift.terminal_id || '';
+            otherDeviceType = terminalId.startsWith('mobile-') ? 'mobile' : 'desktop';
+        }
+    }
+
+    if (!hasConflict) return null;
+
+    return {
+        hasConflict: true,
+        otherDeviceType: otherDeviceType || 'unknown',
+        otherDeviceOnline,
+        shiftBranchName,
+        shiftStartTime
+    };
+}
+
+module.exports.checkSessionConflict = checkSessionConflict;
