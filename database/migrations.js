@@ -611,6 +611,22 @@ async function runMigrations() {
                 console.log('[Schema] ✅ telemetry_events table created successfully');
             }
 
+            // Patch: Add socket_error columns to telemetry_events (error_reason, error_details, consecutive_failures)
+            const checkErrorReasonCol = await client.query(`
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'telemetry_events' AND column_name = 'error_reason'
+            `);
+            if (checkErrorReasonCol.rows.length === 0) {
+                console.log('[Schema] 📝 Adding socket_error columns to telemetry_events...');
+                await client.query(`
+                    ALTER TABLE telemetry_events
+                        ADD COLUMN IF NOT EXISTS error_reason VARCHAR(100),
+                        ADD COLUMN IF NOT EXISTS error_details TEXT,
+                        ADD COLUMN IF NOT EXISTS consecutive_failures INTEGER;
+                `);
+                console.log('[Schema] ✅ Socket error columns added to telemetry_events');
+            }
+
             // Patch: Widen DECIMAL columns in suspicious_weighing_logs to prevent "numeric field overflow"
             if (checkSuspiciousTable.rows[0].exists) {
                 const checkColPrecision = await client.query(`

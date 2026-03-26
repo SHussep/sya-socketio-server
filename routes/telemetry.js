@@ -18,13 +18,16 @@ module.exports = (pool) => {
             const {
                 tenantId,
                 branchId,
-                eventType,        // 'app_open' | 'scale_configured' | 'theme_changed'
+                eventType,        // 'app_open' | 'scale_configured' | 'theme_changed' | 'socket_error'
                 deviceId,
                 deviceName,
                 appVersion,
                 scaleModel,       // Solo para scale_configured
                 scalePort,        // Solo para scale_configured
                 themeName,        // Solo para theme_changed
+                errorReason,      // Solo para socket_error
+                errorDetails,     // Solo para socket_error
+                consecutiveFailures, // Solo para socket_error
                 global_id,
                 terminal_id,
                 local_op_seq,
@@ -42,7 +45,7 @@ module.exports = (pool) => {
             }
 
             // Validar eventType
-            const validEventTypes = ['app_open', 'scale_configured', 'theme_changed'];
+            const validEventTypes = ['app_open', 'scale_configured', 'theme_changed', 'socket_error'];
             if (!validEventTypes.includes(eventType)) {
                 return res.status(400).json({
                     success: false,
@@ -79,9 +82,10 @@ module.exports = (pool) => {
                     tenant_id, branch_id, event_type,
                     device_id, device_name, app_version,
                     scale_model, scale_port, theme_name,
+                    error_reason, error_details, consecutive_failures,
                     global_id, terminal_id, local_op_seq, device_event_raw, created_local_utc,
                     event_timestamp
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, COALESCE($15, NOW()))
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, COALESCE($18, NOW()))
                 ON CONFLICT (global_id) DO NOTHING
                 RETURNING id
             `, [
@@ -94,6 +98,9 @@ module.exports = (pool) => {
                 scaleModel || null,
                 scalePort || null,
                 themeName || null,
+                errorReason || null,
+                errorDetails || null,
+                consecutiveFailures != null ? parseInt(consecutiveFailures) : null,
                 global_id,
                 terminal_id || null,
                 local_op_seq || null,
@@ -105,7 +112,7 @@ module.exports = (pool) => {
             const wasInserted = result.rows.length > 0;
             const eventId = wasInserted ? result.rows[0].id : null;
 
-            console.log(`[Telemetry] ${wasInserted ? '✅ NUEVO' : '⏭️ DUPLICADO'} ${eventType} - Tenant: ${tenantId}, Branch: ${branchId}${scaleModel ? `, Scale: ${scaleModel}` : ''}${themeName ? `, Theme: ${themeName}` : ''}`);
+            console.log(`[Telemetry] ${wasInserted ? '✅ NUEVO' : '⏭️ DUPLICADO'} ${eventType} - Tenant: ${tenantId}, Branch: ${branchId}${scaleModel ? `, Scale: ${scaleModel}` : ''}${themeName ? `, Theme: ${themeName}` : ''}${errorReason ? `, Reason: ${errorReason}, Failures: ${consecutiveFailures}` : ''}`);
 
             res.status(wasInserted ? 201 : 200).json({
                 success: true,
