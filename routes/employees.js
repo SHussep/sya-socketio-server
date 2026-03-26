@@ -2039,6 +2039,33 @@ module.exports = (pool) => {
         }
     });
 
+    // POST /api/employees/send-verification-code - Send verification code to any email (for new employees)
+    // Returns the code so Desktop can verify locally before saving the employee
+    router.post('/send-verification-code', async (req, res) => {
+        try {
+            const { email, recipientName } = req.body;
+
+            if (!email) {
+                return res.status(400).json({ success: false, message: 'Email requerido' });
+            }
+
+            const code = crypto.randomInt(100000, 999999).toString();
+            const sent = await sendVerificationEmail({ to: email, recipientName: recipientName || 'Empleado', code });
+
+            console.log(`[Employees/SendVerificationCode] ${sent ? '✅' : '❌'} Código enviado a ${email}`);
+
+            return res.json({
+                success: true,
+                emailSent: sent,
+                code: sent ? code : null,
+                message: sent ? 'Código enviado' : 'No se pudo enviar el email'
+            });
+        } catch (error) {
+            console.error('[Employees/SendVerificationCode] ❌ Error:', error.message);
+            res.status(500).json({ success: false, message: 'Error al enviar verificación' });
+        }
+    });
+
     // POST /api/employees/verify-email - Valida código y marca email como verificado
     router.post('/verify-email', async (req, res) => {
         const client = await pool.connect();
