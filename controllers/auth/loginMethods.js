@@ -582,28 +582,10 @@ module.exports = {
 async function checkSessionConflict(employeeId, pool, callerDeviceType) {
     const activeDeviceSessions = require('../../socket/activeDeviceSessions');
 
-    // Determine which device type to look for (the OTHER one)
-    const otherType = callerDeviceType === 'mobile' ? 'desktop' : 'mobile';
-    const otherKey = `${employeeId}_${otherType}`;
+    console.log(`[SessionConflict] Checking employee ${employeeId} (caller: ${callerDeviceType || 'unknown'})`);
 
-    console.log(`[SessionConflict] Checking employee ${employeeId} (caller: ${callerDeviceType || 'unknown'}, looking for: ${otherType}). Map size: ${activeDeviceSessions.size}`);
-
-    let hasConflict = false;
-    let otherDeviceType = null;
-    let otherDeviceOnline = false;
-    let shiftBranchName = null;
-    let shiftStartTime = null;
-
-    // 1. Check in-memory registry for the OTHER device type
-    const existingSession = activeDeviceSessions.get(otherKey);
-    console.log(`[SessionConflict] Map lookup for ${otherKey}:`, existingSession ? JSON.stringify(existingSession) : 'NOT FOUND');
-    if (existingSession) {
-        hasConflict = true;
-        otherDeviceType = existingSession.clientType;
-        otherDeviceOnline = true;
-    }
-
-    // 2. Check DB for open shift (even if no active socket session)
+    // 1. Check DB for open shift — this is the SOURCE OF TRUTH for conflict.
+    //    Just being connected to Socket.IO (e.g. on Dashboard) is NOT a conflict.
     const shiftResult = await pool.query(
         `SELECT s.id, s.start_time, s.terminal_id, b.name as branch_name
          FROM shifts s
@@ -616,38 +598,39 @@ async function checkSessionConflict(employeeId, pool, callerDeviceType) {
 
     console.log(`[SessionConflict] DB shift query: ${shiftResult.rows.length} rows found`, shiftResult.rows.length > 0 ? JSON.stringify(shiftResult.rows[0]) : '');
 
-    if (shiftResult.rows.length > 0) {
-        const shift = shiftResult.rows[0];
-        shiftBranchName = shift.branch_name;
-        shiftStartTime = shift.start_time;
-
-        // Infer device type from terminal_id
-        const terminalId = shift.terminal_id || '';
-        const shiftDeviceType = terminalId.startsWith('mobile-') ? 'mobile' : 'desktop';
-
-        // Only conflict if the shift was opened from a DIFFERENT device type
-        // or if we already found an online session from the other device
-        if (hasConflict) {
-            // Already found online conflict from Map, just add shift details
-            if (!otherDeviceType) otherDeviceType = shiftDeviceType;
-        } else if (shiftDeviceType !== callerDeviceType) {
-            // Shift opened from different device type and that device is offline
-            hasConflict = true;
-            otherDeviceType = shiftDeviceType;
-        }
-        // If shiftDeviceType === callerDeviceType → it's the caller's own shift, not a conflict
+    if (shiftResult.rows.length === 0) {
+        console.log(`[SessionConflict] No open shift — no conflict`);
+        return null;
     }
 
-    console.log(`[SessionConflict] Result: hasConflict=${hasConflict}, otherDeviceType=${otherDeviceType}, otherDeviceOnline=${otherDeviceOnline}`);
+    const shift = shiftResult.rows[0];
+    const terminalId = shift.terminal_id || '';
+    const shiftDeviceType = terminalId.startsWith('mobile-') ? 'mobile' : 'desktop';
 
-    if (!hasConflict) return null;
+    // If the shift was opened by the SAME device type → it's the caller's own shift, not a conflict
+    if (shiftDeviceType === callerDeviceType) {
+        console.log(`[SessionConflict] Shift opened by ${shiftDeviceType} (same as caller) — no conflict`);
+        return null;
+    }
+
+    // Shift was opened by a DIFFERENT device type → conflict
+    // Use the Map to check if that other device is currently online
+    const otherKey = `${employeeId}_${shiftDeviceType}`;
+    const otherSession = activeDeviceSessions.get(otherKey);
+    const otherDeviceOnline = !!otherSession;
+
+    console.log(`[SessionConflict] Conflict! Shift opened by ${shiftDeviceType} (caller: ${callerDeviceType}). Other device online: ${otherDeviceOnline}`);
+
+    if (!otherDeviceOnline) {
+        console.log(`[SessionConflict] Result: hasConflict=true, otherDeviceType=${shiftDeviceType}, otherDeviceOnline=false`);
+    }
 
     return {
         hasConflict: true,
-        otherDeviceType: otherDeviceType || 'unknown',
+        otherDeviceType: shiftDeviceType,
         otherDeviceOnline,
-        shiftBranchName,
-        shiftStartTime
+        shiftBranchName: shift.branch_name,
+        shiftStartTime: shift.start_time
     };
 }
 
