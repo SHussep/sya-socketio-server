@@ -3,6 +3,8 @@
 // Todos los handlers de eventos del socket (connection, disconnect, etc.)
 // ═══════════════════════════════════════════════════════════════
 
+const activeDeviceSessions = require('./activeDeviceSessions');
+
 module.exports = function setupSocketHandlers(io, { pool, stats, notificationHelper, scaleStatusByBranch, guardianStatusByBranch }) {
 
     // Debounce FCM: prevent duplicate notifications for same branch+event within window
@@ -128,7 +130,7 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
             socket.emit('joined_branch', { branchIds, message: `Conectado a ${branchIds.length} sucursales` });
         });
 
-        socket.on('identify_client', (data) => {
+        socket.on('identify_client', async (data) => {
             socket.clientType = data.type;
             socket.deviceInfo = data.deviceInfo || {};
             if (data.type === 'desktop') stats.desktopClients++;
@@ -136,25 +138,42 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
             console.log(`[IDENTIFY] ${socket.id} → ${data.type} (Sucursal: ${socket.branchId}, Employee: ${socket.user?.employeeId})`);
 
             // ═══════════════════════════════════════════════════════════════
-            // SINGLE SESSION ENFORCEMENT: Kick other mobile sessions of same employee
-            // Exception: masterLogin (superadmin) does NOT kick existing sessions
+            // MUTUAL EXCLUSION: Session revocation check + Map registration
+            // Replaces old mobile-to-mobile kick code.
             // ═══════════════════════════════════════════════════════════════
-            if (data.type === 'mobile' && socket.user?.employeeId && !socket.user?.isMasterLogin) {
-                const myEmployeeId = socket.user.employeeId;
-                for (const [socketId, otherSocket] of io.sockets.sockets) {
-                    if (socketId !== socket.id
-                        && otherSocket.clientType === 'mobile'
-                        && otherSocket.user?.employeeId === myEmployeeId) {
-                        console.log(`[SESSION] 🔒 Sending force_logout to duplicate mobile session ${socketId} for employee ${myEmployeeId}`);
-                        otherSocket.emit('force_logout', {
-                            reason: 'Se inició sesión en otro dispositivo',
-                            newSocketId: socket.id,
-                            timestamp: new Date().toISOString()
+            const employeeId = socket.user?.employeeId;
+            if (employeeId) {
+                try {
+                    // Check if this device was revoked while offline
+                    const revocationCheck = await pool.query(
+                        `UPDATE employees
+                         SET session_revoked_at = NULL, session_revoked_for_device = NULL
+                         WHERE id = $1
+                           AND session_revoked_at IS NOT NULL
+                           AND session_revoked_for_device = $2
+                         RETURNING session_revoked_at`,
+                        [employeeId, data.type]
+                    );
+
+                    if (revocationCheck.rows.length > 0) {
+                        console.log(`[Socket] 🚫 Employee ${employeeId} (${data.type}) was revoked while offline — sending force_logout`);
+                        socket.emit('force_logout', {
+                            reason: 'session_revoked',
+                            message: 'Tu sesión fue revocada mientras estabas desconectado'
                         });
-                        // No disconnect forzado — la app móvil maneja el logout
-                        // y cierra su propia conexión. Si la app no tiene el handler
-                        // aún, simplemente ignora el evento y no se crea un loop.
+                        return; // Don't register in activeDeviceSessions
                     }
+
+                    // Register this device in the session registry
+                    activeDeviceSessions.set(employeeId, {
+                        socketId: socket.id,
+                        clientType: data.type,
+                        branchId: socket.branchId || null,
+                        connectedAt: Date.now()
+                    });
+                    console.log(`[Socket] 📱 Employee ${employeeId} registered as ${data.type} (socket: ${socket.id})`);
+                } catch (err) {
+                    console.error(`[Socket] Error in session registry for employee ${employeeId}:`, err.message);
                 }
             }
 
@@ -927,7 +946,93 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
         // DISCONNECT
         // ═══════════════════════════════════════════════════════════════
 
+        // ═══════════════════════════════════════════════════════════════
+        // MUTUAL EXCLUSION: Force takeover — new device kicks old device
+        // Uses event-based response (force_takeover_result) for cross-library compatibility.
+        // ═══════════════════════════════════════════════════════════════
+        socket.on('force_takeover', async (data) => {
+            const forceEmployeeId = data?.employeeId || socket.user?.employeeId;
+            if (!forceEmployeeId) {
+                socket.emit('force_takeover_result', { success: false, error: 'No employeeId' });
+                return;
+            }
+
+            console.log(`[Socket] 🔄 Force takeover requested by ${socket.clientType} for employee ${forceEmployeeId}`);
+
+            try {
+                const existingSession = activeDeviceSessions.get(forceEmployeeId);
+
+                if (existingSession && existingSession.socketId !== socket.id) {
+                    // Old device is ONLINE — send force_logout directly
+                    const oldSocket = io.sockets.sockets.get(existingSession.socketId);
+                    if (oldSocket) {
+                        oldSocket.emit('force_logout', {
+                            reason: 'session_taken',
+                            takenByDevice: socket.clientType || 'unknown',
+                            message: 'Tu sesión fue tomada por otro dispositivo'
+                        });
+                        console.log(`[Socket] 📤 force_logout sent to ${existingSession.clientType} (socket: ${existingSession.socketId})`);
+                    }
+                    activeDeviceSessions.delete(forceEmployeeId);
+
+                    // Register new device
+                    activeDeviceSessions.set(forceEmployeeId, {
+                        socketId: socket.id,
+                        clientType: socket.clientType || 'unknown',
+                        branchId: socket.branchId || null,
+                        connectedAt: Date.now()
+                    });
+
+                    socket.emit('force_takeover_result', { success: true, wasOnline: true });
+                } else {
+                    // Old device is OFFLINE — set revocation flag in DB
+                    let revokedDeviceType = 'unknown';
+                    const shiftResult = await pool.query(
+                        `SELECT terminal_id FROM shifts
+                         WHERE employee_id = $1 AND is_cash_cut_open = true
+                         ORDER BY start_time DESC LIMIT 1`,
+                        [forceEmployeeId]
+                    );
+                    if (shiftResult.rows.length > 0) {
+                        const terminalId = shiftResult.rows[0].terminal_id || '';
+                        revokedDeviceType = terminalId.startsWith('mobile-') ? 'mobile' : 'desktop';
+                    }
+
+                    await pool.query(
+                        `UPDATE employees
+                         SET session_revoked_at = NOW(), session_revoked_for_device = $2
+                         WHERE id = $1`,
+                        [forceEmployeeId, revokedDeviceType]
+                    );
+
+                    // Register new device
+                    activeDeviceSessions.set(forceEmployeeId, {
+                        socketId: socket.id,
+                        clientType: socket.clientType || 'unknown',
+                        branchId: socket.branchId || null,
+                        connectedAt: Date.now()
+                    });
+
+                    console.log(`[Socket] 📝 Session revocation flag set for employee ${forceEmployeeId} (${revokedDeviceType})`);
+                    socket.emit('force_takeover_result', { success: true, wasOnline: false });
+                }
+            } catch (err) {
+                console.error(`[Socket] Error in force_takeover:`, err.message);
+                socket.emit('force_takeover_result', { success: false, error: err.message });
+            }
+        });
+
         socket.on('disconnect', () => {
+            // Clean up session registry (only if this socket is the current entry)
+            const empId = socket.user?.employeeId;
+            if (empId && activeDeviceSessions.has(empId)) {
+                const session = activeDeviceSessions.get(empId);
+                if (session.socketId === socket.id) {
+                    activeDeviceSessions.delete(empId);
+                    console.log(`[Socket] 🔌 Employee ${empId} removed from session registry (disconnect)`);
+                }
+            }
+
             // Broadcast desktop offline status BEFORE decrementing stats
             if (socket.clientType === 'desktop' && socket.branchId) {
                 io.to(`branch_${socket.branchId}`).emit('desktop_status_changed', {
