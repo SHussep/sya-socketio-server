@@ -25,7 +25,7 @@ function authenticateToken(req, res, next) {
     });
 }
 
-module.exports = (pool) => {
+module.exports = (pool, io) => {
     const router = express.Router();
 
     // GET /api/withdrawals - Get list of withdrawals
@@ -263,7 +263,7 @@ module.exports = (pool) => {
                             description = EXCLUDED.description,
                             shift_id = EXCLUDED.shift_id,
                             employee_id = EXCLUDED.employee_id
-                         RETURNING *`,
+                         RETURNING *, (xmax = 0) AS was_inserted`,
                         [
                             tenantId, branchId, finalShiftId, finalEmployeeId,
                             numericAmount, description || '', withdrawal_date,
@@ -271,8 +271,24 @@ module.exports = (pool) => {
                         ]
                     );
 
-                    results.push({ success: true, data: result.rows[0] });
-                    console.log(`[Withdrawals/Sync] ✅ Withdrawal synced: $${numericAmount} (global_id: ${global_id})`);
+                    const withdrawalRow = result.rows[0];
+                    const wasInserted = withdrawalRow.was_inserted;
+                    results.push({ success: true, data: withdrawalRow });
+                    console.log(`[Withdrawals/Sync] ✅ Withdrawal synced: $${numericAmount} (global_id: ${global_id}, ${wasInserted ? 'INSERT' : 'UPDATE'})`);
+
+                    // 🔌 Emit withdrawal_created via Socket.IO (only on real INSERT)
+                    if (io && wasInserted) {
+                        const roomName = `branch_${branchId}`;
+                        io.to(roomName).emit('withdrawal_created', {
+                            branchId,
+                            withdrawalId: withdrawalRow.id,
+                            amount: parseFloat(withdrawalRow.amount),
+                            description: withdrawalRow.description,
+                            source: 'rest_sync',
+                            completedAt: withdrawalRow.withdrawal_date || new Date().toISOString(),
+                        });
+                        console.log(`[Withdrawals/Sync] 🔌 Socket.IO: withdrawal_created emitido a ${roomName} ($${numericAmount})`);
+                    }
                 } catch (error) {
                     results.push({ success: false, error: undefined, global_id: withdrawal.global_id });
                     console.error(`[Withdrawals/Sync] ❌ Error:`, error.message);

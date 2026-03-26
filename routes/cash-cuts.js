@@ -25,7 +25,7 @@ function authenticateToken(req, res, next) {
     });
 }
 
-module.exports = (pool) => {
+module.exports = (pool, io) => {
     const router = express.Router();
 
     // GET /api/cash-cuts - Get list of cash cuts
@@ -488,6 +488,23 @@ module.exports = (pool) => {
                     const wasInserted = cashCutRow.was_inserted;
                     results.push({ success: true, data: cashCutRow });
                     console.log(`[CashCuts/Sync] ✅ Cash cut synced for shift ${shiftId} (${wasInserted ? 'INSERT' : 'UPDATE'})`);
+
+                    // 🔌 Emit cash_cut_created via Socket.IO (only on real INSERT)
+                    if (io && wasInserted) {
+                        const roomName = `branch_${branchId}`;
+                        io.to(roomName).emit('cash_cut_created', {
+                            branchId,
+                            cashCutId: cashCutRow.id,
+                            shiftId,
+                            isClosed,
+                            countedCash: parseFloat(countedCash) || 0,
+                            expectedCash: parseFloat(expectedCashInDrawer) || 0,
+                            difference: parseFloat(difference) || 0,
+                            source: 'rest_sync',
+                            completedAt: new Date().toISOString(),
+                        });
+                        console.log(`[CashCuts/Sync] 🔌 Socket.IO: cash_cut_created emitido a ${roomName}`);
+                    }
 
                     // 🔔 ENVIAR NOTIFICACIÓN FCM SI ES CIERRE DE TURNO
                     // ✅ Solo en INSERT real (wasInserted) - en re-sync/UPDATE no reenviar FCM

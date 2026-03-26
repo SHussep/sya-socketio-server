@@ -262,7 +262,7 @@ app.use('/api/ventas', ventasRoutes);
 app.use('/api/expenses', expensesRoutes(pool, io));
 app.use('/api/shifts', shiftsRoutes(pool, io));
 app.use('/api/shift-requests', shiftRequestsRoutes(pool, io));
-app.use('/api/cash-cuts', newCashCutsRoutes(pool));
+app.use('/api/cash-cuts', newCashCutsRoutes(pool, io));
 app.use('/api/purchases', purchasesRoutes(pool));
 app.use('/api/suppliers', suppliersRoutes(pool));
 app.use('/api/guardian-events', guardianEventsRoutes(pool, io));
@@ -283,8 +283,8 @@ app.use('/api/repartidores', repartidoresRoutes(pool));
 app.use('/api/notas-credito', notasCreditoRoutes(pool));
 app.use('/api/preparation-mode', preparationModeRoutes(pool, io));
 app.use('/api/beta-enrollment', betaEnrollmentRoutes(pool));
-app.use('/api/deposits', depositsRoutes(pool));
-app.use('/api/withdrawals', withdrawalsRoutes(pool));
+app.use('/api/deposits', depositsRoutes(pool, io));
+app.use('/api/withdrawals', withdrawalsRoutes(pool, io));
 app.use('/api/sync-diagnostics', syncDiagnosticsRoutes(pool));
 app.use('/api/transfers', transfersRoutes(pool, io));
 app.use('/api/gps', gpsTrackingRoutes(pool, io));
@@ -353,19 +353,19 @@ app.post('/api/scale-disconnection-logs/close-orphans', authenticateToken, async
 app.post('/api/sync/cash-cuts', validateTenant, (req, res) => {
     req.url = '/sync';
     req.baseUrl = '/api/cash-cuts';
-    newCashCutsRoutes(pool)(req, res);
+    newCashCutsRoutes(pool, io)(req, res);
 });
 
 app.post('/api/deposits/sync', validateTenant, (req, res) => {
     req.url = '/sync';
     req.baseUrl = '/api/deposits';
-    depositsRoutes(pool)(req, res);
+    depositsRoutes(pool, io)(req, res);
 });
 
 app.post('/api/withdrawals/sync', validateTenant, (req, res) => {
     req.url = '/sync';
     req.baseUrl = '/api/withdrawals';
-    withdrawalsRoutes(pool)(req, res);
+    withdrawalsRoutes(pool, io)(req, res);
 });
 
 // ═══════════════════════════════════════════════════════════════

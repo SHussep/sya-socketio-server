@@ -25,7 +25,7 @@ function authenticateToken(req, res, next) {
     });
 }
 
-module.exports = (pool) => {
+module.exports = (pool, io) => {
     const router = express.Router();
 
     // GET /api/deposits - Get list of deposits
@@ -267,7 +267,7 @@ module.exports = (pool) => {
                             description = EXCLUDED.description,
                             shift_id = EXCLUDED.shift_id,
                             employee_id = EXCLUDED.employee_id
-                         RETURNING *`,
+                         RETURNING *, (xmax = 0) AS was_inserted`,
                         [
                             tenantId, branchId, finalShiftId, finalEmployeeId,
                             numericAmount, description || '', deposit_date,
@@ -275,8 +275,24 @@ module.exports = (pool) => {
                         ]
                     );
 
-                    results.push({ success: true, data: result.rows[0] });
-                    console.log(`[Deposits/Sync] ✅ Deposit synced: $${numericAmount} (global_id: ${global_id})`);
+                    const depositRow = result.rows[0];
+                    const wasInserted = depositRow.was_inserted;
+                    results.push({ success: true, data: depositRow });
+                    console.log(`[Deposits/Sync] ✅ Deposit synced: $${numericAmount} (global_id: ${global_id}, ${wasInserted ? 'INSERT' : 'UPDATE'})`);
+
+                    // 🔌 Emit deposit_created via Socket.IO (only on real INSERT)
+                    if (io && wasInserted) {
+                        const roomName = `branch_${branchId}`;
+                        io.to(roomName).emit('deposit_created', {
+                            branchId,
+                            depositId: depositRow.id,
+                            amount: parseFloat(depositRow.amount),
+                            description: depositRow.description,
+                            source: 'rest_sync',
+                            completedAt: depositRow.deposit_date || new Date().toISOString(),
+                        });
+                        console.log(`[Deposits/Sync] 🔌 Socket.IO: deposit_created emitido a ${roomName} ($${numericAmount})`);
+                    }
                 } catch (error) {
                     results.push({ success: false, error: undefined, global_id: deposit.global_id });
                     console.error(`[Deposits/Sync] ❌ Error:`, error.message);
