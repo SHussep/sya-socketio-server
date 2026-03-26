@@ -528,9 +528,11 @@ module.exports = {
             // ═══════════════════════════════════════════════════════════════
             let activeSessionConflict = null;
             try {
+                console.log(`[Mobile Login] 🔍 Checking session conflict for employee ${employee.id}...`);
                 activeSessionConflict = await checkSessionConflict(employee.id, this.pool);
+                console.log(`[Mobile Login] 🔍 Conflict result:`, JSON.stringify(activeSessionConflict));
             } catch (conflictErr) {
-                console.error('[Mobile Login] Error checking session conflict:', conflictErr.message);
+                console.error('[Mobile Login] Error checking session conflict:', conflictErr.message, conflictErr.stack);
             }
 
             console.log(`[Mobile Login] ✅ Login exitoso: ${employee.email} (can_use_mobile_app=true)`);
@@ -580,6 +582,8 @@ module.exports = {
 async function checkSessionConflict(employeeId, pool) {
     const activeDeviceSessions = require('../../socket/activeDeviceSessions');
 
+    console.log(`[SessionConflict] Checking employee ${employeeId}. Map size: ${activeDeviceSessions.size}, Map keys: [${[...activeDeviceSessions.keys()].join(', ')}]`);
+
     let hasConflict = false;
     let otherDeviceType = null;
     let otherDeviceOnline = false;
@@ -588,6 +592,7 @@ async function checkSessionConflict(employeeId, pool) {
 
     // 1. Check in-memory registry for online device
     const existingSession = activeDeviceSessions.get(employeeId);
+    console.log(`[SessionConflict] Map lookup for ${employeeId}:`, existingSession ? JSON.stringify(existingSession) : 'NOT FOUND');
     if (existingSession) {
         hasConflict = true;
         otherDeviceType = existingSession.clientType;
@@ -605,6 +610,8 @@ async function checkSessionConflict(employeeId, pool) {
         [employeeId]
     );
 
+    console.log(`[SessionConflict] DB shift query: ${shiftResult.rows.length} rows found`, shiftResult.rows.length > 0 ? JSON.stringify(shiftResult.rows[0]) : '');
+
     if (shiftResult.rows.length > 0) {
         const shift = shiftResult.rows[0];
         hasConflict = true;
@@ -617,6 +624,8 @@ async function checkSessionConflict(employeeId, pool) {
             otherDeviceType = terminalId.startsWith('mobile-') ? 'mobile' : 'desktop';
         }
     }
+
+    console.log(`[SessionConflict] Result: hasConflict=${hasConflict}, otherDeviceType=${otherDeviceType}, otherDeviceOnline=${otherDeviceOnline}`);
 
     if (!hasConflict) return null;
 
