@@ -1990,6 +1990,55 @@ module.exports = (pool) => {
         }
     });
 
+    // POST /api/employees/:id/send-verification - Generate code + send verification email via SMTP
+    // Desktop calls this instead of sending via Gmail OAuth
+    router.post('/:id/send-verification', async (req, res) => {
+        const client = await pool.connect();
+        try {
+            const employeeId = parseInt(req.params.id);
+            const { tenantId } = req.body;
+
+            if (!employeeId || !tenantId) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Parámetros requeridos: employeeId (URL), tenantId (body)'
+                });
+            }
+
+            const empResult = await client.query(
+                `SELECT id, email, first_name, last_name FROM employees WHERE id = $1 AND tenant_id = $2 AND is_active = true`,
+                [employeeId, tenantId]
+            );
+
+            if (empResult.rows.length === 0) {
+                return res.status(404).json({ success: false, message: 'Empleado no encontrado' });
+            }
+
+            const emp = empResult.rows[0];
+            if (!emp.email) {
+                return res.status(400).json({ success: false, message: 'El empleado no tiene email configurado' });
+            }
+
+            const recipientName = `${emp.first_name || ''} ${emp.last_name || ''}`.trim() || 'Empleado';
+            const emailSent = await generateAndSendVerificationCode(client, employeeId, tenantId, emp.email, recipientName);
+
+            console.log(`[Employees/SendVerification] ${emailSent ? '✅' : '❌'} Verificación para ${emp.email} (ID: ${employeeId})`);
+
+            return res.json({
+                success: true,
+                emailSent,
+                message: emailSent
+                    ? `Código de verificación enviado a ${emp.email}`
+                    : 'Código generado pero no se pudo enviar el email. El administrador puede verificar manualmente.'
+            });
+        } catch (error) {
+            console.error('[Employees/SendVerification] ❌ Error:', error.message);
+            res.status(500).json({ success: false, message: 'Error al enviar verificación' });
+        } finally {
+            client.release();
+        }
+    });
+
     // POST /api/employees/verify-email - Valida código y marca email como verificado
     router.post('/verify-email', async (req, res) => {
         const client = await pool.connect();
