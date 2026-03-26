@@ -55,10 +55,10 @@ module.exports = function (pool) {
             if (!employeeId) {
                 return res.status(400).json({ success: false, error: 'employeeId query param required' });
             }
-            const clientType = req.query.clientType || 'desktop'; // caller's device type
+            const terminalId = req.query.terminalId || null; // caller's unique device ID
 
             const { checkSessionConflict } = require('../controllers/auth/loginMethods');
-            const conflict = await checkSessionConflict(employeeId, pool, clientType);
+            const conflict = await checkSessionConflict(employeeId, pool, terminalId);
 
             res.json({
                 success: true,

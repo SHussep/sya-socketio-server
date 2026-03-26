@@ -529,7 +529,8 @@ module.exports = {
             let activeSessionConflict = null;
             try {
                 console.log(`[Mobile Login] 🔍 Checking session conflict for employee ${employee.id}...`);
-                activeSessionConflict = await checkSessionConflict(employee.id, this.pool, 'mobile');
+                const mobileTerminalId = req.body.terminalId || null;
+                activeSessionConflict = await checkSessionConflict(employee.id, this.pool, mobileTerminalId);
                 console.log(`[Mobile Login] 🔍 Conflict result:`, JSON.stringify(activeSessionConflict));
             } catch (conflictErr) {
                 console.error('[Mobile Login] Error checking session conflict:', conflictErr.message, conflictErr.stack);
@@ -579,10 +580,9 @@ module.exports = {
 //          POST /api/auth/mobile-login (embedded in response)
 // Exported separately — utility function, not an HTTP handler.
 // ═══════════════════════════════════════════════════════════════
-async function checkSessionConflict(employeeId, pool, callerDeviceType) {
-    const activeDeviceSessions = require('../../socket/activeDeviceSessions');
+async function checkSessionConflict(employeeId, pool, callerTerminalId) {
 
-    console.log(`[SessionConflict] Checking employee ${employeeId} (caller: ${callerDeviceType || 'unknown'})`);
+    console.log(`[SessionConflict] Checking employee ${employeeId} (callerTerminal: ${callerTerminalId || 'unknown'})`);
 
     // 1. Check DB for open shift — this is the SOURCE OF TRUTH for conflict.
     //    Just being connected to Socket.IO (e.g. on Dashboard) is NOT a conflict.
@@ -604,31 +604,23 @@ async function checkSessionConflict(employeeId, pool, callerDeviceType) {
     }
 
     const shift = shiftResult.rows[0];
-    const terminalId = shift.terminal_id || '';
-    const shiftDeviceType = terminalId.startsWith('mobile-') ? 'mobile' : 'desktop';
+    const shiftTerminalId = shift.terminal_id || '';
 
-    // If the shift was opened by the SAME device type → it's the caller's own shift, not a conflict
-    if (shiftDeviceType === callerDeviceType) {
-        console.log(`[SessionConflict] Shift opened by ${shiftDeviceType} (same as caller) — no conflict`);
+    // If this device owns the shift → no conflict
+    if (callerTerminalId && shiftTerminalId === callerTerminalId) {
+        console.log(`[SessionConflict] Shift terminal matches caller (${callerTerminalId}) — no conflict`);
         return null;
     }
 
-    // Shift was opened by a DIFFERENT device type → conflict
-    // Use the Map to check if that other device is currently online
-    const otherKey = `${employeeId}_${shiftDeviceType}`;
-    const otherSession = activeDeviceSessions.get(otherKey);
-    const otherDeviceOnline = !!otherSession;
+    // Different terminal → conflict. Determine device type for display.
+    const shiftDeviceType = shiftTerminalId.startsWith('mobile-') ? 'mobile' : 'desktop';
 
-    console.log(`[SessionConflict] Conflict! Shift opened by ${shiftDeviceType} (caller: ${callerDeviceType}). Other device online: ${otherDeviceOnline}`);
-
-    if (!otherDeviceOnline) {
-        console.log(`[SessionConflict] Result: hasConflict=true, otherDeviceType=${shiftDeviceType}, otherDeviceOnline=false`);
-    }
+    console.log(`[SessionConflict] Conflict! Shift terminal=${shiftTerminalId}, caller terminal=${callerTerminalId}. Shift device: ${shiftDeviceType}`);
 
     return {
         hasConflict: true,
         otherDeviceType: shiftDeviceType,
-        otherDeviceOnline,
+        otherDeviceOnline: true, // We can't reliably determine this from HTTP — assume online
         shiftBranchName: shift.branch_name,
         shiftStartTime: shift.start_time
     };

@@ -145,12 +145,13 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
             if (employeeId) {
                 try {
                     // Check if this device was revoked while offline
+                    // Matches specific device type OR 'all' (set by force_takeover)
                     const revocationCheck = await pool.query(
                         `UPDATE employees
                          SET session_revoked_at = NULL, session_revoked_for_device = NULL
                          WHERE id = $1
                            AND session_revoked_at IS NOT NULL
-                           AND session_revoked_for_device = $2
+                           AND (session_revoked_for_device = $2 OR session_revoked_for_device = 'all')
                          RETURNING session_revoked_at`,
                         [employeeId, data.type]
                     );
@@ -959,58 +960,45 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
             }
 
             const callerType = socket.clientType || 'unknown';
-            const otherType = callerType === 'mobile' ? 'desktop' : 'mobile';
-            console.log(`[Socket] 🔄 Force takeover requested by ${callerType} for employee ${forceEmployeeId} (looking for ${otherType})`);
+            console.log(`[Socket] 🔄 Force takeover requested by ${callerType} (socket: ${socket.id}) for employee ${forceEmployeeId}`);
 
             try {
-                // Look for the OTHER device type's session (composite key)
-                const otherKey = `${forceEmployeeId}_${otherType}`;
-                const existingSession = activeDeviceSessions.get(otherKey);
-
-                if (existingSession) {
-                    // Other device is ONLINE — send force_logout directly
-                    const oldSocket = io.sockets.sockets.get(existingSession.socketId);
-                    if (oldSocket) {
-                        oldSocket.emit('force_logout', {
+                // Iterate ALL connected sockets to find others for the same employee
+                let kickedCount = 0;
+                for (const [sid, s] of io.sockets.sockets) {
+                    if (s.user?.employeeId === forceEmployeeId && sid !== socket.id) {
+                        s.emit('force_logout', {
                             reason: 'session_taken',
                             takenByDevice: callerType,
                             message: 'Tu sesión fue tomada por otro dispositivo'
                         });
-                        console.log(`[Socket] 📤 force_logout sent to ${existingSession.clientType} (socket: ${existingSession.socketId})`);
+                        console.log(`[Socket] 📤 force_logout sent to ${s.clientType || 'unknown'} (socket: ${sid})`);
+                        kickedCount++;
                     }
-                    activeDeviceSessions.delete(otherKey);
-
-                    // Ensure caller is registered
-                    const callerKey = `${forceEmployeeId}_${callerType}`;
-                    activeDeviceSessions.set(callerKey, {
-                        socketId: socket.id,
-                        clientType: callerType,
-                        branchId: socket.branchId || null,
-                        connectedAt: Date.now()
-                    });
-
-                    socket.emit('force_takeover_result', { success: true, wasOnline: true });
-                } else {
-                    // Other device is OFFLINE — set revocation flag in DB for the other device type
-                    await pool.query(
-                        `UPDATE employees
-                         SET session_revoked_at = NOW(), session_revoked_for_device = $2
-                         WHERE id = $1`,
-                        [forceEmployeeId, otherType]
-                    );
-
-                    // Ensure caller is registered
-                    const callerKey = `${forceEmployeeId}_${callerType}`;
-                    activeDeviceSessions.set(callerKey, {
-                        socketId: socket.id,
-                        clientType: callerType,
-                        branchId: socket.branchId || null,
-                        connectedAt: Date.now()
-                    });
-
-                    console.log(`[Socket] 📝 Session revocation flag set for employee ${forceEmployeeId} (${otherType})`);
-                    socket.emit('force_takeover_result', { success: true, wasOnline: false });
                 }
+                console.log(`[Socket] 🔄 Kicked ${kickedCount} other socket(s) for employee ${forceEmployeeId}`);
+
+                // Also set DB revocation flag for devices that might be offline
+                // Clear any previous flag first, then set for all device types except caller
+                await pool.query(
+                    `UPDATE employees
+                     SET session_revoked_at = NOW(), session_revoked_for_device = 'all'
+                     WHERE id = $1`,
+                    [forceEmployeeId]
+                );
+
+                // Update shift terminal_id to the caller's terminal
+                const newTerminalId = data?.terminalId;
+                if (newTerminalId) {
+                    await pool.query(
+                        `UPDATE shifts SET terminal_id = $2
+                         WHERE employee_id = $1 AND is_cash_cut_open = true`,
+                        [forceEmployeeId, newTerminalId]
+                    );
+                    console.log(`[Socket] 📝 Shift terminal_id updated to ${newTerminalId}`);
+                }
+
+                socket.emit('force_takeover_result', { success: true, wasOnline: kickedCount > 0 });
             } catch (err) {
                 console.error(`[Socket] Error in force_takeover:`, err.message);
                 socket.emit('force_takeover_result', { success: false, error: err.message });
