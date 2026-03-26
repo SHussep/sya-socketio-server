@@ -578,7 +578,7 @@ module.exports = {
 // Exported separately — utility function, not an HTTP handler.
 // ═══════════════════════════════════════════════════════════════
 async function checkSessionConflict(employeeId, pool) {
-    const activeDeviceSessions = require('../socket/activeDeviceSessions');
+    const activeDeviceSessions = require('../../socket/activeDeviceSessions');
 
     let hasConflict = false;
     let otherDeviceType = null;
