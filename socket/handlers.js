@@ -978,12 +978,13 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
                 }
                 console.log(`[Socket] 🔄 Kicked ${kickedCount} other socket(s) for employee ${forceEmployeeId}`);
 
-                // Also set DB revocation flag for devices that might be offline
-                // Clear any previous flag first, then set for all device types except caller
+                // Clear any stale revocation flags (don't set new ones —
+                // online devices are already kicked via socket iteration above,
+                // offline devices will detect the conflict via checkSessionConflict at POS entry)
                 await pool.query(
                     `UPDATE employees
-                     SET session_revoked_at = NOW(), session_revoked_for_device = 'all'
-                     WHERE id = $1`,
+                     SET session_revoked_at = NULL, session_revoked_for_device = NULL
+                     WHERE id = $1 AND session_revoked_at IS NOT NULL`,
                     [forceEmployeeId]
                 );
 
