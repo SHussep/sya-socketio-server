@@ -178,8 +178,8 @@ async function refreshDropboxToken() {
 // ENDPOINTS
 // ═══════════════════════════════════════════════════════════════
 
-// POST /api/backup/upload-desktop - Subir backup desde Desktop
-router.post('/upload-desktop', authenticateToken, async (req, res) => {
+// POST /api/backup/upload-desktop - Subir backup desde Desktop (sin JWT - Desktop envía tenant/branch en body)
+router.post('/upload-desktop', async (req, res) => {
     try {
         const {
             tenant_id,
