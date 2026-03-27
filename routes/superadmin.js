@@ -245,6 +245,7 @@ module.exports = function(pool, io) {
                     (SELECT COUNT(*) FROM employees WHERE tenant_id = t.id AND is_active = true) as active_employee_count,
                     (SELECT COUNT(*) FROM telemetry_events WHERE tenant_id = t.id AND event_type = 'app_open') as app_opens,
                     (SELECT COUNT(DISTINCT branch_id) FROM telemetry_events WHERE tenant_id = t.id AND event_type = 'scale_configured') as branches_with_scale,
+                    (SELECT COUNT(*) FROM telemetry_events WHERE tenant_id = t.id AND event_type = 'socket_error') as error_count,
                     (SELECT COUNT(*) FROM ventas WHERE tenant_id = t.id) as total_sales,
                     (SELECT COALESCE(SUM(total), 0) FROM ventas WHERE tenant_id = t.id) as total_revenue,
                     (SELECT MAX(event_timestamp) FROM telemetry_events WHERE tenant_id = t.id) as last_activity,
@@ -315,6 +316,7 @@ module.exports = function(pool, io) {
                         activeEmployees: parseInt(tenant.active_employee_count),
                         appOpens: parseInt(tenant.app_opens),
                         branchesWithScale: parseInt(tenant.branches_with_scale),
+                        errorCount: parseInt(tenant.error_count),
                         totalSales: parseInt(tenant.total_sales),
                         totalRevenue: parseFloat(tenant.total_revenue)
                     },
@@ -1335,9 +1337,9 @@ module.exports = function(pool, io) {
     router.get('/tenants/:id/telemetry-errors', async (req, res) => {
         try {
             const { id } = req.params;
-            const { limit = 50 } = req.query;
+            const { limit = 50, from, to } = req.query;
 
-            const result = await pool.query(`
+            let query = `
                 SELECT
                     te.id,
                     te.device_name,
@@ -1352,9 +1354,22 @@ module.exports = function(pool, io) {
                 LEFT JOIN branches b ON te.branch_id = b.id
                 WHERE te.tenant_id = $1
                   AND te.event_type = 'socket_error'
-                ORDER BY te.event_timestamp DESC
-                LIMIT $2
-            `, [id, parseInt(limit)]);
+            `;
+            const params = [id];
+
+            if (from) {
+                params.push(from);
+                query += ` AND te.event_timestamp >= $${params.length}`;
+            }
+            if (to) {
+                params.push(to);
+                query += ` AND te.event_timestamp <= $${params.length}`;
+            }
+
+            params.push(parseInt(limit));
+            query += ` ORDER BY te.event_timestamp DESC LIMIT $${params.length}`;
+
+            const result = await pool.query(query, params);
 
             res.json({
                 success: true,
@@ -1375,6 +1390,50 @@ module.exports = function(pool, io) {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener errores de telemetría'
+            });
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
+    // DELETE /api/superadmin/tenants/:id/telemetry-errors
+    // Eliminar errores de telemetría por IDs o todos
+    // ─────────────────────────────────────────────────────────
+    router.delete('/tenants/:id/telemetry-errors', async (req, res) => {
+        try {
+            const { id } = req.params;
+            const { ids } = req.body || {};
+
+            let result;
+            if (ids && Array.isArray(ids) && ids.length > 0) {
+                result = await pool.query(
+                    `DELETE FROM telemetry_events
+                     WHERE tenant_id = $1
+                       AND event_type = 'socket_error'
+                       AND id = ANY($2::int[])
+                     RETURNING id`,
+                    [id, ids]
+                );
+            } else {
+                result = await pool.query(
+                    `DELETE FROM telemetry_events
+                     WHERE tenant_id = $1
+                       AND event_type = 'socket_error'
+                     RETURNING id`,
+                    [id]
+                );
+            }
+
+            console.log(`[Superadmin] Deleted ${result.rowCount} telemetry errors for tenant ${id}`);
+
+            res.json({
+                success: true,
+                deletedCount: result.rowCount
+            });
+        } catch (error) {
+            console.error('[Superadmin] Error deleting telemetry errors:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al eliminar errores de telemetría'
             });
         }
     });
