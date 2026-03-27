@@ -149,7 +149,7 @@ module.exports = (pool, io, scaleStatusByBranch) => {
 
         try {
             const result = await pool.query(`
-                SELECT cajero_consolida_liquidaciones, max_breaks_per_shift
+                SELECT cajero_consolida_liquidaciones, max_breaks_per_shift, multi_caja_enabled
                 FROM branches
                 WHERE id = $1 AND tenant_id = $2
             `, [id, tenantId]);
@@ -164,6 +164,7 @@ module.exports = (pool, io, scaleStatusByBranch) => {
                 data: {
                     cajero_consolida_liquidaciones: row.cajero_consolida_liquidaciones ?? false,
                     max_breaks_per_shift: row.max_breaks_per_shift ?? 1,
+                    multi_caja_enabled: row.multi_caja_enabled ?? false,
                 }
             });
         } catch (error) {
@@ -176,28 +177,44 @@ module.exports = (pool, io, scaleStatusByBranch) => {
     router.put('/:id/settings', authenticateToken, async (req, res) => {
         const { id } = req.params;
         const tenantId = req.user.tenantId;
-        const { cajero_consolida_liquidaciones, max_breaks_per_shift } = req.body;
+        const { cajero_consolida_liquidaciones, max_breaks_per_shift, multi_caja_enabled } = req.body;
 
         if (!tenantId) {
             return res.status(401).json({ success: false, message: 'Token no contiene tenantId' });
         }
 
         try {
+            // Guard: cannot disable multi-caja while shifts are open
+            if (multi_caja_enabled === false) {
+                const openShifts = await pool.query(`
+                    SELECT id FROM shifts
+                    WHERE branch_id = $1 AND end_time IS NULL
+                    LIMIT 1
+                `, [id]);
+                if (openShifts.rows.length > 0) {
+                    return res.status(409).json({
+                        success: false,
+                        message: 'No se puede desactivar multi-caja mientras hay turnos abiertos en esta sucursal'
+                    });
+                }
+            }
+
             const result = await pool.query(`
                 UPDATE branches
                 SET cajero_consolida_liquidaciones = COALESCE($1, cajero_consolida_liquidaciones),
                     max_breaks_per_shift = COALESCE($2, max_breaks_per_shift),
+                    multi_caja_enabled = COALESCE($3, multi_caja_enabled),
                     updated_at = CURRENT_TIMESTAMP
-                WHERE id = $3 AND tenant_id = $4
-                RETURNING id, cajero_consolida_liquidaciones, max_breaks_per_shift
-            `, [cajero_consolida_liquidaciones, max_breaks_per_shift, id, tenantId]);
+                WHERE id = $4 AND tenant_id = $5
+                RETURNING id, cajero_consolida_liquidaciones, max_breaks_per_shift, multi_caja_enabled
+            `, [cajero_consolida_liquidaciones, max_breaks_per_shift, multi_caja_enabled, id, tenantId]);
 
             if (result.rows.length === 0) {
                 return res.status(404).json({ success: false, message: 'Sucursal no encontrada' });
             }
 
             const row = result.rows[0];
-            console.log(`[Branch Settings] ✅ cajero_consolida=${row.cajero_consolida_liquidaciones}, max_breaks=${row.max_breaks_per_shift} para branch ${id}`);
+            console.log(`[Branch Settings] ✅ cajero_consolida=${row.cajero_consolida_liquidaciones}, max_breaks=${row.max_breaks_per_shift}, multi_caja=${row.multi_caja_enabled} para branch ${id}`);
 
             // Notificar via socket a todos los dispositivos de esta sucursal
             const roomName = `branch_${id}`;
@@ -205,6 +222,7 @@ module.exports = (pool, io, scaleStatusByBranch) => {
                 branchId: parseInt(id),
                 cajero_consolida_liquidaciones: row.cajero_consolida_liquidaciones,
                 max_breaks_per_shift: row.max_breaks_per_shift,
+                multi_caja_enabled: row.multi_caja_enabled,
                 receivedAt: new Date().toISOString()
             });
 
