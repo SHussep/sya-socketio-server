@@ -2633,6 +2633,26 @@ async function runMigrations() {
                 console.error('[Schema] ⚠️ Error adding session revocation columns:', err.message);
             }
 
+            // ── Patch: Add multi-caja support columns (migration 037) ──
+            try {
+                await client.query(`
+                    ALTER TABLE branches
+                    ADD COLUMN IF NOT EXISTS multi_caja_enabled BOOLEAN DEFAULT false
+                `);
+                await client.query(`
+                    ALTER TABLE shifts
+                    ADD COLUMN IF NOT EXISTS last_heartbeat TIMESTAMPTZ
+                `);
+                await client.query(`
+                    CREATE INDEX IF NOT EXISTS idx_shifts_active_heartbeat
+                    ON shifts(employee_id, is_cash_cut_open)
+                    WHERE is_cash_cut_open = true
+                `);
+                console.log('[Schema] ✅ Multi-caja columns ready');
+            } catch (mcErr) {
+                console.error(`[Schema] ⚠️ Multi-caja columns error: ${mcErr.message}`);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {

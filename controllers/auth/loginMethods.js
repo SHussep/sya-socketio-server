@@ -592,7 +592,7 @@ async function checkSessionConflict(employeeId, pool, callerTerminalId) {
     // 1. Check DB for open shift — this is the SOURCE OF TRUTH for conflict.
     //    Just being connected to Socket.IO (e.g. on Dashboard) is NOT a conflict.
     const shiftResult = await pool.query(
-        `SELECT s.id, s.start_time, s.terminal_id, b.name as branch_name
+        `SELECT s.id, s.start_time, s.terminal_id, s.branch_id, b.name as branch_name
          FROM shifts s
          LEFT JOIN branches b ON b.id = s.branch_id
          WHERE s.employee_id = $1 AND s.is_cash_cut_open = true
@@ -614,6 +614,23 @@ async function checkSessionConflict(employeeId, pool, callerTerminalId) {
     // If this device owns the shift → no conflict
     if (callerTerminalId && shiftTerminalId === callerTerminalId) {
         console.log(`[SessionConflict] Shift terminal matches caller (${callerTerminalId}) — no conflict`);
+        return null;
+    }
+
+    // Only enforce mutual exclusion when multi_caja_enabled is true for this branch
+    try {
+        const branchResult = await pool.query(
+            'SELECT multi_caja_enabled FROM branches WHERE id = $1',
+            [shift.branch_id]
+        );
+        const multiCaja = branchResult.rows[0]?.multi_caja_enabled ?? false;
+        if (!multiCaja) {
+            console.log(`[SessionConflict] multi_caja_enabled=false for branch ${shift.branch_id} — skipping conflict`);
+            return null;
+        }
+    } catch (brErr) {
+        // Column might not exist yet (pre-migration) — skip conflict check
+        console.log(`[SessionConflict] Could not check multi_caja_enabled: ${brErr.message} — skipping conflict`);
         return null;
     }
 
