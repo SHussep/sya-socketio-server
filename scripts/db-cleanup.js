@@ -382,6 +382,19 @@ async function runPartialCleanup(tenantId, selectedTenant, branchId = null) {
         }
     }
 
+    // Resetear settings de branches (multi_caja_enabled, etc.)
+    process.stdout.write(`  Reseteando configuración de sucursales... `);
+    try {
+        const branchQuery = branchId
+            ? 'UPDATE branches SET multi_caja_enabled = false WHERE tenant_id = $1 AND id = $2'
+            : 'UPDATE branches SET multi_caja_enabled = false WHERE tenant_id = $1';
+        const branchParams = branchId ? [tenantId, branchId] : [tenantId];
+        const branchResult = await pool.query(branchQuery, branchParams);
+        console.log(`${colors.green}OK (${branchResult.rowCount} sucursales)${colors.reset}`);
+    } catch (err) {
+        console.log(`${colors.yellow}SKIP: ${err.message}${colors.reset}`);
+    }
+
     // Resumen
     const totalDeleted = results.reduce((sum, r) => sum + (r.deleted || 0), 0);
     const errors = results.filter(r => r.error);

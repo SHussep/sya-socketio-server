@@ -188,6 +188,12 @@ module.exports = (pool) => {
 
             const deleted = await deleteTransactionalData(client, tenantId);
 
+            // Resetear settings de branch (multi_caja_enabled, etc.)
+            await client.query(
+                'UPDATE branches SET multi_caja_enabled = false WHERE id = $1 AND tenant_id = $2',
+                [branchId, tenantId]
+            );
+
             await client.query(
                 'UPDATE branches SET data_reset_at = $1 WHERE id = $2 AND tenant_id = $3',
                 [resetAt, branchId, tenantId]
