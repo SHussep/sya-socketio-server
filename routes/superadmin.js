@@ -283,17 +283,46 @@ module.exports = function(pool, io) {
                 `)
             ]);
 
-            // Socket.IO stats
+            // Socket.IO stats – aggregate + per-tenant breakdown
             let totalConnections = 0;
             let desktopCount = 0;
             let mobileCount = 0;
             let authenticatedCount = 0;
+            const onlineMap = new Map();
 
             for (const [, socket] of io.sockets.sockets) {
                 totalConnections++;
                 if (socket.authenticated) authenticatedCount++;
                 if (socket.clientType === 'desktop') desktopCount++;
                 else if (socket.clientType === 'mobile') mobileCount++;
+
+                // Per-tenant breakdown
+                if (socket.authenticated && socket.user?.tenantId) {
+                    const tid = socket.user.tenantId;
+                    if (!onlineMap.has(tid)) {
+                        onlineMap.set(tid, { tenantId: tid, desktopCount: 0, mobileCount: 0 });
+                    }
+                    const info = onlineMap.get(tid);
+                    if (socket.clientType === 'desktop') info.desktopCount++;
+                    else if (socket.clientType === 'mobile') info.mobileCount++;
+                }
+            }
+
+            // Fetch business names for online tenants
+            let onlineTenants = [];
+            if (onlineMap.size > 0) {
+                const tids = Array.from(onlineMap.keys());
+                const namesResult = await pool.query(
+                    `SELECT id, business_name FROM tenants WHERE id = ANY($1)`,
+                    [tids]
+                );
+                const nameMap = new Map(namesResult.rows.map(r => [r.id, r.business_name]));
+                onlineTenants = Array.from(onlineMap.values()).map(t => ({
+                    tenantId: t.tenantId,
+                    businessName: nameMap.get(t.tenantId) || `Tenant ${t.tenantId}`,
+                    desktopCount: t.desktopCount,
+                    mobileCount: t.mobileCount,
+                }));
             }
 
             const dbSize = dbSizeResult.rows[0];
@@ -325,7 +354,8 @@ module.exports = function(pool, io) {
                         totalConnections,
                         desktopCount,
                         mobileCount,
-                        authenticatedCount
+                        authenticatedCount,
+                        onlineTenants
                     },
                     postgres: {
                         connectionsTotal: parseInt(pgConn.total),
