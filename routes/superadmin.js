@@ -1439,6 +1439,46 @@ module.exports = function(pool, io) {
     });
 
     // ─────────────────────────────────────────────────────────
+    // GET /api/superadmin/online-tenants
+    // Tenants con al menos un socket conectado
+    // ─────────────────────────────────────────────────────────
+    router.get('/online-tenants', (req, res) => {
+        try {
+            const onlineMap = new Map();
+
+            for (const [, socket] of io.sockets.sockets) {
+                if (!socket.authenticated || !socket.user?.tenantId) continue;
+
+                const tid = socket.user.tenantId;
+                if (!onlineMap.has(tid)) {
+                    onlineMap.set(tid, {
+                        tenantId: tid,
+                        desktopCount: 0,
+                        mobileCount: 0,
+                        branches: new Set(),
+                    });
+                }
+                const info = onlineMap.get(tid);
+                if (socket.clientType === 'desktop') info.desktopCount++;
+                else if (socket.clientType === 'mobile') info.mobileCount++;
+                if (socket.branchId) info.branches.add(socket.branchId);
+            }
+
+            const data = Array.from(onlineMap.values()).map(t => ({
+                tenantId: t.tenantId,
+                desktopCount: t.desktopCount,
+                mobileCount: t.mobileCount,
+                branchCount: t.branches.size,
+            }));
+
+            res.json({ success: true, data });
+        } catch (error) {
+            console.error('[Superadmin] Error getting online tenants:', error);
+            res.status(500).json({ success: false, message: 'Error al obtener tenants en linea' });
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
     // GET /api/superadmin/telemetry/stats
     // Estadísticas detalladas de telemetría
     // ─────────────────────────────────────────────────────────
