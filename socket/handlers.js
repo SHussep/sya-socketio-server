@@ -157,12 +157,32 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
                     );
 
                     if (revocationCheck.rows.length > 0) {
-                        console.log(`[Socket] 🚫 Employee ${employeeId} (${data.type}) was revoked while offline — sending force_logout`);
-                        socket.emit('force_logout', {
-                            reason: 'session_revoked',
-                            message: 'Tu sesión fue revocada mientras estabas desconectado'
+                        console.log(`[Socket] 🚫 Employee ${employeeId} (${data.type}) was revoked while offline — requesting flush`);
+
+                        // Re-set revocation (the UPDATE above cleared it) — wait for flush_complete
+                        await pool.query(
+                            `UPDATE employees SET session_revoked_at = NOW(), session_revoked_for_device = $2
+                             WHERE id = $1`,
+                            [employeeId, data.type]
+                        );
+
+                        // Send flush request instead of immediate force_logout
+                        socket.emit('session_revoked_pending_flush', {
+                            reason: 'session_taken',
+                            message: 'Tu sesión fue revocada — sincronizando datos pendientes'
                         });
-                        return; // Don't register in activeDeviceSessions
+
+                        // Register temporarily so flush_complete handler can find this socket
+                        const sessionKey = `${employeeId}_${data.type}`;
+                        activeDeviceSessions.set(sessionKey, {
+                            socketId: socket.id,
+                            clientType: data.type,
+                            branchId: socket.branchId || null,
+                            connectedAt: Date.now(),
+                            lastHeartbeat: Date.now(),
+                            pendingFlush: true
+                        });
+                        return;
                     }
 
                     // Register this device in the session registry (composite key: employeeId_deviceType)
@@ -210,6 +230,69 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
                     timestamp: new Date().toISOString()
                 });
                 console.log(`[IDENTIFY] 📡 Sent desktop status to new mobile: online=${desktopOnline}`);
+            }
+        });
+
+        // ═══════════════════════════════════════════════════════════════
+        // SHIFT HEARTBEAT: Device liveness for force-takeover decisions
+        // Clients emit every 30s while a shift is open.
+        // Updates both in-memory Map (for socket lookup) and DB (authoritative).
+        // ═══════════════════════════════════════════════════════════════
+        socket.on('shift_heartbeat', async ({ employeeId, shiftId, terminalId }) => {
+            if (!employeeId || !shiftId) return;
+            try {
+                const key = `${employeeId}_${socket.clientType || 'unknown'}`;
+                const existing = activeDeviceSessions.get(key);
+                activeDeviceSessions.set(key, {
+                    socketId: socket.id,
+                    clientType: socket.clientType || existing?.clientType || 'unknown',
+                    branchId: socket.branchId || existing?.branchId || null,
+                    connectedAt: existing?.connectedAt || Date.now(),
+                    lastHeartbeat: Date.now()
+                });
+
+                await pool.query(
+                    'UPDATE shifts SET last_heartbeat = NOW() WHERE id = $1 AND is_cash_cut_open = true',
+                    [shiftId]
+                );
+            } catch (err) {
+                // Silent — heartbeat failures should not disrupt the client
+                console.error(`[Socket] ❌ shift_heartbeat error for employee ${employeeId}:`, err.message);
+            }
+        });
+
+        // ═══════════════════════════════════════════════════════════════
+        // FLUSH COMPLETE: Client signals it has finished syncing pending
+        // data after receiving session_revoked_pending_flush.
+        // Now safe to send force_logout.
+        // ═══════════════════════════════════════════════════════════════
+        socket.on('flush_complete', async ({ employeeId }) => {
+            const empId = employeeId || socket.user?.employeeId;
+            if (!empId) return;
+
+            try {
+                await pool.query(
+                    `UPDATE employees SET session_revoked_at = NULL, session_revoked_for_device = NULL
+                     WHERE id = $1`,
+                    [empId]
+                );
+
+                console.log(`[Socket] ✅ flush_complete from employee ${empId} — sending force_logout`);
+
+                socket.emit('force_logout', {
+                    reason: 'session_revoked',
+                    message: 'Datos sincronizados. Tu sesión fue tomada por otro dispositivo.'
+                });
+
+                // Remove from session registry
+                const key = `${empId}_${socket.clientType || 'unknown'}`;
+                activeDeviceSessions.delete(key);
+            } catch (err) {
+                console.error(`[Socket] Error in flush_complete:`, err.message);
+                socket.emit('force_logout', {
+                    reason: 'session_revoked',
+                    message: 'Tu sesión fue tomada por otro dispositivo.'
+                });
             }
         });
 
@@ -952,6 +1035,12 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
         // MUTUAL EXCLUSION: Force takeover — new device kicks old device
         // Uses event-based response (force_takeover_result) for cross-library compatibility.
         // ═══════════════════════════════════════════════════════════════
+        // ═══════════════════════════════════════════════════════════════
+        // FORCE TAKEOVER: New device kicks old device for same employee.
+        // Uses DB last_heartbeat (authoritative) for online/offline status.
+        // Wrapped in transaction with FOR UPDATE to prevent race conditions.
+        // Sets session_revoked_at for offline devices (flush-before-logout).
+        // ═══════════════════════════════════════════════════════════════
         socket.on('force_takeover', async (data) => {
             const forceEmployeeId = data?.employeeId || socket.user?.employeeId;
             if (!forceEmployeeId) {
@@ -960,10 +1049,28 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
             }
 
             const callerType = socket.clientType || 'unknown';
-            console.log(`[Socket] 🔄 Force takeover requested by ${callerType} (socket: ${socket.id}) for employee ${forceEmployeeId}`);
+            const newTerminalId = data?.terminalId;
+            console.log(`[Socket] 🔄 Force takeover by ${callerType} (socket: ${socket.id}) for employee ${forceEmployeeId}`);
 
+            const client = await pool.connect();
             try {
-                // Iterate ALL connected sockets to find others for the same employee
+                await client.query('BEGIN');
+
+                // Lock the active shift row to prevent concurrent takeovers
+                const shiftResult = await client.query(
+                    `SELECT id, terminal_id, last_heartbeat
+                     FROM shifts
+                     WHERE employee_id = $1 AND is_cash_cut_open = true
+                     FOR UPDATE`,
+                    [forceEmployeeId]
+                );
+
+                const activeShift = shiftResult.rows[0];
+                const OFFLINE_THRESHOLD_MS = 90 * 1000;
+                const isOnline = activeShift?.last_heartbeat &&
+                    (Date.now() - new Date(activeShift.last_heartbeat).getTime()) < OFFLINE_THRESHOLD_MS;
+
+                // Kick all connected sockets for this employee (real-time)
                 let kickedCount = 0;
                 for (const [sid, s] of io.sockets.sockets) {
                     if (s.user?.employeeId === forceEmployeeId && sid !== socket.id) {
@@ -972,37 +1079,46 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
                             takenByDevice: callerType,
                             message: 'Tu sesión fue tomada por otro dispositivo'
                         });
-                        console.log(`[Socket] 📤 force_logout sent to ${s.clientType || 'unknown'} (socket: ${sid})`);
+                        console.log(`[Socket] 📤 force_logout → ${s.clientType || 'unknown'} (socket: ${sid})`);
                         kickedCount++;
                     }
                 }
-                console.log(`[Socket] 🔄 Kicked ${kickedCount} other socket(s) for employee ${forceEmployeeId}`);
 
-                // Clear any stale revocation flags (don't set new ones —
-                // online devices are already kicked via socket iteration above,
-                // offline devices will detect the conflict via checkSessionConflict at POS entry)
-                await pool.query(
-                    `UPDATE employees
-                     SET session_revoked_at = NULL, session_revoked_for_device = NULL
-                     WHERE id = $1 AND session_revoked_at IS NOT NULL`,
-                    [forceEmployeeId]
-                );
-
-                // Update shift terminal_id to the caller's terminal
-                const newTerminalId = data?.terminalId;
-                if (newTerminalId) {
-                    await pool.query(
-                        `UPDATE shifts SET terminal_id = $2
-                         WHERE employee_id = $1 AND is_cash_cut_open = true`,
-                        [forceEmployeeId, newTerminalId]
+                if (isOnline) {
+                    // ONLINE: device was kicked via socket, clear stale revocation
+                    await client.query(
+                        `UPDATE employees SET session_revoked_at = NULL, session_revoked_for_device = NULL
+                         WHERE id = $1`,
+                        [forceEmployeeId]
                     );
-                    console.log(`[Socket] 📝 Shift terminal_id updated to ${newTerminalId}`);
+                } else {
+                    // OFFLINE: set revocation flag so device flushes on reconnect
+                    const revokedDeviceType = activeShift?.terminal_id?.startsWith('mobile-') ? 'mobile' : 'desktop';
+                    await client.query(
+                        `UPDATE employees SET session_revoked_at = NOW(), session_revoked_for_device = $2
+                         WHERE id = $1`,
+                        [forceEmployeeId, revokedDeviceType]
+                    );
+                    console.log(`[Socket] 🚫 Employee ${forceEmployeeId} marked as revoked (${revokedDeviceType}, offline)`);
                 }
 
+                // Transfer shift ownership to the new device
+                if (newTerminalId && activeShift) {
+                    await client.query(
+                        'UPDATE shifts SET terminal_id = $2, last_heartbeat = NOW() WHERE id = $1',
+                        [activeShift.id, newTerminalId]
+                    );
+                    console.log(`[Socket] 📝 Shift ${activeShift.id} terminal_id → ${newTerminalId}`);
+                }
+
+                await client.query('COMMIT');
                 socket.emit('force_takeover_result', { success: true, wasOnline: kickedCount > 0 });
             } catch (err) {
+                await client.query('ROLLBACK').catch(() => {});
                 console.error(`[Socket] Error in force_takeover:`, err.message);
                 socket.emit('force_takeover_result', { success: false, error: err.message });
+            } finally {
+                client.release();
             }
         });
 
