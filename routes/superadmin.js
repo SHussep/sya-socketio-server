@@ -250,7 +250,8 @@ module.exports = function(pool, io) {
                     (SELECT MAX(event_timestamp) FROM telemetry_events WHERE tenant_id = t.id) as last_activity,
                     (SELECT app_version FROM telemetry_events WHERE tenant_id = t.id AND app_version IS NOT NULL AND platform IS NULL ORDER BY event_timestamp DESC LIMIT 1) as desktop_version,
                     (SELECT app_version FROM telemetry_events WHERE tenant_id = t.id AND app_version IS NOT NULL AND platform IN ('android', 'ios') ORDER BY event_timestamp DESC LIMIT 1) as mobile_version,
-                    (SELECT theme_name FROM telemetry_events WHERE tenant_id = t.id AND theme_name IS NOT NULL ORDER BY event_timestamp DESC LIMIT 1) as theme_name
+                    (SELECT theme_name FROM telemetry_events WHERE tenant_id = t.id AND theme_name IS NOT NULL ORDER BY event_timestamp DESC LIMIT 1) as theme_name,
+                    (SELECT name FROM employees WHERE tenant_id = t.id AND is_owner = true LIMIT 1) as owner_name
                 FROM tenants t
                 JOIN subscriptions s ON t.subscription_id = s.id
                 WHERE 1=1
@@ -317,6 +318,7 @@ module.exports = function(pool, io) {
                         totalSales: parseInt(tenant.total_sales),
                         totalRevenue: parseFloat(tenant.total_revenue)
                     },
+                    ownerName: tenant.owner_name,
                     lastActivity: tenant.last_activity,
                     desktopVersion: tenant.desktop_version,
                     mobileVersion: tenant.mobile_version,
@@ -1322,6 +1324,57 @@ module.exports = function(pool, io) {
                 success: false,
                 message: 'Error al revocar licencia',
                 error: undefined
+            });
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
+    // GET /api/superadmin/tenants/:id/telemetry-errors
+    // Errores de telemetría (socket_error) de un tenant
+    // ─────────────────────────────────────────────────────────
+    router.get('/tenants/:id/telemetry-errors', async (req, res) => {
+        try {
+            const { id } = req.params;
+            const { limit = 50 } = req.query;
+
+            const result = await pool.query(`
+                SELECT
+                    te.id,
+                    te.device_name,
+                    te.device_id,
+                    te.app_version,
+                    te.error_reason,
+                    te.error_details,
+                    te.consecutive_failures,
+                    te.event_timestamp,
+                    b.name as branch_name
+                FROM telemetry_events te
+                LEFT JOIN branches b ON te.branch_id = b.id
+                WHERE te.tenant_id = $1
+                  AND te.event_type = 'socket_error'
+                ORDER BY te.event_timestamp DESC
+                LIMIT $2
+            `, [id, parseInt(limit)]);
+
+            res.json({
+                success: true,
+                data: result.rows.map(r => ({
+                    id: r.id,
+                    deviceName: r.device_name,
+                    deviceId: r.device_id,
+                    appVersion: r.app_version,
+                    errorReason: r.error_reason,
+                    errorDetails: r.error_details,
+                    consecutiveFailures: r.consecutive_failures,
+                    eventTimestamp: r.event_timestamp,
+                    branchName: r.branch_name
+                }))
+            });
+        } catch (error) {
+            console.error('[Superadmin] Error fetching telemetry errors:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al obtener errores de telemetría'
             });
         }
     });

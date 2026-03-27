@@ -1127,6 +1127,11 @@ CREATE TABLE IF NOT EXISTS telemetry_events (
     -- Theme configuration (only for theme_changed events)
     theme_name VARCHAR(50),
 
+    -- Error info (only for socket_error events)
+    error_reason VARCHAR(255),
+    error_details TEXT,
+    consecutive_failures INTEGER,
+
     -- Offline-first sync columns (for idempotency)
     global_id VARCHAR(255) UNIQUE NOT NULL,
     terminal_id VARCHAR(100),
