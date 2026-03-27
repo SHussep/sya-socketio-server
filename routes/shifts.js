@@ -30,20 +30,62 @@ module.exports = (pool, io) => {
 
     // POST /api/shifts/open - Abrir turno (inicio de sesión)
     router.post('/open', authenticateToken, async (req, res) => {
+        const client = await pool.connect();
         try {
             const { tenantId, employeeId, branchId } = req.user;
-            const { initialAmount } = req.body;
+            const { initialAmount, terminalId: clientTerminalId } = req.body;
 
-            // Verificar si hay un turno abierto para este empleado en CUALQUIER sucursal
-            const existingShifts = await pool.query(
-                `SELECT id, branch_id, start_time FROM shifts
-                 WHERE tenant_id = $1 AND employee_id = $2 AND is_cash_cut_open = true`,
+            await client.query('BEGIN');
+
+            // Check if branch has multi_caja_enabled
+            const branchResult = await client.query(
+                'SELECT multi_caja_enabled FROM branches WHERE id = $1 AND tenant_id = $2',
+                [branchId, tenantId]
+            );
+            const multiCajaEnabled = branchResult.rows[0]?.multi_caja_enabled ?? false;
+
+            // Check for existing open shift (row lock prevents race conditions)
+            const existingShifts = await client.query(
+                `SELECT s.id, s.terminal_id, s.start_time, s.global_id, s.branch_id,
+                        s.initial_amount, s.transaction_counter, s.is_cash_cut_open,
+                        s.created_at, b.name as branch_name
+                 FROM shifts s
+                 JOIN branches b ON s.branch_id = b.id
+                 WHERE s.tenant_id = $1 AND s.employee_id = $2 AND s.is_cash_cut_open = true
+                 FOR UPDATE`,
                 [tenantId, employeeId]
             );
 
-            if (existingShifts.rows.length > 0) {
-                // Auto-cerrar todos los turnos previos antes de abrir uno nuevo
-                const autoCloseResult = await pool.query(
+            if (existingShifts.rows.length > 0 && multiCajaEnabled) {
+                // ═══ MULTI-CAJA MODE: Return 409 conflict (don't auto-close) ═══
+                const shift = existingShifts.rows[0];
+                const isSameDevice = clientTerminalId && shift.terminal_id === clientTerminalId;
+
+                await client.query('ROLLBACK');
+
+                return res.status(409).json({
+                    success: false,
+                    error: 'SHIFT_CONFLICT',
+                    activeShift: {
+                        id: shift.id,
+                        globalId: shift.global_id,
+                        terminalId: shift.terminal_id,
+                        isSameDevice,
+                        deviceType: shift.terminal_id?.startsWith('mobile-') ? 'mobile' : 'desktop',
+                        branchId: shift.branch_id,
+                        branchName: shift.branch_name,
+                        startTime: new Date(shift.start_time).toISOString(),
+                        initialAmount: parseFloat(shift.initial_amount) || 0,
+                        transactionCounter: shift.transaction_counter || 0,
+                        isCashCutOpen: shift.is_cash_cut_open,
+                        createdAt: shift.created_at ? new Date(shift.created_at).toISOString() : null
+                    }
+                });
+            }
+
+            if (existingShifts.rows.length > 0 && !multiCajaEnabled) {
+                // ═══ LEGACY MODE: Auto-close previous shifts ═══
+                const autoCloseResult = await client.query(
                     `UPDATE shifts SET end_time = CURRENT_TIMESTAMP, is_cash_cut_open = false, updated_at = NOW()
                      WHERE tenant_id = $1 AND employee_id = $2 AND is_cash_cut_open = true
                      RETURNING id, branch_id`,
@@ -52,37 +94,45 @@ module.exports = (pool, io) => {
                 console.log(`[Shifts] 🧹 Auto-cerrados ${autoCloseResult.rows.length} turnos previos del empleado ${employeeId}: ${autoCloseResult.rows.map(r => `ID ${r.id} (branch ${r.branch_id})`).join(', ')}`);
             }
 
-            // Crear nuevo turno (include offline-first columns required by schema)
+            // Create new shift
             const shiftGlobalId = require('crypto').randomUUID();
-            const terminalId = 'mobile-' + require('crypto').randomUUID().substring(0, 8);
+            // Use client-provided terminalId if available, otherwise generate server-side
+            const terminalId = clientTerminalId || ('mobile-' + require('crypto').randomUUID().substring(0, 8));
             const createdLocalUtc = new Date().toISOString();
 
-            const result = await pool.query(
-                `INSERT INTO shifts (tenant_id, branch_id, employee_id, start_time, initial_amount, transaction_counter, is_cash_cut_open, global_id, terminal_id, local_op_seq, created_local_utc)
-                 VALUES ($1, $2, $3, CURRENT_TIMESTAMP, $4, 0, true, $5, $6, 1, $7)
-                 RETURNING id, tenant_id, branch_id, employee_id, start_time, initial_amount, transaction_counter, is_cash_cut_open, global_id, created_at`,
+            const result = await client.query(
+                `INSERT INTO shifts (tenant_id, branch_id, employee_id, start_time, initial_amount,
+                                     transaction_counter, is_cash_cut_open, global_id, terminal_id,
+                                     local_op_seq, created_local_utc, last_heartbeat)
+                 VALUES ($1, $2, $3, CURRENT_TIMESTAMP, $4, 0, true, $5, $6, 1, $7, NOW())
+                 RETURNING id, tenant_id, branch_id, employee_id, start_time, initial_amount,
+                           transaction_counter, is_cash_cut_open, global_id, terminal_id, created_at`,
                 [tenantId, branchId, employeeId, initialAmount || 0, shiftGlobalId, terminalId, createdLocalUtc]
             );
 
-            const shift = result.rows[0];
-            console.log(`[Shifts] 🚀 Turno abierto: ID ${shift.id} - Empleado ${employeeId} - Sucursal ${branchId}`);
+            await client.query('COMMIT');
 
-            // Format timestamps as ISO strings in UTC
+            const shift = result.rows[0];
+            console.log(`[Shifts] 🚀 Turno abierto: ID ${shift.id} - Empleado ${employeeId} - Sucursal ${branchId} - Terminal ${terminalId}${multiCajaEnabled ? ' [MULTI-CAJA]' : ''}`);
+
             const formattedShift = {
                 ...shift,
                 start_time: shift.start_time ? new Date(shift.start_time).toISOString() : null,
                 created_at: shift.created_at ? new Date(shift.created_at).toISOString() : null
             };
 
-            res.json({
+            res.status(201).json({
                 success: true,
                 data: formattedShift,
                 message: 'Turno abierto exitosamente'
             });
 
         } catch (error) {
+            await client.query('ROLLBACK').catch(() => {});
             console.error('[Shifts] Error al abrir turno:', error);
             res.status(500).json({ success: false, message: 'Error al abrir turno' });
+        } finally {
+            client.release();
         }
     });
 
