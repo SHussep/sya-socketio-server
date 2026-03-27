@@ -1445,9 +1445,22 @@ module.exports = function(pool, io) {
     router.get('/online-tenants', (req, res) => {
         try {
             const onlineMap = new Map();
+            let totalSockets = 0;
+            let skippedNoAuth = 0;
+            let skippedNoTenant = 0;
 
             for (const [, socket] of io.sockets.sockets) {
-                if (!socket.authenticated || !socket.user?.tenantId) continue;
+                totalSockets++;
+
+                // Count sockets that fail our filters for debugging
+                if (!socket.authenticated) {
+                    skippedNoAuth++;
+                    continue;
+                }
+                if (!socket.user?.tenantId) {
+                    skippedNoTenant++;
+                    continue;
+                }
 
                 const tid = socket.user.tenantId;
                 if (!onlineMap.has(tid)) {
@@ -1471,7 +1484,17 @@ module.exports = function(pool, io) {
                 branchCount: t.branches.size,
             }));
 
-            res.json({ success: true, data });
+            const debug = {
+                totalSockets,
+                authenticatedSockets: totalSockets - skippedNoAuth,
+                skippedNoAuth,
+                skippedNoTenant,
+                uniqueTenants: onlineMap.size,
+            };
+
+            console.log(`[Superadmin] Online tenants: ${onlineMap.size} tenants, ${totalSockets} total sockets (noAuth=${skippedNoAuth}, noTenant=${skippedNoTenant})`);
+
+            res.json({ success: true, data, debug });
         } catch (error) {
             console.error('[Superadmin] Error getting online tenants:', error);
             res.status(500).json({ success: false, message: 'Error al obtener tenants en linea' });
