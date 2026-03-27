@@ -32,10 +32,29 @@ module.exports = (pool, io) => {
     router.post('/open', authenticateToken, async (req, res) => {
         const client = await pool.connect();
         try {
-            const { tenantId, employeeId, branchId } = req.user;
-            const { initialAmount, terminalId: clientTerminalId } = req.body;
+            const { tenantId, employeeId: jwtEmployeeId, branchId } = req.user;
+            const { initialAmount, terminalId: clientTerminalId, employeeGlobalId } = req.body;
 
             await client.query('BEGIN');
+
+            // ═══ Resolve real employee_id from global_id if provided ═══
+            // JWT may contain stale employeeId — global_id is authoritative
+            let employeeId = jwtEmployeeId;
+            if (employeeGlobalId) {
+                const empResult = await client.query(
+                    'SELECT id FROM employees WHERE global_id = $1 AND tenant_id = $2',
+                    [employeeGlobalId, tenantId]
+                );
+                if (empResult.rows.length > 0) {
+                    const resolvedId = empResult.rows[0].id;
+                    if (resolvedId !== jwtEmployeeId) {
+                        console.log(`[Shifts] ⚠️ JWT employeeId=${jwtEmployeeId} differs from global_id resolved id=${resolvedId} (global_id=${employeeGlobalId}). Using resolved id.`);
+                    }
+                    employeeId = resolvedId;
+                } else {
+                    console.log(`[Shifts] ⚠️ employeeGlobalId=${employeeGlobalId} not found in tenant ${tenantId}, falling back to JWT employeeId=${jwtEmployeeId}`);
+                }
+            }
 
             // Check if branch has multi_caja_enabled
             const branchResult = await client.query(
@@ -139,8 +158,20 @@ module.exports = (pool, io) => {
     // POST /api/shifts/close - Cerrar turno (cierre de sesión)
     router.post('/close', authenticateToken, async (req, res) => {
         try {
-            const { tenantId, employeeId, branchId } = req.user;
-            const { shiftId, finalAmount, counted_cash, expected_cash, difference, notes } = req.body;
+            const { tenantId, employeeId: jwtEmployeeId, branchId } = req.user;
+            const { shiftId, finalAmount, counted_cash, expected_cash, difference, notes, employeeGlobalId } = req.body;
+
+            // Resolve real employee_id from global_id if provided
+            let employeeId = jwtEmployeeId;
+            if (employeeGlobalId) {
+                const empResult = await pool.query(
+                    'SELECT id FROM employees WHERE global_id = $1 AND tenant_id = $2',
+                    [employeeGlobalId, tenantId]
+                );
+                if (empResult.rows.length > 0) {
+                    employeeId = empResult.rows[0].id;
+                }
+            }
 
             // Verificar que el turno existe, pertenece al empleado y está abierto
             const shiftCheck = await pool.query(
@@ -357,8 +388,21 @@ module.exports = (pool, io) => {
     // GET /api/shifts/current - Obtener turno actual del empleado
     router.get('/current', authenticateToken, async (req, res) => {
         try {
-            const { tenantId, employeeId, branchId, roleId } = req.user;
+            const { tenantId, employeeId: jwtEmployeeId, branchId, roleId } = req.user;
             const isAdmin = roleId === 1; // roleId 1 = Administrador
+
+            // Resolve real employee_id from global_id query param if provided
+            let employeeId = jwtEmployeeId;
+            const { employee_global_id } = req.query;
+            if (employee_global_id) {
+                const empResult = await pool.query(
+                    'SELECT id FROM employees WHERE global_id = $1 AND tenant_id = $2',
+                    [employee_global_id, tenantId]
+                );
+                if (empResult.rows.length > 0) {
+                    employeeId = empResult.rows[0].id;
+                }
+            }
 
             // 🎯 ADMINISTRADORES: Ven cualquier turno abierto de la sucursal
             // 🎯 EMPLEADOS: Solo ven su propio turno abierto

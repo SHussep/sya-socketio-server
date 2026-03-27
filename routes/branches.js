@@ -179,6 +179,8 @@ module.exports = (pool, io, scaleStatusByBranch) => {
         const tenantId = req.user.tenantId;
         const { cajero_consolida_liquidaciones, max_breaks_per_shift, multi_caja_enabled } = req.body;
 
+        console.log(`[Branch Settings] PUT /branches/${id}/settings - tenant=${tenantId}, body=${JSON.stringify(req.body)}`);
+
         if (!tenantId) {
             return res.status(401).json({ success: false, message: 'Token no contiene tenantId' });
         }
