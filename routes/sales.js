@@ -316,6 +316,19 @@ module.exports = (pool, io) => {
                 [turno_global_id, tenant_id]
             );
             if (shiftResult.rows.length === 0) {
+                // Verificar si la branch tuvo un data_reset — si sí, descartar la venta huérfana
+                const branchReset = await pool.query(
+                    'SELECT data_reset_at FROM branches WHERE id = $1 AND tenant_id = $2',
+                    [branch_id, tenant_id]
+                );
+                if (branchReset.rows.length > 0 && branchReset.rows[0].data_reset_at) {
+                    console.log(`[Sync/Sales] ⚠️ Turno ${turno_global_id} no existe, branch tiene data_reset_at=${branchReset.rows[0].data_reset_at} — descartando venta huérfana (Ticket #${ticket_number})`);
+                    return res.json({
+                        success: true,
+                        data: { id: -1, discarded: true },
+                        message: 'Venta descartada: turno eliminado por restablecimiento de datos'
+                    });
+                }
                 console.log(`[Sync/Sales] ❌ Turno no encontrado: ${turno_global_id}`);
                 return res.status(400).json({
                     success: false,

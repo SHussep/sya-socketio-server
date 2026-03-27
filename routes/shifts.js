@@ -1513,6 +1513,19 @@ module.exports = (pool, io) => {
             );
 
             if (shiftCheck.rows.length === 0) {
+                // Verificar si fue eliminado por data_reset
+                const branchReset = await pool.query(
+                    'SELECT b.data_reset_at FROM branches b WHERE b.tenant_id = $1 AND b.data_reset_at IS NOT NULL LIMIT 1',
+                    [tenant_id]
+                );
+                if (branchReset.rows.length > 0) {
+                    console.log(`[Shifts/SyncClose] ⚠️ Turno ${global_id} no existe, branch tiene data_reset — descartando cierre huérfano`);
+                    return res.json({
+                        success: true,
+                        data: { id: -1, discarded: true },
+                        message: 'Turno descartado: eliminado por restablecimiento de datos'
+                    });
+                }
                 console.log(`[Shifts/SyncClose] ⚠️ Turno no encontrado: ${global_id}`);
                 return res.status(404).json({
                     success: false,
