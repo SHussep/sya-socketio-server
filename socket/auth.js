@@ -6,7 +6,7 @@
 
 const jwt = require('jsonwebtoken');
 const JWT_SECRET = process.env.JWT_SECRET;
-const { pool } = require('../db');
+const { pool } = require('../database');
 
 module.exports = function setupSocketAuth(io) {
     io.use(async (socket, next) => {
