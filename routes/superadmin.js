@@ -216,6 +216,132 @@ module.exports = function(pool, io) {
     });
 
     // ─────────────────────────────────────────────────────────
+    // GET /api/superadmin/system-health
+    // Salud del sistema: PostgreSQL + Socket.IO
+    // ─────────────────────────────────────────────────────────
+    router.get('/system-health', async (req, res) => {
+        try {
+            const [
+                dbSizeResult,
+                tableSizesResult,
+                tenantRowCountsResult,
+                pgConnectionsResult,
+                cacheHitResult
+            ] = await Promise.all([
+                // 1. Total database size
+                pool.query(`SELECT pg_database_size(current_database()) as total_bytes`),
+
+                // 2. Top 10 tables by size
+                pool.query(`
+                    SELECT
+                        relname as table_name,
+                        pg_total_relation_size(relid) as total_bytes,
+                        n_live_tup as row_count
+                    FROM pg_stat_user_tables
+                    ORDER BY pg_total_relation_size(relid) DESC
+                    LIMIT 10
+                `),
+
+                // 3. Per-tenant row counts across key tables
+                pool.query(`
+                    SELECT
+                        t.id as tenant_id,
+                        t.business_name,
+                        COALESCE(v.ventas_count, 0) as ventas_count,
+                        COALESCE(te.telemetry_count, 0) as telemetry_count,
+                        COALESCE(e.employee_count, 0) as employee_count,
+                        COALESCE(c.customer_count, 0) as customer_count,
+                        (COALESCE(v.ventas_count, 0) + COALESCE(te.telemetry_count, 0) +
+                         COALESCE(e.employee_count, 0) + COALESCE(c.customer_count, 0)) as total_rows
+                    FROM tenants t
+                    LEFT JOIN (SELECT tenant_id, COUNT(*) as ventas_count FROM ventas GROUP BY tenant_id) v ON v.tenant_id = t.id
+                    LEFT JOIN (SELECT tenant_id, COUNT(*) as telemetry_count FROM telemetry_events GROUP BY tenant_id) te ON te.tenant_id = t.id
+                    LEFT JOIN (SELECT tenant_id, COUNT(*) as employee_count FROM employees GROUP BY tenant_id) e ON e.tenant_id = t.id
+                    LEFT JOIN (SELECT tenant_id, COUNT(*) as customer_count FROM customers GROUP BY tenant_id) c ON c.tenant_id = t.id
+                    ORDER BY total_rows DESC
+                    LIMIT 10
+                `),
+
+                // 4. PostgreSQL connections
+                pool.query(`
+                    SELECT
+                        COUNT(*) as total,
+                        COUNT(*) FILTER (WHERE state = 'active') as active,
+                        COUNT(*) FILTER (WHERE state = 'idle') as idle
+                    FROM pg_stat_activity
+                    WHERE datname = current_database()
+                `),
+
+                // 5. Cache hit ratio
+                pool.query(`
+                    SELECT
+                        CASE WHEN SUM(heap_blks_hit) + SUM(heap_blks_read) > 0
+                             THEN ROUND(SUM(heap_blks_hit)::numeric / (SUM(heap_blks_hit) + SUM(heap_blks_read)) * 100, 2)
+                             ELSE 100
+                        END as cache_hit_ratio
+                    FROM pg_statio_user_tables
+                `)
+            ]);
+
+            // Socket.IO stats
+            let totalConnections = 0;
+            let desktopCount = 0;
+            let mobileCount = 0;
+            let authenticatedCount = 0;
+
+            for (const [, socket] of io.sockets.sockets) {
+                totalConnections++;
+                if (socket.authenticated) authenticatedCount++;
+                if (socket.clientType === 'desktop') desktopCount++;
+                else if (socket.clientType === 'mobile') mobileCount++;
+            }
+
+            const dbSize = dbSizeResult.rows[0];
+            const pgConn = pgConnectionsResult.rows[0];
+            const cacheRatio = cacheHitResult.rows[0];
+
+            res.json({
+                success: true,
+                data: {
+                    database: {
+                        totalBytes: parseInt(dbSize.total_bytes),
+                        totalFormatted: formatBytes(parseInt(dbSize.total_bytes)),
+                        tables: tableSizesResult.rows.map(r => ({
+                            name: r.table_name,
+                            totalBytes: parseInt(r.total_bytes),
+                            rowCount: parseInt(r.row_count)
+                        }))
+                    },
+                    tenantStorage: tenantRowCountsResult.rows.map(r => ({
+                        tenantId: r.tenant_id,
+                        businessName: r.business_name,
+                        ventasCount: parseInt(r.ventas_count),
+                        telemetryCount: parseInt(r.telemetry_count),
+                        employeeCount: parseInt(r.employee_count),
+                        customerCount: parseInt(r.customer_count),
+                        totalRows: parseInt(r.total_rows)
+                    })),
+                    socket: {
+                        totalConnections,
+                        desktopCount,
+                        mobileCount,
+                        authenticatedCount
+                    },
+                    postgres: {
+                        connectionsTotal: parseInt(pgConn.total),
+                        connectionsActive: parseInt(pgConn.active),
+                        connectionsIdle: parseInt(pgConn.idle),
+                        cacheHitRatio: parseFloat(cacheRatio.cache_hit_ratio)
+                    }
+                }
+            });
+        } catch (error) {
+            console.error('[SuperAdmin SystemHealth] Error:', error);
+            res.status(500).json({ success: false, message: 'Error al obtener salud del sistema' });
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
     // GET /api/superadmin/tenants
     // Lista de todos los tenants con detalles
     // ─────────────────────────────────────────────────────────
@@ -2398,3 +2524,12 @@ body{background:#080e1a;font-family:'Inter','Segoe UI',sans-serif;min-height:100
 
     return router;
 };
+
+// Helper: format bytes to human-readable string
+function formatBytes(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
