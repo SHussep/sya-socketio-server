@@ -135,6 +135,26 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
             socket.deviceInfo = data.deviceInfo || {};
             if (data.type === 'desktop') stats.desktopClients++;
             else if (data.type === 'mobile') stats.mobileClients++;
+
+            // Fallback: resolve employeeGlobalId if auth middleware didn't (e.g., reconnection)
+            if (data.employeeGlobalId && socket.user?.tenantId) {
+                try {
+                    const empResult = await pool.query(
+                        'SELECT id FROM employees WHERE global_id = $1 AND tenant_id = $2',
+                        [data.employeeGlobalId, socket.user.tenantId]
+                    );
+                    if (empResult.rows.length > 0) {
+                        const resolvedId = empResult.rows[0].id;
+                        if (resolvedId !== socket.user.employeeId) {
+                            console.log(`[IDENTIFY] ⚠️ Correcting employeeId: JWT=${socket.user.employeeId} → resolved=${resolvedId} (globalId=${data.employeeGlobalId})`);
+                            socket.user.employeeId = resolvedId;
+                        }
+                    }
+                } catch (err) {
+                    console.warn(`[IDENTIFY] ⚠️ Could not resolve employeeGlobalId: ${err.message}`);
+                }
+            }
+
             console.log(`[IDENTIFY] ${socket.id} → ${data.type} (Sucursal: ${socket.branchId}, Employee: ${socket.user?.employeeId})`);
 
             // ═══════════════════════════════════════════════════════════════
