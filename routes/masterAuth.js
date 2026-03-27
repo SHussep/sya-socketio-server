@@ -281,31 +281,51 @@ module.exports = function (pool) {
                 });
 
             } else {
-                // DESKTOP: Solo verificar contraseña, Desktop usa BD local
-                const token = jwt.sign(
-                    {
-                        isMasterLogin: true,
-                        masterUsername: username,
-                        role: 'admin'
-                    },
-                    JWT_SECRET,
-                    { expiresIn: '24h' }
-                );
+                // DESKTOP: Verificar contraseña + generar JWT con contexto tenant/employee si se proporcionan
+                const { tenantId, branchId, employeeId } = req.body;
+
+                const tokenPayload = {
+                    isMasterLogin: true,
+                    masterUsername: username,
+                    role: 'admin'
+                };
+
+                let refreshToken = null;
+
+                // Si el desktop envía contexto del tenant, generar JWT completo para Socket.IO
+                if (tenantId && branchId && employeeId) {
+                    tokenPayload.tenantId = tenantId;
+                    tokenPayload.branchId = branchId;
+                    tokenPayload.employeeId = employeeId;
+
+                    refreshToken = jwt.sign(
+                        {
+                            employeeId,
+                            tenantId,
+                            isMasterLogin: true
+                        },
+                        JWT_SECRET,
+                        { expiresIn: '30d' }
+                    );
+                }
+
+                const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: '24h' });
 
                 // Registrar éxito
                 await pool.query(
-                    `INSERT INTO master_login_audit (username, ip_address, user_agent, success, client_type)
-                     VALUES ($1, $2, $3, true, $4)`,
-                    [username, ip, userAgent, clientType || 'desktop']
+                    `INSERT INTO master_login_audit (username, ip_address, user_agent, success, client_type, target_tenant_id, target_branch_id)
+                     VALUES ($1, $2, $3, true, $4, $5, $6)`,
+                    [username, ip, userAgent, clientType || 'desktop', tenantId || null, branchId || null]
                 );
 
-                console.log(`[MasterAuth] Login maestro EXITOSO (desktop): ${username} desde ${ip}`);
+                console.log(`[MasterAuth] Login maestro EXITOSO (desktop): ${username} desde ${ip}${tenantId ? ` → tenant ${tenantId}, branch ${branchId}` : ''}`);
 
                 return res.json({
                     success: true,
                     isMasterLogin: true,
                     data: {
                         token,
+                        refreshToken,
                         message: 'Acceso maestro verificado. Use la sesión local del equipo.'
                     }
                 });
