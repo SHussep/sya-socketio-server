@@ -181,7 +181,7 @@ module.exports = (pool) => {
     router.post('/register', authenticateToken, async (req, res) => {
         try {
             const { device_id, device_name, device_type, branch_id } = req.body;
-            const tenantId = req.user.tenantId; // SEGURO: Solo del JWT, nunca del body
+            const tenantId = req.user.tenantId;
 
             console.log(`[Devices] POST /register - Device: ${device_id?.substring(0, 10)}..., Type: ${device_type}`);
 
@@ -192,7 +192,31 @@ module.exports = (pool) => {
                 });
             }
 
-            // Insertar o actualizar dispositivo (como Auxiliar por defecto)
+            // Auto-generate name if not provided
+            let finalDeviceName = device_name;
+            if (!finalDeviceName || finalDeviceName.trim() === '') {
+                const countResult = await pool.query(
+                    `SELECT COUNT(*) as cnt FROM branch_devices
+                     WHERE branch_id = $1 AND tenant_id = $2 AND COALESCE(is_active, TRUE) = TRUE`,
+                    [branch_id, tenantId]
+                );
+                let n = parseInt(countResult.rows[0].cnt) + 1;
+                finalDeviceName = `Caja ${n}`;
+
+                // Retry if name collides (max 5 attempts)
+                for (let attempt = 0; attempt < 5; attempt++) {
+                    const nameExists = await pool.query(
+                        `SELECT id FROM branch_devices
+                         WHERE branch_id = $1 AND tenant_id = $2 AND device_name = $3
+                         AND COALESCE(is_active, TRUE) = TRUE`,
+                        [branch_id, tenantId, finalDeviceName]
+                    );
+                    if (nameExists.rows.length === 0) break;
+                    n++;
+                    finalDeviceName = `Caja ${n}`;
+                }
+            }
+
             const result = await pool.query(`
                 INSERT INTO branch_devices (
                     tenant_id, branch_id, device_id, device_name, device_type,
@@ -201,22 +225,25 @@ module.exports = (pool) => {
                 VALUES ($1, $2, $3, $4, $5, FALSE, NOW(), NOW(), NOW())
                 ON CONFLICT (device_id, branch_id, tenant_id)
                 DO UPDATE SET
-                    device_name = COALESCE(EXCLUDED.device_name, branch_devices.device_name),
+                    device_name = COALESCE(NULLIF($4, ''), branch_devices.device_name),
                     device_type = COALESCE(EXCLUDED.device_type, branch_devices.device_type),
                     last_seen_at = NOW(),
                     updated_at = NOW()
-                RETURNING id, is_primary
-            `, [tenantId, branch_id, device_id, device_name, device_type]);
+                RETURNING id, is_primary, device_name,
+                    (xmax = 0) as is_new
+            `, [tenantId, branch_id, device_id, finalDeviceName, device_type]);
 
-            console.log(`[Devices] ✅ Dispositivo registrado: ${device_id.substring(0, 10)}... (Primary: ${result.rows[0].is_primary})`);
+            console.log(`[Devices] ✅ Dispositivo ${result.rows[0].is_new ? 'registrado' : 'actualizado'}: ${device_id.substring(0, 10)}... name=${result.rows[0].device_name}`);
 
             res.json({
                 success: true,
-                message: 'Dispositivo registrado',
+                message: result.rows[0].is_new ? 'Dispositivo registrado' : 'Dispositivo actualizado',
                 data: {
                     id: result.rows[0].id,
                     device_id,
-                    is_primary: result.rows[0].is_primary
+                    device_name: result.rows[0].device_name,
+                    is_primary: result.rows[0].is_primary,
+                    is_new: result.rows[0].is_new
                 }
             });
 
@@ -242,11 +269,14 @@ module.exports = (pool) => {
                 return res.status(400).json({ success: false, message: 'Se requiere tenantId' });
             }
 
+            const { include_inactive } = req.query;
             const result = await pool.query(`
                 SELECT id, device_id, device_name, device_type, is_primary,
+                       COALESCE(is_active, TRUE) as is_active,
                        claimed_at, last_seen_at, created_at
                 FROM branch_devices
                 WHERE branch_id = $1 AND tenant_id = $2
+                ${include_inactive !== 'true' ? 'AND COALESCE(is_active, TRUE) = TRUE' : ''}
                 ORDER BY is_primary DESC, last_seen_at DESC
             `, [branchId, tenantId]);
 
@@ -314,6 +344,136 @@ module.exports = (pool) => {
                 message: 'Error en heartbeat',
                 error: undefined
             });
+        }
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // PATCH /api/devices/:id - Rename or deactivate a terminal
+    // Only Owner (is_owner=true) or Administrador (role_id=1) can modify
+    // ═══════════════════════════════════════════════════════════════════════════
+    router.patch('/:id', authenticateToken, async (req, res) => {
+        try {
+            const deviceId = parseInt(req.params.id);
+            const { device_name, is_active } = req.body;
+            const tenantId = req.user.tenantId;
+            const employeeId = req.user.employeeId;
+
+            if (!deviceId || isNaN(deviceId)) {
+                return res.status(400).json({ success: false, message: 'ID de dispositivo inválido' });
+            }
+
+            // Check permissions: Owner or Administrador only
+            const permCheck = await pool.query(
+                `SELECT is_owner, role_id FROM employees WHERE id = $1 AND tenant_id = $2 AND is_active = TRUE`,
+                [employeeId, tenantId]
+            );
+            if (permCheck.rows.length === 0) {
+                return res.status(403).json({ success: false, message: 'Empleado no encontrado' });
+            }
+            const emp = permCheck.rows[0];
+            if (!emp.is_owner && emp.role_id !== 1) {
+                return res.status(403).json({ success: false, message: 'Solo Owner o Administrador pueden modificar terminales' });
+            }
+
+            // Fetch current device
+            const current = await pool.query(
+                `SELECT * FROM branch_devices WHERE id = $1 AND tenant_id = $2`,
+                [deviceId, tenantId]
+            );
+            if (current.rows.length === 0) {
+                return res.status(404).json({ success: false, message: 'Dispositivo no encontrado' });
+            }
+            const device = current.rows[0];
+
+            // Handle deactivation
+            if (is_active === false) {
+                const activeShift = await pool.query(
+                    `SELECT id FROM shifts WHERE terminal_id = $1 AND is_cash_cut_open = TRUE AND tenant_id = $2`,
+                    [device.device_id, tenantId]
+                );
+                if (activeShift.rows.length > 0) {
+                    return res.status(400).json({ success: false, message: 'No se puede desactivar una terminal con turno abierto' });
+                }
+                await pool.query(
+                    `UPDATE branch_devices SET is_active = FALSE, updated_at = NOW() WHERE id = $1`,
+                    [deviceId]
+                );
+            }
+
+            // Handle reactivation
+            if (is_active === true) {
+                await pool.query(
+                    `UPDATE branch_devices SET is_active = TRUE, updated_at = NOW() WHERE id = $1`,
+                    [deviceId]
+                );
+            }
+
+            // Handle rename
+            if (device_name !== undefined) {
+                const trimmed = (device_name || '').trim();
+                if (trimmed.length < 1 || trimmed.length > 50) {
+                    return res.status(400).json({ success: false, message: 'El nombre debe tener entre 1 y 50 caracteres' });
+                }
+
+                // Check uniqueness among active devices in same branch
+                const nameCheck = await pool.query(
+                    `SELECT id FROM branch_devices
+                     WHERE branch_id = $1 AND tenant_id = $2 AND device_name = $3
+                     AND COALESCE(is_active, TRUE) = TRUE AND id != $4`,
+                    [device.branch_id, tenantId, trimmed, deviceId]
+                );
+                if (nameCheck.rows.length > 0) {
+                    return res.status(409).json({ success: false, message: `Ya existe una terminal con el nombre "${trimmed}" en esta sucursal` });
+                }
+
+                await pool.query(
+                    `UPDATE branch_devices SET device_name = $1, updated_at = NOW() WHERE id = $2`,
+                    [trimmed, deviceId]
+                );
+            }
+
+            // Fetch updated device
+            const updated = await pool.query(
+                `SELECT id, device_id, device_name, device_type, is_primary, COALESCE(is_active, TRUE) as is_active, last_seen_at
+                 FROM branch_devices WHERE id = $1`,
+                [deviceId]
+            );
+            const result = updated.rows[0];
+
+            // Emit Socket.IO event
+            const io = req.app.get('io');
+            if (io) {
+                io.to(`branch_${device.branch_id}`).emit('terminal:updated', {
+                    id: result.id,
+                    deviceId: result.device_id,
+                    deviceName: result.device_name,
+                    deviceType: result.device_type,
+                    isPrimary: result.is_primary,
+                    isActive: result.is_active
+                });
+            }
+
+            console.log(`[Devices] ✅ PATCH /${deviceId}: name=${result.device_name}, active=${result.is_active}`);
+
+            res.json({
+                success: true,
+                data: {
+                    id: result.id,
+                    device_id: result.device_id,
+                    device_name: result.device_name,
+                    device_type: result.device_type,
+                    is_primary: result.is_primary,
+                    is_active: result.is_active,
+                    last_seen_at: result.last_seen_at
+                }
+            });
+
+        } catch (error) {
+            console.error('[Devices] ❌ Error en PATCH:', error.message);
+            if (error.code === '23505') {
+                return res.status(409).json({ success: false, message: 'El nombre ya está en uso' });
+            }
+            res.status(500).json({ success: false, message: 'Error al actualizar dispositivo' });
         }
     });
 
