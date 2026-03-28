@@ -60,7 +60,7 @@ module.exports = (pool, io) => {
                        v.venta_tipo_id as sale_type, v.id_empleado as employee_id,
                        v.estado_venta_id, v.status,
                        v.tenant_id, v.branch_id, v.id_turno as shift_id,
-                       v.has_nota_credito,
+                       v.has_nota_credito, v.terminal_id,
                        -- Payment breakdown for mixed payments
                        v.cash_amount, v.card_amount, v.credit_amount,
                        -- Para delivery: mostrar repartidor; para mostrador: mostrar operador POS
