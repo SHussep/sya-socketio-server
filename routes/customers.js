@@ -149,6 +149,9 @@ module.exports = (pool, io) => {
                     credito_limite as credit_limit,
                     saldo_deudor as balance,
                     porcentaje_descuento as discount_percentage,
+                    tipo_descuento,
+                    monto_descuento_fijo,
+                    aplicar_redondeo,
                     nota as notes,
                     activo as is_active,
                     is_system_generic,
@@ -210,6 +213,9 @@ module.exports = (pool, io) => {
                 notes,
                 is_wholesale,
                 discount_percentage,
+                tipo_descuento,
+                monto_descuento_fijo,
+                aplicar_redondeo,
                 // Location (Google Places)
                 latitude,
                 longitude,
@@ -250,11 +256,12 @@ module.exports = (pool, io) => {
                 `INSERT INTO customers (
                     tenant_id, nombre, telefono, telefono_secundario, correo, direccion,
                     tiene_credito, credito_limite, nota, porcentaje_descuento,
+                    tipo_descuento, monto_descuento_fijo, aplicar_redondeo,
                     latitude, longitude, google_maps_url,
                     global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw,
                     is_system_generic, created_at, updated_at
                  )
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::uuid, $15::uuid, $16, $17, $18, FALSE, NOW(), NOW())
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::uuid, $18::uuid, $19, $20, $21, FALSE, NOW(), NOW())
                  ON CONFLICT (global_id) DO UPDATE
                  SET nombre = EXCLUDED.nombre,
                      telefono = EXCLUDED.telefono,
@@ -265,6 +272,9 @@ module.exports = (pool, io) => {
                      credito_limite = EXCLUDED.credito_limite,
                      nota = EXCLUDED.nota,
                      porcentaje_descuento = EXCLUDED.porcentaje_descuento,
+                     tipo_descuento = EXCLUDED.tipo_descuento,
+                     monto_descuento_fijo = EXCLUDED.monto_descuento_fijo,
+                     aplicar_redondeo = EXCLUDED.aplicar_redondeo,
                      latitude = EXCLUDED.latitude,
                      longitude = EXCLUDED.longitude,
                      google_maps_url = EXCLUDED.google_maps_url,
@@ -281,6 +291,9 @@ module.exports = (pool, io) => {
                     credit_limit || 0,
                     notes || null,
                     discount_percentage || 0,
+                    tipo_descuento || 0,
+                    monto_descuento_fijo || 0,
+                    aplicar_redondeo || false,
                     latitude || null,
                     longitude || null,
                     google_maps_url || null,
