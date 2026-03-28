@@ -194,7 +194,7 @@ module.exports = (pool, io) => {
         }
     });
 
-    // POST /api/expenses - Crear gasto desde Desktop (sin JWT)
+    // POST /api/expenses - Crear gasto desde Desktop (server-first)
     router.post('/', async (req, res) => {
         try {
             const { tenantId, branchId, category, description, amount, userEmail } = req.body;
@@ -203,10 +203,13 @@ module.exports = (pool, io) => {
                 return res.status(400).json({ success: false, message: 'Datos incompletos' });
             }
 
-            // Buscar empleado por email
-            let employeeId = null;
+            // ✅ Accept global_id from request body for idempotency, or generate new one
+            const globalId = req.body.global_id || uuidv4();
+
+            // ✅ Accept employeeId directly (Desktop knows the employee ID), or resolve from email
+            let employeeId = req.body.employeeId || null;
             let employeeName = 'Empleado'; // Default name
-            if (userEmail) {
+            if (!employeeId && userEmail) {
                 const empResult = await pool.query(
                     'SELECT id, first_name, last_name, username FROM employees WHERE LOWER(email) = LOWER($1) AND tenant_id = $2',
                     [userEmail, tenantId]
@@ -216,11 +219,21 @@ module.exports = (pool, io) => {
                     const emp = empResult.rows[0];
                     employeeName = emp.first_name ? `${emp.first_name} ${emp.last_name || ''}`.trim() : emp.username;
                 }
+            } else if (employeeId) {
+                // Resolve employee name from employeeId
+                const empResult = await pool.query(
+                    'SELECT first_name, last_name, username FROM employees WHERE id = $1 AND tenant_id = $2',
+                    [employeeId, tenantId]
+                );
+                if (empResult.rows.length > 0) {
+                    const emp = empResult.rows[0];
+                    employeeName = emp.first_name ? `${emp.first_name} ${emp.last_name || ''}`.trim() : emp.username;
+                }
             }
 
-            // ✅ FIX: Resolver turno abierto del empleado para asociar el gasto al turno correcto
-            let shiftId = null;
-            if (employeeId) {
+            // ✅ Accept shiftId directly (Desktop knows the shift remote ID), or auto-find open shift
+            let shiftId = req.body.shiftId || null;
+            if (!shiftId && employeeId) {
                 const shiftResult = await pool.query(
                     `SELECT id FROM shifts
                      WHERE employee_id = $1
@@ -259,13 +272,13 @@ module.exports = (pool, io) => {
                 `INSERT INTO expenses (tenant_id, branch_id, employee_id, global_category_id, description, amount, id_turno, global_id, terminal_id, local_op_seq, created_local_utc)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, $10)
                  RETURNING *`,
-                [tenantId, branchId, employeeId, globalCategoryId, description, amount, shiftId, uuidv4(), uuidv4(), new Date().toISOString()]
+                [tenantId, branchId, employeeId, globalCategoryId, description, amount, shiftId, globalId, uuidv4(), new Date().toISOString()]
             );
 
             const newExpense = result.rows[0];
             console.log(`[Expenses] ✅ Gasto creado desde Desktop: ${category} - $${amount} (Shift: ${shiftId || 'NULL'})`);
 
-            // 📢 EMITIR EVENTO SOCKET.IO
+            // 📢 EMITIR EVENTO SOCKET.IO - expense_assigned (para notificación al empleado)
             if (io && employeeId) {
                 const roomName = `branch_${branchId}`;
                 console.log(`[Expenses] 📡 Emitiendo 'expense_assigned' a ${roomName} para empleado ${employeeId}`);
@@ -280,10 +293,72 @@ module.exports = (pool, io) => {
                 });
             }
 
-            res.json({ success: true, data: newExpense });
+            // 📢 EMITIR EVENTO SOCKET.IO - expense_created (para sync server-first)
+            if (io) {
+                io.to(`branch_${branchId}`).emit('expense_created', {
+                    expenseId: newExpense.id,
+                    globalId: newExpense.global_id,
+                    amount: parseFloat(amount),
+                    branchId,
+                    source: 'server_first'
+                });
+            }
+
+            res.json({
+                success: true,
+                data: {
+                    ...newExpense,
+                    amount: parseFloat(newExpense.amount)
+                }
+            });
         } catch (error) {
             console.error('[Expenses] Error:', error);
             res.status(500).json({ success: false, message: 'Error al crear gasto' });
+        }
+    });
+
+    // GET /api/expenses/pull - Incremental sync for Desktop (server-first)
+    router.get('/pull', authenticateToken, async (req, res) => {
+        try {
+            const tenantId = req.user.tenantId;
+            const branchId = req.query.branch_id || req.user.branchId;
+            const since = req.query.since || '1970-01-01T00:00:00Z';
+            const limit = Math.min(parseInt(req.query.limit) || 500, 1000);
+
+            console.log(`[Expenses/Pull] 📥 Pulling expenses - Tenant: ${tenantId}, Branch: ${branchId}, Since: ${since}, Limit: ${limit}`);
+
+            const result = await pool.query(`
+                SELECT e.*,
+                       emp.global_id as employee_global_id,
+                       s.global_id as shift_global_id
+                FROM expenses e
+                LEFT JOIN employees emp ON e.employee_id = emp.id
+                LEFT JOIN shifts s ON e.id_turno = s.id
+                WHERE e.tenant_id = $1 AND e.branch_id = $2
+                  AND e.created_at > $3
+                ORDER BY e.created_at ASC
+                LIMIT $4
+            `, [tenantId, branchId, since, limit]);
+
+            const expenses = result.rows.map(row => ({
+                ...row,
+                amount: parseFloat(row.amount)
+            }));
+
+            const lastSync = result.rows.length > 0
+                ? result.rows[result.rows.length - 1].created_at
+                : since;
+
+            console.log(`[Expenses/Pull] ✅ Pulled ${expenses.length} expenses (lastSync: ${lastSync})`);
+
+            res.json({
+                success: true,
+                data: { expenses, last_sync: lastSync },
+                count: expenses.length
+            });
+        } catch (err) {
+            console.error('[Expenses/Pull]', err.message);
+            res.status(500).json({ success: false, message: err.message });
         }
     });
 
