@@ -84,6 +84,8 @@ module.exports = (pool, io) => {
                 SELECT id, global_id, tenant_id, nombre as name, telefono as phone, correo as email, direccion as address,
                        credito_limite as credit_limit, saldo_deudor as current_balance, nota as notes, is_system_generic,
                        tiene_credito, latitude, longitude, google_maps_url,
+                       tipo_descuento, porcentaje_descuento as discount_percentage,
+                       monto_descuento_fijo, aplicar_redondeo,
                        created_at, updated_at
                 FROM customers
                 WHERE tenant_id = $1 AND activo = TRUE
