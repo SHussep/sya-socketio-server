@@ -1400,6 +1400,23 @@ async function runMigrations() {
                 console.log('[Schema] ✅ Table branch_devices created successfully');
             }
 
+            // Patch: Add is_active to branch_devices for terminal naming (Migration 038)
+            const checkBranchDevicesIsActive = await client.query(`
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'branch_devices' AND column_name = 'is_active'
+            `);
+            if (checkBranchDevicesIsActive.rows.length === 0) {
+                console.log('[Schema] 📝 Adding is_active to branch_devices (terminal naming)...');
+                await client.query(`ALTER TABLE branch_devices ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE`);
+                await client.query(`
+                    CREATE UNIQUE INDEX IF NOT EXISTS uq_branch_devices_name_active
+                    ON branch_devices(branch_id, tenant_id, device_name)
+                    WHERE is_active = TRUE AND device_name IS NOT NULL
+                `);
+                console.log('[Schema] ✅ branch_devices.is_active added');
+            }
+
             // Patch: Migrate to tenant-specific roles (Migration 014)
             // Check if roles table has tenant_id column (new structure)
             const checkRolesTenantId = await client.query(`
