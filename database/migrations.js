@@ -1417,6 +1417,11 @@ async function runMigrations() {
                 console.log('[Schema] ✅ branch_devices.is_active added');
             }
 
+            // Patch: Ensure unique index on (device_id, branch_id, tenant_id) exists
+            // Required for ON CONFLICT in auto-registration and claim-primary
+            await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_branch_devices_unique ON branch_devices(device_id, branch_id, tenant_id)`);
+            await client.query(`CREATE INDEX IF NOT EXISTS idx_branch_devices_branch ON branch_devices(branch_id, tenant_id)`);
+
             // Patch: Migrate to tenant-specific roles (Migration 014)
             // Check if roles table has tenant_id column (new structure)
             const checkRolesTenantId = await client.query(`
