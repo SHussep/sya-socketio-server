@@ -258,7 +258,7 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
         // Clients emit every 30s while a shift is open.
         // Updates both in-memory Map (for socket lookup) and DB (authoritative).
         // ═══════════════════════════════════════════════════════════════
-        socket.on('shift_heartbeat', async ({ employeeId, shiftId, terminalId }) => {
+        socket.on('shift_heartbeat', async ({ employeeId, shiftId, terminalId }, ackFn) => {
             if (!employeeId || !shiftId) return;
             try {
                 const key = `${employeeId}_${socket.clientType || 'unknown'}`;
@@ -271,6 +271,35 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
                     lastHeartbeat: Date.now()
                 });
 
+                // Check if shift was taken over by another device
+                const shiftCheck = await pool.query(
+                    `SELECT terminal_id, is_cash_cut_open FROM shifts WHERE id = $1`,
+                    [shiftId]
+                );
+                const shift = shiftCheck.rows[0];
+
+                if (!shift || !shift.is_cash_cut_open) {
+                    // Shift closed — tell client to stop
+                    console.log(`[Socket] ⚠️ shift_heartbeat: shift ${shiftId} is closed — notifying ${socket.clientType}`);
+                    socket.emit('force_logout', {
+                        reason: 'shift_closed',
+                        message: 'Tu turno fue cerrado desde otro dispositivo'
+                    });
+                    return;
+                }
+
+                if (terminalId && shift.terminal_id && shift.terminal_id !== terminalId) {
+                    // Shift was taken by another device — revoke this session
+                    console.log(`[Socket] ⚠️ shift_heartbeat: shift ${shiftId} terminal mismatch (DB=${shift.terminal_id}, caller=${terminalId}) — revoking ${socket.clientType}`);
+                    socket.emit('force_logout', {
+                        reason: 'session_taken',
+                        takenByDevice: shift.terminal_id.startsWith('mobile-') ? 'mobile' : 'desktop',
+                        message: 'Tu sesión fue tomada por otro dispositivo'
+                    });
+                    return;
+                }
+
+                // All good — update heartbeat
                 await pool.query(
                     'UPDATE shifts SET last_heartbeat = NOW() WHERE id = $1 AND is_cash_cut_open = true',
                     [shiftId]
@@ -1114,34 +1143,27 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
                     }
                 }
 
-                // Fallback: if no sockets matched but shift exists, broadcast to branch room
-                // This catches edge cases where socket.user.employeeId was never set correctly
-                if (kickedCount === 0 && activeShift?.branch_id) {
+                // Always broadcast to branch room as safety net
+                // Catches: dead sockets not in io.sockets.sockets, reconnected clients,
+                // and cases where direct socket kick missed (e.g., stale employeeId)
+                if (activeShift?.branch_id) {
                     const branchRoom = `branch_${activeShift.branch_id}`;
-                    console.log(`[Socket] ⚠️ No sockets matched for employee ${forceEmployeeIdInt} — broadcasting force_logout to room ${branchRoom}`);
+                    console.log(`[Socket] 📡 Broadcasting force_logout to room ${branchRoom} (targetEmployeeId=${forceEmployeeIdInt}, directKicks=${kickedCount})`);
                     socket.to(branchRoom).emit('force_logout', {
                         ...forceLogoutPayload,
                         targetEmployeeId: forceEmployeeIdInt
                     });
                 }
 
-                if (isOnline) {
-                    // ONLINE: device was kicked via socket, clear stale revocation
-                    await client.query(
-                        `UPDATE employees SET session_revoked_at = NULL, session_revoked_for_device = NULL
-                         WHERE id = $1`,
-                        [forceEmployeeIdInt]
-                    );
-                } else {
-                    // OFFLINE: set revocation flag so device flushes on reconnect
-                    const revokedDeviceType = activeShift?.terminal_id?.startsWith('mobile-') ? 'mobile' : 'desktop';
-                    await client.query(
-                        `UPDATE employees SET session_revoked_at = NOW(), session_revoked_for_device = $2
-                         WHERE id = $1`,
-                        [forceEmployeeIdInt, revokedDeviceType]
-                    );
-                    console.log(`[Socket] 🚫 Employee ${forceEmployeeIdInt} marked as revoked (${revokedDeviceType}, offline)`);
-                }
+                // Always set session_revoked_at — the device may have a dead socket
+                // and won't receive the force_logout emit. The heartbeat check will catch it.
+                const revokedDeviceType = activeShift?.terminal_id?.startsWith('mobile-') ? 'mobile' : 'desktop';
+                await client.query(
+                    `UPDATE employees SET session_revoked_at = NOW(), session_revoked_for_device = $2
+                     WHERE id = $1`,
+                    [forceEmployeeIdInt, revokedDeviceType]
+                );
+                console.log(`[Socket] 🚫 Employee ${forceEmployeeIdInt} marked as revoked (${revokedDeviceType}, isOnline=${isOnline}, directKicks=${kickedCount})`);
 
                 // Transfer shift ownership to the new device
                 if (newTerminalId && activeShift) {
