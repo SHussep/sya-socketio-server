@@ -190,6 +190,41 @@ module.exports = (pool, io) => {
         }
     });
 
+    // GET /api/purchases/pull - Pull purchases for offline-first sync
+    router.get('/pull', authenticateToken, async (req, res) => {
+        try {
+            const tenantId = req.user.tenantId;
+            const branchId = req.query.branch_id || req.user.branchId;
+            const since = req.query.since || '1970-01-01T00:00:00Z';
+            const limit = Math.min(parseInt(req.query.limit) || 500, 1000);
+
+            const result = await pool.query(`
+                SELECT p.*,
+                       s.global_id as supplier_global_id,
+                       emp.global_id as employee_global_id
+                FROM purchases p
+                LEFT JOIN suppliers s ON p.supplier_id = s.id
+                LEFT JOIN employees emp ON p.employee_id = emp.id
+                WHERE p.tenant_id = $1 AND p.branch_id = $2
+                  AND p.created_at > $3
+                ORDER BY p.created_at ASC
+                LIMIT $4
+            `, [tenantId, branchId, since, limit]);
+
+            const lastSync = result.rows.length > 0
+                ? result.rows[result.rows.length - 1].created_at : since;
+
+            res.json({
+                success: true,
+                data: { purchases: result.rows, last_sync: lastSync },
+                count: result.rows.length
+            });
+        } catch (err) {
+            console.error('[Purchases Pull]', err.message);
+            res.status(500).json({ success: false, message: err.message });
+        }
+    });
+
     // GET /api/purchases/:id/details - Detalles de una compra
     // :id puede ser el ID numérico o el global_id (UUID)
     router.get('/:id/details', authenticateToken, async (req, res) => {
@@ -272,11 +307,13 @@ module.exports = (pool, io) => {
                 }
             }
 
+            const globalId = req.body.global_id || require('uuid').v4();
+
             const result = await pool.query(
-                `INSERT INTO purchases (tenant_id, branch_id, supplier_id, employee_id, purchase_number, total_amount, payment_status, notes)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                `INSERT INTO purchases (tenant_id, branch_id, supplier_id, employee_id, purchase_number, total_amount, payment_status, notes, global_id)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                  RETURNING *`,
-                [tenantId, branchId, supplierId, finalEmployeeId, purchaseNumber, totalAmount, paymentStatus || 'pending', notes || null]
+                [tenantId, branchId, supplierId, finalEmployeeId, purchaseNumber, totalAmount, paymentStatus || 'pending', notes || null, globalId]
             );
 
             console.log(`[Purchases] ✅ Compra creada desde Desktop: ${purchaseNumber} - $${totalAmount}`);
