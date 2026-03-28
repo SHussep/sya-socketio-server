@@ -318,6 +318,16 @@ module.exports = (pool, io) => {
 
             console.log(`[Purchases] ✅ Compra creada desde Desktop: ${purchaseNumber} - $${totalAmount}`);
 
+            // Emit socket event after successful creation
+            if (io) {
+                io.to(`branch_${branchId}`).emit('inventory_updated', {
+                    tenantId,
+                    branchId: parseInt(branchId),
+                    action: 'purchase'
+                });
+                console.log(`[Purchases] 📡 inventory_updated emitido a branch_${branchId} (action=purchase)`);
+            }
+
             // Format timestamps as ISO strings in UTC
             const formattedData = {
                 ...result.rows[0],

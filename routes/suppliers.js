@@ -231,6 +231,26 @@ module.exports = (pool, io) => {
             const supplierId = supplierResult.rows[0].id;
             await client.query('COMMIT');
 
+            // Emit socket event AFTER transaction commit
+            if (io) {
+                try {
+                    const branches = await pool.query(
+                        'SELECT id FROM branches WHERE tenant_id = $1 AND is_active = true',
+                        [tenantId]);
+                    for (const b of branches.rows) {
+                        io.to(`branch_${b.id}`).emit('supplier_updated', {
+                            supplierId,
+                            globalId: global_id,
+                            tenantId,
+                            action: 'created'
+                        });
+                    }
+                    console.log(`[Suppliers/Sync] 📡 supplier_updated emitido a ${branches.rows.length} branches (action=created)`);
+                } catch (socketErr) {
+                    console.error('[Suppliers/Sync] ⚠️ Error emitting supplier_updated:', socketErr.message);
+                }
+            }
+
             console.log(`[Suppliers/Sync] ✅ Proveedor ${global_id} sincronizado exitosamente (ID: ${supplierId})`);
             res.json({
                 success: true,
@@ -300,6 +320,26 @@ module.exports = (pool, io) => {
             if (result.rows.length === 0) {
                 console.log(`[Suppliers/Update] ❌ Proveedor ${globalId} no encontrado`);
                 return res.status(404).json({ success: false, message: 'Proveedor no encontrado' });
+            }
+
+            // Emit socket event after successful update
+            if (io) {
+                try {
+                    const branches = await pool.query(
+                        'SELECT id FROM branches WHERE tenant_id = $1 AND is_active = true',
+                        [tenant_id]);
+                    for (const b of branches.rows) {
+                        io.to(`branch_${b.id}`).emit('supplier_updated', {
+                            supplierId: result.rows[0].id,
+                            globalId,
+                            tenantId: tenant_id,
+                            action: 'updated'
+                        });
+                    }
+                    console.log(`[Suppliers/Update] 📡 supplier_updated emitido a ${branches.rows.length} branches (action=updated)`);
+                } catch (socketErr) {
+                    console.error('[Suppliers/Update] ⚠️ Error emitting supplier_updated:', socketErr.message);
+                }
             }
 
             console.log(`[Suppliers/Update] ✅ Proveedor ${globalId} actualizado`);
