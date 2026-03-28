@@ -93,6 +93,90 @@ module.exports = (pool, io) => {
         }
     });
 
+    // POST /api/credit-payments — Direct server-first creation
+    router.post('/', authenticateToken, async (req, res) => {
+        try {
+            const tenantId = req.user.tenantId;
+            const { branchId, customerId, customer_global_id, shiftId, shift_global_id,
+                    employeeId, employee_global_id, amount, paymentMethod, notes,
+                    global_id, terminal_id, created_local_utc } = req.body;
+
+            if (!amount || amount <= 0) {
+                return res.status(400).json({ success: false, message: 'Amount must be > 0' });
+            }
+
+            // Resolve global IDs to PG IDs
+            let finalCustomerId = customerId;
+            if (!finalCustomerId && customer_global_id) {
+                const r = await pool.query(
+                    'SELECT id FROM customers WHERE global_id = $1 AND tenant_id = $2',
+                    [customer_global_id, tenantId]);
+                if (r.rows.length > 0) finalCustomerId = r.rows[0].id;
+            }
+            if (!finalCustomerId) {
+                return res.status(400).json({ success: false, message: 'Customer not found' });
+            }
+
+            let finalShiftId = shiftId;
+            if (!finalShiftId && shift_global_id) {
+                const r = await pool.query(
+                    'SELECT id FROM shifts WHERE global_id = $1 AND tenant_id = $2',
+                    [shift_global_id, tenantId]);
+                if (r.rows.length > 0) finalShiftId = r.rows[0].id;
+            }
+
+            let finalEmployeeId = employeeId || req.user.employeeId;
+            if (!finalEmployeeId && employee_global_id) {
+                const r = await pool.query(
+                    'SELECT id FROM employees WHERE global_id = $1 AND tenant_id = $2',
+                    [employee_global_id, tenantId]);
+                if (r.rows.length > 0) finalEmployeeId = r.rows[0].id;
+            }
+
+            const finalGlobalId = global_id || require('uuid').v4();
+            const finalBranchId = branchId || req.user.branchId;
+
+            // Idempotency: DO NOTHING on conflict
+            const result = await pool.query(`
+                INSERT INTO credit_payments (
+                    tenant_id, branch_id, customer_id, shift_id, employee_id,
+                    amount, payment_method, payment_date, notes,
+                    global_id, terminal_id, created_local_utc
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8, $9, $10, $11)
+                ON CONFLICT (global_id) DO NOTHING
+                RETURNING *
+            `, [tenantId, finalBranchId, finalCustomerId, finalShiftId,
+                finalEmployeeId, amount, paymentMethod || 'cash', notes,
+                finalGlobalId, terminal_id, created_local_utc]);
+
+            let paymentRow;
+            if (result.rows.length > 0) {
+                paymentRow = result.rows[0];
+            } else {
+                // Already existed — fetch existing
+                const existing = await pool.query(
+                    'SELECT * FROM credit_payments WHERE global_id = $1', [finalGlobalId]);
+                paymentRow = existing.rows[0];
+            }
+
+            // Socket notification
+            if (io) {
+                const roomName = `branch_${paymentRow.branch_id}`;
+                io.to(roomName).emit('credit_payment_created', {
+                    paymentId: paymentRow.id,
+                    customerId: paymentRow.customer_id,
+                    amount: parseFloat(paymentRow.amount),
+                    branchId: paymentRow.branch_id
+                });
+            }
+
+            res.status(201).json({ success: true, data: paymentRow });
+        } catch (err) {
+            console.error('[CreditPayments] POST error:', err.message);
+            res.status(500).json({ success: false, message: err.message });
+        }
+    });
+
     // POST /api/credit-payments/sync - Sincronizar pagos desde Desktop
     // ✅ ACTUALIZADO: Soporta resolución de GlobalIds para relaciones
     router.post('/sync', authenticateToken, async (req, res) => {
@@ -224,6 +308,43 @@ module.exports = (pool, io) => {
         } catch (error) {
             console.error('[CreditPayments/Sync] ❌ Error:', error.message);
             res.status(500).json({ success: false, message: 'Error syncing credit payments', error: undefined });
+        }
+    });
+
+    // GET /api/credit-payments/pull - Incremental sync pull
+    router.get('/pull', authenticateToken, async (req, res) => {
+        try {
+            const tenantId = req.user.tenantId;
+            const branchId = req.query.branch_id || req.user.branchId;
+            const since = req.query.since || '1970-01-01T00:00:00Z';
+            const limit = Math.min(parseInt(req.query.limit) || 500, 1000);
+
+            const result = await pool.query(`
+                SELECT cp.*,
+                       c.global_id as customer_global_id,
+                       emp.global_id as employee_global_id,
+                       s.global_id as shift_global_id
+                FROM credit_payments cp
+                LEFT JOIN customers c ON cp.customer_id = c.id
+                LEFT JOIN employees emp ON cp.employee_id = emp.id
+                LEFT JOIN shifts s ON cp.shift_id = s.id
+                WHERE cp.tenant_id = $1 AND cp.branch_id = $2
+                  AND cp.created_at > $3
+                ORDER BY cp.created_at ASC
+                LIMIT $4
+            `, [tenantId, branchId, since, limit]);
+
+            const lastSync = result.rows.length > 0
+                ? result.rows[result.rows.length - 1].created_at
+                : since;
+
+            res.json({
+                success: true,
+                data: { credit_payments: result.rows, last_sync: lastSync },
+                count: result.rows.length
+            });
+        } catch (err) {
+            res.status(500).json({ success: false, message: err.message });
         }
     });
 
