@@ -1070,7 +1070,8 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
 
             const callerType = socket.clientType || 'unknown';
             const newTerminalId = data?.terminalId;
-            console.log(`[Socket] 🔄 Force takeover by ${callerType} (socket: ${socket.id}) for employee ${forceEmployeeId}`);
+            const forceEmployeeIdInt = parseInt(forceEmployeeId, 10);
+            console.log(`[Socket] 🔄 Force takeover by ${callerType} (socket: ${socket.id}) for employee ${forceEmployeeIdInt} (raw: ${forceEmployeeId}, type: ${typeof forceEmployeeId})`);
 
             const client = await pool.connect();
             try {
@@ -1078,11 +1079,11 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
 
                 // Lock the active shift row to prevent concurrent takeovers
                 const shiftResult = await client.query(
-                    `SELECT id, terminal_id, last_heartbeat
+                    `SELECT id, terminal_id, last_heartbeat, branch_id
                      FROM shifts
                      WHERE employee_id = $1 AND is_cash_cut_open = true
                      FOR UPDATE`,
-                    [forceEmployeeId]
+                    [forceEmployeeIdInt]
                 );
 
                 const activeShift = shiftResult.rows[0];
@@ -1090,18 +1091,38 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
                 const isOnline = activeShift?.last_heartbeat &&
                     (Date.now() - new Date(activeShift.last_heartbeat).getTime()) < OFFLINE_THRESHOLD_MS;
 
-                // Kick all connected sockets for this employee (real-time)
-                let kickedCount = 0;
+                // Debug: log all connected sockets to diagnose matching issues
+                console.log(`[Socket] 🔍 Force takeover scan — looking for employeeId=${forceEmployeeIdInt} among ${io.sockets.sockets.size} sockets:`);
                 for (const [sid, s] of io.sockets.sockets) {
-                    if (s.user?.employeeId === forceEmployeeId && sid !== socket.id) {
-                        s.emit('force_logout', {
-                            reason: 'session_taken',
-                            takenByDevice: callerType,
-                            message: 'Tu sesión fue tomada por otro dispositivo'
-                        });
+                    const sEmpId = s.user?.employeeId;
+                    console.log(`[Socket]   → ${sid} type=${s.clientType || '?'} empId=${sEmpId} (type: ${typeof sEmpId}) match=${parseInt(sEmpId, 10) === forceEmployeeIdInt && sid !== socket.id}`);
+                }
+
+                // Kick all connected sockets for this employee (real-time)
+                // Use parseInt for type-safe comparison (JWT may store as string vs int)
+                let kickedCount = 0;
+                const forceLogoutPayload = {
+                    reason: 'session_taken',
+                    takenByDevice: callerType,
+                    message: 'Tu sesión fue tomada por otro dispositivo'
+                };
+                for (const [sid, s] of io.sockets.sockets) {
+                    if (parseInt(s.user?.employeeId, 10) === forceEmployeeIdInt && sid !== socket.id) {
+                        s.emit('force_logout', forceLogoutPayload);
                         console.log(`[Socket] 📤 force_logout → ${s.clientType || 'unknown'} (socket: ${sid})`);
                         kickedCount++;
                     }
+                }
+
+                // Fallback: if no sockets matched but shift exists, broadcast to branch room
+                // This catches edge cases where socket.user.employeeId was never set correctly
+                if (kickedCount === 0 && activeShift?.branch_id) {
+                    const branchRoom = `branch_${activeShift.branch_id}`;
+                    console.log(`[Socket] ⚠️ No sockets matched for employee ${forceEmployeeIdInt} — broadcasting force_logout to room ${branchRoom}`);
+                    socket.to(branchRoom).emit('force_logout', {
+                        ...forceLogoutPayload,
+                        targetEmployeeId: forceEmployeeIdInt
+                    });
                 }
 
                 if (isOnline) {
@@ -1109,7 +1130,7 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
                     await client.query(
                         `UPDATE employees SET session_revoked_at = NULL, session_revoked_for_device = NULL
                          WHERE id = $1`,
-                        [forceEmployeeId]
+                        [forceEmployeeIdInt]
                     );
                 } else {
                     // OFFLINE: set revocation flag so device flushes on reconnect
@@ -1117,9 +1138,9 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
                     await client.query(
                         `UPDATE employees SET session_revoked_at = NOW(), session_revoked_for_device = $2
                          WHERE id = $1`,
-                        [forceEmployeeId, revokedDeviceType]
+                        [forceEmployeeIdInt, revokedDeviceType]
                     );
-                    console.log(`[Socket] 🚫 Employee ${forceEmployeeId} marked as revoked (${revokedDeviceType}, offline)`);
+                    console.log(`[Socket] 🚫 Employee ${forceEmployeeIdInt} marked as revoked (${revokedDeviceType}, offline)`);
                 }
 
                 // Transfer shift ownership to the new device
