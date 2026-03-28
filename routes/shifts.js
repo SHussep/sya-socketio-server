@@ -134,6 +134,81 @@ module.exports = (pool, io) => {
             const shift = result.rows[0];
             console.log(`[Shifts] 🚀 Turno abierto: ID ${shift.id} - Empleado ${employeeId} - Sucursal ${branchId} - Terminal ${terminalId}${multiCajaEnabled ? ' [MULTI-CAJA]' : ''}`);
 
+            // ═══════════════════════════════════════════════════════════════
+            // Auto-register terminal in branch_devices if not exists
+            // ═══════════════════════════════════════════════════════════════
+            let terminalInfo = null;
+            if (shift.terminal_id) {
+                try {
+                    const deviceType = shift.terminal_id.startsWith('mobile-') ? 'mobile' : 'desktop';
+
+                    // Check if already registered
+                    const existing = await pool.query(
+                        `SELECT id, device_name, device_type, is_primary, COALESCE(is_active, TRUE) as is_active
+                         FROM branch_devices
+                         WHERE device_id = $1 AND branch_id = $2 AND tenant_id = $3`,
+                        [shift.terminal_id, branchId, tenantId]
+                    );
+
+                    if (existing.rows.length > 0) {
+                        const dev = existing.rows[0];
+                        // Update last_seen_at, reactivate if inactive
+                        await pool.query(
+                            `UPDATE branch_devices SET last_seen_at = NOW(), is_active = TRUE WHERE id = $1`,
+                            [dev.id]
+                        );
+                        terminalInfo = {
+                            id: dev.id,
+                            name: dev.device_name,
+                            deviceType: dev.device_type,
+                            isPrimary: dev.is_primary,
+                            isNew: false
+                        };
+                    } else {
+                        // Auto-register with suggested name
+                        const countResult = await pool.query(
+                            `SELECT COUNT(*) as cnt FROM branch_devices
+                             WHERE branch_id = $1 AND tenant_id = $2 AND COALESCE(is_active, TRUE) = TRUE`,
+                            [branchId, tenantId]
+                        );
+                        let n = parseInt(countResult.rows[0].cnt) + 1;
+                        let suggestedName = `Caja ${n}`;
+
+                        // Retry on name collision
+                        for (let attempt = 0; attempt < 5; attempt++) {
+                            const nameExists = await pool.query(
+                                `SELECT id FROM branch_devices
+                                 WHERE branch_id = $1 AND tenant_id = $2 AND device_name = $3
+                                 AND COALESCE(is_active, TRUE) = TRUE`,
+                                [branchId, tenantId, suggestedName]
+                            );
+                            if (nameExists.rows.length === 0) break;
+                            n++;
+                            suggestedName = `Caja ${n}`;
+                        }
+
+                        const inserted = await pool.query(
+                            `INSERT INTO branch_devices (tenant_id, branch_id, device_id, device_name, device_type, is_primary, last_seen_at, created_at, updated_at)
+                             VALUES ($1, $2, $3, $4, $5, FALSE, NOW(), NOW(), NOW())
+                             ON CONFLICT (device_id, branch_id, tenant_id) DO UPDATE SET last_seen_at = NOW()
+                             RETURNING id, device_name, device_type, is_primary`,
+                            [tenantId, branchId, shift.terminal_id, suggestedName, deviceType]
+                        );
+                        const dev = inserted.rows[0];
+                        terminalInfo = {
+                            id: dev.id,
+                            name: dev.device_name,
+                            deviceType: dev.device_type,
+                            isPrimary: dev.is_primary,
+                            isNew: true
+                        };
+                    }
+                    console.log(`[Shifts] 🏷️ Terminal: ${terminalInfo.name} (${terminalInfo.isNew ? 'NEW' : 'existing'})`);
+                } catch (termErr) {
+                    console.error(`[Shifts] ⚠️ Terminal registration error (non-fatal):`, termErr.message);
+                }
+            }
+
             const formattedShift = {
                 ...shift,
                 start_time: shift.start_time ? new Date(shift.start_time).toISOString() : null,
@@ -143,6 +218,7 @@ module.exports = (pool, io) => {
             res.status(201).json({
                 success: true,
                 data: formattedShift,
+                terminal: terminalInfo,
                 message: 'Turno abierto exitosamente'
             });
 
