@@ -191,6 +191,10 @@ app.get('/health', async (req, res) => {
     }
 });
 
+// Health check for Desktop multi-caja connectivity polling (no auth required)
+const healthRoutes = require('./routes/health');
+app.use('/api/health', healthRoutes(pool));
+
 
 // ═══════════════════════════════════════════════════════════════
 // SOCKET.IO SETUP
@@ -263,24 +267,24 @@ app.use('/api/expenses', expensesRoutes(pool, io));
 app.use('/api/shifts', shiftsRoutes(pool, io));
 app.use('/api/shift-requests', shiftRequestsRoutes(pool, io));
 app.use('/api/cash-cuts', newCashCutsRoutes(pool, io));
-app.use('/api/purchases', purchasesRoutes(pool));
-app.use('/api/suppliers', suppliersRoutes(pool));
+app.use('/api/purchases', purchasesRoutes(pool, io));
+app.use('/api/suppliers', suppliersRoutes(pool, io));
 app.use('/api/guardian-events', guardianEventsRoutes(pool, io));
 app.use('/api/dashboard', dashboardRoutes(pool));
 app.use('/api/admin', adminRoutes(pool));
 app.use('/api/employees', employeesRoutes);
-app.use('/api/cancelaciones', cancelacionesRoutes(pool));
+app.use('/api/cancelaciones', cancelacionesRoutes(pool, io));
 app.use('/api/employee-roles', employeeRolesRoutes);
 app.use('/api/customers', customersRoutes(pool, io));
 app.use('/api/productos', productosRoutes(pool, io));
 app.use('/api/categorias-productos', categoriasProductosRoutes(pool));
-app.use('/api/credit-payments', creditPaymentsRoutes(pool));
+app.use('/api/credit-payments', creditPaymentsRoutes(pool, io));
 app.use('/api/suspicious-weighing-logs', suspiciousWeighingLogsRoutes(pool, io));
 app.use('/api/scale-disconnection-logs', scaleDisconnectionLogsRoutes(pool));
 app.use('/api/guardian', guardianRoutes(pool, guardianStatusByBranch));
 app.use('/api/employee-metrics', employeeMetricsRoutes(pool));
 app.use('/api/repartidores', repartidoresRoutes(pool));
-app.use('/api/notas-credito', notasCreditoRoutes(pool));
+app.use('/api/notas-credito', notasCreditoRoutes(pool, io));
 app.use('/api/preparation-mode', preparationModeRoutes(pool, io));
 app.use('/api/beta-enrollment', betaEnrollmentRoutes(pool));
 app.use('/api/deposits', depositsRoutes(pool, io));

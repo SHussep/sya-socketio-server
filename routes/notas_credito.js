@@ -9,7 +9,7 @@ const express = require('express');
 const router = express.Router();
 const { authenticateToken } = require('../middleware/auth');
 
-module.exports = function(pool) {
+module.exports = function(pool, io) {
 
     // ═══════════════════════════════════════════════════════════════════════════
     // POST /api/notas-credito/sync - Sincronizar NC desde Desktop

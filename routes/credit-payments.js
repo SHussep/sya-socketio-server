@@ -24,7 +24,7 @@ function authenticateToken(req, res, next) {
     });
 }
 
-module.exports = (pool) => {
+module.exports = (pool, io) => {
     const router = express.Router();
 
     // GET /api/credit-payments - Lista de pagos de crédito

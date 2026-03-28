@@ -25,7 +25,7 @@ function authenticateToken(req, res, next) {
     });
 }
 
-module.exports = (pool) => {
+module.exports = (pool, io) => {
     const router = express.Router();
 
     // GET /api/purchases/summary - Resumen de compras con filtros

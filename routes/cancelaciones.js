@@ -6,7 +6,7 @@ const express = require('express');
 const router = express.Router();
 const { authenticateToken } = require('../middleware/auth');
 
-module.exports = (pool) => {
+module.exports = (pool, io) => {
     // ============================================================================
     // POST /api/cancelaciones/sync
     // Sincronizar cancelación desde POS (offline-first idempotente)

@@ -44,7 +44,7 @@ function optionalAuthenticateToken(req, res, next) {
     });
 }
 
-module.exports = (pool) => {
+module.exports = (pool, io) => {
     const router = express.Router();
 
     // ═══════════════════════════════════════════════════════════════
