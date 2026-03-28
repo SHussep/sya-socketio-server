@@ -74,7 +74,9 @@ module.exports = (pool, io) => {
                         ORDER BY ra.created_at DESC LIMIT 1) as assignment_id,
                        (CASE WHEN v.estado_venta_id = 5 THEN COALESCE(v.fecha_liquidacion_utc, v.fecha_venta_utc) ELSE v.fecha_venta_utc END AT TIME ZONE '${userTimezone}') as sale_date_display,
                        -- Items summary: quantities grouped by unit of measure
-                       items_agg.items_summary
+                       items_agg.items_summary,
+                       -- Line items: individual product details
+                       line_items_agg.line_items
                 FROM ventas v
                 LEFT JOIN employees emp ON emp.id = CASE
                     WHEN v.venta_tipo_id = 2 AND v.id_repartidor_asignado IS NOT NULL THEN v.id_repartidor_asignado
@@ -95,6 +97,20 @@ module.exports = (pool, io) => {
                         GROUP BY COALESCE(um.abbreviation, 'kg')
                     ) sub
                 ) items_agg ON true
+                LEFT JOIN LATERAL (
+                    SELECT json_agg(json_build_object(
+                        'product_id', vd.id_producto,
+                        'product_name', COALESCE(p.descripcion, 'Producto'),
+                        'qty', vd.cantidad,
+                        'total', vd.total_linea,
+                        'unit', COALESCE(um.abbreviation, 'kg')
+                    ) ORDER BY vd.total_linea DESC) as line_items
+                    FROM ventas_detalle vd
+                    LEFT JOIN productos p ON vd.id_producto = p.id AND p.tenant_id = v.tenant_id
+                    LEFT JOIN units_of_measure um ON p.unidad_medida_id = um.id
+                    WHERE vd.id_venta = v.id_venta
+                    AND COALESCE(vd.detalle_status, 'active') != 'voided'
+                ) line_items_agg ON true
                 WHERE v.tenant_id = $1 AND ${estadoFilter}
             `;
 
