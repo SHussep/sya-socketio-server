@@ -112,7 +112,7 @@ module.exports = (pool, io) => {
             const numericCantidad = parseFloat(cantidad) || 0;
             const numericPesoKg = peso_kg !== null && peso_kg !== undefined ? parseFloat(peso_kg) : null;
 
-            // Idempotent INSERT with ON CONFLICT (global_id) DO UPDATE
+            // Idempotent INSERT with ON CONFLICT (global_id) DO NOTHING
             const result = await pool.query(
                 `INSERT INTO cancelaciones_bitacora (
                     tenant_id, branch_id, id_turno, id_empleado, fecha,
@@ -127,24 +127,7 @@ module.exports = (pool, io) => {
                     $15, $16, $17, $18,
                     TRUE, EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) * 1000, CURRENT_TIMESTAMP
                 )
-                ON CONFLICT (global_id) DO UPDATE SET
-                    tenant_id = EXCLUDED.tenant_id,
-                    branch_id = EXCLUDED.branch_id,
-                    id_turno = EXCLUDED.id_turno,
-                    id_empleado = EXCLUDED.id_empleado,
-                    fecha = EXCLUDED.fecha,
-                    id_venta = EXCLUDED.id_venta,
-                    id_venta_detalle = EXCLUDED.id_venta_detalle,
-                    id_producto = EXCLUDED.id_producto,
-                    descripcion = EXCLUDED.descripcion,
-                    cantidad = EXCLUDED.cantidad,
-                    peso_kg = EXCLUDED.peso_kg,
-                    motivo = EXCLUDED.motivo,
-                    razon_id = EXCLUDED.razon_id,
-                    otra_razon = EXCLUDED.otra_razon,
-                    synced = TRUE,
-                    synced_at_raw = EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) * 1000,
-                    updated_at = CURRENT_TIMESTAMP
+                ON CONFLICT (global_id) DO NOTHING
                 RETURNING id, global_id`,
                 [
                     tenant_id, branch_id, resolvedShiftId, resolvedEmployeeId, fecha,
@@ -154,7 +137,29 @@ module.exports = (pool, io) => {
                 ]
             );
 
-            const cancelacionId = result.rows[0].id;
+            let row;
+            if (result.rows.length > 0) {
+                row = result.rows[0];
+            } else {
+                // Already exists — fetch the existing record
+                const existing = await pool.query(
+                    'SELECT id, global_id FROM cancelaciones_bitacora WHERE global_id = $1',
+                    [global_id]
+                );
+                row = existing.rows[0];
+            }
+
+            const cancelacionId = row.id;
+            const branchId = branch_id;
+
+            // Emit socket event for real-time sync
+            if (io) {
+                io.to(`branch_${branchId}`).emit('cancellation_created', {
+                    cancellationId: row.id,
+                    globalId: row.global_id,
+                    branchId
+                });
+            }
 
             console.log(`[Sync/Cancelaciones] ✅ Cancelación sincronizada - ID: ${cancelacionId}, GlobalId: ${global_id}`);
 
@@ -272,10 +277,7 @@ module.exports = (pool, io) => {
                             $15, $16, $17, $18,
                             TRUE, EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) * 1000, CURRENT_TIMESTAMP
                         )
-                        ON CONFLICT (global_id) DO UPDATE SET
-                            synced = TRUE,
-                            synced_at_raw = EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) * 1000,
-                            updated_at = CURRENT_TIMESTAMP
+                        ON CONFLICT (global_id) DO NOTHING
                         RETURNING id, global_id`,
                         [
                             tenant_id, branch_id, resolvedShiftId, resolvedEmployeeId, fecha,
@@ -285,9 +287,30 @@ module.exports = (pool, io) => {
                         ]
                     );
 
+                    let row;
+                    if (result.rows.length > 0) {
+                        row = result.rows[0];
+                    } else {
+                        // Already exists — fetch the existing record
+                        const existing = await client.query(
+                            'SELECT id, global_id FROM cancelaciones_bitacora WHERE global_id = $1',
+                            [global_id]
+                        );
+                        row = existing.rows[0];
+                    }
+
+                    // Emit socket event for real-time sync
+                    if (io) {
+                        io.to(`branch_${branch_id}`).emit('cancellation_created', {
+                            cancellationId: row.id,
+                            globalId: row.global_id,
+                            branchId: branch_id
+                        });
+                    }
+
                     results.push({
-                        global_id: result.rows[0].global_id,
-                        id: result.rows[0].id,
+                        global_id: row.global_id,
+                        id: row.id,
                         success: true
                     });
                 }
@@ -386,6 +409,48 @@ module.exports = (pool, io) => {
             res.status(500).json({
                 success: false,
                 message: 'Error al obtener cancelaciones',
+                error: undefined
+            });
+        }
+    });
+
+    // ============================================================================
+    // GET /api/cancelaciones/pull
+    // Descargar cancelaciones para sincronización (server-first pull)
+    // ============================================================================
+    router.get('/pull', authenticateToken, async (req, res) => {
+        try {
+            const tenantId = req.user.tenantId;
+            const branchId = req.query.branch_id || req.user.branchId;
+            const since = req.query.since || '1970-01-01T00:00:00Z';
+            const limit = Math.min(parseInt(req.query.limit) || 500, 1000);
+
+            console.log(`[Cancelaciones/Pull] 📥 Descargando - Tenant: ${tenantId}, Branch: ${branchId}, Since: ${since}`);
+
+            const result = await pool.query(
+                `SELECT * FROM cancelaciones_bitacora
+                 WHERE tenant_id = $1 AND branch_id = $2 AND created_at > $3
+                 ORDER BY created_at ASC
+                 LIMIT $4`,
+                [tenantId, branchId, since, limit]
+            );
+
+            console.log(`[Cancelaciones/Pull] 📦 Encontradas ${result.rows.length} cancelaciones`);
+
+            res.json({
+                success: true,
+                data: {
+                    cancelaciones: result.rows,
+                    last_sync: new Date().toISOString()
+                },
+                count: result.rows.length
+            });
+
+        } catch (error) {
+            console.error('[Cancelaciones/Pull] ❌ Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al descargar cancelaciones',
                 error: undefined
             });
         }

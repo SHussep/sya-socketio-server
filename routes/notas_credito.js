@@ -91,7 +91,7 @@ module.exports = function(pool, io) {
                         continue;
                     }
 
-                    // Upsert NC
+                    // Idempotent INSERT with ON CONFLICT (global_id) DO NOTHING
                     const upsertResult = await client.query(`
                         INSERT INTO notas_credito (
                             venta_original_id, shift_id, employee_id, authorized_by_id, cliente_id,
@@ -108,16 +108,8 @@ module.exports = function(pool, io) {
                             $16, $17, $18, $19,
                             $20, $21, $22, $23, $24
                         )
-                        ON CONFLICT (global_id) DO UPDATE SET
-                            estado = EXCLUDED.estado,
-                            total = EXCLUDED.total,
-                            monto_credito = EXCLUDED.monto_credito,
-                            monto_efectivo = EXCLUDED.monto_efectivo,
-                            monto_tarjeta = EXCLUDED.monto_tarjeta,
-                            razon = EXCLUDED.razon,
-                            notas = EXCLUDED.notas,
-                            updated_at = CURRENT_TIMESTAMP
-                        RETURNING id, (xmax = 0) AS inserted
+                        ON CONFLICT (global_id) DO NOTHING
+                        RETURNING id, global_id
                     `, [
                         venta_original_id, shift_id, employee_id, authorized_by_id, cliente_id,
                         nc.tenant_id, nc.branch_id, nc.tipo || 'Cancelacion', nc.estado || 'Aplicada',
@@ -138,13 +130,34 @@ module.exports = function(pool, io) {
                         nc.created_local_utc
                     ]);
 
-                    const ncId = upsertResult.rows[0].id;
-                    const wasInserted = upsertResult.rows[0].inserted;
+                    let ncId;
+                    let wasInserted;
+                    if (upsertResult.rows.length > 0) {
+                        ncId = upsertResult.rows[0].id;
+                        wasInserted = true;
+                    } else {
+                        // Already exists — fetch the existing record
+                        const existing = await client.query(
+                            'SELECT id FROM notas_credito WHERE global_id = $1',
+                            [nc.global_id]
+                        );
+                        ncId = existing.rows[0].id;
+                        wasInserted = false;
+                    }
 
                     if (wasInserted) {
                         results.inserted++;
                     } else {
                         results.updated++;
+                    }
+
+                    // Emit socket event for real-time sync
+                    if (io) {
+                        io.to(`branch_${nc.branch_id}`).emit('credit_note_created', {
+                            creditNoteId: ncId,
+                            globalId: nc.global_id,
+                            branchId: nc.branch_id
+                        });
                     }
 
                     // Guardar el ID para el response (útil para sync single desde Desktop)
@@ -190,10 +203,7 @@ module.exports = function(pool, io) {
                                 precio_unitario, total_linea, devuelve_a_inventario,
                                 global_id, terminal_id, local_op_seq
                             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-                            ON CONFLICT (global_id) DO UPDATE SET
-                                cantidad = EXCLUDED.cantidad,
-                                total_linea = EXCLUDED.total_linea,
-                                devuelve_a_inventario = EXCLUDED.devuelve_a_inventario
+                            ON CONFLICT (global_id) DO NOTHING
                         `, [
                             ncId, venta_detalle_original_id, producto_id,
                             det.descripcion_producto || 'Producto',
