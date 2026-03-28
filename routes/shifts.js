@@ -67,7 +67,7 @@ module.exports = (pool, io) => {
             const existingShifts = await client.query(
                 `SELECT s.id, s.terminal_id, s.start_time, s.global_id, s.branch_id,
                         s.initial_amount, s.transaction_counter, s.is_cash_cut_open,
-                        s.created_at, b.name as branch_name
+                        s.created_at, s.last_heartbeat, b.name as branch_name
                  FROM shifts s
                  JOIN branches b ON s.branch_id = b.id
                  WHERE s.tenant_id = $1 AND s.employee_id = $2 AND s.is_cash_cut_open = true
@@ -76,30 +76,52 @@ module.exports = (pool, io) => {
             );
 
             if (existingShifts.rows.length > 0 && multiCajaEnabled) {
-                // ═══ MULTI-CAJA MODE: Return 409 conflict (don't auto-close) ═══
                 const shift = existingShifts.rows[0];
                 const isSameDevice = clientTerminalId && shift.terminal_id === clientTerminalId;
 
-                await client.query('ROLLBACK');
+                // ═══ STALE SHIFT DETECTION ═══
+                // If the shift hasn't sent a heartbeat in 8+ hours, the original device
+                // is likely offline (e.g. Desktop closed shift without internet).
+                // Auto-close the stale shift so the employee can open a fresh one.
+                const STALE_HOURS = 8;
+                const lastActivity = shift.last_heartbeat || shift.start_time;
+                const hoursSinceActivity = (Date.now() - new Date(lastActivity).getTime()) / (1000 * 60 * 60);
 
-                return res.status(409).json({
-                    success: false,
-                    error: 'SHIFT_CONFLICT',
-                    activeShift: {
-                        id: shift.id,
-                        globalId: shift.global_id,
-                        terminalId: shift.terminal_id,
-                        isSameDevice,
-                        deviceType: shift.terminal_id?.startsWith('mobile-') ? 'mobile' : 'desktop',
-                        branchId: shift.branch_id,
-                        branchName: shift.branch_name,
-                        startTime: new Date(shift.start_time).toISOString(),
-                        initialAmount: parseFloat(shift.initial_amount) || 0,
-                        transactionCounter: shift.transaction_counter || 0,
-                        isCashCutOpen: shift.is_cash_cut_open,
-                        createdAt: shift.created_at ? new Date(shift.created_at).toISOString() : null
-                    }
-                });
+                if (hoursSinceActivity >= STALE_HOURS && !isSameDevice) {
+                    console.log(`[Shifts] ⚠️ STALE SHIFT DETECTED: ID ${shift.id} (global: ${shift.global_id}), ` +
+                        `last activity ${hoursSinceActivity.toFixed(1)}h ago (>${STALE_HOURS}h threshold). Auto-closing.`);
+
+                    await client.query(
+                        `UPDATE shifts SET end_time = CURRENT_TIMESTAMP, is_cash_cut_open = false, updated_at = NOW()
+                         WHERE id = $1 AND tenant_id = $2
+                         RETURNING id`,
+                        [shift.id, tenantId]
+                    );
+                    console.log(`[Shifts] 🧹 Stale shift ${shift.id} auto-closed. Opening fresh shift for employee ${employeeId}`);
+                    // Fall through to create new shift below
+                } else {
+                    // ═══ MULTI-CAJA MODE: Return 409 conflict (don't auto-close) ═══
+                    await client.query('ROLLBACK');
+
+                    return res.status(409).json({
+                        success: false,
+                        error: 'SHIFT_CONFLICT',
+                        activeShift: {
+                            id: shift.id,
+                            globalId: shift.global_id,
+                            terminalId: shift.terminal_id,
+                            isSameDevice,
+                            deviceType: shift.terminal_id?.startsWith('mobile-') ? 'mobile' : 'desktop',
+                            branchId: shift.branch_id,
+                            branchName: shift.branch_name,
+                            startTime: new Date(shift.start_time).toISOString(),
+                            initialAmount: parseFloat(shift.initial_amount) || 0,
+                            transactionCounter: shift.transaction_counter || 0,
+                            isCashCutOpen: shift.is_cash_cut_open,
+                            createdAt: shift.created_at ? new Date(shift.created_at).toISOString() : null
+                        }
+                    });
+                }
             }
 
             if (existingShifts.rows.length > 0 && !multiCajaEnabled) {
