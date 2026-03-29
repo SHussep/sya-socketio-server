@@ -227,7 +227,7 @@ module.exports = (pool, io) => {
                     p.updated_at,
                     prov.global_id as proveedor_global_id
                 FROM productos p
-                LEFT JOIN proveedores prov ON p.proveedor_id = prov.id
+                LEFT JOIN suppliers prov ON p.proveedor_id = prov.id
             `;
 
             const params = [tenantId];
