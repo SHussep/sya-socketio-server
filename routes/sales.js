@@ -58,7 +58,7 @@ module.exports = (pool, io) => {
                 SELECT v.id_venta as id, v.ticket_number, v.total as total_amount,
                        v.tipo_pago_id as payment_method, v.fecha_venta_utc as sale_date,
                        v.venta_tipo_id as sale_type, v.id_empleado as employee_id,
-                       v.estado_venta_id, v.status,
+                       v.estado_venta_id,
                        v.tenant_id, v.branch_id, v.id_turno as shift_id,
                        v.has_nota_credito, v.terminal_id,
                        -- Payment breakdown for mixed payments
