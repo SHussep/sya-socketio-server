@@ -403,7 +403,9 @@ module.exports = function(pool) {
                 // Detalles de la venta
                 items = [],
                 // Opcional: global_id (si viene de offline-first)
-                global_id
+                global_id,
+                // Terminal ID del dispositivo (persistente)
+                terminal_id: clientTerminalId
             } = req.body;
 
             console.log(`[Ventas/Create] 🛒 Creando venta desde móvil - Tenant: ${tenant_id}, Branch: ${branch_id}, Ticket: ${ticket_number}`);
@@ -525,8 +527,8 @@ module.exports = function(pool) {
                     }
                 }
 
-                // Generate a mobile terminal UUID for offline-first columns
-                const mobileTerminalId = require('crypto').randomUUID();
+                // Use client-provided terminal_id, fallback to random UUID for legacy clients
+                const mobileTerminalId = clientTerminalId || require('crypto').randomUUID();
                 const nowUtcText = new Date().toISOString();
                 const nowEpochMs = Date.now();
 
