@@ -2675,6 +2675,58 @@ async function runMigrations() {
                 console.error(`[Schema] ⚠️ Multi-caja columns error: ${mcErr.message}`);
             }
 
+            // ── Patch: Create customer_product_prices table (migration 039) ──
+            try {
+                const checkCppTable = await client.query(`
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables
+                        WHERE table_name = 'customer_product_prices'
+                    )
+                `);
+                if (!checkCppTable.rows[0].exists) {
+                    console.log('[Schema] 📝 Creating customer_product_prices table...');
+                    const fs = require('fs');
+                    const path = require('path');
+                    const migrationPath = path.join(__dirname, '..', 'migrations', '039_customer_product_prices.sql');
+                    if (fs.existsSync(migrationPath)) {
+                        const sql = fs.readFileSync(migrationPath, 'utf8');
+                        await client.query(sql);
+                        console.log('[Schema] ✅ customer_product_prices table created');
+                    } else {
+                        console.log('[Schema] ⚠️ Migration file 039 not found, creating inline...');
+                        await client.query(`
+                            CREATE TABLE IF NOT EXISTS customer_product_prices (
+                                id SERIAL PRIMARY KEY,
+                                tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                                customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+                                product_id INTEGER NOT NULL REFERENCES productos(id) ON DELETE CASCADE,
+                                special_price NUMERIC(10,2),
+                                discount_percentage NUMERIC(5,2) DEFAULT 0,
+                                set_by_employee_id INTEGER,
+                                set_at TIMESTAMPTZ DEFAULT NOW(),
+                                notes TEXT,
+                                global_id VARCHAR(255) UNIQUE NOT NULL,
+                                terminal_id VARCHAR(255),
+                                local_op_seq INTEGER,
+                                created_local_utc TEXT,
+                                device_event_raw BIGINT,
+                                is_active BOOLEAN DEFAULT TRUE,
+                                created_at TIMESTAMPTZ DEFAULT NOW(),
+                                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                                UNIQUE(tenant_id, customer_id, product_id)
+                            )
+                        `);
+                        await client.query(`CREATE INDEX IF NOT EXISTS idx_cpp_tenant_customer ON customer_product_prices(tenant_id, customer_id) WHERE is_active = TRUE`);
+                        await client.query(`CREATE INDEX IF NOT EXISTS idx_cpp_global_id ON customer_product_prices(global_id)`);
+                        await client.query(`CREATE INDEX IF NOT EXISTS idx_cpp_lookup ON customer_product_prices(tenant_id, customer_id, product_id) WHERE is_active = TRUE`);
+                        await client.query(`CREATE INDEX IF NOT EXISTS idx_cpp_updated ON customer_product_prices(updated_at)`);
+                        console.log('[Schema] ✅ customer_product_prices table created (inline)');
+                    }
+                }
+            } catch (cppErr) {
+                console.error(`[Schema] ⚠️ customer_product_prices error: ${cppErr.message}`);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {

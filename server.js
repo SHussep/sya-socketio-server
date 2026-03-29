@@ -134,6 +134,7 @@ const shiftRequestsRoutes = require('./routes/shift_requests');
 const geofenceZonesRoutes = require('./routes/geofence_zones');
 const emailDigestRoutes = require('./routes/emailDigest');
 const dataResetRoutes = require('./routes/data-reset');
+const customerProductPricesRoutes = require('./routes/customer_product_prices');
 const { processGuardianDigests, initializeDigestSchedules } = require('./jobs/guardianEmailDigest');
 const { processLicenseExpiryNotifications } = require('./jobs/licenseExpiryNotifier');
 const { purgeExpiredResets } = require('./jobs/dataResetPurge');
@@ -296,6 +297,7 @@ app.use('/api/geofence-zones', geofenceZonesRoutes(pool, io));
 app.use('/api/notification-history', notificationHistoryRoutes(pool));
 app.use('/api/email-digest', emailDigestRoutes);
 app.use('/api/data-reset', dataResetRoutes(pool));
+app.use('/api/customer-product-prices', customerProductPricesRoutes(pool, io));
 
 // ═══════════════════════════════════════════════════════════════
 // ENDPOINTS MISC (pocos, no justifican su propio archivo de ruta)
