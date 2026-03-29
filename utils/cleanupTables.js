@@ -88,7 +88,9 @@ const FULL_CLEANUP_TABLES = [
     { name: 'categorias_productos', description: 'Categorías productos', fkColumn: 'tenant_id' },
     { name: 'devices', description: 'Dispositivos', fkColumn: 'tenant_id' },
     { name: 'fcm_tokens', description: 'Tokens FCM', fkColumn: 'tenant_id' },
+    { name: 'followup_emails', description: 'Emails de seguimiento', fkColumn: 'tenant_id' },
     // Nivel 6: Tenant/Branch (solo en cleanup completo con --mode=full)
+    { name: 'branch_licenses', description: 'Licencias de sucursal', fkColumn: 'tenant_id' },
     { name: 'branches', description: 'SUCURSALES', fkColumn: 'tenant_id', critical: true, structural: true },
     { name: 'tenants', description: 'TENANT', fkColumn: 'id', critical: true, isTenantTable: true, structural: true },
 ];
