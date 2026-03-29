@@ -223,10 +223,10 @@ module.exports = {
             console.log(`[Google Signup] ✅ Branch creado: ${branch.branch_code} (ID: ${branch.id})`);
 
             // ✅ SECURITY: Password validation
-            if (!password || password.length < 8) {
+            if (!password || password.length < 6) {
                 return res.status(400).json({
                     success: false,
-                    message: 'La contraseña debe tener al menos 8 caracteres'
+                    message: 'La contraseña debe tener al menos 6 caracteres'
                 });
             }
 
@@ -339,12 +339,22 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                 { expiresIn: '7d' }
             );
 
+            const refreshToken = jwt.sign(
+                {
+                    employeeId: employee.id,
+                    tenantId: tenant.id
+                },
+                JWT_SECRET,
+                { expiresIn: '30d' }
+            );
+
             console.log(`[Google Signup] ✅ Registro completado exitosamente para: ${email}`);
 
             res.status(201).json({
                 success: true,
                 message: 'Registro exitoso',
                 token,
+                refreshToken,
                 tenant: {
                     id: tenant.id,
                     tenantCode: tenant.tenant_code,
