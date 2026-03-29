@@ -141,7 +141,7 @@ module.exports = (pool, io) => {
     // POST /api/withdrawals - Create new withdrawal
     router.post('/', authenticateToken, async (req, res) => {
         try {
-            const { tenantId, branchId, employeeId, amount, description, shiftId } = req.body;
+            const { tenantId, branchId, employeeId, amount, description, shiftId, terminal_id } = req.body;
 
             if (!tenantId || !branchId) {
                 return res.status(400).json({ success: false, message: 'tenantId y branchId son requeridos' });
@@ -158,7 +158,7 @@ module.exports = (pool, io) => {
                 `INSERT INTO withdrawals (tenant_id, branch_id, shift_id, employee_id, amount, description, withdrawal_date, global_id, terminal_id, local_op_seq, device_event_raw, created_local_utc)
                  VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7, $8, 0, 0, $9)
                  RETURNING *`,
-                [tenantId, branchId, shiftId || null, employeeId, numericAmount, description || '', globalId, 'mobile-pos', new Date().toISOString()]
+                [tenantId, branchId, shiftId || null, employeeId, numericAmount, description || '', globalId, terminal_id || 'mobile-pos', new Date().toISOString()]
             );
 
             const withdrawal = result.rows[0];

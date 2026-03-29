@@ -33,7 +33,7 @@ module.exports = (pool, io) => {
         const client = await pool.connect();
         try {
             const { tenantId, employeeId: jwtEmployeeId, branchId } = req.user;
-            const { initialAmount, terminalId: clientTerminalId, employeeGlobalId } = req.body;
+            const { initialAmount, terminalId: clientTerminalId, employeeGlobalId, deviceType: clientDeviceType } = req.body;
 
             await client.query('BEGIN');
 
@@ -162,7 +162,7 @@ module.exports = (pool, io) => {
             let terminalInfo = null;
             if (shift.terminal_id) {
                 try {
-                    const deviceType = shift.terminal_id.startsWith('mobile-') ? 'mobile' : 'desktop';
+                    const deviceType = clientDeviceType || (shift.terminal_id.startsWith('mobile-') ? 'mobile' : 'desktop');
 
                     // Check if already registered
                     const existing = await pool.query(
