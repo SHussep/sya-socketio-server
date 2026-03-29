@@ -109,7 +109,6 @@ module.exports = (pool, io) => {
                     LEFT JOIN productos p ON vd.id_producto = p.id AND p.tenant_id = v.tenant_id
                     LEFT JOIN units_of_measure um ON p.unidad_medida_id = um.id
                     WHERE vd.id_venta = v.id_venta
-                    AND COALESCE(vd.detalle_status, 'active') != 'voided'
                 ) line_items_agg ON true
                 WHERE v.tenant_id = $1 AND ${estadoFilter}
             `;
