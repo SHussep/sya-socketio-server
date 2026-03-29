@@ -293,10 +293,10 @@ module.exports = (pool, io) => {
                     c.global_id AS customer_global_id,
                     c.nombre AS customer_name,
                     p.global_id AS product_global_id,
-                    p.nombre AS product_name,
+                    p.descripcion AS product_name,
                     p.precio_venta AS product_base_price,
                     e.global_id AS set_by_employee_global_id,
-                    e.nombre AS set_by_employee_name
+                    COALESCE(e.first_name || ' ' || COALESCE(e.last_name, ''), 'N/A') AS set_by_employee_name
                 FROM customer_product_prices cpp
                 JOIN customers c ON cpp.customer_id = c.id
                 JOIN productos p ON cpp.product_id = p.id
@@ -342,15 +342,15 @@ module.exports = (pool, io) => {
                     cpp.global_id,
                     cpp.set_at,
                     p.global_id AS product_global_id,
-                    p.nombre AS product_name,
+                    p.descripcion AS product_name,
                     p.precio_venta AS product_base_price,
-                    e.nombre AS set_by_employee_name
+                    COALESCE(e.first_name || ' ' || COALESCE(e.last_name, ''), 'N/A') AS set_by_employee_name
                 FROM customer_product_prices cpp
                 JOIN customers c ON cpp.customer_id = c.id AND c.global_id = $1
                 JOIN productos p ON cpp.product_id = p.id
                 LEFT JOIN employees e ON cpp.set_by_employee_id = e.id
                 WHERE cpp.tenant_id = $2 AND cpp.is_active = TRUE
-                ORDER BY p.nombre ASC`,
+                ORDER BY p.descripcion ASC`,
                 [customerGlobalId, tenantId]
             );
 
