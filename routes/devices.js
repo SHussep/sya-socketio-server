@@ -10,6 +10,21 @@ module.exports = (pool) => {
     const router = express.Router();
     const authenticateToken = createAuthMiddleware(pool);
 
+    // GET /api/devices/debug-list - Diagnóstico temporal: ver branch_devices
+    router.get('/debug-list', async (req, res) => {
+        try {
+            const result = await pool.query(
+                `SELECT id, device_id, device_name, device_type, is_primary,
+                        COALESCE(is_active, TRUE) as is_active, branch_id, tenant_id,
+                        last_seen_at, created_at
+                 FROM branch_devices ORDER BY created_at DESC LIMIT 50`
+            );
+            res.json({ count: result.rows.length, devices: result.rows });
+        } catch (error) {
+            res.status(500).json({ error: error.message });
+        }
+    });
+
     // ═══════════════════════════════════════════════════════════════════════════
     // POST /api/devices/claim-primary - Reclamar rol de Equipo Principal
     // Permite a un dispositivo reclamar el rol de Principal para una sucursal.
