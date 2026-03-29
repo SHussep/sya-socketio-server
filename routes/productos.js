@@ -321,6 +321,7 @@ module.exports = (pool, io) => {
 
             console.log(`[Productos/Sync] 🔄 Sincronizando producto - GlobalId: ${global_id}`);
             console.log(`[Productos/Sync] 📦 Descripcion: ${descripcion}, Tenant: ${tenant_id}`);
+            console.log(`[Productos/Sync] 💰 Precios: venta=${precio_venta}, compra=${precio_compra}`);
             console.log(`[Productos/Sync] 🏭 Proveedor: ID=${proveedor_id}, GlobalId=${proveedor_global_id}`);
             console.log(`[Productos/Sync] 🖼️ ImageUrl recibido: ${image_url || '(null)'}`);  // Debug image
 
