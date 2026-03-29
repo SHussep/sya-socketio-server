@@ -1422,6 +1422,46 @@ async function runMigrations() {
             await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_branch_devices_unique ON branch_devices(device_id, branch_id, tenant_id)`);
             await client.query(`CREATE INDEX IF NOT EXISTS idx_branch_devices_branch ON branch_devices(branch_id, tenant_id)`);
 
+            // Patch: Backfill branch_devices from existing shifts
+            // Registers terminals that opened shifts before auto-registration was working
+            const backfillCheck = await client.query(`SELECT COUNT(*) as cnt FROM branch_devices`);
+            if (parseInt(backfillCheck.rows[0].cnt) === 0) {
+                console.log('[Schema] 📝 Backfilling branch_devices from existing shifts...');
+                const distinctTerminals = await client.query(`
+                    SELECT DISTINCT terminal_id, branch_id, tenant_id
+                    FROM shifts
+                    WHERE terminal_id IS NOT NULL AND terminal_id != ''
+                    ORDER BY branch_id, tenant_id
+                `);
+                let insertedCount = 0;
+                // Group by branch+tenant to assign sequential names
+                const branchGroups = {};
+                for (const row of distinctTerminals.rows) {
+                    const key = `${row.branch_id}_${row.tenant_id}`;
+                    if (!branchGroups[key]) branchGroups[key] = [];
+                    branchGroups[key].push(row);
+                }
+                for (const [, terminals] of Object.entries(branchGroups)) {
+                    let cajaNum = 1;
+                    for (const t of terminals) {
+                        const deviceType = t.terminal_id.startsWith('mobile-') ? 'mobile' : 'desktop';
+                        const name = `Caja ${cajaNum}`;
+                        try {
+                            await client.query(`
+                                INSERT INTO branch_devices (tenant_id, branch_id, device_id, device_name, device_type, is_primary, last_seen_at, created_at, updated_at)
+                                VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW(), NOW())
+                                ON CONFLICT (device_id, branch_id, tenant_id) DO NOTHING
+                            `, [t.tenant_id, t.branch_id, t.terminal_id, name, deviceType, cajaNum === 1]);
+                            insertedCount++;
+                            cajaNum++;
+                        } catch (e) {
+                            console.error(`[Schema] ⚠️ Backfill error for ${t.terminal_id}: ${e.message}`);
+                        }
+                    }
+                }
+                console.log(`[Schema] ✅ Backfilled ${insertedCount} terminals into branch_devices`);
+            }
+
             // Patch: Migrate to tenant-specific roles (Migration 014)
             // Check if roles table has tenant_id column (new structure)
             const checkRolesTenantId = await client.query(`
