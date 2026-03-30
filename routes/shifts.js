@@ -32,8 +32,10 @@ module.exports = (pool, io) => {
     router.post('/open', authenticateToken, async (req, res) => {
         const client = await pool.connect();
         try {
-            const { tenantId, employeeId: jwtEmployeeId, branchId } = req.user;
-            const { initialAmount, terminalId: clientTerminalId, employeeGlobalId, deviceType: clientDeviceType } = req.body;
+            const { tenantId, employeeId: jwtEmployeeId, branchId: jwtBranchId } = req.user;
+            const { initialAmount, terminalId: clientTerminalId, employeeGlobalId, deviceType: clientDeviceType, branchId: bodyBranchId } = req.body;
+            // Fallback: usar branchId del body si el JWT no lo tiene (ej: JWT de google-login)
+            const branchId = jwtBranchId || bodyBranchId;
 
             await client.query('BEGIN');
 
