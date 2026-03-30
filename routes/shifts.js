@@ -2416,5 +2416,38 @@ module.exports = (pool, io) => {
         }
     });
 
+    // ═══════════════════════════════════════════════════════════
+    // GET /api/shifts/active-in-branch — Turnos abiertos en sucursal
+    // Usado por Flutter POS para seleccionar repartidores disponibles
+    // ═══════════════════════════════════════════════════════════
+    router.get('/active-in-branch', authenticateToken, async (req, res) => {
+        try {
+            const { tenantId, branchId: jwtBranchId } = req.user;
+            const branchId = req.query.branch_id || jwtBranchId;
+
+            const result = await pool.query(
+                `SELECT s.id as shift_id, s.global_id as shift_global_id,
+                        s.employee_id, s.start_time, s.initial_amount, s.terminal_id,
+                        e.global_id as employee_global_id,
+                        CONCAT(e.first_name, ' ', e.last_name) as employee_name,
+                        r.id as role_id, r.name as role_name
+                 FROM shifts s
+                 JOIN employees e ON s.employee_id = e.id AND e.tenant_id = s.tenant_id
+                 LEFT JOIN roles r ON e.role_id = r.id
+                 WHERE s.tenant_id = $1
+                   AND s.branch_id = $2
+                   AND s.is_cash_cut_open = true
+                   AND s.end_time IS NULL
+                 ORDER BY e.first_name, e.last_name`,
+                [tenantId, branchId]
+            );
+
+            res.json({ success: true, shifts: result.rows });
+        } catch (error) {
+            console.error('[Shifts] Error getting active shifts in branch:', error);
+            res.status(500).json({ success: false, message: 'Error al obtener turnos activos' });
+        }
+    });
+
     return router;
 };
