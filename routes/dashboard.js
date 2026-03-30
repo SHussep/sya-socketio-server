@@ -32,11 +32,12 @@ module.exports = (pool) => {
     router.get('/summary', authenticateToken, async (req, res) => {
         try {
             const { tenantId, branchId: userBranchId } = req.user;
-            const { branch_id, start_date, end_date, all_branches = 'false', shift_id, timezone } = req.query;
+            const { branch_id, start_date, end_date, all_branches = 'false', shift_id, timezone, tenant_id } = req.query;
 
             // Prioridad: 1. branch_id del query, 2. branchId del JWT
             const targetBranchId = branch_id ? parseInt(branch_id) : userBranchId;
-            const shouldFilterByBranch = all_branches !== 'true' && targetBranchId;
+            // Si se envía tenant_id o all_branches=true, no filtrar por sucursal (modo "Todas")
+            const shouldFilterByBranch = !tenant_id && all_branches !== 'true' && targetBranchId;
 
             // ✅ Prioridad de timezone: 1. timezone del cliente, 2. timezone del branch, 3. default
             let userTimezone = timezone || null;
