@@ -2424,10 +2424,13 @@ module.exports = (pool, io) => {
     router.get('/active-in-branch', authenticateToken, async (req, res) => {
         try {
             const { tenantId, branchId: jwtBranchId } = req.user;
-            const branchId = req.query.branch_id || jwtBranchId;
+            const branchId = parseInt(req.query.branch_id) || jwtBranchId;
+
+            console.log(`[Shifts/ActiveInBranch] tenant=${tenantId}, branch=${branchId} (jwt=${jwtBranchId}, query=${req.query.branch_id})`);
 
             const result = await pool.query(
-                `SELECT e.id as employee_id, e.global_id as employee_global_id,
+                `SELECT DISTINCT ON (e.id)
+                        e.id as employee_id, e.global_id as employee_global_id,
                         CONCAT(e.first_name, ' ', e.last_name) as employee_name,
                         r.id as role_id, r.name as role_name,
                         s.id as shift_id, s.global_id as shift_global_id,
@@ -2444,11 +2447,13 @@ module.exports = (pool, io) => {
                  WHERE e.tenant_id = $1
                    AND e.is_active = true
                    AND (eb.branch_id IS NOT NULL OR e.main_branch_id = $2)
-                 ORDER BY
-                   CASE WHEN s.id IS NOT NULL THEN 0 ELSE 1 END,
-                   e.first_name, e.last_name`,
+                 ORDER BY e.id,
+                   CASE WHEN s.id IS NOT NULL THEN 0 ELSE 1 END`,
                 [tenantId, branchId]
             );
+
+            console.log(`[Shifts/ActiveInBranch] Returned ${result.rows.length} employees:`,
+                result.rows.map(r => `${r.employee_name}(id=${r.employee_id},shift=${r.shift_id||'NONE'},has=${r.has_active_shift})`).join(', '));
 
             res.json({ success: true, employees: result.rows });
         } catch (error) {
