@@ -1308,6 +1308,57 @@ function createRepartidorAssignmentRoutes(io) {
   });
 
   // ═══════════════════════════════════════════════════════════════
+  // GET /api/repartidor-assignments/branch/:branchId/repartidores
+  // Devuelve empleados con asignaciones activas (pending/in_progress)
+  // en turnos abiertos de la sucursal. Usado por Desktop multi-caja
+  // para mostrar la lista de repartidores en LiquidacionPage.
+  // ═══════════════════════════════════════════════════════════════
+  router.get('/branch/:branchId/repartidores', async (req, res) => {
+    const { branchId } = req.params;
+    const { tenant_id } = req.query;
+
+    try {
+      console.log(`[RepartidorAssignments] GET /branch/${branchId}/repartidores tenant=${tenant_id}`);
+
+      const result = await pool.query(`
+        SELECT
+          e.id as employee_id,
+          e.global_id as employee_global_id,
+          CONCAT(e.first_name, ' ', e.last_name) as employee_name,
+          s.id as shift_id,
+          s.global_id as shift_global_id,
+          s.start_time as shift_start_time,
+          COUNT(*) FILTER (WHERE ra.status NOT IN ('liquidated', 'cancelled')) as pending_count,
+          COUNT(*) FILTER (WHERE ra.status = 'liquidated') as liquidated_count,
+          COUNT(*) as total_count
+        FROM repartidor_assignments ra
+        JOIN employees e ON e.id = ra.employee_id
+        LEFT JOIN shifts s ON s.id = ra.repartidor_shift_id
+        WHERE ra.branch_id = $1
+          AND ra.status != 'cancelled'
+          AND (s.end_time IS NULL OR s.id IS NULL)
+        ${tenant_id ? 'AND ra.tenant_id = $2' : ''}
+        GROUP BY e.id, e.global_id, e.first_name, e.last_name,
+                 s.id, s.global_id, s.start_time
+        HAVING COUNT(*) FILTER (WHERE ra.status NOT IN ('liquidated', 'cancelled')) > 0
+            OR COUNT(*) FILTER (WHERE ra.status = 'liquidated') > 0
+        ORDER BY COUNT(*) FILTER (WHERE ra.status NOT IN ('liquidated', 'cancelled')) DESC
+      `, tenant_id ? [branchId, tenant_id] : [branchId]);
+
+      console.log(`[RepartidorAssignments] Found ${result.rows.length} repartidores with assignments`);
+
+      res.json({
+        success: true,
+        data: result.rows,
+        count: result.rows.length
+      });
+    } catch (error) {
+      console.error('[RepartidorAssignments] Error getting repartidores:', error.message);
+      res.status(500).json({ success: false, error: undefined });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════
   // GET /api/repartidor-assignments/branch/:branchId/summary
   // Obtener resumen de asignaciones por repartidor (kilos asignados, devueltos, vendidos)
   // ═══════════════════════════════════════════════════════════════
