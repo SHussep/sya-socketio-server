@@ -70,6 +70,90 @@ module.exports = function (pool) {
         }
     });
 
+    // Force takeover via REST (fallback when Socket.IO is not connected)
+    router.post('/force-takeover', loginRateLimiter, async (req, res) => {
+        try {
+            const { employeeId, terminalId } = req.body;
+            if (!employeeId) {
+                return res.status(400).json({ success: false, error: 'employeeId required' });
+            }
+
+            const forceEmployeeIdInt = parseInt(employeeId, 10);
+            const callerType = terminalId?.startsWith('mobile-') ? 'mobile' : 'desktop';
+            console.log(`[Auth] 🔄 REST force-takeover for employee ${forceEmployeeIdInt} (terminal: ${terminalId || 'unknown'})`);
+
+            const client = await pool.connect();
+            try {
+                await client.query('BEGIN');
+
+                // Lock the active shift row
+                const shiftResult = await client.query(
+                    `SELECT id, terminal_id, last_heartbeat, branch_id
+                     FROM shifts
+                     WHERE employee_id = $1 AND is_cash_cut_open = true
+                     FOR UPDATE`,
+                    [forceEmployeeIdInt]
+                );
+
+                const activeShift = shiftResult.rows[0];
+
+                // Mark employee as revoked so the old device gets kicked on reconnect
+                const revokedDeviceType = activeShift?.terminal_id?.startsWith('mobile-') ? 'mobile' : 'desktop';
+                await client.query(
+                    `UPDATE employees SET session_revoked_at = NOW(), session_revoked_for_device = $2
+                     WHERE id = $1`,
+                    [forceEmployeeIdInt, revokedDeviceType]
+                );
+
+                // Transfer shift ownership to the new device
+                if (terminalId && activeShift) {
+                    await client.query(
+                        'UPDATE shifts SET terminal_id = $2, last_heartbeat = NOW() WHERE id = $1',
+                        [activeShift.id, terminalId]
+                    );
+                    console.log(`[Auth] 📝 Shift ${activeShift.id} terminal_id → ${terminalId}`);
+                }
+
+                await client.query('COMMIT');
+
+                // Try to kick via Socket.IO if io is available
+                let kickedCount = 0;
+                const ioInstance = req.app.get('io');
+                if (ioInstance) {
+                    const forceLogoutPayload = {
+                        reason: 'session_taken',
+                        takenByDevice: callerType,
+                        message: 'Tu sesión fue tomada por otro dispositivo'
+                    };
+                    for (const [sid, s] of ioInstance.sockets.sockets) {
+                        if (parseInt(s.user?.employeeId, 10) === forceEmployeeIdInt) {
+                            s.emit('force_logout', forceLogoutPayload);
+                            kickedCount++;
+                        }
+                    }
+                    // Broadcast to branch room as safety net
+                    if (activeShift?.branch_id) {
+                        ioInstance.to(`branch_${activeShift.branch_id}`).emit('force_logout', {
+                            ...forceLogoutPayload,
+                            targetEmployeeId: forceEmployeeIdInt
+                        });
+                    }
+                }
+
+                console.log(`[Auth] ✅ REST force-takeover success (kicked=${kickedCount}, revoked=${revokedDeviceType})`);
+                res.json({ success: true, wasOnline: kickedCount > 0 });
+            } catch (err) {
+                await client.query('ROLLBACK').catch(() => {});
+                throw err;
+            } finally {
+                client.release();
+            }
+        } catch (err) {
+            console.error('[Auth] force-takeover error:', err.message);
+            res.status(500).json({ success: false, error: err.message });
+        }
+    });
+
     // Middleware: Verificar JWT Token
     // Se adjunta al router para mantener compatibilidad con el código existente
     router.authenticateToken = bind(authController.authenticateToken);
