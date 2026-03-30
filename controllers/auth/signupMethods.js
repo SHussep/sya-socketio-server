@@ -569,7 +569,8 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                     email: employee.email,
                     username: employee.username,
                     fullName: `${employee.first_name || ''} ${employee.last_name || ''}`.trim(),
-                    role: employee.role
+                    role: employee.role,
+                    globalId: employee.global_id
                 } : null,
                 tenant: {
                     id: tenant.id,
