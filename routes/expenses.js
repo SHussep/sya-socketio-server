@@ -949,6 +949,68 @@ module.exports = (pool, io) => {
     });
 
     // ═══════════════════════════════════════════════════════════════
+    // POST /api/expenses/:id/cancel - Cancelar gasto server-first (multi-caja)
+    // Soft delete: is_active = false, valida turno abierto
+    // ═══════════════════════════════════════════════════════════════
+    router.post('/:id/cancel', authenticateToken, async (req, res) => {
+        try {
+            const expenseId = parseInt(req.params.id);
+            const tenantId = req.user.tenantId;
+
+            // 1. Get expense with shift info
+            const expenseResult = await pool.query(
+                `SELECT e.*, s.end_time as shift_end_time
+                 FROM expenses e
+                 LEFT JOIN shifts s ON e.id_turno = s.id
+                 WHERE e.id = $1 AND e.tenant_id = $2`,
+                [expenseId, tenantId]
+            );
+
+            if (expenseResult.rows.length === 0) {
+                return res.status(404).json({ success: false, message: 'Gasto no encontrado' });
+            }
+
+            const expense = expenseResult.rows[0];
+
+            if (!expense.is_active) {
+                return res.status(400).json({ success: false, message: 'El gasto ya fue eliminado' });
+            }
+
+            if (expense.shift_end_time) {
+                return res.status(400).json({
+                    success: false,
+                    message: `No se puede eliminar: el turno fue cerrado el ${new Date(expense.shift_end_time).toLocaleString('es-MX')}`
+                });
+            }
+
+            // 2. Soft delete
+            await pool.query(
+                `UPDATE expenses
+                 SET is_active = false,
+                     deleted_at = NOW(),
+                     updated_at = NOW()
+                 WHERE id = $1 AND tenant_id = $2`,
+                [expenseId, tenantId]
+            );
+
+            if (io && expense.branch_id) {
+                io.to(`branch_${expense.branch_id}`).emit('expense_deleted', {
+                    globalId: expense.global_id,
+                    expenseId,
+                    branchId: expense.branch_id
+                });
+            }
+
+            console.log(`[Expenses/Cancel] ✅ Gasto ${expenseId} cancelado server-first`);
+            res.json({ success: true, message: 'Gasto eliminado correctamente' });
+
+        } catch (error) {
+            console.error('[Expenses/Cancel] ❌ Error:', error);
+            res.status(500).json({ success: false, message: 'Error al eliminar gasto' });
+        }
+    });
+
+    // ═══════════════════════════════════════════════════════════════
     // EXPENSE CATEGORIES ENDPOINTS
     // ═══════════════════════════════════════════════════════════════
 

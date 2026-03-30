@@ -601,7 +601,94 @@ module.exports = (pool, io) => {
     });
 
     // ═══════════════════════════════════════════════════════════════
-    // PATCH /api/purchases/:globalId/cancel - Cancelar compra
+    // POST /api/purchases/:id/cancel - Cancelar compra server-first (multi-caja)
+    // Handles: status→cancelled, inventory reversion
+    // ═══════════════════════════════════════════════════════════════
+    router.post('/:id/cancel', authenticateToken, async (req, res) => {
+        const client = await pool.connect();
+        try {
+            const purchaseId = parseInt(req.params.id);
+            const tenantId = req.user.tenantId;
+
+            await client.query('BEGIN');
+
+            // 1. Get the purchase
+            const purchaseResult = await client.query(
+                `SELECT p.*, s.end_time as shift_end_time
+                 FROM purchases p
+                 LEFT JOIN shifts s ON p.shift_id = s.id
+                 WHERE p.id = $1 AND p.tenant_id = $2`,
+                [purchaseId, tenantId]
+            );
+
+            if (purchaseResult.rows.length === 0) {
+                await client.query('ROLLBACK');
+                return res.status(404).json({ success: false, message: 'Compra no encontrada' });
+            }
+
+            const purchase = purchaseResult.rows[0];
+
+            if (purchase.payment_status === 'cancelled') {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ success: false, message: 'La compra ya fue cancelada' });
+            }
+
+            if (purchase.shift_end_time) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({
+                    success: false,
+                    message: `No se puede cancelar: el turno fue cerrado el ${new Date(purchase.shift_end_time).toLocaleString('es-MX')}`
+                });
+            }
+
+            // 2. Cancel the purchase
+            await client.query(
+                `UPDATE purchases SET payment_status = 'cancelled', updated_at = NOW()
+                 WHERE id = $1 AND tenant_id = $2`,
+                [purchaseId, tenantId]
+            );
+
+            // 3. Revert inventory for each detail
+            const detailsResult = await client.query(
+                `SELECT pd.*, pr.inventariar
+                 FROM purchase_details pd
+                 LEFT JOIN productos pr ON pd.product_id = pr.id AND pr.tenant_id = $2
+                 WHERE pd.purchase_id = $1`,
+                [purchaseId, tenantId]
+            );
+
+            for (const detail of detailsResult.rows) {
+                if (detail.inventariar && detail.product_id) {
+                    await client.query(
+                        `UPDATE productos SET inventario = GREATEST(inventario - $1, 0), updated_at = NOW()
+                         WHERE id = $2 AND tenant_id = $3`,
+                        [parseFloat(detail.quantity), detail.product_id, tenantId]
+                    );
+                }
+            }
+
+            await client.query('COMMIT');
+
+            if (io) {
+                io.to(`branch_${purchase.branch_id}`).emit('purchase_cancelled', {
+                    purchaseId, branchId: purchase.branch_id
+                });
+            }
+
+            console.log(`[Purchases/Cancel] ✅ Compra ${purchaseId} cancelada server-first (${detailsResult.rows.length} líneas)`);
+            res.json({ success: true, message: 'Compra cancelada correctamente' });
+
+        } catch (error) {
+            await client.query('ROLLBACK');
+            console.error('[Purchases/Cancel] ❌ Error:', error);
+            res.status(500).json({ success: false, message: 'Error al cancelar compra' });
+        } finally {
+            client.release();
+        }
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // PATCH /api/purchases/:globalId/cancel - Cancelar compra (legacy offline-first)
     // ═══════════════════════════════════════════════════════════════
     router.patch('/:globalId/cancel', async (req, res) => {
         try {
