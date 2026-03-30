@@ -112,6 +112,18 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
             socket.emit('joined_branch', { branchId: parsedBranchId, message: `Conectado a sucursal ${parsedBranchId}` });
         });
 
+        // Join tenant room (for cross-branch events like producto_branch sync)
+        socket.on('join_tenant', (tenantId) => {
+            if (!socket.authenticated) {
+                console.warn(`[Socket.IO] Unauthenticated client ${socket.id} tried to join tenant_${tenantId}`);
+                return;
+            }
+            const parsedTenantId = parseInt(tenantId);
+            const roomName = `tenant_${parsedTenantId}`;
+            socket.join(roomName);
+            console.log(`[Socket.IO] Cliente ${socket.id} joined ${roomName}`);
+        });
+
         // Admin: join ALL branch rooms to receive events from every branch
         socket.on('join_all_branches', (branchIds) => {
             if (!socket.authenticated) {

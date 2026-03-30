@@ -2767,6 +2767,66 @@ async function runMigrations() {
                 console.error(`[Schema] ⚠️ customer_product_prices error: ${cppErr.message}`);
             }
 
+            // ── Patch: Create producto_branches table (migration 040) ──
+            try {
+                const checkPbTable = await client.query(`
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables
+                        WHERE table_name = 'producto_branches'
+                    )
+                `);
+                if (!checkPbTable.rows[0].exists) {
+                    console.log('[Schema] 📝 Creating producto_branches table...');
+                    await client.query(`
+                        CREATE TABLE IF NOT EXISTS producto_branches (
+                            id SERIAL PRIMARY KEY,
+                            tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+                            branch_id INTEGER NOT NULL REFERENCES branches(id),
+                            product_global_id UUID NOT NULL,
+                            precio_venta DOUBLE PRECISION NOT NULL DEFAULT 0,
+                            precio_compra DOUBLE PRECISION NOT NULL DEFAULT 0,
+                            inventario DOUBLE PRECISION NOT NULL DEFAULT 0,
+                            minimo DOUBLE PRECISION NOT NULL DEFAULT 0,
+                            is_active BOOLEAN NOT NULL DEFAULT true,
+                            assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            global_id UUID NOT NULL UNIQUE,
+                            terminal_id TEXT,
+                            local_op_seq BIGINT,
+                            created_local_utc TEXT,
+                            device_event_raw BIGINT,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            UNIQUE(tenant_id, product_global_id, branch_id)
+                        )
+                    `);
+                    await client.query(`CREATE INDEX IF NOT EXISTS idx_producto_branches_tenant_branch ON producto_branches(tenant_id, branch_id)`);
+                    await client.query(`CREATE INDEX IF NOT EXISTS idx_producto_branches_global_id ON producto_branches(global_id)`);
+                    console.log('[Schema] ✅ producto_branches table created');
+                }
+            } catch (pbErr) {
+                console.error(`[Schema] ⚠️ producto_branches error: ${pbErr.message}`);
+            }
+
+            // ── Patch: Add branch_id to precios_especiales_cliente (migration 040b) ──
+            try {
+                const checkPecBranchId = await client.query(`
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'customer_product_prices'
+                    AND column_name = 'branch_id'
+                `);
+                if (checkPecBranchId.rows.length === 0) {
+                    console.log('[Schema] 📝 Adding branch_id to customer_product_prices...');
+                    await client.query(`
+                        ALTER TABLE customer_product_prices
+                        ADD COLUMN IF NOT EXISTS branch_id INTEGER DEFAULT 0
+                    `);
+                    console.log('[Schema] ✅ customer_product_prices.branch_id added');
+                }
+            } catch (pecErr) {
+                console.error(`[Schema] ⚠️ customer_product_prices.branch_id error: ${pecErr.message}`);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {

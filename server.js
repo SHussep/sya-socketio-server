@@ -136,6 +136,7 @@ const emailDigestRoutes = require('./routes/emailDigest');
 const dataResetRoutes = require('./routes/data-reset');
 const customerProductPricesRoutes = require('./routes/customer_product_prices');
 const kardexRoutes = require('./routes/kardex');
+const productoBranchRoutes = require('./routes/productoBranch');
 const { processGuardianDigests, initializeDigestSchedules } = require('./jobs/guardianEmailDigest');
 const { processLicenseExpiryNotifications } = require('./jobs/licenseExpiryNotifier');
 const { purgeExpiredResets } = require('./jobs/dataResetPurge');
@@ -300,6 +301,7 @@ app.use('/api/email-digest', emailDigestRoutes);
 app.use('/api/data-reset', dataResetRoutes(pool));
 app.use('/api/customer-product-prices', customerProductPricesRoutes(pool, io));
 app.use('/api/kardex', kardexRoutes(pool));
+app.use('/api/producto-branch', productoBranchRoutes(pool, io));
 
 // ═══════════════════════════════════════════════════════════════
 // ENDPOINTS MISC (pocos, no justifican su propio archivo de ruta)
