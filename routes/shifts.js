@@ -2417,8 +2417,9 @@ module.exports = (pool, io) => {
     });
 
     // ═══════════════════════════════════════════════════════════
-    // GET /api/shifts/active-in-branch — Turnos abiertos en sucursal
-    // Usado por Flutter POS para seleccionar repartidores disponibles
+    // GET /api/shifts/active-in-branch — Empleados de la sucursal con estado de turno
+    // Retorna TODOS los empleados activos de la sucursal, indicando si tienen turno abierto.
+    // Usado por Flutter POS para seleccionar repartidores y abrir turnos.
     // ═══════════════════════════════════════════════════════════
     router.get('/active-in-branch', authenticateToken, async (req, res) => {
         try {
@@ -2426,26 +2427,33 @@ module.exports = (pool, io) => {
             const branchId = req.query.branch_id || jwtBranchId;
 
             const result = await pool.query(
-                `SELECT s.id as shift_id, s.global_id as shift_global_id,
-                        s.employee_id, s.start_time, s.initial_amount, s.terminal_id,
-                        e.global_id as employee_global_id,
+                `SELECT e.id as employee_id, e.global_id as employee_global_id,
                         CONCAT(e.first_name, ' ', e.last_name) as employee_name,
-                        r.id as role_id, r.name as role_name
-                 FROM shifts s
-                 JOIN employees e ON s.employee_id = e.id AND e.tenant_id = s.tenant_id
+                        r.id as role_id, r.name as role_name,
+                        s.id as shift_id, s.global_id as shift_global_id,
+                        s.start_time, s.initial_amount, s.terminal_id,
+                        CASE WHEN s.id IS NOT NULL THEN true ELSE false END as has_active_shift
+                 FROM employees e
                  LEFT JOIN roles r ON e.role_id = r.id
-                 WHERE s.tenant_id = $1
-                   AND s.branch_id = $2
-                   AND s.is_cash_cut_open = true
-                   AND s.end_time IS NULL
-                 ORDER BY e.first_name, e.last_name`,
+                 LEFT JOIN employee_branches eb ON e.id = eb.employee_id AND eb.branch_id = $2
+                 LEFT JOIN shifts s ON s.employee_id = e.id
+                                    AND s.tenant_id = $1
+                                    AND s.branch_id = $2
+                                    AND s.is_cash_cut_open = true
+                                    AND s.end_time IS NULL
+                 WHERE e.tenant_id = $1
+                   AND e.is_active = true
+                   AND (eb.branch_id IS NOT NULL OR e.main_branch_id = $2)
+                 ORDER BY
+                   CASE WHEN s.id IS NOT NULL THEN 0 ELSE 1 END,
+                   e.first_name, e.last_name`,
                 [tenantId, branchId]
             );
 
-            res.json({ success: true, shifts: result.rows });
+            res.json({ success: true, employees: result.rows });
         } catch (error) {
-            console.error('[Shifts] Error getting active shifts in branch:', error);
-            res.status(500).json({ success: false, message: 'Error al obtener turnos activos' });
+            console.error('[Shifts] Error getting employees in branch:', error);
+            res.status(500).json({ success: false, message: 'Error al obtener empleados' });
         }
     });
 
