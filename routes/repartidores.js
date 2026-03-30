@@ -444,7 +444,7 @@ module.exports = (pool) => {
                 query += ` AND (s.id IS NULL OR s.is_cash_cut_open = true)`;
                 // 🔧 Ya NO filtrar por status - incluir pending, in_progress Y liquidated
                 // query += ` AND ra.status IN ('pending', 'in_progress')`;  // REMOVED
-                query += ` AND (ra.venta_id IS NULL OR v.status NOT IN ('cancelled', 'voided'))`;
+                query += ` AND (ra.venta_id IS NULL OR COALESCE(v.status, 'active') NOT IN ('cancelled', 'voided'))`;
                 console.log(`[Repartidor Assignments] ✅ Filtrando asignaciones de turnos abiertos (todos los status)`);
             }
 
