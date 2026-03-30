@@ -145,7 +145,8 @@ function createRepartidorAssignmentRoutes(io) {
         }
       }
 
-      // GATE: Bloquear asignaciones desde móvil si Desktop no está conectado
+      // INFO: Verificar si Desktop está conectado (solo log, no bloquear)
+      // Las asignaciones se guardan en PostgreSQL y Desktop las sincroniza al reconectar
       if (source === 'mobile') {
         const roomName = `branch_${branch_id}`;
         const roomSockets = io.sockets.adapter.rooms.get(roomName);
@@ -165,12 +166,7 @@ function createRepartidorAssignmentRoutes(io) {
         console.log(`[RepartidorAssignments] 📡 Desktop check for branch_${branch_id}: found=${desktopFound}, clients=[${clientTypes.join(', ')}]`);
 
         if (!desktopFound) {
-          console.log(`[RepartidorAssignments] 🚫 BLOQUEADO: No hay Desktop en branch_${branch_id}`);
-          return res.status(409).json({
-            success: false,
-            code: 'DESKTOP_OFFLINE',
-            message: 'La computadora de la sucursal no está conectada. No se pueden crear asignaciones hasta que Desktop esté en línea.'
-          });
+          console.log(`[RepartidorAssignments] ⚠️ Desktop no conectado en branch_${branch_id} — asignación se guardará en PostgreSQL igualmente`);
         }
       }
 
