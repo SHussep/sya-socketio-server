@@ -384,7 +384,6 @@ module.exports = (pool) => {
                     ra.employee_id,
                     ra.product_id,
                     ra.product_name,
-                    ra.product_global_id,
                     ra.assigned_quantity,
                     ra.assigned_amount,
                     ra.unit_price,
