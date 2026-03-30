@@ -703,6 +703,65 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
 
             const branch = branchResult.rows[0];
 
+            // ═══════════════════════════════════════════════════════════════
+            // Helper: sincronizar dispositivo a branch_devices (tabla unificada)
+            // Genera nombre secuencial "Caja N" si no tiene nombre previo
+            // ═══════════════════════════════════════════════════════════════
+            async function syncToBranchDevices(devId, devName, devType) {
+                try {
+                    // Verificar si ya existe en branch_devices
+                    const existingBD = await client.query(
+                        `SELECT id, device_name FROM branch_devices WHERE device_id = $1 AND branch_id = $2 AND tenant_id = $3`,
+                        [devId, branchId, tenantId]
+                    );
+
+                    if (existingBD.rows.length > 0) {
+                        // Ya existe — solo actualizar last_seen y reactivar
+                        await client.query(
+                            `UPDATE branch_devices SET last_seen_at = NOW(), is_active = TRUE, updated_at = NOW() WHERE id = $1`,
+                            [existingBD.rows[0].id]
+                        );
+                        return existingBD.rows[0].device_name;
+                    }
+
+                    // Auto-generar nombre "Caja N"
+                    const countResult = await client.query(
+                        `SELECT COUNT(*) as cnt FROM branch_devices WHERE branch_id = $1 AND tenant_id = $2 AND COALESCE(is_active, TRUE) = TRUE`,
+                        [branchId, tenantId]
+                    );
+                    let n = parseInt(countResult.rows[0].cnt) + 1;
+                    let finalName = devName || `Caja ${n}`;
+
+                    // Si no tiene nombre custom, generar secuencial con detección de colisiones
+                    if (!devName || devName === 'Dispositivo') {
+                        finalName = `Caja ${n}`;
+                        for (let attempt = 0; attempt < 5; attempt++) {
+                            const collision = await client.query(
+                                `SELECT id FROM branch_devices WHERE branch_id = $1 AND tenant_id = $2 AND device_name = $3 AND COALESCE(is_active, TRUE) = TRUE`,
+                                [branchId, tenantId, finalName]
+                            );
+                            if (collision.rows.length === 0) break;
+                            n++;
+                            finalName = `Caja ${n}`;
+                        }
+                    }
+
+                    await client.query(`
+                        INSERT INTO branch_devices (tenant_id, branch_id, device_id, device_name, device_type, is_primary, last_seen_at, created_at, updated_at)
+                        VALUES ($1, $2, $3, $4, $5, FALSE, NOW(), NOW(), NOW())
+                        ON CONFLICT (device_id, branch_id, tenant_id) DO UPDATE SET
+                            device_name = COALESCE(NULLIF($4, ''), branch_devices.device_name),
+                            last_seen_at = NOW(), is_active = TRUE, updated_at = NOW()
+                    `, [tenantId, branchId, devId, finalName, devType || 'desktop']);
+
+                    console.log(`[Device Register] ✅ Sincronizado a branch_devices: ${finalName}`);
+                    return finalName;
+                } catch (bdError) {
+                    console.error('[Device Register] ⚠️ Error sincronizando a branch_devices:', bdError.message);
+                    return devName || 'Dispositivo';
+                }
+            }
+
             const existingDeviceResult = await client.query(
                 'SELECT * FROM devices WHERE device_id = $1 AND tenant_id = $2',
                 [deviceId, tenantId]
@@ -712,6 +771,8 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                 const existingDevice = existingDeviceResult.rows[0];
 
                 if (existingDevice.branch_id === branchId && existingDevice.is_active) {
+                    // Sincronizar a branch_devices (tabla unificada)
+                    const bdName = await syncToBranchDevices(existingDevice.device_id, existingDevice.device_name, existingDevice.device_type);
                     await client.query('COMMIT');
                     console.log(`[Device Register] Dispositivo ya registrado y activo en branch ${branch.name}`);
                     return res.json({
@@ -720,7 +781,7 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                         device: {
                             id: existingDevice.id,
                             deviceId: existingDevice.device_id,
-                            deviceName: existingDevice.device_name,
+                            deviceName: bdName,
                             deviceType: existingDevice.device_type,
                             branchId: existingDevice.branch_id,
                             branchName: branch.name,
@@ -782,6 +843,8 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                     );
                 }
 
+                // Sincronizar a branch_devices (tabla unificada)
+                const bdNameUpdated = await syncToBranchDevices(deviceId, deviceName, deviceType);
                 await client.query('COMMIT');
 
                 const updatedDeviceResult = await client.query(
@@ -799,7 +862,7 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                     device: {
                         id: updatedDevice.id,
                         deviceId: updatedDevice.device_id,
-                        deviceName: updatedDevice.device_name,
+                        deviceName: bdNameUpdated,
                         deviceType: updatedDevice.device_type,
                         branchId: updatedDevice.branch_id,
                         branchName: branch.name,
@@ -824,19 +887,22 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                 });
             }
 
+            // Sincronizar a branch_devices PRIMERO (para obtener nombre secuencial)
+            const bdNameNew = await syncToBranchDevices(deviceId, deviceName, deviceType || 'desktop');
+
             const newDeviceResult = await client.query(`
                 INSERT INTO devices (
                     tenant_id, branch_id, employee_id, device_id,
                     device_name, device_type, is_active, last_seen
                 ) VALUES ($1, $2, $3, $4, $5, $6, true, NOW())
                 RETURNING id, device_id, device_name, device_type, branch_id, is_active, last_seen
-            `, [tenantId, branchId, employeeId, deviceId, deviceName || 'Dispositivo', deviceType || 'desktop']);
+            `, [tenantId, branchId, employeeId, deviceId, bdNameNew, deviceType || 'desktop']);
 
             const newDevice = newDeviceResult.rows[0];
 
             await client.query('COMMIT');
 
-            console.log(`[Device Register] ✅ Dispositivo creado: ${deviceId} en branch ${branch.name} (${activeDevicesCount + 1}/${maxDevicesPerBranch})`);
+            console.log(`[Device Register] ✅ Dispositivo creado: ${deviceId} en branch ${branch.name} como "${bdNameNew}" (${activeDevicesCount + 1}/${maxDevicesPerBranch})`);
 
             res.status(201).json({
                 success: true,
@@ -844,7 +910,7 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                 device: {
                     id: newDevice.id,
                     deviceId: newDevice.device_id,
-                    deviceName: newDevice.device_name,
+                    deviceName: bdNameNew,
                     deviceType: newDevice.device_type,
                     branchId: newDevice.branch_id,
                     branchName: branch.name,
