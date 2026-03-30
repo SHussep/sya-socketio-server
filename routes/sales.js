@@ -258,6 +258,145 @@ module.exports = (pool, io) => {
     });
     */
 
+    // ============================================================================
+    // POST /api/sales/:id/cancel - Cancelar venta server-first (multi-caja)
+    // Maneja: status→cancelled, reversión de crédito (mixto), inventario, bitácora
+    // Nota: Para tipo_pago_id=3 (crédito puro), el trigger de PostgreSQL revierte saldo_deudor automáticamente
+    // ============================================================================
+    router.post('/:id/cancel', authenticateToken, async (req, res) => {
+        const client = await pool.connect();
+        try {
+            const saleId = parseInt(req.params.id);
+            const tenantId = req.user.tenantId;
+            const { employee_name, terminal_id } = req.body;
+
+            await client.query('BEGIN');
+
+            // 1. Obtener la venta con sus detalles
+            const saleResult = await client.query(
+                `SELECT v.*, s.end_time as shift_end_time
+                 FROM ventas v
+                 LEFT JOIN shifts s ON v.id_turno = s.id
+                 WHERE v.id_venta = $1 AND v.tenant_id = $2`,
+                [saleId, tenantId]
+            );
+
+            if (saleResult.rows.length === 0) {
+                await client.query('ROLLBACK');
+                return res.status(404).json({ success: false, message: 'Venta no encontrada' });
+            }
+
+            const sale = saleResult.rows[0];
+
+            if (sale.estado_venta_id === 4 || sale.status === 'cancelled') {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ success: false, message: 'La venta ya fue cancelada anteriormente' });
+            }
+
+            // Validar turno abierto (opcional - el turno del cajero que creó la venta)
+            if (sale.shift_end_time) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({
+                    success: false,
+                    message: `No se puede cancelar: el turno fue cerrado el ${new Date(sale.shift_end_time).toLocaleString('es-MX')}`
+                });
+            }
+
+            // 2. Actualizar venta a cancelada
+            // El trigger update_customer_balance maneja la reversión para tipo_pago_id=3
+            await client.query(
+                `UPDATE ventas SET estado_venta_id = 4, status = 'cancelled', updated_at = NOW()
+                 WHERE id_venta = $1 AND tenant_id = $2`,
+                [saleId, tenantId]
+            );
+
+            // 3. Para pagos mixtos (tipo_pago_id=4), revertir la porción de crédito manualmente
+            // (el trigger solo maneja tipo_pago_id=3)
+            if (sale.tipo_pago_id === 4 && sale.id_cliente && parseFloat(sale.credit_amount || 0) > 0) {
+                const creditToRevert = parseFloat(sale.credit_amount);
+                await client.query(
+                    `UPDATE customers SET saldo_deudor = GREATEST(saldo_deudor - $1, 0)
+                     WHERE id = $2 AND tenant_id = $3`,
+                    [creditToRevert, sale.id_cliente, tenantId]
+                );
+                console.log(`[Sales/Cancel] 💳 Crédito mixto revertido: $${creditToRevert} para cliente ${sale.id_cliente}`);
+            }
+
+            // 4. Obtener detalles de la venta para revertir inventario
+            const detailsResult = await client.query(
+                `SELECT vd.*, p.inventariar, p.inventario as stock_actual
+                 FROM ventas_detalle vd
+                 LEFT JOIN productos p ON vd.id_producto = p.id AND p.tenant_id = $2
+                 WHERE vd.id_venta = $1`,
+                [saleId, tenantId]
+            );
+
+            // 5. Revertir inventario y crear bitácora
+            for (const detail of detailsResult.rows) {
+                // Revertir inventario si el producto lo requiere
+                if (detail.inventariar) {
+                    await client.query(
+                        `UPDATE productos SET inventario = inventario + $1, updated_at = NOW()
+                         WHERE id = $2 AND tenant_id = $3`,
+                        [parseFloat(detail.cantidad), detail.id_producto, tenantId]
+                    );
+                }
+
+                // Crear entrada en bitácora de cancelaciones
+                const bitGlobalId = require('crypto').randomUUID();
+                await client.query(
+                    `INSERT INTO cancelaciones_bitacora (
+                        tenant_id, branch_id, id_turno, id_empleado, fecha,
+                        id_venta, id_producto, descripcion,
+                        cantidad, motivo,
+                        global_id, terminal_id, local_op_seq, created_local_utc,
+                        synced, synced_at_raw, created_at
+                    ) VALUES (
+                        $1, $2, $3, $4, NOW(),
+                        $5, $6, $7,
+                        $8, $9,
+                        $10, $11, 0, $12,
+                        TRUE, EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) * 1000, CURRENT_TIMESTAMP
+                    ) ON CONFLICT (global_id) DO NOTHING`,
+                    [
+                        tenantId, sale.branch_id, sale.id_turno, sale.id_empleado,
+                        saleId, detail.id_producto, detail.descripcion_producto,
+                        parseFloat(detail.cantidad), 'Venta cancelada desde dashboard multi-caja',
+                        bitGlobalId, terminal_id || sale.terminal_id, new Date().toISOString()
+                    ]
+                );
+            }
+
+            await client.query('COMMIT');
+
+            // Emit socket event for real-time sync
+            if (io) {
+                io.to(`branch_${sale.branch_id}`).emit('sale_cancelled', {
+                    saleId,
+                    ticketNumber: sale.ticket_number,
+                    total: parseFloat(sale.total),
+                    cancelledBy: employee_name || 'Sistema',
+                    branchId: sale.branch_id
+                });
+            }
+
+            console.log(`[Sales/Cancel] ✅ Venta ${saleId} cancelada server-first (${detailsResult.rows.length} líneas)`);
+
+            res.json({
+                success: true,
+                message: 'Venta cancelada correctamente',
+                data: { saleId, linesReverted: detailsResult.rows.length }
+            });
+
+        } catch (error) {
+            await client.query('ROLLBACK');
+            console.error('[Sales/Cancel] ❌ Error:', error);
+            res.status(500).json({ success: false, message: 'Error al cancelar la venta' });
+        } finally {
+            client.release();
+        }
+    });
+
     // POST /api/sync/sales - Sincronizar venta desde Desktop
     // 🔴 NUEVO: Ahora usa tabla "ventas" con estructura 1:1 con Desktop
     router.post('/sync', async (req, res) => {
