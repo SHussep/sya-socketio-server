@@ -2827,6 +2827,32 @@ async function runMigrations() {
                 console.error(`[Schema] ⚠️ customer_product_prices.branch_id error: ${pecErr.message}`);
             }
 
+            // ── Migration 041: branch_settings table (JSONB per-branch config) ──
+            try {
+                const checkBranchSettings = await client.query(`
+                    SELECT to_regclass('public.branch_settings') as exists
+                `);
+                if (!checkBranchSettings.rows[0].exists) {
+                    console.log('[Schema] 📝 Creating branch_settings table...');
+                    await client.query(`
+                        CREATE TABLE branch_settings (
+                            id SERIAL PRIMARY KEY,
+                            tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                            branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+                            setting_key VARCHAR(100) NOT NULL,
+                            setting_value JSONB NOT NULL DEFAULT '{}',
+                            updated_at TIMESTAMPTZ DEFAULT NOW(),
+                            updated_by_terminal_id VARCHAR(36),
+                            UNIQUE(tenant_id, branch_id, setting_key)
+                        )
+                    `);
+                    await client.query(`CREATE INDEX IF NOT EXISTS idx_branch_settings_tenant_branch ON branch_settings(tenant_id, branch_id)`);
+                    console.log('[Schema] ✅ branch_settings table created');
+                }
+            } catch (bsErr) {
+                console.error(`[Schema] ⚠️ branch_settings error: ${bsErr.message}`);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {

@@ -302,6 +302,7 @@ app.use('/api/data-reset', dataResetRoutes(pool));
 app.use('/api/customer-product-prices', customerProductPricesRoutes(pool, io));
 app.use('/api/kardex', kardexRoutes(pool));
 app.use('/api/producto-branch', productoBranchRoutes(pool, io));
+app.use('/api/branch-settings', require('./routes/branchSettings')(pool));
 
 // ═══════════════════════════════════════════════════════════════
 // ENDPOINTS MISC (pocos, no justifican su propio archivo de ruta)
