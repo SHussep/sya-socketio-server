@@ -241,9 +241,10 @@ module.exports = {
                 INSERT INTO employees (
                     tenant_id, email, username, first_name, last_name, password_hash,
                     role_id, main_branch_id, can_use_mobile_app, is_active, is_owner,
+                    mobile_access_type, mobile_access_types,
                     google_user_identifier, global_id, password_updated_at, email_verified, created_at, updated_at
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, true, true, $9, gen_random_uuid()::text, NOW(), true, NOW(), NOW())
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, true, true, 'admin', 'admin', $9, gen_random_uuid()::text, NOW(), true, NOW(), NOW())
                 RETURNING id, email, username, first_name, last_name, role_id, can_use_mobile_app, is_active, global_id, created_at
             `, [tenant.id, email, username, firstName, lastName, passwordHash, accesoTotalRoleId, branch.id, email]);
 

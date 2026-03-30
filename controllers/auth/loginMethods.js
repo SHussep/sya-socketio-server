@@ -449,14 +449,20 @@ module.exports = {
                 { expiresIn: '30d' }
             );
 
-            // Prioridad: employee override > role default
-            const resolvedAccessType = (employee.mobile_access_type && employee.mobile_access_type !== 'none')
-                ? employee.mobile_access_type
-                : (employee.role_mobile_access_type || 'none');
+            // Prioridad: owner siempre admin > employee override > role default
+            let resolvedAccessType;
+            if (employee.is_owner) {
+                resolvedAccessType = 'admin';
+            } else {
+                resolvedAccessType = (employee.mobile_access_type && employee.mobile_access_type !== 'none')
+                    ? employee.mobile_access_type
+                    : (employee.role_mobile_access_type || 'none');
+            }
 
             // Resolve mobile_access_types: new plural field takes priority, fallback to singular
-            const resolvedAccessTypes = employee.mobile_access_types
-                || (resolvedAccessType !== 'none' ? resolvedAccessType : null);
+            const resolvedAccessTypes = employee.is_owner
+                ? 'admin'
+                : (employee.mobile_access_types || (resolvedAccessType !== 'none' ? resolvedAccessType : null));
 
             const employeeData = {
                 id: employee.id,
