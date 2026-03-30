@@ -103,6 +103,29 @@ module.exports = (pool, io) => {
                     // Fall through to create new shift below
                 } else {
                     // ═══ MULTI-CAJA MODE: Return 409 conflict (don't auto-close) ═══
+                    // Lookup terminal name for the conflicting shift
+                    let conflictTerminal = null;
+                    if (shift.terminal_id) {
+                        try {
+                            const termResult = await client.query(
+                                `SELECT id, device_name, device_type, is_primary FROM branch_devices
+                                 WHERE device_id = $1 AND branch_id = $2 AND tenant_id = $3`,
+                                [shift.terminal_id, branchId, tenantId]
+                            );
+                            if (termResult.rows.length > 0) {
+                                const dev = termResult.rows[0];
+                                conflictTerminal = {
+                                    id: dev.id,
+                                    name: dev.device_name,
+                                    deviceType: dev.device_type,
+                                    isPrimary: dev.is_primary
+                                };
+                            }
+                        } catch (termErr) {
+                            console.error(`[Shifts] ⚠️ Terminal lookup error (non-fatal):`, termErr.message);
+                        }
+                    }
+
                     await client.query('ROLLBACK');
 
                     return res.status(409).json({
@@ -121,7 +144,8 @@ module.exports = (pool, io) => {
                             transactionCounter: shift.transaction_counter || 0,
                             isCashCutOpen: shift.is_cash_cut_open,
                             createdAt: shift.created_at ? new Date(shift.created_at).toISOString() : null
-                        }
+                        },
+                        terminal: conflictTerminal
                     });
                 }
             }
@@ -214,7 +238,15 @@ module.exports = (pool, io) => {
                         const inserted = await pool.query(
                             `INSERT INTO branch_devices (tenant_id, branch_id, device_id, device_name, device_type, is_primary, last_seen_at, created_at, updated_at)
                              VALUES ($1, $2, $3, $4, $5, FALSE, NOW(), NOW(), NOW())
-                             ON CONFLICT (device_id, branch_id, tenant_id) DO UPDATE SET last_seen_at = NOW()
+                             ON CONFLICT (device_id, branch_id, tenant_id) DO UPDATE SET
+                                last_seen_at = NOW(),
+                                device_name = CASE
+                                    WHEN branch_devices.device_name IS NULL
+                                         OR branch_devices.device_name = ''
+                                         OR branch_devices.device_name ~ '^[0-9a-fA-F]{4,}'
+                                    THEN EXCLUDED.device_name
+                                    ELSE branch_devices.device_name
+                                END
                              RETURNING id, device_name, device_type, is_primary`,
                             [tenantId, branchId, shift.terminal_id, suggestedName, deviceType]
                         );
