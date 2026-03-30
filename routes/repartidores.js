@@ -379,10 +379,12 @@ module.exports = (pool) => {
             let query = `
                 SELECT
                     ra.id,
+                    ra.global_id,
                     ra.venta_id,
                     ra.employee_id,
                     ra.product_id,
                     ra.product_name,
+                    ra.product_global_id,
                     ra.assigned_quantity,
                     ra.assigned_amount,
                     ra.unit_price,
