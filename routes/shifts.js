@@ -128,6 +128,63 @@ module.exports = (pool, io) => {
 
                     await client.query('ROLLBACK');
 
+                    // ═══ Auto-register CALLER's device in branch_devices (outside transaction) ═══
+                    // The conflict path skips the normal auto-register, so ensure the calling
+                    // device is registered so GetTerminalsAsync can resolve its name.
+                    let callerTerminal = null;
+                    if (clientTerminalId) {
+                        try {
+                            const deviceType = clientDeviceType || (clientTerminalId.startsWith('mobile-') ? 'mobile' : 'desktop');
+                            const existingCaller = await pool.query(
+                                `SELECT id, device_name FROM branch_devices
+                                 WHERE device_id = $1 AND branch_id = $2 AND tenant_id = $3`,
+                                [clientTerminalId, branchId, tenantId]
+                            );
+                            if (existingCaller.rows.length === 0) {
+                                const countResult = await pool.query(
+                                    `SELECT COUNT(*) as cnt FROM branch_devices
+                                     WHERE branch_id = $1 AND tenant_id = $2 AND COALESCE(is_active, TRUE) = TRUE`,
+                                    [branchId, tenantId]
+                                );
+                                let n = parseInt(countResult.rows[0].cnt) + 1;
+                                let suggestedName = `Caja ${n}`;
+                                for (let attempt = 0; attempt < 5; attempt++) {
+                                    const nameExists = await pool.query(
+                                        `SELECT id FROM branch_devices
+                                         WHERE branch_id = $1 AND tenant_id = $2 AND device_name = $3
+                                         AND COALESCE(is_active, TRUE) = TRUE`,
+                                        [branchId, tenantId, suggestedName]
+                                    );
+                                    if (nameExists.rows.length === 0) break;
+                                    n++;
+                                    suggestedName = `Caja ${n}`;
+                                }
+                                const inserted = await pool.query(
+                                    `INSERT INTO branch_devices (tenant_id, branch_id, device_id, device_name, device_type, is_primary, last_seen_at, created_at, updated_at)
+                                     VALUES ($1, $2, $3, $4, $5, FALSE, NOW(), NOW(), NOW())
+                                     ON CONFLICT (device_id, branch_id, tenant_id) DO UPDATE SET
+                                        last_seen_at = NOW(),
+                                        device_name = CASE
+                                            WHEN branch_devices.device_name IS NULL
+                                                 OR branch_devices.device_name = ''
+                                                 OR branch_devices.device_name ~ '^[0-9a-fA-F]{4,}'
+                                            THEN EXCLUDED.device_name
+                                            ELSE branch_devices.device_name
+                                        END
+                                     RETURNING id, device_name`,
+                                    [tenantId, branchId, clientTerminalId, suggestedName, deviceType]
+                                );
+                                callerTerminal = { name: inserted.rows[0].device_name };
+                                console.log(`[Shifts] 🏷️ Caller device auto-registered in conflict path: ${clientTerminalId.substring(0, 10)}... → ${callerTerminal.name}`);
+                            } else {
+                                callerTerminal = { name: existingCaller.rows[0].device_name };
+                                await pool.query(`UPDATE branch_devices SET last_seen_at = NOW() WHERE id = $1`, [existingCaller.rows[0].id]);
+                            }
+                        } catch (regErr) {
+                            console.error(`[Shifts] ⚠️ Caller device registration error (non-fatal):`, regErr.message);
+                        }
+                    }
+
                     return res.status(409).json({
                         success: false,
                         error: 'SHIFT_CONFLICT',
@@ -145,7 +202,8 @@ module.exports = (pool, io) => {
                             isCashCutOpen: shift.is_cash_cut_open,
                             createdAt: shift.created_at ? new Date(shift.created_at).toISOString() : null
                         },
-                        terminal: conflictTerminal
+                        terminal: conflictTerminal,
+                        callerTerminal
                     });
                 }
             }
