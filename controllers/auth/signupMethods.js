@@ -847,6 +847,38 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                 const bdNameUpdated = await syncToBranchDevices(deviceId, deviceName, deviceType);
                 await client.query('COMMIT');
 
+                // Auto-enable multi-caja si 2+ dispositivos activos
+                try {
+                    const bdCount = await this.pool.query(
+                        `SELECT COUNT(*) as cnt FROM branch_devices
+                         WHERE branch_id = $1 AND tenant_id = $2 AND COALESCE(is_active, TRUE) = TRUE`,
+                        [branchId, tenantId]
+                    );
+                    if (parseInt(bdCount.rows[0].cnt) >= 2) {
+                        const branchMC = await this.pool.query(
+                            `SELECT multi_caja_enabled FROM branches WHERE id = $1 AND tenant_id = $2`,
+                            [branchId, tenantId]
+                        );
+                        if (branchMC.rows.length > 0 && !branchMC.rows[0].multi_caja_enabled) {
+                            await this.pool.query(
+                                `UPDATE branches SET multi_caja_enabled = TRUE, updated_at = NOW() WHERE id = $1 AND tenant_id = $2`,
+                                [branchId, tenantId]
+                            );
+                            console.log(`[Device Register] 🔄 Multi-caja auto-habilitado para branch ${branchId}`);
+                            const io = req.app.get('io');
+                            if (io) {
+                                io.to(`branch_${branchId}`).emit('branch_settings_changed', {
+                                    branchId, multi_caja_enabled: true, auto_enabled: true,
+                                    active_device_count: parseInt(bdCount.rows[0].cnt),
+                                    receivedAt: new Date().toISOString()
+                                });
+                            }
+                        }
+                    }
+                } catch (mcErr) {
+                    console.error('[Device Register] ⚠️ Error auto-enable multi-caja:', mcErr.message);
+                }
+
                 const updatedDeviceResult = await client.query(
                     'SELECT * FROM devices WHERE device_id = $1 AND tenant_id = $2',
                     [deviceId, tenantId]
@@ -901,6 +933,38 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
             const newDevice = newDeviceResult.rows[0];
 
             await client.query('COMMIT');
+
+            // Auto-enable multi-caja si 2+ dispositivos activos
+            try {
+                const bdCount = await this.pool.query(
+                    `SELECT COUNT(*) as cnt FROM branch_devices
+                     WHERE branch_id = $1 AND tenant_id = $2 AND COALESCE(is_active, TRUE) = TRUE`,
+                    [branchId, tenantId]
+                );
+                if (parseInt(bdCount.rows[0].cnt) >= 2) {
+                    const branchMC = await this.pool.query(
+                        `SELECT multi_caja_enabled FROM branches WHERE id = $1 AND tenant_id = $2`,
+                        [branchId, tenantId]
+                    );
+                    if (branchMC.rows.length > 0 && !branchMC.rows[0].multi_caja_enabled) {
+                        await this.pool.query(
+                            `UPDATE branches SET multi_caja_enabled = TRUE, updated_at = NOW() WHERE id = $1 AND tenant_id = $2`,
+                            [branchId, tenantId]
+                        );
+                        console.log(`[Device Register] 🔄 Multi-caja auto-habilitado para branch ${branchId}`);
+                        const io = req.app.get('io');
+                        if (io) {
+                            io.to(`branch_${branchId}`).emit('branch_settings_changed', {
+                                branchId, multi_caja_enabled: true, auto_enabled: true,
+                                active_device_count: parseInt(bdCount.rows[0].cnt),
+                                receivedAt: new Date().toISOString()
+                            });
+                        }
+                    }
+                }
+            } catch (mcErr) {
+                console.error('[Device Register] ⚠️ Error auto-enable multi-caja:', mcErr.message);
+            }
 
             console.log(`[Device Register] ✅ Dispositivo creado: ${deviceId} en branch ${branch.name} como "${bdNameNew}" (${activeDevicesCount + 1}/${maxDevicesPerBranch})`);
 

@@ -162,6 +162,17 @@ module.exports = (pool) => {
 
             console.log(`[Devices] ✅ Nuevo Primary registrado: ${device_id.substring(0, 10)}... para branch ${branch_id}`);
 
+            // Notificar a la sucursal que hay un nuevo Primary
+            const io = req.app.get('io');
+            if (io) {
+                io.to(`branch_${branch_id}`).emit('terminal:primary_claimed', {
+                    device_id,
+                    device_name,
+                    branch_id: parseInt(branch_id),
+                    replaced_existing: !!existingPrimary
+                });
+            }
+
             res.json({
                 success: true,
                 message: existingPrimary ? 'Rol Principal reclamado (reemplazó existente)' : 'Rol Principal asignado',
@@ -250,6 +261,51 @@ module.exports = (pool) => {
 
             console.log(`[Devices] ✅ Dispositivo ${result.rows[0].is_new ? 'registrado' : 'actualizado'}: ${device_id.substring(0, 10)}... name=${result.rows[0].device_name}`);
 
+            // ═══════════════════════════════════════════════════════════════
+            // AUTO-ENABLE MULTI-CAJA: Si hay 2+ dispositivos activos
+            // y multi_caja_enabled está desactivado, activarlo automáticamente
+            // ═══════════════════════════════════════════════════════════════
+            let multiCajaAutoEnabled = false;
+            try {
+                const activeDeviceCount = await pool.query(
+                    `SELECT COUNT(*) as cnt FROM branch_devices
+                     WHERE branch_id = $1 AND tenant_id = $2 AND COALESCE(is_active, TRUE) = TRUE`,
+                    [branch_id, tenantId]
+                );
+                const count = parseInt(activeDeviceCount.rows[0].cnt);
+
+                if (count >= 2) {
+                    const branchCheck = await pool.query(
+                        `SELECT multi_caja_enabled FROM branches WHERE id = $1 AND tenant_id = $2`,
+                        [branch_id, tenantId]
+                    );
+
+                    if (branchCheck.rows.length > 0 && !branchCheck.rows[0].multi_caja_enabled) {
+                        await pool.query(
+                            `UPDATE branches SET multi_caja_enabled = TRUE, updated_at = NOW()
+                             WHERE id = $1 AND tenant_id = $2`,
+                            [branch_id, tenantId]
+                        );
+
+                        console.log(`[Devices] 🔄 Multi-caja auto-habilitado para branch ${branch_id} (${count} dispositivos activos)`);
+                        multiCajaAutoEnabled = true;
+
+                        const io = req.app.get('io');
+                        if (io) {
+                            io.to(`branch_${branch_id}`).emit('branch_settings_changed', {
+                                branchId: parseInt(branch_id),
+                                multi_caja_enabled: true,
+                                auto_enabled: true,
+                                active_device_count: count,
+                                receivedAt: new Date().toISOString()
+                            });
+                        }
+                    }
+                }
+            } catch (mcErr) {
+                console.error('[Devices] ⚠️ Error verificando multi-caja:', mcErr.message);
+            }
+
             res.json({
                 success: true,
                 message: result.rows[0].is_new ? 'Dispositivo registrado' : 'Dispositivo actualizado',
@@ -258,7 +314,8 @@ module.exports = (pool) => {
                     device_id,
                     device_name: result.rows[0].device_name,
                     is_primary: result.rows[0].is_primary,
-                    is_new: result.rows[0].is_new
+                    is_new: result.rows[0].is_new,
+                    multi_caja_auto_enabled: multiCajaAutoEnabled
                 }
             });
 
