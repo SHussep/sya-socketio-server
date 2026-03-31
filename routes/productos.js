@@ -219,7 +219,6 @@ module.exports = (pool, io) => {
                     p.minimo,
                     p.inventario,
                     p.proveedor_id,
-                    p.codigo_barras,
                     p.unidad_medida as unidad_medida_id,
                     p.bascula as pesable,
                     p.is_active,
