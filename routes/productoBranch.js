@@ -248,7 +248,7 @@ module.exports = (pool, io) => {
                     pb.created_at,
                     pb.updated_at,
                     p.descripcion AS product_name,
-                    p.unidad_medida AS product_unit
+                    p.unidad_medida_id AS product_unit
                 FROM producto_branches pb
                 JOIN productos p ON p.global_id = pb.product_global_id::text AND p.tenant_id = pb.tenant_id
                 ${whereClause}
