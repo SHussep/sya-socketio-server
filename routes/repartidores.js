@@ -518,6 +518,7 @@ module.exports = (pool) => {
 
                     return {
                         id: row.id,
+                        global_id: row.global_id,
                         venta_id: row.venta_id,
                         ticket_number: row.ticket_number,
                         employee_id: row.employee_id,
