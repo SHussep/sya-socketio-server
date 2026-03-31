@@ -56,6 +56,7 @@ module.exports = (pool, io) => {
             // (asignar, devolver, reasignar). Obtiene la asignación más reciente.
             let query = `
                 SELECT v.id_venta as id, v.ticket_number, v.total as total_amount,
+                       v.subtotal, v.total_descuentos,
                        v.tipo_pago_id as payment_method, v.fecha_venta_utc as sale_date,
                        v.venta_tipo_id as sale_type, v.id_empleado as employee_id,
                        v.estado_venta_id,
@@ -175,6 +176,8 @@ module.exports = (pool, io) => {
             const normalizedRows = result.rows.map(row => ({
                 ...row,
                 total_amount: parseFloat(row.total_amount),
+                subtotal: row.subtotal ? parseFloat(row.subtotal) : null,
+                total_descuentos: row.total_descuentos ? parseFloat(row.total_descuentos) : null,
                 // Payment breakdown as numbers
                 cash_amount: row.cash_amount ? parseFloat(row.cash_amount) : null,
                 card_amount: row.card_amount ? parseFloat(row.card_amount) : null,
