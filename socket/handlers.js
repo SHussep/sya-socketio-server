@@ -14,6 +14,8 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
     const PREPMODE_FCM_DEBOUNCE_MS = 30000; // 30s — prep mode events are less frequent
     const lastShiftFcm = new Map(); // key: "branchId:shift_started" → timestamp
     const SHIFT_FCM_DEBOUNCE_MS = 30000; // 30s — evita doble FCM si se re-inicia turno
+    const lastProductionFcm = new Map(); // key: "branchId:scenarioCode" → timestamp
+    const PRODUCTION_FCM_DEBOUNCE_MS = 30000; // 30s — produccion genera muchos eventos
 
     function shouldSendScaleFcm(branchId, eventType) {
         const key = `${branchId}:${eventType}`;
@@ -51,6 +53,18 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
         return true;
     }
 
+    function shouldSendProductionFcm(branchId, scenarioCode) {
+        const key = `${branchId}:${scenarioCode}`;
+        const now = Date.now();
+        const last = lastProductionFcm.get(key);
+        if (last && (now - last) < PRODUCTION_FCM_DEBOUNCE_MS) {
+            console.log(`[PRODUCTION] ⏭️ FCM debounce: ${scenarioCode} para branch ${branchId} (${Math.round((now - last) / 1000)}s desde último)`);
+            return false;
+        }
+        lastProductionFcm.set(key, now);
+        return true;
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // CLEANUP: Limpiar entradas viejas de debounce Maps cada 30 minutos
     // Evita memory leaks en procesos de larga duración
@@ -69,6 +83,9 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
         }
         for (const [key, ts] of lastShiftFcm) {
             if (now - ts > DEBOUNCE_CLEANUP_MAX_AGE_MS) { lastShiftFcm.delete(key); cleaned++; }
+        }
+        for (const [key, ts] of lastProductionFcm) {
+            if (now - ts > DEBOUNCE_CLEANUP_MAX_AGE_MS) { lastProductionFcm.delete(key); cleaned++; }
         }
 
         // Limpiar scaleStatusByBranch (almacena objetos con updatedAt ISO string)
@@ -383,6 +400,35 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
 
             // ⚠️ IMPORTANTE: NO guardar en BD aquí ni enviar FCM
             // Desktop ya envía los eventos via REST API (/api/guardian-events)
+        });
+
+        socket.on('production_alert', async (data) => {
+            stats.totalEvents++;
+            const roomName = `branch_${data.branchId}`;
+
+            console.log(`[PRODUCTION] Alerta produccion sucursal ${data.branchId}: ${data.scenarioCode} (${data.severity}) - ${data.alertType}`);
+
+            // Re-broadcast a otros clientes en la sucursal
+            io.to(roomName).emit('production_alert', {
+                ...data,
+                receivedAt: new Date().toISOString()
+            });
+
+            // Enviar FCM con debounce
+            if (shouldSendProductionFcm(data.branchId, data.scenarioCode)) {
+                try {
+                    await notificationHelper.notifyProductionAlert(data.branchId, {
+                        alertType: data.alertType,
+                        scenarioCode: data.scenarioCode,
+                        severity: data.severity,
+                        weightKg: data.weightKg,
+                        details: data.details,
+                        employeeName: data.employeeName
+                    });
+                } catch (e) {
+                    console.error(`[PRODUCTION] Error enviando FCM: ${e.message}`);
+                }
+            }
         });
 
         socket.on('scale_disconnected', async (data) => {

@@ -723,6 +723,37 @@ async function notifyScaleConnection(branchId, { message }) {
 }
 
 /**
+ * Envía notificación cuando se detecta una anomalía de producción
+ * Solo notifica a administradores con preferencia notify_production activa
+ */
+async function notifyProductionAlert(branchId, { alertType, scenarioCode, severity, weightKg, details, employeeName }) {
+    const severityEmoji = { Critical: '🔴', High: '🟠', Medium: '🟡', Low: '🔵' };
+    const alertTypeDisplay = {
+        'MasaNoRegistrada': 'Masa No Registrada',
+        'RegistroCancelado': 'Registro Cancelado',
+        'PesoExcedido': 'Peso Excedido',
+        'PesoNegativo': 'Peso Negativo'
+    };
+
+    const emoji = severityEmoji[severity] || '⚠️';
+    const typeDisplay = alertTypeDisplay[alertType] || alertType;
+    const weightDisplay = weightKg < 1 ? `${(weightKg * 1000).toFixed(0)} g` : `${weightKg.toFixed(3)} kg`;
+
+    return await sendNotificationToAdminsInBranch(branchId, {
+        title: `${emoji} Produccion: ${typeDisplay}`,
+        body: `${details} (${weightDisplay}) — ${employeeName}`,
+        data: {
+            type: 'production_alert',
+            branchId: branchId.toString(),
+            severity: severity,
+            alertType: alertType,
+            scenarioCode: scenarioCode,
+            timestamp: new Date().toISOString()
+        }
+    }, { notificationType: 'notify_production' });
+}
+
+/**
  * Envía notificación cuando se registra un gasto para un empleado/repartidor
  * Notifica a:
  * Los administradores y encargados de la sucursal (NO al empleado que lo creó)
@@ -1257,5 +1288,6 @@ module.exports = {
     notifyClientPaymentReceived,
     notifySaleCancelled,
     notifyGuardianStatusChanged,
-    notifyGeofenceEvent
+    notifyGeofenceEvent,
+    notifyProductionAlert
 };
