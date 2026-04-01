@@ -649,6 +649,7 @@ async function checkSessionConflict(employeeId, pool, callerTerminalId) {
         hasConflict: true,
         otherDeviceType: shiftDeviceType,
         otherDeviceOnline: true, // We can't reliably determine this from HTTP — assume online
+        shiftBranchId: shift.branch_id,
         shiftBranchName: shift.branch_name,
         shiftStartTime: shift.start_time
     };
