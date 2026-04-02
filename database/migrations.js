@@ -2853,6 +2853,28 @@ async function runMigrations() {
                 console.error(`[Schema] ⚠️ branch_settings error: ${bsErr.message}`);
             }
 
+            // ── Patch: Add is_practice flag to notifications (Practice Mode) ──
+            try {
+                const checkIsPractice = await client.query(`
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'notifications'
+                    AND column_name = 'is_practice'
+                `);
+                if (checkIsPractice.rows.length === 0) {
+                    console.log('[Schema] 📝 Adding is_practice column to notifications...');
+                    await client.query(`
+                        ALTER TABLE notifications ADD COLUMN IF NOT EXISTS is_practice BOOLEAN DEFAULT FALSE
+                    `);
+                    await client.query(`
+                        CREATE INDEX IF NOT EXISTS idx_notifications_practice ON notifications(is_practice) WHERE is_practice = true
+                    `);
+                    console.log('[Schema] ✅ notifications.is_practice added');
+                }
+            } catch (ipErr) {
+                console.error(`[Schema] ⚠️ notifications.is_practice error: ${ipErr.message}`);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {
