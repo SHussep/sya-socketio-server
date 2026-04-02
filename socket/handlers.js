@@ -377,15 +377,17 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
         socket.on('scale_alert', async (data) => {
             stats.totalEvents++;
             const roomName = `branch_${data.branchId}`;
+            const isPractice = data.is_practice === true;
 
             console.log(`[ALERT] 🔍 Datos recibidos:`, {
                 branchId: data.branchId,
                 eventType: data.eventType,
                 severity: data.severity,
-                employeeName: data.employeeName
+                employeeName: data.employeeName,
+                is_practice: isPractice
             });
 
-            console.log(`[ALERT] Sucursal ${data.branchId}: ${data.eventType} (${data.severity})`);
+            console.log(`[ALERT] Sucursal ${data.branchId}: ${data.eventType} (${data.severity})${isPractice ? ' [PRÁCTICA]' : ''}`);
             console.log(`[ALERT] Emitiendo a room: ${roomName}`);
 
             const roomSockets = io.sockets.adapter.rooms.get(roomName);
@@ -398,8 +400,50 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
                 });
             }
 
-            // ⚠️ IMPORTANTE: NO guardar en BD aquí ni enviar FCM
+            // ⚠️ IMPORTANTE: NO guardar en BD aquí ni enviar FCM para eventos reales
             // Desktop ya envía los eventos via REST API (/api/guardian-events)
+
+            // Practice mode: prefix FCM title, save notification with is_practice,
+            // do NOT save to suspicious_weighing_logs
+            if (isPractice) {
+                console.log(`[ALERT] 🎓 Evento de práctica — no se guarda en suspicious_weighing_logs`);
+                try {
+                    const practiceTitle = `[PRÁCTICA] ${data.title || data.eventType}`;
+                    const practiceBody = data.description || `${data.employeeName}: ${data.eventType} (${data.severity})`;
+
+                    await notificationHelper.sendNotificationToAdminsInBranch(data.branchId, {
+                        title: practiceTitle,
+                        body: practiceBody,
+                        data: {
+                            type: 'scale_alert',
+                            is_practice: 'true',
+                            branchId: data.branchId.toString(),
+                            eventType: data.eventType
+                        }
+                    }, { notificationType: 'notify_guardian' });
+
+                    // Guardar notificación con is_practice = true (no en suspicious_weighing_logs)
+                    const { saveToNotificationHistory: saveHist } = require('../utils/notificationHelper');
+                    // Use internal helper via pool directly since saveToNotificationHistory isn't exported
+                    await pool.query(
+                        `INSERT INTO notifications (tenant_id, branch_id, employee_id, category, event_type, title, body, data, is_practice)
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+                        [
+                            data.tenantId || socket.user?.tenantId,
+                            data.branchId,
+                            null,
+                            'security',
+                            'scale_alert_practice',
+                            practiceTitle,
+                            practiceBody,
+                            JSON.stringify({ ...data, is_practice: true }),
+                            true
+                        ]
+                    );
+                } catch (practiceErr) {
+                    console.error(`[ALERT] ⚠️ Error procesando alerta de práctica:`, practiceErr.message);
+                }
+            }
         });
 
         socket.on('production_alert', async (data) => {
@@ -848,6 +892,67 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
                     console.log(`[PREPMODE] 📨 FCM desactivación enviada${isShortSession ? ' (SESIÓN CORTA)' : ''} al tenant ${data.tenantId}`);
                 } catch (error) {
                     console.error(`[PREPMODE] ⚠️ Error enviando notificación FCM de desactivación:`, error.message);
+                }
+            }
+        });
+
+        // ═══════════════════════════════════════════════════════════════
+        // PRACTICE MODE - Notificación en tiempo real a administradores
+        // ═══════════════════════════════════════════════════════════════
+        socket.on('practice_mode_activated', async (data) => {
+            stats.totalEvents++;
+            const roomName = `branch_${data.branchId}`;
+
+            console.log(`[PRACTICE] 🎓 Modo Práctica ACTIVADO en sucursal ${data.branchId} (tenant ${data.tenantId})`);
+            console.log(`[PRACTICE]   Sucursal: ${data.branchName}`);
+            console.log(`[PRACTICE]   Operador: ${data.ownerName}`);
+            console.log(`[PRACTICE]   Terminal: ${data.terminalId || 'N/A'}`);
+
+            socket.to(roomName).emit('practice_mode_activated', {
+                ...data,
+                receivedAt: new Date().toISOString()
+            });
+
+            // Enviar FCM a admins
+            if (shouldSendPrepModeFcm(data.branchId, 'practice_activated')) {
+                try {
+                    await notificationHelper.notifyPracticeModeActivated(data.tenantId, data.branchId, {
+                        ownerName: data.ownerName,
+                        terminalId: data.terminalId,
+                        branchName: data.branchName
+                    });
+                    console.log(`[PRACTICE] 📨 FCM de activación enviada al tenant ${data.tenantId}`);
+                } catch (error) {
+                    console.error(`[PRACTICE] ⚠️ Error enviando FCM de activación:`, error.message);
+                }
+            }
+        });
+
+        socket.on('practice_mode_deactivated', async (data) => {
+            stats.totalEvents++;
+            const roomName = `branch_${data.branchId}`;
+
+            console.log(`[PRACTICE] ✅ Modo Práctica DESACTIVADO en sucursal ${data.branchId} (tenant ${data.tenantId})`);
+            console.log(`[PRACTICE]   Sucursal: ${data.branchName}`);
+            console.log(`[PRACTICE]   Operador: ${data.ownerName}`);
+            console.log(`[PRACTICE]   Terminal: ${data.terminalId || 'N/A'}`);
+
+            socket.to(roomName).emit('practice_mode_deactivated', {
+                ...data,
+                receivedAt: new Date().toISOString()
+            });
+
+            // Enviar FCM a admins
+            if (shouldSendPrepModeFcm(data.branchId, 'practice_deactivated')) {
+                try {
+                    await notificationHelper.notifyPracticeModeDeactivated(data.tenantId, data.branchId, {
+                        ownerName: data.ownerName,
+                        terminalId: data.terminalId,
+                        branchName: data.branchName
+                    });
+                    console.log(`[PRACTICE] 📨 FCM de desactivación enviada al tenant ${data.tenantId}`);
+                } catch (error) {
+                    console.error(`[PRACTICE] ⚠️ Error enviando FCM de desactivación:`, error.message);
                 }
             }
         });

@@ -97,15 +97,15 @@ async function filterDevicesByPreferences(deviceTokensWithEmployeeId, notificati
  * Helper interno para guardar notificación en la tabla de historial (campana)
  * Excluye: guardian (tiene su propia página)
  */
-async function saveToNotificationHistory({ tenant_id, branch_id, employee_id, category, event_type, title, body, data }) {
+async function saveToNotificationHistory({ tenant_id, branch_id, employee_id, category, event_type, title, body, data, is_practice }) {
     try {
         // Excluir eventos de Guardian (tienen su propia página)
         if (category === 'guardian') return null;
 
         await pool.query(
-            `INSERT INTO notifications (tenant_id, branch_id, employee_id, category, event_type, title, body, data)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-            [tenant_id, branch_id, employee_id, category, event_type, title, body, data ? JSON.stringify(data) : null]
+            `INSERT INTO notifications (tenant_id, branch_id, employee_id, category, event_type, title, body, data, is_practice)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+            [tenant_id, branch_id, employee_id, category, event_type, title, body, data ? JSON.stringify(data) : null, is_practice || false]
         );
     } catch (error) {
         // No fallar si no se puede guardar, solo loguear
@@ -1267,6 +1267,138 @@ async function notifyGeofenceEvent(tenantId, branchId, { employeeId, employeeNam
     }
 }
 
+// ═══════════════════════════════════════════════════════════════
+// PRACTICE MODE - Notificaciones de modo práctica/entrenamiento
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Envía notificación cuando se activa el Modo Práctica
+ * Notifica a TODOS los administradores y encargados del TENANT
+ * @param {number} tenantId - ID del tenant
+ * @param {number} branchId - ID de la sucursal
+ * @param {object} params - { ownerName, terminalId, branchName }
+ */
+async function notifyPracticeModeActivated(tenantId, branchId, { ownerName, terminalId, branchName }) {
+    try {
+        const fcmTitle = `[PRÁCTICA] Modo Práctica Activado [${branchName}]`;
+        const fcmBody = `${ownerName} activó el Modo Práctica. Las operaciones no serán reales.`;
+
+        const result = await sendNotificationToAdminsInTenant(tenantId, {
+            title: fcmTitle,
+            body: fcmBody,
+            data: {
+                type: 'practice_mode_activated',
+                ownerName,
+                terminalId: terminalId || '',
+                branchName,
+                branchId: branchId.toString(),
+                tenantId: tenantId.toString()
+            }
+        }, { notificationType: 'notify_guardian' });
+
+        console.log(`[NotificationHelper] 🎓 Notificación de Modo Práctica activado enviada a admins del tenant ${tenantId}: ${result.sent}/${result.total || 0}`);
+
+        await saveToNotificationHistory({
+            tenant_id: tenantId,
+            branch_id: branchId,
+            employee_id: null,
+            category: 'security',
+            event_type: 'practice_mode_activated',
+            title: `🎓 Modo Práctica Activado [${branchName}]`,
+            body: `${ownerName} activó el Modo Práctica`,
+            data: { ownerName, terminalId, branchName, branchId, tenantId },
+            is_practice: true
+        });
+
+        return result;
+    } catch (error) {
+        console.error('[NotificationHelper] ❌ Error en notifyPracticeModeActivated:', error.message);
+        return { sent: 0, failed: 0, error: error.message };
+    }
+}
+
+/**
+ * Envía notificación cuando se desactiva el Modo Práctica
+ * Notifica a TODOS los administradores y encargados del TENANT
+ * @param {number} tenantId - ID del tenant
+ * @param {number} branchId - ID de la sucursal
+ * @param {object} params - { ownerName, terminalId, branchName }
+ */
+async function notifyPracticeModeDeactivated(tenantId, branchId, { ownerName, terminalId, branchName }) {
+    try {
+        const fcmTitle = `[PRÁCTICA] Modo Práctica Desactivado [${branchName}]`;
+        const fcmBody = `${ownerName} desactivó el Modo Práctica. Las operaciones vuelven a ser reales.`;
+
+        const result = await sendNotificationToAdminsInTenant(tenantId, {
+            title: fcmTitle,
+            body: fcmBody,
+            data: {
+                type: 'practice_mode_deactivated',
+                ownerName,
+                terminalId: terminalId || '',
+                branchName,
+                branchId: branchId.toString(),
+                tenantId: tenantId.toString()
+            }
+        }, { notificationType: 'notify_guardian' });
+
+        console.log(`[NotificationHelper] 🎓 Notificación de Modo Práctica desactivado enviada a admins del tenant ${tenantId}: ${result.sent}/${result.total || 0}`);
+
+        await saveToNotificationHistory({
+            tenant_id: tenantId,
+            branch_id: branchId,
+            employee_id: null,
+            category: 'security',
+            event_type: 'practice_mode_deactivated',
+            title: `✅ Modo Práctica Desactivado [${branchName}]`,
+            body: `${ownerName} desactivó el Modo Práctica`,
+            data: { ownerName, terminalId, branchName, branchId, tenantId },
+            is_practice: true
+        });
+
+        return result;
+    } catch (error) {
+        console.error('[NotificationHelper] ❌ Error en notifyPracticeModeDeactivated:', error.message);
+        return { sent: 0, failed: 0, error: error.message };
+    }
+}
+
+/**
+ * Envía notificación cuando se realiza limpieza de datos de práctica
+ * Notifica a TODOS los administradores y encargados del TENANT
+ * @param {number} tenantId - ID del tenant
+ * @param {number} branchId - ID de la sucursal
+ * @param {object} params - { ownerName, terminalId, deletedCount }
+ */
+async function notifyPracticeModeCleanup(tenantId, branchId, { ownerName, terminalId, deletedCount }) {
+    try {
+        const fcmTitle = `[PRÁCTICA] Limpieza de datos de práctica`;
+        const fcmBody = `${ownerName} eliminó ${deletedCount} notificación(es) de práctica.`;
+
+        const result = await sendNotificationToAdminsInTenant(tenantId, {
+            title: fcmTitle,
+            body: fcmBody,
+            data: {
+                type: 'practice_mode_cleanup',
+                ownerName,
+                terminalId: terminalId || '',
+                deletedCount: deletedCount.toString(),
+                branchId: branchId.toString(),
+                tenantId: tenantId.toString()
+            }
+        }, { notificationType: 'notify_guardian' });
+
+        console.log(`[NotificationHelper] 🧹 Notificación de limpieza de práctica enviada a admins del tenant ${tenantId}: ${result.sent}/${result.total || 0}`);
+
+        // No guardar en historial — la limpieza ya eliminó las notificaciones de práctica
+
+        return result;
+    } catch (error) {
+        console.error('[NotificationHelper] ❌ Error en notifyPracticeModeCleanup:', error.message);
+        return { sent: 0, failed: 0, error: error.message };
+    }
+}
+
 module.exports = {
     sendNotificationToBranch,
     sendNotificationToAdminsInBranch,
@@ -1289,5 +1421,8 @@ module.exports = {
     notifySaleCancelled,
     notifyGuardianStatusChanged,
     notifyGeofenceEvent,
-    notifyProductionAlert
+    notifyProductionAlert,
+    notifyPracticeModeActivated,
+    notifyPracticeModeDeactivated,
+    notifyPracticeModeCleanup
 };

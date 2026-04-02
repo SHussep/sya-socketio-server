@@ -60,7 +60,8 @@ module.exports = (pool, io) => {
     // Este endpoint acepta el evento pero solo emite notificaciones Socket.IO/FCM (no persiste en DB)
     router.post('/', authenticateToken, async (req, res) => {
         try {
-            const { tenantId, branchId, employeeId, eventType, severity, title, description, weightKg, scaleId, metadata, employeeName } = req.body;
+            const { tenantId, branchId, employeeId, eventType, severity, title, description, weightKg, scaleId, metadata, employeeName, is_practice } = req.body;
+            const isPractice = is_practice === true;
 
             // Validar que tenemos los datos requeridos
             if (!tenantId || !branchId || !employeeId || !eventType) {
@@ -69,47 +70,67 @@ module.exports = (pool, io) => {
 
             const finalEmployeeName = employeeName || `Employee_${employeeId}`;
 
-            console.log(`[Guardian Events] 🚨 Evento recibido: ${eventType} - ${title} (Empleado: ${finalEmployeeName})`);
-            console.log(`[Guardian Events] ⚠️ Tabla guardian_events no existe - enviando solo notificación FCM`);
+            console.log(`[Guardian Events] 🚨 Evento recibido: ${eventType} - ${title} (Empleado: ${finalEmployeeName})${isPractice ? ' [PRÁCTICA]' : ''}`);
 
-            // ❌ Socket.IO emit comentado - no soporta filtrado por rol
-            // Solo usamos notificaciones FCM que ya están filtradas por rol (admins/encargados)
-            // if (io && branchId) {
-            //     io.to(`branch_${branchId}`).emit('scale_alert', {
-            //         branchId: branchId,
-            //         alertId: null,
-            //         severity: severity || 'medium',
-            //         eventType: eventType,
-            //         weightDetected: weightKg || 0,
-            //         details: description || '',
-            //         timestamp: new Date().toISOString(),
-            //         employeeName: finalEmployeeName,
-            //         receivedAt: new Date().toISOString(),
-            //         source: 'api'
-            //     });
-            //     console.log(`[Guardian Events] 📡 Evento 'scale_alert' emitido a branch_${branchId}`);
-            // }
+            if (isPractice) {
+                // Practice mode: prefix FCM title, save notification with is_practice,
+                // do NOT save to suspicious_weighing_logs
+                console.log(`[Guardian Events] 🎓 Evento de práctica — no se guarda en suspicious_weighing_logs`);
 
-            // ✅ Enviar notificación FCM a dispositivos móviles (filtrada por rol)
-            if (branchId) {
-                try {
-                    await notificationHelper.notifyScaleAlert(branchId, {
-                        severity: severity || 'medium',
-                        eventType: eventType,
-                        details: description || 'Alerta de báscula detectada',
-                        employeeName: finalEmployeeName
-                    });
-                    console.log(`[Guardian Events] ✅ FCM enviado: ${eventType} (${finalEmployeeName})`);
-                } catch (fcmError) {
-                    console.error(`[Guardian Events] ⚠️ Error enviando FCM: ${fcmError.message}`);
-                    // No fallar si hay error en FCM
+                if (branchId) {
+                    try {
+                        const practiceTitle = `[PRÁCTICA] ${title || eventType}`;
+                        await notificationHelper.sendNotificationToAdminsInBranch(branchId, {
+                            title: practiceTitle,
+                            body: description || `${finalEmployeeName}: ${eventType} (${severity || 'medium'})`,
+                            data: {
+                                type: 'scale_alert',
+                                is_practice: 'true',
+                                branchId: branchId.toString(),
+                                eventType
+                            }
+                        }, { notificationType: 'notify_guardian' });
+
+                        // Save notification with is_practice = true
+                        await pool.query(
+                            `INSERT INTO notifications (tenant_id, branch_id, employee_id, category, event_type, title, body, data, is_practice)
+                             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+                            [tenantId, branchId, null, 'security', 'scale_alert_practice', practiceTitle,
+                             description || `${finalEmployeeName}: ${eventType}`,
+                             JSON.stringify({ eventType, severity, employeeName: finalEmployeeName, is_practice: true }),
+                             true]
+                        );
+                        console.log(`[Guardian Events] ✅ FCM de práctica enviado: ${eventType} (${finalEmployeeName})`);
+                    } catch (fcmError) {
+                        console.error(`[Guardian Events] ⚠️ Error enviando FCM de práctica: ${fcmError.message}`);
+                    }
+                }
+            } else {
+                console.log(`[Guardian Events] ⚠️ Tabla guardian_events no existe - enviando solo notificación FCM`);
+
+                // ✅ Enviar notificación FCM a dispositivos móviles (filtrada por rol)
+                if (branchId) {
+                    try {
+                        await notificationHelper.notifyScaleAlert(branchId, {
+                            severity: severity || 'medium',
+                            eventType: eventType,
+                            details: description || 'Alerta de báscula detectada',
+                            employeeName: finalEmployeeName
+                        });
+                        console.log(`[Guardian Events] ✅ FCM enviado: ${eventType} (${finalEmployeeName})`);
+                    } catch (fcmError) {
+                        console.error(`[Guardian Events] ⚠️ Error enviando FCM: ${fcmError.message}`);
+                        // No fallar si hay error en FCM
+                    }
                 }
             }
 
             res.json({
                 success: true,
-                data: { id: null, event_type: eventType, severity, title, description },
-                message: 'Guardian event notification sent (not persisted to database)'
+                data: { id: null, event_type: eventType, severity, title, description, is_practice: isPractice },
+                message: isPractice
+                    ? 'Guardian practice event notification sent (not persisted to suspicious_weighing_logs)'
+                    : 'Guardian event notification sent (not persisted to database)'
             });
         } catch (error) {
             console.error('[Guardian Events] Error:', error);
