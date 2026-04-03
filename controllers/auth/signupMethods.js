@@ -29,7 +29,7 @@ const deriveMobileAccessType = (roleId, canUseMobileApp) => {
 
 module.exports = {
     async refreshToken(req, res) {
-        const { refreshToken } = req.body;
+        const { refreshToken, branch_id } = req.body;
 
         if (!refreshToken) {
             return res.status(400).json({
@@ -55,23 +55,33 @@ module.exports = {
 
             const employee = employeeResult.rows[0];
 
+            // Determine branchId: use override if owner, else use main_branch_id
             let branchId = employee.main_branch_id;
+            if (branch_id && employee.is_owner === true) {
+                // Verify the branch belongs to the same tenant
+                const branchCheck = await this.pool.query(
+                    'SELECT id FROM branches WHERE id = $1 AND tenant_id = $2',
+                    [parseInt(branch_id), employee.tenant_id]
+                );
+                if (branchCheck.rows.length > 0) {
+                    branchId = parseInt(branch_id);
+                    console.log(`[Refresh Token] 🏪 Owner branch override: ${branchId} (kiosk mode)`);
+                }
+            }
+
             if (!branchId) {
-                // Fallback: buscar primera branch del tenant y asignarla
                 const branchResult = await this.pool.query(
                     'SELECT id FROM branches WHERE tenant_id = $1 ORDER BY id LIMIT 1',
                     [employee.tenant_id]
                 );
                 if (branchResult.rows.length > 0) {
                     branchId = branchResult.rows[0].id;
-                    // Auto-fix: asignar main_branch_id para futuros refreshes
                     await this.pool.query(
                         'UPDATE employees SET main_branch_id = $1 WHERE id = $2',
                         [branchId, employee.id]
                     );
                     console.log(`[Refresh Token] 🔧 Auto-asignó main_branch_id=${branchId} a empleado ${employee.email}`);
                 } else {
-                    console.warn(`[Refresh Token] ⚠️ Empleado ${employee.email} sin sucursal disponible`);
                     return res.status(400).json({
                         success: false,
                         message: 'No hay sucursales disponibles para este empleado'
@@ -79,6 +89,7 @@ module.exports = {
                 }
             }
 
+            // New access token
             const newToken = jwt.sign(
                 {
                     employeeId: employee.id,
@@ -92,11 +103,25 @@ module.exports = {
                 { expiresIn: '15m' }
             );
 
-            console.log(`[Refresh Token] ✅ Token renovado para: ${employee.email}`);
+            // Rolling refresh token — issue new one with fresh 30d expiry
+            const newRefreshToken = jwt.sign(
+                {
+                    employeeId: employee.id,
+                    tenantId: employee.tenant_id,
+                    is_owner: employee.is_owner === true
+                },
+                JWT_SECRET,
+                { expiresIn: '30d' }
+            );
+
+            console.log(`[Refresh Token] ✅ Token renovado para: ${employee.email} (branch=${branchId}, rolling=true)`);
 
             res.json({
                 success: true,
-                token: newToken
+                token: newToken,             // MUST keep 'token' — existing Flutter reads data['token']
+                accessToken: newToken,       // New field for kiosk clients
+                refreshToken: newRefreshToken,
+                expiresIn: 900
             });
 
         } catch (error) {
@@ -110,8 +135,7 @@ module.exports = {
             console.error('[Refresh Token] Error:', error);
             res.status(500).json({
                 success: false,
-                message: 'Error al renovar token',
-                ...(process.env.NODE_ENV !== 'production' && { error: error.message })
+                message: 'Error interno del servidor'
             });
         }
     },
