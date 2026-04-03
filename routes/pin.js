@@ -12,7 +12,7 @@ module.exports = (pool) => {
     // POST /api/employees/:id/pin - Set/update PIN (employee changes own, or owner sets)
     router.post('/:id/pin', authenticateToken, async (req, res) => {
         try {
-            const { tenantId, employeeId: callerId, is_owner: callerIsOwner } = req.user;
+            const { tenantId, employeeId: callerId } = req.user;
             const targetId = parseInt(req.params.id);
             const { pin } = req.body;
 
@@ -31,6 +31,13 @@ module.exports = (pool) => {
             if (empResult.rows.length === 0) {
                 return res.status(404).json({ success: false, message: 'Empleado no encontrado' });
             }
+
+            // Query caller's is_owner from DB (not in JWT yet)
+            const callerResult = await pool.query(
+                'SELECT is_owner FROM employees WHERE id = $1 AND tenant_id = $2 AND is_active = true',
+                [callerId, tenantId]
+            );
+            const callerIsOwner = callerResult.rows[0]?.is_owner;
 
             // Authorization: only self or owner can set PIN
             if (targetId !== callerId && !callerIsOwner) {
@@ -92,9 +99,16 @@ module.exports = (pool) => {
     // POST /api/employees/:id/pin/reset - Owner resets employee's PIN
     router.post('/:id/pin/reset', authenticateToken, async (req, res) => {
         try {
-            const { tenantId, is_owner: callerIsOwner } = req.user;
+            const { tenantId, employeeId: callerId } = req.user;
             const targetId = parseInt(req.params.id);
             const { pin } = req.body;
+
+            // Query caller's is_owner from DB (not in JWT yet)
+            const callerResult = await pool.query(
+                'SELECT is_owner FROM employees WHERE id = $1 AND tenant_id = $2 AND is_active = true',
+                [callerId, tenantId]
+            );
+            const callerIsOwner = callerResult.rows[0]?.is_owner;
 
             if (!callerIsOwner) {
                 return res.status(403).json({ success: false, message: 'Solo el propietario puede resetear PINs' });
