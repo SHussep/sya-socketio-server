@@ -657,7 +657,7 @@ module.exports = (pool) => {
                         e.role_id, r.name as role_name,
                         e.main_branch_id, e.can_use_mobile_app, e.mobile_access_type, e.mobile_access_types, e.google_user_identifier,
                         e.global_id, e.terminal_id, e.local_op_seq, e.created_local_utc, e.device_event_raw,
-                        e.email_verified, e.is_owner, e.map_icon,
+                        e.email_verified, e.is_owner, e.map_icon, e.pin_hash,
                         e.created_at, e.updated_at
                  FROM employees e
                  LEFT JOIN roles r ON e.role_id = r.id
@@ -715,6 +715,7 @@ module.exports = (pool) => {
                     e.is_owner,
                     e.email_verified,
                     e.password_hash,
+                    e.pin_hash,
                     e.created_at,
                     e.updated_at
                 FROM employees e
