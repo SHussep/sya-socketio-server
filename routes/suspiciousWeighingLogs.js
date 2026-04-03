@@ -208,7 +208,8 @@ module.exports = (pool, io) => {
                         severity: severity || 'medium',
                         eventType: event_type,
                         details: formattedDetails,
-                        employeeName: employeeName
+                        employeeName: employeeName,
+                        pageContext: page_context
                     });
                     console.log(`[Sync/GuardianLogs] ✅ FCM enviado: ${event_type} - ${employeeName}`);
                 } catch (fcmError) {

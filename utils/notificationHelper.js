@@ -556,7 +556,7 @@ function getGuardianSimpleCategory(eventType) {
  * Filtra según preferencias: notify_guardian_peso_no_registrado,
  *   notify_guardian_operacion_irregular, notify_guardian_discrepancia
  */
-async function notifyScaleAlert(branchId, { severity, eventType, details, employeeName, simpleCategory }) {
+async function notifyScaleAlert(branchId, { severity, eventType, details, employeeName, simpleCategory, pageContext }) {
     const severityText = severity === 'high' ? 'ALTA' : severity === 'medium' ? 'MEDIA' : 'BAJA';
 
     // Si no viene simpleCategory del frontend, determinarla a partir del eventType
@@ -565,10 +565,13 @@ async function notifyScaleAlert(branchId, { severity, eventType, details, employ
     // Todas las alertas de Guardian usan el mismo grupo de preferencias
     const notificationType = 'notify_guardian';
 
-    console.log(`[NotificationHelper] 🎯 Guardian Alert: ${eventType} → categoría: ${resolvedCategory}`);
+    // Determine source label for the notification
+    const sourceLabel = pageContext || 'POS en PC';
+
+    console.log(`[NotificationHelper] 🎯 Guardian Alert: ${eventType} → categoría: ${resolvedCategory}, fuente: ${sourceLabel}`);
 
     return await sendNotificationToAdminsInBranch(branchId, {
-        title: `Alerta de Báscula [${severityText}]`,
+        title: `Alerta de Báscula [${severityText}] — ${sourceLabel}`,
         body: `${eventType}: ${details} (${employeeName})`,
         data: {
             type: 'scale_alert',
