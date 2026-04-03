@@ -138,6 +138,7 @@ const dataResetRoutes = require('./routes/data-reset');
 const customerProductPricesRoutes = require('./routes/customer_product_prices');
 const kardexRoutes = require('./routes/kardex');
 const productoBranchRoutes = require('./routes/productoBranch');
+const pinRoutes = require('./routes/pin');
 const { processGuardianDigests, initializeDigestSchedules } = require('./jobs/guardianEmailDigest');
 const { processLicenseExpiryNotifications } = require('./jobs/licenseExpiryNotifier');
 const { purgeExpiredResets } = require('./jobs/dataResetPurge');
@@ -168,6 +169,7 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/notification-preferences', notificationPreferencesRoutes);
 app.use('/api/desktop/updates', desktopUpdatesRoutes);
 app.use('/api/employees', employeesRoutes);
+app.use('/api/employees', pinRoutes(pool));
 app.use('/api/employee-branches', employeeBranchesRoutes);
 app.use('/api/cliente-branches', clienteBranchesRoutes);
 
