@@ -569,6 +569,18 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
             }
         });
 
+        // EVENT: Guardian config updated (Desktop ↔ Flutter sync)
+        socket.on('guardian_config_updated', (data) => {
+            stats.totalEvents++;
+            const roomName = `branch_${data.branchId}`;
+            console.log(`[GUARDIAN] ⚙️ Config actualizada por ${data.source || 'unknown'} en branch ${data.branchId}`);
+            // Broadcast to room so the other platform picks it up
+            socket.to(roomName).emit('guardian_config_updated', {
+                ...data,
+                receivedAt: new Date().toISOString()
+            });
+        });
+
         // EVENT: Guardian status changed (Desktop → Mobile)
         socket.on('guardian_status_changed', async (data) => {
             stats.totalEvents++;
