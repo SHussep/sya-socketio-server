@@ -58,6 +58,19 @@ module.exports = (pool, io) => {
                 }
             }
 
+            // ═══ is_owner guard: only owners can open shifts on behalf of other employees ═══
+            if (employeeGlobalId && employeeId !== jwtEmployeeId) {
+                const callerIsOwner = req.user.is_owner === true;
+                if (!callerIsOwner) {
+                    await client.query('ROLLBACK');
+                    return res.status(403).json({
+                        success: false,
+                        message: 'Solo el propietario puede abrir turnos de otros empleados'
+                    });
+                }
+                console.log(`[Shifts] 🏪 Owner ${jwtEmployeeId} opening shift for employee ${employeeId} (kiosk mode)`);
+            }
+
             // Check if branch has multi_caja_enabled
             const branchResult = await client.query(
                 'SELECT multi_caja_enabled FROM branches WHERE id = $1 AND tenant_id = $2',
@@ -361,6 +374,18 @@ module.exports = (pool, io) => {
                 if (empResult.rows.length > 0) {
                     employeeId = empResult.rows[0].id;
                 }
+            }
+
+            // ═══ is_owner guard: only owners can close shifts on behalf of other employees ═══
+            if (employeeGlobalId && employeeId !== jwtEmployeeId) {
+                const callerIsOwner = req.user.is_owner === true;
+                if (!callerIsOwner) {
+                    return res.status(403).json({
+                        success: false,
+                        message: 'Solo el propietario puede cerrar turnos de otros empleados'
+                    });
+                }
+                console.log(`[Shifts] 🏪 Owner ${jwtEmployeeId} closing shift for employee ${employeeId} (kiosk mode)`);
             }
 
             // Verificar que el turno existe, pertenece al empleado y está abierto
