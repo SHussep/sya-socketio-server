@@ -85,7 +85,8 @@ module.exports = {
                     tenantId: employee.tenant_id,
                     branchId: branchId,
                     roleId: employee.role_id,
-                    email: employee.email
+                    email: employee.email,
+                    is_owner: employee.is_owner === true
                 },
                 JWT_SECRET,
                 { expiresIn: '15m' }
@@ -334,7 +335,8 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                     tenantId: tenant.id,
                     branchId: branch.id,
                     roleId: employee.role_id,
-                    email: employee.email
+                    email: employee.email,
+                    is_owner: employee.is_owner === true
                 },
                 JWT_SECRET,
                 { expiresIn: '7d' }
@@ -343,7 +345,8 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
             const refreshToken = jwt.sign(
                 {
                     employeeId: employee.id,
-                    tenantId: tenant.id
+                    tenantId: tenant.id,
+                    is_owner: employee.is_owner === true
                 },
                 JWT_SECRET,
                 { expiresIn: '30d' }
@@ -541,19 +544,23 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                 employeeId: employee.id,
                 tenantId: tenant.id,
                 roleId: employee.role_id,
-                email: email
+                email: email,
+                is_owner: employee.is_owner === true
             } : {
                 tenantId: tenant.id,
-                email: email
+                email: email,
+                is_owner: false
             };
 
             const accessToken = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: '7d' });
 
             const refreshPayload = employee ? {
                 employeeId: employee.id,
-                tenantId: tenant.id
+                tenantId: tenant.id,
+                is_owner: employee.is_owner === true
             } : {
-                tenantId: tenant.id
+                tenantId: tenant.id,
+                is_owner: false
             };
 
             const refreshToken = jwt.sign(refreshPayload, JWT_SECRET, { expiresIn: '30d' });

@@ -210,7 +210,8 @@ module.exports = {
                     tenantId: employee.tenant_id,
                     branchId: selectedBranch.id,
                     roleId: employee.role_id,
-                    email: employee.email
+                    email: employee.email,
+                    is_owner: employee.is_owner === true
                 },
                 JWT_SECRET,
                 { expiresIn: '15m' }
@@ -219,7 +220,8 @@ module.exports = {
             const refreshToken = jwt.sign(
                 {
                     employeeId: employee.id,
-                    tenantId: employee.tenant_id
+                    tenantId: employee.tenant_id,
+                    is_owner: employee.is_owner === true
                 },
                 JWT_SECRET,
                 { expiresIn: '30d' }
@@ -434,7 +436,8 @@ module.exports = {
                     branchId: selectedBranch.id,
                     roleId: employee.role_id,
                     email: employee.email,
-                    canUseMobileApp: employee.can_use_mobile_app
+                    canUseMobileApp: employee.can_use_mobile_app,
+                    is_owner: employee.is_owner === true
                 },
                 JWT_SECRET,
                 { expiresIn: '15m' }
@@ -443,7 +446,8 @@ module.exports = {
             const refreshToken = jwt.sign(
                 {
                     employeeId: employee.id,
-                    tenantId: employee.tenant_id
+                    tenantId: employee.tenant_id,
+                    is_owner: employee.is_owner === true
                 },
                 JWT_SECRET,
                 { expiresIn: '30d' }

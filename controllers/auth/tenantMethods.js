@@ -718,7 +718,8 @@ module.exports = {
                     tenantId: tenantId,
                     branchId: branchId,
                     roleId: decoded.roleId,
-                    email: decoded.email
+                    email: decoded.email,
+                    is_owner: decoded.is_owner === true
                 },
                 JWT_SECRET,
                 { expiresIn: '15m' }
