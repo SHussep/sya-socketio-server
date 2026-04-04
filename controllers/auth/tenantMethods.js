@@ -987,7 +987,7 @@ module.exports = {
     async verifyAdminPassword(req, res) {
         console.log('[Verify Admin Password] Nueva solicitud de verificación');
 
-        const { tenantId, password } = req.body;
+        const { tenantId, password, email } = req.body;
 
         if (!tenantId || !password) {
             return res.status(400).json({
@@ -997,23 +997,41 @@ module.exports = {
         }
 
         try {
-            // Buscar al owner del tenant O cualquier administrador (role_id = 1)
-            const employeeResult = await this.pool.query(
-                `SELECT id, password_hash, first_name, last_name, is_owner, role_id
-                 FROM employees
-                 WHERE tenant_id = $1
-                   AND is_active = TRUE
-                   AND (is_owner = TRUE OR role_id = 1)
-                 ORDER BY is_owner DESC, id ASC
-                 LIMIT 1`,
-                [tenantId]
-            );
+            let query, params;
+
+            if (email) {
+                // Look up specific admin by email/username
+                query = `SELECT id, password_hash, first_name, last_name, is_owner, role_id, email
+                         FROM employees
+                         WHERE tenant_id = $1
+                           AND is_active = TRUE
+                           AND (is_owner = TRUE OR role_id = 1)
+                           AND (LOWER(email) = LOWER($2) OR LOWER(username) = LOWER($2))
+                         LIMIT 1`;
+                params = [tenantId, email];
+                console.log(`[Verify Admin Password] Buscando admin por email/username: ${email}`);
+            } else {
+                // Fallback: owner or first admin (backwards compatible)
+                query = `SELECT id, password_hash, first_name, last_name, is_owner, role_id, email
+                         FROM employees
+                         WHERE tenant_id = $1
+                           AND is_active = TRUE
+                           AND (is_owner = TRUE OR role_id = 1)
+                         ORDER BY is_owner DESC, id ASC
+                         LIMIT 1`;
+                params = [tenantId];
+            }
+
+            const employeeResult = await this.pool.query(query, params);
 
             if (employeeResult.rows.length === 0) {
-                console.log(`[Verify Admin Password] ❌ No se encontró owner/admin para tenant ${tenantId}`);
+                const msg = email
+                    ? `No se encontró administrador con email/usuario: ${email}`
+                    : 'No se encontró administrador para este negocio';
+                console.log(`[Verify Admin Password] ❌ ${msg}`);
                 return res.status(404).json({
                     success: false,
-                    message: 'No se encontró administrador para este negocio'
+                    message: email ? 'No se encontró un administrador con ese correo o usuario' : msg
                 });
             }
 
@@ -1032,7 +1050,7 @@ module.exports = {
             const isValid = await bcrypt.compare(password, employee.password_hash);
 
             if (isValid) {
-                console.log(`[Verify Admin Password] ✅ Contraseña verificada para tenant ${tenantId}`);
+                console.log(`[Verify Admin Password] ✅ Contraseña verificada para tenant ${tenantId} (admin: ${employee.email})`);
                 res.json({
                     success: true,
                     message: 'Contraseña verificada correctamente',
