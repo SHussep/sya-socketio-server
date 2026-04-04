@@ -2875,6 +2875,32 @@ async function runMigrations() {
                 console.error(`[Schema] ⚠️ notifications.is_practice error: ${ipErr.message}`);
             }
 
+            // ═══════════════════════════════════════════════════════════
+            // sync_error_reports — Reportes de errores de sincronización enviados desde Desktop
+            // ═══════════════════════════════════════════════════════════
+            try {
+                await client.query(`
+                    CREATE TABLE IF NOT EXISTS sync_error_reports (
+                        id SERIAL PRIMARY KEY,
+                        tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+                        branch_id INTEGER NOT NULL REFERENCES branches(id),
+                        device_id TEXT NOT NULL,
+                        device_name TEXT,
+                        app_version TEXT,
+                        auto_generated BOOLEAN DEFAULT FALSE,
+                        sync_stats JSONB,
+                        errors JSONB,
+                        created_at TIMESTAMPTZ DEFAULT NOW()
+                    )
+                `);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_sync_reports_tenant ON sync_error_reports(tenant_id)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_sync_reports_branch ON sync_error_reports(tenant_id, branch_id)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_sync_reports_created ON sync_error_reports(created_at)`);
+                console.log('[Schema] ✅ sync_error_reports table ensured');
+            } catch (serErr) {
+                console.error(`[Schema] ⚠️ sync_error_reports error: ${serErr.message}`);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {
