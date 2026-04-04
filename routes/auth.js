@@ -27,6 +27,10 @@ module.exports = function (pool) {
     router.post('/google-signup', loginRateLimiter, bind(authController.googleSignup));
     router.post('/google-login', loginRateLimiter, bind(authController.googleLogin));
 
+    // Apple Auth (con rate limiting)
+    router.post('/apple-signup', loginRateLimiter, bind(authController.appleSignup));
+    router.post('/apple-login', loginRateLimiter, bind(authController.appleLogin));
+
     // Devices
     router.post('/devices/register', bind(authController.registerDevice));
 

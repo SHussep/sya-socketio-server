@@ -6,6 +6,7 @@ const gmailMethods = require('./gmailMethods');
 const loginMethods = require('./loginMethods');
 const signupMethods = require('./signupMethods');
 const tenantMethods = require('./tenantMethods');
+const appleMethods = require('./appleMethods');
 
 class AuthController {
     constructor(pool) {
@@ -19,7 +20,8 @@ Object.assign(
     gmailMethods,
     loginMethods,
     signupMethods,
-    tenantMethods
+    tenantMethods,
+    appleMethods
 );
 
 module.exports = AuthController;

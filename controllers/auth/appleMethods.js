@@ -1,0 +1,402 @@
+// Apple Sign-In Methods
+// Verifica identity tokens de Apple y maneja signup/login
+
+const jwt = require('jsonwebtoken');
+const jwksClient = require('jwks-rsa');
+
+const JWT_SECRET = process.env.JWT_SECRET;
+const APPLE_BUNDLE_ID = process.env.APPLE_BUNDLE_ID || 'com.syatortillerias.mobile';
+
+// Cliente JWKS para obtener las public keys de Apple
+const appleJwksClient = jwksClient({
+    jwksUri: 'https://appleid.apple.com/auth/keys',
+    cache: true,
+    cacheMaxAge: 86400000, // 24 horas
+    rateLimit: true,
+});
+
+/**
+ * Verifica un identity token de Apple Sign-In.
+ * Apple usa JWTs firmados con RS256, verificados con sus public keys.
+ * @param {string} identityToken - JWT de Apple
+ * @returns {object} - { email, sub, email_verified }
+ */
+async function verifyAppleToken(identityToken) {
+    // 1. Decodificar el header para obtener el kid
+    const decoded = jwt.decode(identityToken, { complete: true });
+    if (!decoded || !decoded.header || !decoded.header.kid) {
+        throw new Error('Token de Apple inválido: no se pudo decodificar el header');
+    }
+
+    // 2. Obtener la public key de Apple usando el kid
+    const key = await appleJwksClient.getSigningKey(decoded.header.kid);
+    const publicKey = key.getPublicKey();
+
+    // 3. Verificar el token
+    const payload = jwt.verify(identityToken, publicKey, {
+        algorithms: ['RS256'],
+        issuer: 'https://appleid.apple.com',
+        audience: APPLE_BUNDLE_ID,
+    });
+
+    return {
+        sub: payload.sub,           // Identificador único del usuario en Apple
+        email: payload.email,
+        email_verified: payload.email_verified === 'true' || payload.email_verified === true,
+    };
+}
+
+module.exports = {
+    /**
+     * POST /api/auth/apple-login
+     * Verifica si el email de Apple ya está registrado.
+     * Similar a googleLogin pero para tokens de Apple.
+     */
+    async appleLogin(req, res) {
+        console.log('[Apple Login] Nueva solicitud de verificación con Apple Identity Token');
+
+        const { identityToken, fullName } = req.body;
+
+        if (!identityToken) {
+            return res.status(400).json({
+                success: false,
+                message: 'identityToken es requerido'
+            });
+        }
+
+        try {
+            // Verificar el token de Apple
+            let appleUser;
+            try {
+                appleUser = await verifyAppleToken(identityToken);
+            } catch (error) {
+                console.error('[Apple Login] Error al verificar Identity Token:', error.message);
+                return res.status(401).json({
+                    success: false,
+                    message: 'Token de Apple inválido o expirado'
+                });
+            }
+
+            const email = appleUser.email;
+            const appleSub = appleUser.sub;
+            console.log(`[Apple Login] Token verificado. Email: ${email}, Sub: ${appleSub}`);
+
+            // Buscar primero por apple_user_identifier (más confiable - Apple puede ocultar email)
+            let tenantResult = await this.pool.query(
+                `SELECT t.*, s.name as subscription_name, s.max_employees, s.max_devices_per_branch
+                 FROM tenants t
+                 JOIN subscriptions s ON t.subscription_id = s.id
+                 JOIN employees e ON e.tenant_id = t.id
+                 WHERE e.apple_user_identifier = $1 AND t.is_active = true
+                 LIMIT 1`,
+                [appleSub]
+            );
+
+            // Si no se encontró por apple_sub, buscar por email en tenants
+            if (tenantResult.rows.length === 0 && email) {
+                tenantResult = await this.pool.query(
+                    `SELECT t.*, s.name as subscription_name, s.max_employees, s.max_devices_per_branch
+                     FROM tenants t
+                     JOIN subscriptions s ON t.subscription_id = s.id
+                     WHERE LOWER(t.email) = LOWER($1) AND t.is_active = true`,
+                    [email]
+                );
+            }
+
+            if (tenantResult.rows.length === 0) {
+                console.log(`[Apple Login] Email/Apple ID no registrado`);
+                return res.json({
+                    success: true,
+                    emailExists: false,
+                    email: email,
+                    appleName: fullName || null,
+                    appleSub: appleSub
+                });
+            }
+
+            const tenant = tenantResult.rows[0];
+            console.log(`[Apple Login] Tenant encontrado: ${tenant.business_name} (ID: ${tenant.id})`);
+
+            // Buscar el employee owner
+            const employeeResult = await this.pool.query(
+                `SELECT * FROM employees
+                 WHERE tenant_id = $1 AND is_active = true
+                 ORDER BY is_owner DESC, role_id ASC, id ASC
+                 LIMIT 1`,
+                [tenant.id]
+            );
+
+            const employee = employeeResult.rows[0] || null;
+
+            // Actualizar apple_user_identifier si no lo tiene
+            if (employee && !employee.apple_user_identifier) {
+                try {
+                    await this.pool.query(
+                        `UPDATE employees SET apple_user_identifier = $1 WHERE id = $2`,
+                        [appleSub, employee.id]
+                    );
+                    console.log(`[Apple Login] 🍎 Apple ID vinculado a employee ${employee.id}`);
+                } catch (err) {
+                    console.log(`[Apple Login] ⚠️ Error vinculando Apple ID: ${err.message}`);
+                }
+            }
+
+            // Obtener branches
+            const branchesResult = await this.pool.query(`
+                SELECT b.id, b.branch_code, b.name, b.address, b.timezone
+                FROM branches b
+                WHERE b.tenant_id = $1 AND b.is_active = true
+                ORDER BY b.created_at ASC
+            `, [tenant.id]);
+
+            // Licencias
+            const licensesResult = await this.pool.query(`
+                SELECT
+                    COUNT(*) FILTER (WHERE status IN ('available', 'active')) as total_licenses,
+                    COUNT(*) FILTER (WHERE status = 'active') as used_licenses,
+                    COUNT(*) FILTER (WHERE status = 'available') as available_licenses
+                FROM branch_licenses
+                WHERE tenant_id = $1
+            `, [tenant.id]);
+            const licenseInfo = licensesResult.rows[0];
+
+            // Generar tokens
+            const tokenPayload = employee ? {
+                employeeId: employee.id,
+                tenantId: tenant.id,
+                roleId: employee.role_id,
+                email: employee.email,
+                is_owner: employee.is_owner === true
+            } : {
+                tenantId: tenant.id,
+                email: email,
+                is_owner: false
+            };
+
+            const accessToken = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: '7d' });
+            const refreshToken = jwt.sign(
+                employee ? { employeeId: employee.id, tenantId: tenant.id, is_owner: employee.is_owner === true }
+                         : { tenantId: tenant.id, is_owner: false },
+                JWT_SECRET,
+                { expiresIn: '30d' }
+            );
+
+            console.log(`[Apple Login] ✅ Email existe en tenant: ${tenant.business_name}`);
+
+            res.json({
+                success: true,
+                emailExists: true,
+                email: email,
+                employee: employee ? {
+                    id: employee.id,
+                    email: employee.email,
+                    username: employee.username,
+                    fullName: `${employee.first_name || ''} ${employee.last_name || ''}`.trim(),
+                    role: employee.role,
+                    globalId: employee.global_id
+                } : null,
+                tenant: {
+                    id: tenant.id,
+                    tenantCode: tenant.tenant_code,
+                    businessName: tenant.business_name,
+                    subscription: tenant.subscription_name
+                },
+                branches: branchesResult.rows.map(b => ({
+                    id: b.id,
+                    branchCode: b.branch_code,
+                    name: b.name,
+                    timezone: b.timezone || 'America/Mexico_City'
+                })),
+                planLimits: {
+                    maxEmployees: tenant.max_employees || 0,
+                    maxDevicesPerBranch: tenant.max_devices_per_branch || 0,
+                    totalLicenses: licenseInfo?.total_licenses || 0,
+                    usedLicenses: licenseInfo?.used_licenses || 0,
+                    availableLicenses: licenseInfo?.available_licenses || 0
+                },
+                tokens: {
+                    accessToken,
+                    refreshToken,
+                    expiresIn: 604800
+                }
+            });
+
+        } catch (error) {
+            console.error('[Apple Login] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al procesar login con Apple',
+                ...(process.env.NODE_ENV !== 'production' && { error: error.message })
+            });
+        }
+    },
+
+    /**
+     * POST /api/auth/apple-signup
+     * Crea un nuevo tenant usando Apple Sign-In.
+     * Reutiliza la misma lógica de googleSignup pero con Apple identity token.
+     */
+    async appleSignup(req, res) {
+        console.log('[Apple Signup] Nueva solicitud de registro con Apple');
+
+        const { identityToken, email, displayName, businessName, phoneNumber, address, password } = req.body;
+
+        if (!identityToken || !email || !businessName || !password) {
+            return res.status(400).json({
+                success: false,
+                message: 'Faltan campos requeridos: identityToken, email, businessName, password'
+            });
+        }
+
+        // Verificar el token de Apple
+        let appleUser;
+        try {
+            appleUser = await verifyAppleToken(identityToken);
+        } catch (error) {
+            console.error('[Apple Signup] Error al verificar Identity Token:', error.message);
+            return res.status(401).json({
+                success: false,
+                message: 'Token de Apple inválido o expirado'
+            });
+        }
+
+        // Inyectar el apple_sub en el request y delegar a googleSignup
+        // (misma lógica de creación de tenant/branch/employee)
+        // Pero necesitamos manejar apple_user_identifier en lugar de google_user_identifier
+        const appleSub = appleUser.sub;
+        const finalName = displayName || 'Propietario';
+
+        const bcrypt = require('bcryptjs');
+        const client = await this.pool.connect();
+
+        try {
+            await client.query('BEGIN');
+
+            // Verificar email duplicado
+            const existingTenant = await client.query(
+                'SELECT id, tenant_code, business_name FROM tenants WHERE LOWER(email) = LOWER($1)',
+                [email]
+            );
+
+            if (existingTenant.rows.length > 0) {
+                const tenantId = existingTenant.rows[0].id;
+                const branchesResult = await client.query(
+                    `SELECT id, branch_code, name, timezone FROM branches WHERE tenant_id = $1 ORDER BY created_at ASC`,
+                    [tenantId]
+                );
+
+                await client.query('ROLLBACK');
+                return res.status(409).json({
+                    success: false,
+                    message: 'Este email ya está registrado',
+                    emailExists: true,
+                    tenant: {
+                        id: existingTenant.rows[0].id,
+                        tenantCode: existingTenant.rows[0].tenant_code,
+                        businessName: existingTenant.rows[0].business_name
+                    },
+                    branches: branchesResult.rows.map(b => ({
+                        id: b.id, branchCode: b.branch_code, name: b.name,
+                        timezone: b.timezone || 'America/Mexico_City'
+                    }))
+                });
+            }
+
+            // Generar tenant code
+            const baseCode = businessName.substring(0, 3).toUpperCase();
+            let tenantCode = baseCode;
+            let codeExists = true;
+            let counter = 1;
+            while (codeExists) {
+                const check = await client.query('SELECT id FROM tenants WHERE tenant_code = $1', [tenantCode]);
+                codeExists = check.rows.length > 0;
+                if (codeExists) tenantCode = `${baseCode}${counter++}`;
+            }
+
+            // Crear tenant
+            const tenantResult = await client.query(
+                `INSERT INTO tenants (tenant_code, business_name, email, subscription_id, is_active, trial_ends_at, subscription_status)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+                [tenantCode, businessName, email, 1, true, new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), 'trial']
+            );
+            const tenant = tenantResult.rows[0];
+
+            // Crear branch
+            const branchResult = await client.query(
+                `INSERT INTO branches (tenant_id, branch_code, name, address, phone, is_active)
+                 VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+                [tenant.id, 'MAIN', 'Sucursal Principal', address || null, phoneNumber || null, true]
+            );
+            const branch = branchResult.rows[0];
+
+            // Crear employee owner con apple_user_identifier
+            const { v4: uuidv4 } = require('uuid');
+            const globalId = uuidv4();
+            const hashedPassword = await bcrypt.hash(password, 10);
+
+            const employeeResult = await client.query(
+                `INSERT INTO employees (
+                    tenant_id, username, email, password_hash, first_name, last_name,
+                    role_id, is_active, is_owner, can_use_mobile_app, main_branch_id,
+                    apple_user_identifier, global_id, terminal_id, email_verified
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                 RETURNING *`,
+                [
+                    tenant.id, email.split('@')[0], email, hashedPassword,
+                    finalName.split(' ')[0], finalName.split(' ').slice(1).join(' ') || '',
+                    1, true, true, true, branch.id,
+                    appleSub, globalId, 'mobile-' + Date.now(), true
+                ]
+            );
+            const employee = employeeResult.rows[0];
+
+            // Employee-branch relationship
+            await client.query(
+                `INSERT INTO employee_branches (tenant_id, employee_id, branch_id) VALUES ($1, $2, $3)`,
+                [tenant.id, employee.id, branch.id]
+            );
+
+            await client.query('COMMIT');
+
+            // Generar tokens
+            const token = jwt.sign(
+                { employeeId: employee.id, tenantId: tenant.id, branchId: branch.id, roleId: 1, email, is_owner: true },
+                JWT_SECRET, { expiresIn: '7d' }
+            );
+            const refreshToken = jwt.sign(
+                { employeeId: employee.id, tenantId: tenant.id, is_owner: true },
+                JWT_SECRET, { expiresIn: '30d' }
+            );
+
+            console.log(`[Apple Signup] ✅ Registro completado: ${email} → Tenant: ${businessName}`);
+
+            res.status(201).json({
+                success: true,
+                message: 'Registro exitoso',
+                token,
+                refreshToken,
+                tenant: {
+                    id: tenant.id, tenantCode: tenant.tenant_code, businessName: tenant.business_name,
+                    trialEndsAt: tenant.trial_ends_at, subscriptionStatus: 'trial'
+                },
+                employee: {
+                    id: employee.id, email: employee.email,
+                    fullName: `${employee.first_name} ${employee.last_name}`.trim(),
+                    roleId: 1, globalId: employee.global_id
+                },
+                branch: { id: branch.id, branchCode: branch.branch_code, name: branch.name }
+            });
+
+        } catch (error) {
+            await client.query('ROLLBACK');
+            console.error('[Apple Signup] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al registrar usuario con Apple',
+                ...(process.env.NODE_ENV !== 'production' && { error: error.message })
+            });
+        } finally {
+            client.release();
+        }
+    }
+};

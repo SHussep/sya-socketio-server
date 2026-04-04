@@ -176,6 +176,7 @@ async function initializeDatabase() {
                 mobile_access_type VARCHAR(50) DEFAULT 'none',
                 can_use_mobile_app BOOLEAN DEFAULT FALSE,
                 google_user_identifier VARCHAR(255),
+                apple_user_identifier VARCHAR(255),
                 main_branch_id INTEGER REFERENCES branches(id),
                 global_id VARCHAR(255) UNIQUE NOT NULL,
                 terminal_id VARCHAR(100),
@@ -567,6 +568,13 @@ async function initializeDatabase() {
             console.log('[DB] ✅ Columna employees.google_user_identifier verificada/agregada');
         } catch (error) {
             console.log('[DB] ⚠️ employees.google_user_identifier:', error.message);
+        }
+
+        try {
+            await client.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS apple_user_identifier VARCHAR(255)`);
+            console.log('[DB] ✅ Columna employees.apple_user_identifier verificada/agregada');
+        } catch (error) {
+            console.log('[DB] ⚠️ employees.apple_user_identifier:', error.message);
         }
 
         try {
