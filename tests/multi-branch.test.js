@@ -231,4 +231,116 @@ describe('Multi-Branch Business Rules', () => {
             }
         });
     });
+
+    // ===========================================================
+    // force_takeover with OFFLINE employee — DB revocation
+    // ===========================================================
+    describe('force_takeover offline revocation', () => {
+        test('force_takeover sets session_revoked_at in DB when target has no active socket', async () => {
+            // Seed employee 99901 with an active shift but do NOT connect a socket for them
+            await seedTestData(pool, { employeeId: 99901, branchId: BRANCH_A, hasActiveShift: true });
+
+            // Clear any previous revocation
+            await pool.query(
+                'UPDATE employees SET session_revoked_at = NULL, session_revoked_for_device = NULL WHERE id = $1',
+                [99901]
+            );
+
+            // Only the takeover requester connects
+            const socketTakeover = await createSocket({ employeeId: 99903, branchId: BRANCH_A });
+
+            try {
+                socketTakeover.emit('force_takeover', {
+                    employeeId: 99901,
+                    terminalId: 'test-takeover-offline'
+                });
+
+                // Wait for the server to process and respond
+                const result = await waitForEvent(socketTakeover, 'force_takeover_result', 5000);
+                expect(result.success).toBe(true);
+
+                // Verify DB: session_revoked_at should be set
+                const { rows } = await pool.query(
+                    'SELECT session_revoked_at, session_revoked_for_device FROM employees WHERE id = $1',
+                    [99901]
+                );
+                expect(rows.length).toBe(1);
+                expect(rows[0].session_revoked_at).not.toBeNull();
+                expect(rows[0].session_revoked_for_device).toBe('desktop');
+            } finally {
+                socketTakeover.disconnect();
+            }
+        });
+    });
+
+    // ===========================================================
+    // join_branch cleans previous rooms — event isolation
+    // ===========================================================
+    describe('join_branch room cleanup', () => {
+        test('switching from Branch A to Branch B stops receiving Branch A events', async () => {
+            await seedTestData(pool, { employeeId: 99901, branchId: BRANCH_A, hasActiveShift: true });
+            await seedTestData(pool, { employeeId: 99902, branchId: BRANCH_B, hasActiveShift: false });
+
+            // Socket starts in Branch A
+            const socketSwitcher = await createSocket({ employeeId: 99901, branchId: BRANCH_A });
+            // Another socket stays in Branch A to emit events
+            const socketStayer = await createSocket({ employeeId: 99902, branchId: BRANCH_A });
+
+            try {
+                // Switch to Branch B — server should leave Branch A room
+                socketSwitcher.emit('join_branch', BRANCH_B);
+                await waitForEvent(socketSwitcher, 'joined_branch', 3000);
+                // Small delay for room operations to complete
+                await new Promise(r => setTimeout(r, 200));
+
+                // Emit shift_ended in Branch A — switcher should NOT receive it
+                socketStayer.emit('shift_ended', {
+                    shiftId: 1, employeeId: 99902,
+                    branchId: BRANCH_A, source: 'test'
+                });
+
+                await expectNoEvent(socketSwitcher, 'shift_ended', 2000);
+            } finally {
+                socketSwitcher.disconnect();
+                socketStayer.disconnect();
+            }
+        });
+    });
+
+    // ===========================================================
+    // shift_heartbeat updates last_heartbeat in DB
+    // ===========================================================
+    describe('shift_heartbeat persistence', () => {
+        test('shift_heartbeat updates last_heartbeat column for active shift', async () => {
+            const shiftId = await seedTestData(pool, { employeeId: 99901, branchId: BRANCH_A, hasActiveShift: true });
+
+            // Verify initial state: last_heartbeat should be NULL
+            const before = await pool.query('SELECT last_heartbeat FROM shifts WHERE id = $1', [shiftId]);
+            expect(before.rows[0].last_heartbeat).toBeNull();
+
+            const socket = await createSocket({ employeeId: 99901, branchId: BRANCH_A });
+
+            try {
+                socket.emit('shift_heartbeat', {
+                    employeeId: 99901,
+                    shiftId: shiftId,
+                    terminalId: `test-terminal-99901`
+                });
+
+                // Wait for the server to process the heartbeat
+                await new Promise(r => setTimeout(r, 1000));
+
+                // Verify DB: last_heartbeat should now be set
+                const after = await pool.query('SELECT last_heartbeat FROM shifts WHERE id = $1', [shiftId]);
+                expect(after.rows[0].last_heartbeat).not.toBeNull();
+
+                // It should be recent (within last 5 seconds)
+                const heartbeatTime = new Date(after.rows[0].last_heartbeat).getTime();
+                const now = Date.now();
+                expect(now - heartbeatTime).toBeLessThan(5000);
+            } finally {
+                socket.disconnect();
+            }
+        });
+    });
 });
