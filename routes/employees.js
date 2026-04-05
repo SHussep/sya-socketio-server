@@ -184,14 +184,14 @@ module.exports = (pool) => {
 
             if (roleId) {
                 const roleCheck = await client.query(
-                    `SELECT id, name, mobile_access_type FROM roles WHERE id = $1 AND tenant_id = $2`,
+                    `SELECT id, name, mobile_access_type FROM roles WHERE id = $1 AND (tenant_id = $2 OR tenant_id IS NULL)`,
                     [roleId, tenantId]
                 );
 
                 if (roleCheck.rows.length === 0) {
                     // Buscar roles válidos para mostrar en el mensaje de error
                     const validRoles = await client.query(
-                        `SELECT id, name FROM roles WHERE tenant_id = $1 ORDER BY id`,
+                        `SELECT id, name FROM roles WHERE tenant_id = $1 OR tenant_id IS NULL ORDER BY id`,
                         [tenantId]
                     );
                     const validRolesList = validRoles.rows.map(r => `${r.id} (${r.name})`).join(', ');
@@ -881,7 +881,7 @@ module.exports = (pool) => {
                  FROM roles r
                  LEFT JOIN role_permissions rp ON rp.role_id = r.id
                  LEFT JOIN permissions p ON p.id = rp.permission_id
-                 WHERE r.tenant_id = $1
+                 WHERE r.tenant_id = $1 OR r.tenant_id IS NULL
                  GROUP BY r.id, r.name, r.description, r.is_system, r.mobile_access_type, r.global_id
                  ORDER BY r.is_system DESC, r.name ASC`,
                 [tenantId]

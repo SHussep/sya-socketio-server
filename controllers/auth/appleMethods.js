@@ -236,7 +236,7 @@ module.exports = {
     async appleSignup(req, res) {
         console.log('[Apple Signup] Nueva solicitud de registro con Apple');
 
-        const { identityToken, email, displayName, businessName, phoneNumber, address, password } = req.body;
+        const { identityToken, email, displayName, businessName, phoneNumber, address, password, rfc } = req.body;
 
         if (!identityToken || !email || !businessName || !password) {
             return res.status(400).json({
@@ -319,10 +319,11 @@ module.exports = {
             const tenant = tenantResult.rows[0];
 
             // Crear branch
+            const branchCode = `B${tenant.id}M`;
             const branchResult = await client.query(
-                `INSERT INTO branches (tenant_id, branch_code, name, address, phone, is_active)
-                 VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-                [tenant.id, 'MAIN', 'Sucursal Principal', address || null, phoneNumber || null, true]
+                `INSERT INTO branches (tenant_id, branch_code, name, address, phone, rfc, is_active)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+                [tenant.id, branchCode, businessName + ' - Principal', address || null, phoneNumber || null, rfc || null, true]
             );
             const branch = branchResult.rows[0];
 
@@ -352,6 +353,44 @@ module.exports = {
                 `INSERT INTO employee_branches (tenant_id, employee_id, branch_id) VALUES ($1, $2, $3)`,
                 [tenant.id, employee.id, branch.id]
             );
+
+            // Cliente genérico "Público en General"
+            const genericCustomerResult = await client.query(
+                'SELECT get_or_create_generic_customer($1, $2) as customer_id',
+                [tenant.id, branch.id]
+            );
+            console.log(`[Apple Signup] ✅ Cliente genérico creado: ID ${genericCustomerResult.rows[0].customer_id}`);
+
+            // Licencia de sucursal
+            await client.query(`
+                INSERT INTO branch_licenses (tenant_id, branch_id, status, granted_by, activated_at, notes)
+                VALUES ($1, $2, 'active', 'system', NOW(), 'Licencia inicial - registro')
+            `, [tenant.id, branch.id]);
+            console.log(`[Apple Signup] ✅ Licencia de sucursal creada para branch ${branch.id}`);
+
+            // Seed products (6 productos iniciales)
+            const seedProducts = [
+                { id: 9001, desc: 'Tortilla de Maíz', precio: 26.00, bascula: true, unidad: 1 },
+                { id: 9002, desc: 'Masa', precio: 20.00, bascula: true, unidad: 1 },
+                { id: 9003, desc: 'Totopos', precio: 40.00, bascula: false, unidad: 3 },
+                { id: 9004, desc: 'Salsa Roja', precio: 30.00, bascula: false, unidad: 3 },
+                { id: 9005, desc: 'Salsa Verde', precio: 30.00, bascula: false, unidad: 3 },
+                { id: 9006, desc: 'Tortilla de Harina', precio: 35.00, bascula: true, unidad: 1 },
+            ];
+            for (const p of seedProducts) {
+                await client.query(`
+                    INSERT INTO productos (
+                        tenant_id, id_producto, descripcion,
+                        precio_venta, bascula, is_pos_shortcut,
+                        unidad_medida_id, global_id, terminal_id
+                    ) VALUES ($1, $2, $3, $4, $5, true, $6, $7, $8)
+                `, [
+                    tenant.id, p.id, p.desc,
+                    p.precio, p.bascula,
+                    p.unidad, `SEED_PRODUCT_${tenant.id}_${p.id}`, `mobile-signup-${Date.now()}`
+                ]);
+            }
+            console.log(`[Apple Signup] ✅ 6 productos seed creados para tenant ${tenant.id}`);
 
             await client.query('COMMIT');
 

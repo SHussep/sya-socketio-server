@@ -143,7 +143,7 @@ module.exports = {
     async googleSignup(req, res) {
         console.log('[Google Signup] Nueva solicitud de registro con Google');
 
-        const { idToken, email, displayName, businessName, phoneNumber, address, password } = req.body;
+        const { idToken, email, displayName, businessName, phoneNumber, address, password, rfc } = req.body;
 
         if (!email || !displayName || !businessName || !password) {
             return res.status(400).json({
@@ -238,10 +238,10 @@ module.exports = {
 
             const branchCode = `B${tenant.id}M`;
             const branchResult = await client.query(`
-                INSERT INTO branches (tenant_id, branch_code, name)
-                VALUES ($1, $2, $3)
+                INSERT INTO branches (tenant_id, branch_code, name, address, phone, rfc)
+                VALUES ($1, $2, $3, $4, $5, $6)
                 RETURNING id, branch_code, name
-            `, [tenant.id, branchCode, businessName + ' - Principal']);
+            `, [tenant.id, branchCode, businessName + ' - Principal', address || null, phoneNumber || null, rfc || null]);
 
             const branch = branchResult.rows[0];
 
@@ -296,6 +296,30 @@ module.exports = {
                 VALUES ($1, $2, 'active', 'system', NOW(), 'Licencia inicial - registro')
             `, [tenant.id, branch.id]);
             console.log(`[Google Signup] ✅ Licencia de sucursal creada para branch ${branch.id}`);
+
+            // ===== Seed products (6 productos iniciales) =====
+            const seedProducts = [
+                { id: 9001, desc: 'Tortilla de Maíz', precio: 26.00, bascula: true, unidad: 1 },
+                { id: 9002, desc: 'Masa', precio: 20.00, bascula: true, unidad: 1 },
+                { id: 9003, desc: 'Totopos', precio: 40.00, bascula: false, unidad: 3 },
+                { id: 9004, desc: 'Salsa Roja', precio: 30.00, bascula: false, unidad: 3 },
+                { id: 9005, desc: 'Salsa Verde', precio: 30.00, bascula: false, unidad: 3 },
+                { id: 9006, desc: 'Tortilla de Harina', precio: 35.00, bascula: true, unidad: 1 },
+            ];
+            for (const p of seedProducts) {
+                await client.query(`
+                    INSERT INTO productos (
+                        tenant_id, id_producto, descripcion,
+                        precio_venta, bascula, is_pos_shortcut,
+                        unidad_medida_id, global_id, terminal_id
+                    ) VALUES ($1, $2, $3, $4, $5, true, $6, $7, $8)
+                `, [
+                    tenant.id, p.id, p.desc,
+                    p.precio, p.bascula,
+                    p.unidad, `SEED_PRODUCT_${tenant.id}_${p.id}`, `mobile-signup-${Date.now()}`
+                ]);
+            }
+            console.log(`[Google Signup] ✅ 6 productos seed creados para tenant ${tenant.id}`);
 
             await client.query('COMMIT');
 
