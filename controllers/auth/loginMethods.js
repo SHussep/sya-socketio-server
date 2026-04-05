@@ -259,6 +259,7 @@ module.exports = {
                         firstName: employee.first_name,
                         lastName: employee.last_name,
                         roleId: employee.role_id,
+                        isOwner: employee.is_owner === true,
                         mainBranchId: employee.main_branch_id,
                         canUseMobileApp: employee.can_use_mobile_app,
                         googleUserIdentifier: employee.google_user_identifier,
