@@ -625,6 +625,9 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                     username: employee.username,
                     fullName: `${employee.first_name || ''} ${employee.last_name || ''}`.trim(),
                     role: employee.role,
+                    roleId: employee.role_id,
+                    isOwner: employee.is_owner === true,
+                    canUseMobileApp: employee.can_use_mobile_app === true,
                     globalId: employee.global_id
                 } : null,
                 tenant: {
