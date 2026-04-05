@@ -4,6 +4,12 @@ const { Pool } = require('pg');
 const SERVER_URL = process.env.TEST_SERVER_URL || 'http://localhost:3001';
 const TEST_DB_URL = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL;
 
+// Pool config — Render requires SSL
+const POOL_CONFIG = {
+    connectionString: TEST_DB_URL,
+    ssl: TEST_DB_URL && !TEST_DB_URL.includes('localhost') ? { rejectUnauthorized: false } : false
+};
+
 // Auth token — single JWT with admin/tenant access
 const TEST_TOKEN = process.env.TEST_TOKEN;
 
@@ -59,17 +65,25 @@ async function createAdminSocket({ employeeId, branchIds, tenantId = 1 }) {
 
 // Create test employee + shift in DB
 async function seedTestData(pool, { employeeId, branchId, tenantId = 1, hasActiveShift = false }) {
-    // Ensure employee exists
+    // Ensure test branch exists (FK on shifts.branch_id)
     await pool.query(`
-        INSERT INTO employees (id, tenant_id, name, email, role, global_id)
-        VALUES ($1, $2, $3, $4, 'cajero', gen_random_uuid())
+        INSERT INTO branches (id, tenant_id, branch_code, name)
+        VALUES ($1, $2, $3, $4)
         ON CONFLICT (id) DO NOTHING
-    `, [employeeId, tenantId, `TestEmployee_${employeeId}`, `test${employeeId}@test.com`]);
+    `, [branchId, tenantId, `TEST_${branchId}`, `Test Branch ${branchId}`]);
+
+    // NOT NULL columns: id, tenant_id, username, global_id
+    await pool.query(`
+        INSERT INTO employees (id, tenant_id, username, email, global_id)
+        VALUES ($1, $2, $3, $4, gen_random_uuid())
+        ON CONFLICT (id) DO NOTHING
+    `, [employeeId, tenantId, `test_emp_${employeeId}`, `test${employeeId}@test.com`]);
 
     if (hasActiveShift) {
+        // shifts requires: global_id, terminal_id, local_op_seq, created_local_utc (all NOT NULL)
         const result = await pool.query(`
-            INSERT INTO shifts (employee_id, tenant_id, branch_id, is_cash_cut_open, initial_amount, start_time, terminal_id)
-            VALUES ($1, $2, $3, true, 500, NOW(), $4)
+            INSERT INTO shifts (employee_id, tenant_id, branch_id, is_cash_cut_open, initial_amount, start_time, terminal_id, global_id, local_op_seq, created_local_utc)
+            VALUES ($1, $2, $3, true, 500, NOW(), $4, gen_random_uuid(), 1, NOW())
             RETURNING id
         `, [employeeId, tenantId, branchId, `test-terminal-${employeeId}`]);
         return result.rows[0].id;
@@ -78,10 +92,13 @@ async function seedTestData(pool, { employeeId, branchId, tenantId = 1, hasActiv
 }
 
 // Cleanup test data — call in beforeEach AND afterAll for safety
-async function cleanupTestData(pool, employeeIds) {
+async function cleanupTestData(pool, employeeIds, branchIds = []) {
     for (const empId of employeeIds) {
         await pool.query('DELETE FROM shifts WHERE employee_id = $1', [empId]);
         await pool.query('DELETE FROM employees WHERE id = $1', [empId]);
+    }
+    for (const bId of branchIds) {
+        await pool.query('DELETE FROM branches WHERE id = $1', [bId]);
     }
 }
 
@@ -119,5 +136,6 @@ module.exports = {
     waitForEvent,
     expectNoEvent,
     SERVER_URL,
-    TEST_DB_URL
+    TEST_DB_URL,
+    POOL_CONFIG
 };

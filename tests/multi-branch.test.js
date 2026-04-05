@@ -1,12 +1,13 @@
 const { Pool } = require('pg');
-const { createSocket, createAdminSocket, seedTestData, cleanupTestData, waitForEvent, expectNoEvent, TEST_DB_URL } = require('./helpers/test-setup');
+const { createSocket, createAdminSocket, seedTestData, cleanupTestData, waitForEvent, expectNoEvent, POOL_CONFIG } = require('./helpers/test-setup');
 
 // Prerequisites:
 // 1. Server running: cd /c/SYA/sya-socketio-server && node server.js
-// 2. Set env: TEST_TOKEN=<valid_jwt> TEST_DATABASE_URL=<pg_connection_string>
+// 2. Set env: TEST_TOKEN=<valid_jwt> DATABASE_URL=<pg_connection_string>
 // Run: npm test -- tests/multi-branch.test.js
 
 const TEST_EMP = [99901, 99902, 99903];
+const TEST_BRANCHES = [99901, 99902];
 const BRANCH_A = 99901;
 const BRANCH_B = 99902;
 
@@ -14,15 +15,15 @@ describe('Multi-Branch Business Rules', () => {
     let pool;
 
     beforeAll(async () => {
-        pool = new Pool({ connectionString: TEST_DB_URL });
+        pool = new Pool(POOL_CONFIG);
     });
 
     beforeEach(async () => {
-        await cleanupTestData(pool, TEST_EMP);
+        await cleanupTestData(pool, TEST_EMP, TEST_BRANCHES);
     });
 
     afterAll(async () => {
-        await cleanupTestData(pool, TEST_EMP);
+        await cleanupTestData(pool, TEST_EMP, TEST_BRANCHES);
         await pool.end();
     });
 
