@@ -30,36 +30,48 @@ module.exports = {
     async desktopLogin(req, res) {
         const { email, password, branchId, tenantCode } = req.body;
 
-        console.log(`[Desktop Login] Intento de login: email=${maskEmail(email)}, tenantCode=${tenantCode}`);
+        console.log(`[Desktop Login] Intento de login: email=${maskEmail(email)}, tenantCode=${tenantCode || '(sin código)'}`);
 
-        if (!tenantCode || !email || !password) {
+        if (!email || !password) {
             return res.status(400).json({
                 success: false,
-                message: 'TenantCode, Email y contraseña son requeridos'
+                message: 'Email y contraseña son requeridos'
             });
         }
 
         try {
-            console.log(`[Desktop Login] 🔍 Buscando tenant con código: ${tenantCode}`);
-            const tenantLookup = await this.pool.query(
-                'SELECT id FROM tenants WHERE tenant_code = $1 AND is_active = true',
-                [tenantCode]
-            );
+            let tenantId;
+            let query, params;
 
-            if (tenantLookup.rows.length === 0) {
-                console.log(`[Desktop Login] ❌ Tenant no encontrado con código: ${tenantCode}`);
-                return res.status(401).json({
-                    success: false,
-                    message: 'Código de tenant inválido'
-                });
+            if (tenantCode) {
+                // Flujo original: buscar tenant por código + email
+                console.log(`[Desktop Login] 🔍 Buscando tenant con código: ${tenantCode}`);
+                const tenantLookup = await this.pool.query(
+                    'SELECT id FROM tenants WHERE tenant_code = $1 AND is_active = true',
+                    [tenantCode]
+                );
+
+                if (tenantLookup.rows.length === 0) {
+                    console.log(`[Desktop Login] ❌ Tenant no encontrado con código: ${tenantCode}`);
+                    return res.status(401).json({
+                        success: false,
+                        message: 'Código de tenant inválido'
+                    });
+                }
+
+                tenantId = tenantLookup.rows[0].id;
+                query = 'SELECT * FROM employees WHERE LOWER(email) = LOWER($1) AND tenant_id = $2 AND is_active = true';
+                params = [email, tenantId];
+            } else {
+                // Flujo sin tenantCode: buscar empleado solo por email
+                // Útil para usuarios que se registraron desde móvil (Apple/Google)
+                console.log(`[Desktop Login] 🔍 Buscando empleado solo por email (sin tenantCode)`);
+                query = 'SELECT * FROM employees WHERE LOWER(email) = LOWER($1) AND is_active = true AND is_owner = true';
+                params = [email];
             }
 
-            const tenantId = tenantLookup.rows[0].id;
-            console.log(`[Desktop Login] ✅ Tenant encontrado: ID ${tenantId}`);
+            console.log(`[Desktop Login] ✅ Tenant: ${tenantId || 'auto-detect'}`);
 
-            // Buscar empleado SOLO por email
-            const query = 'SELECT * FROM employees WHERE LOWER(email) = LOWER($1) AND tenant_id = $2 AND is_active = true';
-            const params = [email, tenantId];
 
             console.log('[Desktop Login] Ejecutando query:', query);
             console.log('[Desktop Login] Parámetros:', params);
@@ -81,7 +93,11 @@ module.exports = {
             }
 
             const employee = employeeResult.rows[0];
-            console.log(`[Desktop Login] Empleado encontrado: ID ${employee.id}, Email ${employee.email}`);
+            // Si no venía tenantCode, obtener tenantId del empleado encontrado
+            if (!tenantId) {
+                tenantId = employee.tenant_id;
+            }
+            console.log(`[Desktop Login] Empleado encontrado: ID ${employee.id}, Email ${employee.email}, TenantId: ${tenantId}`);
 
             if (!employee.password_hash) {
                 console.log(`[Desktop Login] ⚠️ Empleado ${employee.email} no tiene contraseña configurada`);
@@ -255,6 +271,7 @@ module.exports = {
                     tenant: {
                         id: tenant.id,
                         businessName: tenant.business_name,
+                        tenantCode: tenant.tenant_code,
                         rfc: tenant.rfc,
                         subscription: tenant.subscription_name,
                         license: {
