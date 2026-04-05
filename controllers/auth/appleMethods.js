@@ -5,7 +5,7 @@ const jwt = require('jsonwebtoken');
 const jwksClient = require('jwks-rsa');
 
 const JWT_SECRET = process.env.JWT_SECRET;
-const APPLE_BUNDLE_ID = process.env.APPLE_BUNDLE_ID || 'com.syatortillerias.mobile';
+const APPLE_BUNDLE_ID = process.env.APPLE_BUNDLE_ID || 'com.sya.mobileapp';
 
 // Cliente JWKS para obtener las public keys de Apple
 const appleJwksClient = jwksClient({
@@ -187,6 +187,8 @@ module.exports = {
                 success: true,
                 emailExists: true,
                 email: email,
+                accessToken,
+                refreshToken,
                 employee: employee ? {
                     id: employee.id,
                     email: employee.email,
@@ -208,16 +210,11 @@ module.exports = {
                     timezone: b.timezone || 'America/Mexico_City'
                 })),
                 planLimits: {
+                    maxBranches: licenseInfo?.total_licenses || 0,
+                    usedBranches: licenseInfo?.used_licenses || 0,
+                    availableBranches: licenseInfo?.available_licenses || 0,
                     maxEmployees: tenant.max_employees || 0,
-                    maxDevicesPerBranch: tenant.max_devices_per_branch || 0,
-                    totalLicenses: licenseInfo?.total_licenses || 0,
-                    usedLicenses: licenseInfo?.used_licenses || 0,
-                    availableLicenses: licenseInfo?.available_licenses || 0
-                },
-                tokens: {
-                    accessToken,
-                    refreshToken,
-                    expiresIn: 604800
+                    maxDevicesPerBranch: tenant.max_devices_per_branch || 0
                 }
             });
 
