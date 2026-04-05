@@ -7,7 +7,9 @@
     "start": "node server.js",
     "dev": "nodemon server.js",
     "list-no-password": "node list_employees_without_password.js",
-    "set-password": "node set_employee_password.js"
+    "set-password": "node set_employee_password.js",
+    "test": "jest --runInBand --forceExit",
+    "test:multi-branch": "jest tests/multi-branch.test.js --runInBand --forceExit"
   },
   "keywords": [
     "socketio",
@@ -41,7 +43,9 @@
     "socket.io": "^4.7.2"
   },
   "devDependencies": {
+    "jest": "^30.3.0",
     "nodemon": "^3.0.1",
+    "socket.io-client": "^4.8.3",
     "sqlite3": "^5.1.7"
   },
   "engines": {

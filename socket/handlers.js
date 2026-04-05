@@ -1312,8 +1312,25 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
                 };
                 for (const [sid, s] of io.sockets.sockets) {
                     if (parseInt(s.user?.employeeId, 10) === forceEmployeeIdInt && sid !== socket.id) {
-                        s.emit('force_logout', forceLogoutPayload);
-                        console.log(`[Socket] 📤 force_logout → ${s.clientType || 'unknown'} (socket: ${sid})`);
+                        const socketBranch = parseInt(s.branchId);
+                        const shiftBranch = activeShift?.branch_id;
+
+                        // FAIL-CLOSED: Only kick if we can CONFIRM the socket is in the same branch
+                        // Sockets via join_all_branches don't have s.branchId set — skip them.
+                        // The room broadcast fallback (line 1327) with targetEmployeeId handles those.
+                        if (shiftBranch) {
+                            if (isNaN(socketBranch)) {
+                                console.log(`[Socket] ⏭️ Skipping ${s.clientType || 'unknown'} (socket: ${sid}) — no branchId set, relying on room broadcast`);
+                                continue;
+                            }
+                            if (socketBranch !== shiftBranch) {
+                                console.log(`[Socket] ⏭️ Skipping ${s.clientType || 'unknown'} (socket: ${sid}) — branch ${socketBranch} ≠ shift branch ${shiftBranch}`);
+                                continue;
+                            }
+                        }
+
+                        s.emit('force_logout', { ...forceLogoutPayload, targetEmployeeId: forceEmployeeIdInt });
+                        console.log(`[Socket] 📤 force_logout → ${s.clientType || 'unknown'} (socket: ${sid}, branch: ${socketBranch || '?'})`);
                         kickedCount++;
                     }
                 }
