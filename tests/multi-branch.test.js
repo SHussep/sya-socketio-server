@@ -1,9 +1,18 @@
 const { Pool } = require('pg');
+const jwt = require('jsonwebtoken');
 const { createSocket, createAdminSocket, seedTestData, cleanupTestData, waitForEvent, expectNoEvent, POOL_CONFIG } = require('./helpers/test-setup');
+
+const SERVER_URL = process.env.TEST_SERVER_URL || 'http://localhost:3000';
+const JWT_SECRET = process.env.JWT_SECRET;
+
+// Generate a JWT for a specific employee+branch (for REST API tests)
+function makeToken(employeeId, branchId, tenantId = 1) {
+    return jwt.sign({ tenantId, employeeId, branchId, role: 'owner', is_owner: true }, JWT_SECRET, { expiresIn: '1h' });
+}
 
 // Prerequisites:
 // 1. Server running: cd /c/SYA/sya-socketio-server && node server.js
-// 2. Set env: TEST_TOKEN=<valid_jwt> DATABASE_URL=<pg_connection_string>
+// 2. Set env: TEST_TOKEN=<valid_jwt> JWT_SECRET=<secret> DATABASE_URL=<pg_connection_string>
 // Run: npm test -- tests/multi-branch.test.js
 
 const TEST_EMP = [99901, 99902, 99903];
@@ -164,26 +173,34 @@ describe('Multi-Branch Business Rules', () => {
     // ===========================================================
     describe('Regla T1: One active shift per employee system-wide', () => {
         test('opening shift in Branch B when shift exists in Branch A returns 409', async () => {
+            // Seed: employee 99901 already has active shift in BRANCH_A
             await seedTestData(pool, { employeeId: 99901, branchId: BRANCH_A, hasActiveShift: true });
+            // Also ensure BRANCH_B exists for the second open attempt
+            await seedTestData(pool, { employeeId: 99902, branchId: BRANCH_B, hasActiveShift: false });
 
-            const serverUrl = process.env.TEST_SERVER_URL || 'http://localhost:3001';
-            const response = await fetch(`${serverUrl}/api/shifts/open`, {
+            // JWT must have employeeId=99901 and branchId=BRANCH_B (trying to open in B)
+            const token = makeToken(99901, BRANCH_B);
+            const response = await fetch(`${SERVER_URL}/api/shifts/open`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${process.env.TEST_TOKEN}`
+                    'Authorization': `Bearer ${token}`
                 },
                 body: JSON.stringify({
-                    employeeId: 99901,
                     initialAmount: 500,
                     terminalId: 'test-terminal-branchB',
-                    deviceType: 'desktop'
+                    deviceType: 'desktop',
+                    branchId: BRANCH_B
                 })
             });
 
+            // Should be 409 because employee already has shift in BRANCH_A
             expect(response.status).toBe(409);
             const body = await response.json();
-            expect(body.isOtherBranch).toBe(true);
+            expect(body.error).toBe('SHIFT_CONFLICT');
+            // The active shift is in BRANCH_A, but we're trying to open in BRANCH_B
+            expect(body.activeShift.branchId).toBe(BRANCH_A);
+            expect(body.activeShift.branchId).not.toBe(BRANCH_B);
         });
     });
 

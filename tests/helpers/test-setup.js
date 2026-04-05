@@ -65,10 +65,10 @@ async function createAdminSocket({ employeeId, branchIds, tenantId = 1 }) {
 
 // Create test employee + shift in DB
 async function seedTestData(pool, { employeeId, branchId, tenantId = 1, hasActiveShift = false }) {
-    // Ensure test branch exists (FK on shifts.branch_id)
+    // Ensure test branch exists (FK on shifts.branch_id) with multi_caja_enabled for conflict detection
     await pool.query(`
-        INSERT INTO branches (id, tenant_id, branch_code, name)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO branches (id, tenant_id, branch_code, name, multi_caja_enabled)
+        VALUES ($1, $2, $3, $4, true)
         ON CONFLICT (id) DO NOTHING
     `, [branchId, tenantId, `TEST_${branchId}`, `Test Branch ${branchId}`]);
 
