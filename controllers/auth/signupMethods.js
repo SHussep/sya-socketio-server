@@ -282,26 +282,27 @@ module.exports = {
             `, [tenant.id, branch.id]);
             console.log(`[Google Signup] ✅ Licencia de sucursal creada para branch ${branch.id}`);
 
-            // ===== Seed products (6 productos iniciales) =====
+            // ===== Seed products (6 productos iniciales con imágenes Cloudinary) =====
             const seedProducts = [
-                { id: 9001, desc: 'Tortilla de Maíz', precio: 26.00, bascula: true, unidad: 1 },
-                { id: 9002, desc: 'Masa', precio: 20.00, bascula: true, unidad: 1 },
-                { id: 9003, desc: 'Totopos', precio: 40.00, bascula: false, unidad: 3 },
-                { id: 9004, desc: 'Salsa Roja', precio: 30.00, bascula: false, unidad: 3 },
-                { id: 9005, desc: 'Salsa Verde', precio: 30.00, bascula: false, unidad: 3 },
-                { id: 9006, desc: 'Tortilla de Harina', precio: 35.00, bascula: true, unidad: 1 },
+                { id: 9001, desc: 'Tortilla de Maíz', precio: 26.00, bascula: true, unidad: 1, img: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1774822301/TortillaMaiz_scug2v.webp' },
+                { id: 9002, desc: 'Masa', precio: 20.00, bascula: true, unidad: 1, img: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1774822303/Masa_nzre1m.png' },
+                { id: 9003, desc: 'Totopos', precio: 40.00, bascula: false, unidad: 3, img: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1774822303/Totopos_d5zxd1.png' },
+                { id: 9004, desc: 'Salsa Roja', precio: 30.00, bascula: false, unidad: 3, img: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1774822303/SalsaRoja_fximvw.png' },
+                { id: 9005, desc: 'Salsa Verde', precio: 30.00, bascula: false, unidad: 3, img: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1774822303/SalsaVerde_yg4zwm.png' },
+                { id: 9006, desc: 'Tortilla de Harina', precio: 35.00, bascula: true, unidad: 1, img: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1774822304/TortillaHarina_k8tvt5.png' },
             ];
             for (const p of seedProducts) {
                 await client.query(`
                     INSERT INTO productos (
                         tenant_id, id_producto, descripcion,
                         precio_venta, bascula, is_pos_shortcut,
-                        unidad_medida_id, global_id, terminal_id
-                    ) VALUES ($1, $2, $3, $4, $5, true, $6, $7, $8)
+                        unidad_medida_id, global_id, terminal_id, image_url
+                    ) VALUES ($1, $2, $3, $4, $5, true, $6, $7, $8, $9)
                 `, [
                     tenant.id, p.id, p.desc,
                     p.precio, p.bascula,
-                    p.unidad, `SEED_PRODUCT_${tenant.id}_${p.id}`, `mobile-signup-${Date.now()}`
+                    p.unidad, `SEED_PRODUCT_${tenant.id}_${p.id}`, `mobile-signup-${Date.now()}`,
+                    p.img
                 ]);
             }
             console.log(`[Google Signup] ✅ 6 productos seed creados para tenant ${tenant.id}`);
