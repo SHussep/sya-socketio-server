@@ -284,7 +284,7 @@ module.exports = (pool) => {
                              mobile_access_types = COALESCE($10, mobile_access_types),
                              updated_at = NOW()
                          WHERE id = $7 AND tenant_id = $8
-                         RETURNING id, tenant_id, first_name, last_name, username, email, main_branch_id, is_active, role_id, can_use_mobile_app, mobile_access_types, created_at, updated_at`,
+                         RETURNING id, tenant_id, first_name, last_name, username, email, main_branch_id, is_active, role_id, can_use_mobile_app, mobile_access_types, global_id, is_owner, created_at, updated_at`,
                         [
                             firstName,
                             lastName,
@@ -447,7 +447,7 @@ module.exports = (pool) => {
                          is_active = COALESCE(EXCLUDED.is_active, employees.is_active),
                          email_verified = CASE WHEN EXCLUDED.email_verified = true THEN true ELSE employees.email_verified END,
                          updated_at = NOW()
-                     RETURNING id, tenant_id, first_name, last_name, username, email, main_branch_id, role_id, can_use_mobile_app, mobile_access_type, mobile_access_types, is_active, email_verified, created_at, updated_at`,
+                     RETURNING id, tenant_id, first_name, last_name, username, email, main_branch_id, role_id, can_use_mobile_app, mobile_access_type, mobile_access_types, is_active, email_verified, global_id, is_owner, created_at, updated_at`,
                     [
                         tenantId,
                         firstName,
