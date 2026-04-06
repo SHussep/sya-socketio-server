@@ -2901,6 +2901,66 @@ async function runMigrations() {
                 console.error(`[Schema] ⚠️ sync_error_reports error: ${serErr.message}`);
             }
 
+            // ═══════════════════════════════════════════════════════════
+            // Patch: Add tenant_id to global_expense_categories for custom categories
+            // ═══════════════════════════════════════════════════════════
+            try {
+                const checkTenantIdCol = await client.query(`
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'global_expense_categories'
+                    AND column_name = 'tenant_id'
+                `);
+
+                if (checkTenantIdCol.rows.length === 0) {
+                    console.log('[Schema] 📝 Adding global_expense_categories.tenant_id column...');
+
+                    // Add nullable tenant_id column (NULL = canonical/global, non-NULL = tenant-specific)
+                    await client.query(`
+                        ALTER TABLE global_expense_categories
+                        ADD COLUMN tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE
+                    `);
+
+                    // Change id column to use a sequence for auto-increment on new rows
+                    // First create the sequence starting after the canonical IDs
+                    await client.query(`
+                        CREATE SEQUENCE IF NOT EXISTS global_expense_categories_id_seq
+                        START WITH 100 OWNED BY global_expense_categories.id
+                    `);
+                    await client.query(`
+                        ALTER TABLE global_expense_categories
+                        ALTER COLUMN id SET DEFAULT nextval('global_expense_categories_id_seq')
+                    `);
+
+                    // Drop the old UNIQUE constraint on name and replace with a partial unique index
+                    // This allows same name across tenants but not within same tenant/global scope
+                    await client.query(`
+                        ALTER TABLE global_expense_categories
+                        DROP CONSTRAINT IF EXISTS global_expense_categories_name_key
+                    `);
+                    await client.query(`
+                        CREATE UNIQUE INDEX IF NOT EXISTS idx_expense_categories_name_global
+                        ON global_expense_categories (LOWER(name))
+                        WHERE tenant_id IS NULL
+                    `);
+                    await client.query(`
+                        CREATE UNIQUE INDEX IF NOT EXISTS idx_expense_categories_name_tenant
+                        ON global_expense_categories (LOWER(name), tenant_id)
+                        WHERE tenant_id IS NOT NULL
+                    `);
+
+                    // Index for filtering by tenant
+                    await client.query(`
+                        CREATE INDEX IF NOT EXISTS idx_expense_categories_tenant
+                        ON global_expense_categories (tenant_id)
+                    `);
+
+                    console.log('[Schema] ✅ global_expense_categories.tenant_id column and indexes added');
+                }
+            } catch (tenantCatErr) {
+                console.error(`[Schema] ⚠️ global_expense_categories tenant_id migration error: ${tenantCatErr.message}`);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {

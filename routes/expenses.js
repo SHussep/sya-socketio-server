@@ -1014,21 +1014,40 @@ module.exports = (pool, io) => {
     // EXPENSE CATEGORIES ENDPOINTS
     // ═══════════════════════════════════════════════════════════════
 
-    // GET /api/expense-categories - Obtener categorías de gastos globales
+    // GET /api/expense-categories - Obtener categorías de gastos (globales + tenant-specific)
     router.get('/categories', async (req, res) => {
         try {
-            console.log(`[Expenses/Categories] 📋 Obteniendo categorías globales`);
+            const { tenant_id } = req.query;
 
-            const query = `
-                SELECT id, name, description, is_measurable, unit_abbreviation, is_available, sort_order, created_at, updated_at
-                FROM global_expense_categories
-                WHERE is_available = true
-                ORDER BY sort_order ASC
-            `;
+            console.log(`[Expenses/Categories] 📋 Obteniendo categorías - tenant_id: ${tenant_id || 'solo globales'}`);
 
-            const result = await pool.query(query);
+            let query;
+            let params = [];
 
-            console.log(`[Expenses/Categories] ✅ Encontradas ${result.rows.length} categorías globales`);
+            if (tenant_id) {
+                // Retornar categorías canónicas (tenant_id IS NULL) + las del tenant
+                query = `
+                    SELECT id, name, description, is_measurable, unit_abbreviation, is_available, sort_order, tenant_id, created_at, updated_at
+                    FROM global_expense_categories
+                    WHERE (tenant_id IS NULL OR tenant_id = $1)
+                    AND is_available = true
+                    ORDER BY sort_order ASC, id ASC
+                `;
+                params = [tenant_id];
+            } else {
+                // Sin tenant_id, solo retornar las canónicas (compatibilidad hacia atrás)
+                query = `
+                    SELECT id, name, description, is_measurable, unit_abbreviation, is_available, sort_order, tenant_id, created_at, updated_at
+                    FROM global_expense_categories
+                    WHERE tenant_id IS NULL
+                    AND is_available = true
+                    ORDER BY sort_order ASC, id ASC
+                `;
+            }
+
+            const result = await pool.query(query, params);
+
+            console.log(`[Expenses/Categories] ✅ Encontradas ${result.rows.length} categorías`);
 
             res.json({
                 success: true,
@@ -1041,6 +1060,230 @@ module.exports = (pool, io) => {
                 success: false,
                 message: 'Error al obtener categorías de gastos',
                 error: undefined
+            });
+        }
+    });
+
+    // POST /api/expense-categories - Crear categoría de gastos (tenant-specific)
+    router.post('/categories', authenticateToken, async (req, res) => {
+        try {
+            const { tenant_id, name, description, is_measurable, unit_abbreviation } = req.body;
+
+            if (!tenant_id) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'tenant_id es requerido para crear categorías personalizadas'
+                });
+            }
+
+            if (!name || !name.trim()) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'El nombre de la categoría es requerido'
+                });
+            }
+
+            const trimmedName = name.trim();
+
+            console.log(`[Expenses/Categories] 📝 Creando categoría "${trimmedName}" para tenant ${tenant_id}`);
+
+            // Validar que el nombre sea único dentro de (globales + este tenant)
+            const duplicateCheck = await pool.query(`
+                SELECT id, tenant_id FROM global_expense_categories
+                WHERE LOWER(name) = LOWER($1)
+                AND (tenant_id IS NULL OR tenant_id = $2)
+                AND is_available = true
+            `, [trimmedName, tenant_id]);
+
+            if (duplicateCheck.rows.length > 0) {
+                const existing = duplicateCheck.rows[0];
+                const scope = existing.tenant_id === null ? 'global' : 'de tu negocio';
+                return res.status(409).json({
+                    success: false,
+                    message: `Ya existe una categoría ${scope} con el nombre "${trimmedName}"`
+                });
+            }
+
+            // Obtener el siguiente sort_order
+            const maxSortOrder = await pool.query(`
+                SELECT COALESCE(MAX(sort_order), 0) + 1 as next_sort
+                FROM global_expense_categories
+                WHERE tenant_id IS NULL OR tenant_id = $1
+            `, [tenant_id]);
+
+            const sortOrder = maxSortOrder.rows[0].next_sort;
+
+            const result = await pool.query(`
+                INSERT INTO global_expense_categories (name, description, is_measurable, unit_abbreviation, tenant_id, sort_order, is_available)
+                VALUES ($1, $2, $3, $4, $5, $6, true)
+                RETURNING id, name, description, is_measurable, unit_abbreviation, is_available, sort_order, tenant_id, created_at, updated_at
+            `, [trimmedName, description || null, is_measurable || false, unit_abbreviation || null, tenant_id, sortOrder]);
+
+            console.log(`[Expenses/Categories] ✅ Categoría creada con ID ${result.rows[0].id}`);
+
+            res.status(201).json({
+                success: true,
+                message: 'Categoría creada exitosamente',
+                data: result.rows[0]
+            });
+        } catch (error) {
+            console.error('[Expenses/Categories/POST] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al crear categoría de gastos'
+            });
+        }
+    });
+
+    // PUT /api/expense-categories/:id - Actualizar categoría de gastos (solo tenant-specific)
+    router.put('/categories/:id', authenticateToken, async (req, res) => {
+        try {
+            const categoryId = parseInt(req.params.id);
+            const { name, description, is_measurable, unit_abbreviation } = req.body;
+
+            if (isNaN(categoryId)) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'ID de categoría inválido'
+                });
+            }
+
+            console.log(`[Expenses/Categories] ✏️ Actualizando categoría ${categoryId}`);
+
+            // Verificar que la categoría existe y es tenant-specific
+            const existing = await pool.query(`
+                SELECT id, tenant_id, name FROM global_expense_categories
+                WHERE id = $1
+            `, [categoryId]);
+
+            if (existing.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Categoría no encontrada'
+                });
+            }
+
+            if (existing.rows[0].tenant_id === null) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'No se pueden modificar las categorías canónicas del sistema'
+                });
+            }
+
+            const tenantId = existing.rows[0].tenant_id;
+
+            // Si se está cambiando el nombre, validar unicidad
+            if (name && name.trim() !== existing.rows[0].name) {
+                const trimmedName = name.trim();
+                const duplicateCheck = await pool.query(`
+                    SELECT id FROM global_expense_categories
+                    WHERE LOWER(name) = LOWER($1)
+                    AND (tenant_id IS NULL OR tenant_id = $2)
+                    AND is_available = true
+                    AND id != $3
+                `, [trimmedName, tenantId, categoryId]);
+
+                if (duplicateCheck.rows.length > 0) {
+                    return res.status(409).json({
+                        success: false,
+                        message: `Ya existe una categoría con el nombre "${trimmedName}"`
+                    });
+                }
+            }
+
+            const result = await pool.query(`
+                UPDATE global_expense_categories
+                SET name = COALESCE($1, name),
+                    description = COALESCE($2, description),
+                    is_measurable = COALESCE($3, is_measurable),
+                    unit_abbreviation = $4,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = $5 AND tenant_id IS NOT NULL
+                RETURNING id, name, description, is_measurable, unit_abbreviation, is_available, sort_order, tenant_id, created_at, updated_at
+            `, [name ? name.trim() : null, description !== undefined ? description : null, is_measurable !== undefined ? is_measurable : null, unit_abbreviation !== undefined ? unit_abbreviation : null, categoryId]);
+
+            if (result.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'No se pudo actualizar la categoría'
+                });
+            }
+
+            console.log(`[Expenses/Categories] ✅ Categoría ${categoryId} actualizada`);
+
+            res.json({
+                success: true,
+                message: 'Categoría actualizada exitosamente',
+                data: result.rows[0]
+            });
+        } catch (error) {
+            console.error('[Expenses/Categories/PUT] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al actualizar categoría de gastos'
+            });
+        }
+    });
+
+    // DELETE /api/expense-categories/:id - Soft-delete categoría de gastos (solo tenant-specific)
+    router.delete('/categories/:id', authenticateToken, async (req, res) => {
+        try {
+            const categoryId = parseInt(req.params.id);
+
+            if (isNaN(categoryId)) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'ID de categoría inválido'
+                });
+            }
+
+            console.log(`[Expenses/Categories] 🗑️ Eliminando (soft) categoría ${categoryId}`);
+
+            // Verificar que la categoría existe y es tenant-specific
+            const existing = await pool.query(`
+                SELECT id, tenant_id, name FROM global_expense_categories
+                WHERE id = $1
+            `, [categoryId]);
+
+            if (existing.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Categoría no encontrada'
+                });
+            }
+
+            if (existing.rows[0].tenant_id === null) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'No se pueden eliminar las categorías canónicas del sistema'
+                });
+            }
+
+            const result = await pool.query(`
+                UPDATE global_expense_categories
+                SET is_available = false, updated_at = CURRENT_TIMESTAMP
+                WHERE id = $1 AND tenant_id IS NOT NULL
+                RETURNING id, name
+            `, [categoryId]);
+
+            if (result.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'No se pudo eliminar la categoría'
+                });
+            }
+
+            console.log(`[Expenses/Categories] ✅ Categoría "${result.rows[0].name}" (ID ${categoryId}) soft-deleted`);
+
+            res.json({
+                success: true,
+                message: `Categoría "${result.rows[0].name}" eliminada exitosamente`
+            });
+        } catch (error) {
+            console.error('[Expenses/Categories/DELETE] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al eliminar categoría de gastos'
             });
         }
     });

@@ -266,19 +266,50 @@ async function initializeDatabase() {
             )
         `);
 
-        // Tabla: global_expense_categories (categorías de gastos GLOBALES con IDs canónicos 1-14)
+        // Sequence for auto-increment IDs starting after canonical IDs (must exist before table references it)
+        await client.query(`
+            CREATE SEQUENCE IF NOT EXISTS global_expense_categories_id_seq START WITH 100
+        `);
+
+        // Tabla: global_expense_categories (categorías de gastos GLOBALES con IDs canónicos 1-14 + tenant-specific)
         await client.query(`
             CREATE TABLE IF NOT EXISTS global_expense_categories (
-                id INTEGER PRIMARY KEY,
-                name VARCHAR(100) NOT NULL UNIQUE,
+                id INTEGER PRIMARY KEY DEFAULT nextval('global_expense_categories_id_seq'),
+                name VARCHAR(100) NOT NULL,
                 description TEXT,
                 is_measurable BOOLEAN DEFAULT FALSE,
                 unit_abbreviation VARCHAR(10),
                 is_available BOOLEAN DEFAULT TRUE,
                 sort_order INTEGER DEFAULT 0,
+                tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
+        `);
+
+        // Set sequence ownership after table exists
+        await client.query(`
+            ALTER SEQUENCE global_expense_categories_id_seq OWNED BY global_expense_categories.id
+        `);
+
+        // Unique name within global scope
+        await client.query(`
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_expense_categories_name_global
+            ON global_expense_categories (LOWER(name))
+            WHERE tenant_id IS NULL
+        `);
+
+        // Unique name within each tenant
+        await client.query(`
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_expense_categories_name_tenant
+            ON global_expense_categories (LOWER(name), tenant_id)
+            WHERE tenant_id IS NOT NULL
+        `);
+
+        // Index for filtering by tenant
+        await client.query(`
+            CREATE INDEX IF NOT EXISTS idx_expense_categories_tenant
+            ON global_expense_categories (tenant_id)
         `);
 
         // Tabla: suppliers (proveedores para compras)
