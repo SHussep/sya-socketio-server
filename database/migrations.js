@@ -3002,6 +3002,24 @@ async function runMigrations() {
                 console.error(`[Schema] ⚠️ Cajero role migration error: ${cajeroErr.message}`);
             }
 
+            // ── Migration: Make telemetry_events.branch_id nullable ──
+            // After Apple re-auth, app_open fires before branch is selected
+            try {
+                const checkTelemetryBranch = await client.query(`
+                    SELECT is_nullable
+                    FROM information_schema.columns
+                    WHERE table_name = 'telemetry_events'
+                    AND column_name = 'branch_id'
+                `);
+                if (checkTelemetryBranch.rows.length > 0 && checkTelemetryBranch.rows[0].is_nullable === 'NO') {
+                    console.log('[Schema] 📝 Making telemetry_events.branch_id nullable...');
+                    await client.query(`ALTER TABLE telemetry_events ALTER COLUMN branch_id DROP NOT NULL`);
+                    console.log('[Schema] ✅ telemetry_events.branch_id is now nullable');
+                }
+            } catch (telErr) {
+                console.error(`[Schema] ⚠️ telemetry branch_id nullable error: ${telErr.message}`);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {
