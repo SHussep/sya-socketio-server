@@ -1108,7 +1108,7 @@ CREATE TABLE IF NOT EXISTS backup_metadata (
 CREATE TABLE IF NOT EXISTS telemetry_events (
     id SERIAL PRIMARY KEY,
     tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-    branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+    branch_id INTEGER REFERENCES branches(id) ON DELETE CASCADE,
     employee_id INTEGER REFERENCES employees(id) ON DELETE SET NULL,
 
     -- Event identification

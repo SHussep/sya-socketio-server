@@ -175,7 +175,7 @@ module.exports = (pool) => {
                 RETURNING id
             `, [
                 tenantId,
-                branchId,
+                branchId || null,
                 employeeId,
                 eventType,
                 deviceId || null,
