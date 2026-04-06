@@ -419,7 +419,11 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                     email: employee.email,
                     fullName: `${employee.first_name} ${employee.last_name}`.trim(),
                     roleId: employee.role_id,
-                    globalId: employee.global_id
+                    globalId: employee.global_id,
+                    isOwner: true,
+                    canUseMobileApp: true,
+                    mobileAccessType: 'admin',
+                    mobileAccessTypes: 'admin'
                 },
                 branch: {
                     id: branch.id,
@@ -626,9 +630,11 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                     fullName: `${employee.first_name || ''} ${employee.last_name || ''}`.trim(),
                     role: employee.role,
                     roleId: employee.role_id,
-                    isOwner: employee.is_owner === true,
+                    isOwner: employee.is_owner === true || employee.role_id === 1,
                     canUseMobileApp: employee.can_use_mobile_app === true,
-                    globalId: employee.global_id
+                    globalId: employee.global_id,
+                    mobileAccessType: deriveMobileAccessType(employee.role_id, true),
+                    mobileAccessTypes: employee.role_id <= 2 ? 'admin' : deriveMobileAccessType(employee.role_id, true)
                 } : null,
                 tenant: {
                     id: tenant.id,

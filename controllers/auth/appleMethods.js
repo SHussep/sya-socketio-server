@@ -7,6 +7,21 @@ const jwksClient = require('jwks-rsa');
 const JWT_SECRET = process.env.JWT_SECRET;
 const APPLE_BUNDLE_ID = process.env.APPLE_BUNDLE_ID || 'com.sya.mobileapp';
 
+const deriveMobileAccessType = (roleId, canUseMobileApp) => {
+    if (!canUseMobileApp) return 'none';
+    switch (roleId) {
+        case 1:
+        case 2:
+            return 'admin';
+        case 3:
+            return 'distributor';
+        case 4:
+        case 99:
+        default:
+            return 'none';
+    }
+};
+
 // Cliente JWKS para obtener las public keys de Apple
 const appleJwksClient = jwksClient({
     jwksUri: 'https://appleid.apple.com/auth/keys',
@@ -196,9 +211,11 @@ module.exports = {
                     fullName: `${employee.first_name || ''} ${employee.last_name || ''}`.trim(),
                     role: employee.role,
                     roleId: employee.role_id,
-                    isOwner: employee.is_owner === true,
+                    isOwner: employee.is_owner === true || employee.role_id === 1,
                     canUseMobileApp: employee.can_use_mobile_app === true,
-                    globalId: employee.global_id
+                    globalId: employee.global_id,
+                    mobileAccessType: deriveMobileAccessType(employee.role_id, true),
+                    mobileAccessTypes: employee.role_id <= 2 ? 'admin' : deriveMobileAccessType(employee.role_id, true)
                 } : null,
                 tenant: {
                     id: tenant.id,
@@ -421,7 +438,11 @@ module.exports = {
                 employee: {
                     id: employee.id, email: employee.email,
                     fullName: `${employee.first_name} ${employee.last_name}`.trim(),
-                    roleId: 1, globalId: employee.global_id
+                    roleId: 1, globalId: employee.global_id,
+                    isOwner: true,
+                    canUseMobileApp: true,
+                    mobileAccessType: 'admin',
+                    mobileAccessTypes: 'admin'
                 },
                 branch: { id: branch.id, branchCode: branch.branch_code, name: branch.name }
             });
