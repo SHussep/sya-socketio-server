@@ -1357,11 +1357,17 @@ module.exports = (pool) => {
             const employee = result.rows[0];
             const employeeFullName = `${employee.first_name || ''} ${employee.last_name || ''}`.trim();
 
-            // Prioridad: employee override > role default
-            const accessType = (employee.mobile_access_type && employee.mobile_access_type !== 'none')
-                ? employee.mobile_access_type
-                : (employee.role_mobile_access_type || 'none');
-            const hasMobileAccess = accessType !== 'none' && employee.can_use_mobile_app;
+            // Prioridad: owner always admin > employee override > role default
+            const isOwner = employee.is_owner || false;
+            let accessType;
+            if (isOwner) {
+                accessType = 'admin';
+            } else if (employee.mobile_access_type && employee.mobile_access_type !== 'none') {
+                accessType = employee.mobile_access_type;
+            } else {
+                accessType = employee.role_mobile_access_type || 'none';
+            }
+            const hasMobileAccess = accessType !== 'none' && (employee.can_use_mobile_app || isOwner);
 
             // All permission codes - owners get everything automatically
             const ALL_PERMISSIONS = [
@@ -1372,7 +1378,6 @@ module.exports = (pool) => {
                 'admin.break_settings'
             ];
 
-            const isOwner = employee.is_owner || false;
             // Owners always have all permissions; admins get exactly what's stored
             let mobilePermissions = [];
             if (isOwner) {
