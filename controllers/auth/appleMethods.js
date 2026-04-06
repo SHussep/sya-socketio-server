@@ -7,20 +7,6 @@ const jwksClient = require('jwks-rsa');
 const JWT_SECRET = process.env.JWT_SECRET;
 const APPLE_BUNDLE_ID = process.env.APPLE_BUNDLE_ID || 'com.sya.mobileapp';
 
-const deriveMobileAccessType = (roleId, canUseMobileApp) => {
-    if (!canUseMobileApp) return 'none';
-    switch (roleId) {
-        case 1:
-        case 2:
-            return 'admin';
-        case 3:
-            return 'distributor';
-        case 4:
-        case 99:
-        default:
-            return 'none';
-    }
-};
 
 // Cliente JWKS para obtener las public keys de Apple
 const appleJwksClient = jwksClient({
@@ -132,11 +118,13 @@ module.exports = {
             const tenant = tenantResult.rows[0];
             console.log(`[Apple Login] Tenant encontrado: ${tenant.business_name} (ID: ${tenant.id})`);
 
-            // Buscar el employee owner
+            // Buscar el employee owner, JOIN con roles para obtener mobile_access_type
             const employeeResult = await this.pool.query(
-                `SELECT * FROM employees
-                 WHERE tenant_id = $1 AND is_active = true
-                 ORDER BY is_owner DESC, role_id ASC, id ASC
+                `SELECT e.*, r.name as role_name, r.mobile_access_type as role_mobile_access_type
+                 FROM employees e
+                 LEFT JOIN roles r ON e.role_id = r.id
+                 WHERE e.tenant_id = $1 AND e.is_active = true
+                 ORDER BY e.is_owner DESC NULLS LAST, r.id ASC, e.id ASC
                  LIMIT 1`,
                 [tenant.id]
             );
@@ -209,13 +197,13 @@ module.exports = {
                     email: employee.email,
                     username: employee.username,
                     fullName: `${employee.first_name || ''} ${employee.last_name || ''}`.trim(),
-                    role: employee.role,
+                    role: employee.role_name || employee.role,
                     roleId: employee.role_id,
-                    isOwner: employee.is_owner === true || employee.role_id === 1,
+                    isOwner: employee.is_owner === true,
                     canUseMobileApp: employee.can_use_mobile_app === true,
                     globalId: employee.global_id,
-                    mobileAccessType: deriveMobileAccessType(employee.role_id, true),
-                    mobileAccessTypes: employee.role_id <= 2 ? 'admin' : deriveMobileAccessType(employee.role_id, true)
+                    mobileAccessType: employee.role_mobile_access_type || 'none',
+                    mobileAccessTypes: employee.role_mobile_access_type || 'none'
                 } : null,
                 tenant: {
                     id: tenant.id,

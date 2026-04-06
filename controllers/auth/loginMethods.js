@@ -9,23 +9,6 @@ const maskEmail = (email) => {
     return email.replace(/^(.)(.*)(@.*)$/, '$1***$3');
 };
 
-const deriveMobileAccessType = (roleId, canUseMobileApp) => {
-    if (!canUseMobileApp) return 'none';
-    switch (roleId) {
-        case 1:
-        case 2:
-            return 'admin';
-        case 3:
-            return 'distributor';
-        case 5:
-            return 'cashier';
-        case 4:
-        case 99:
-        default:
-            return 'none';
-    }
-};
-
 module.exports = {
     async desktopLogin(req, res) {
         const { email, password, branchId, tenantCode } = req.body;
