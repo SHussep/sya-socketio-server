@@ -645,8 +645,20 @@ async function checkSessionConflict(employeeId, pool, callerTerminalId) {
         return null;
     }
 
-    // Different terminal → conflict. Determine device type for display.
-    const shiftDeviceType = shiftTerminalId.startsWith('mobile-') ? 'mobile' : 'desktop';
+    // Different terminal → conflict. Determine device type by checking branch_devices table.
+    // Flutter devices may not be in branch_devices, so default to 'mobile' if not found.
+    let shiftDeviceType = 'mobile'; // default: if device not registered, it's likely Flutter/mobile
+    try {
+        const deviceResult = await pool.query(
+            `SELECT device_type FROM branch_devices WHERE device_id = $1 LIMIT 1`,
+            [shiftTerminalId]
+        );
+        if (deviceResult.rows.length > 0 && deviceResult.rows[0].device_type) {
+            shiftDeviceType = deviceResult.rows[0].device_type; // 'desktop', 'tablet', or 'mobile'
+        }
+    } catch (devErr) {
+        console.log(`[SessionConflict] Could not query branch_devices: ${devErr.message} — defaulting to mobile`);
+    }
 
     console.log(`[SessionConflict] Conflict! Shift terminal=${shiftTerminalId}, caller terminal=${callerTerminalId}. Shift device: ${shiftDeviceType}`);
 
