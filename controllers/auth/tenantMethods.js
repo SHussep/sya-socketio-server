@@ -1001,23 +1001,26 @@ module.exports = {
 
             if (email) {
                 // Look up specific admin by email/username
-                query = `SELECT id, password_hash, first_name, last_name, is_owner, role_id, email
-                         FROM employees
-                         WHERE tenant_id = $1
-                           AND is_active = TRUE
-                           AND (is_owner = TRUE OR role_id = 1)
-                           AND (LOWER(email) = LOWER($2) OR LOWER(username) = LOWER($2))
+                // JOIN with roles to check mobile_access_type instead of hardcoded role_id
+                query = `SELECT e.id, e.password_hash, e.first_name, e.last_name, e.is_owner, e.role_id, e.email
+                         FROM employees e
+                         LEFT JOIN roles r ON e.role_id = r.id
+                         WHERE e.tenant_id = $1
+                           AND e.is_active = TRUE
+                           AND (e.is_owner = TRUE OR r.mobile_access_type = 'admin')
+                           AND (LOWER(e.email) = LOWER($2) OR LOWER(e.username) = LOWER($2))
                          LIMIT 1`;
                 params = [tenantId, email];
                 console.log(`[Verify Admin Password] Buscando admin por email/username: ${email}`);
             } else {
-                // Fallback: owner or first admin (backwards compatible)
-                query = `SELECT id, password_hash, first_name, last_name, is_owner, role_id, email
-                         FROM employees
-                         WHERE tenant_id = $1
-                           AND is_active = TRUE
-                           AND (is_owner = TRUE OR role_id = 1)
-                         ORDER BY is_owner DESC, id ASC
+                // Fallback: owner or first admin
+                query = `SELECT e.id, e.password_hash, e.first_name, e.last_name, e.is_owner, e.role_id, e.email
+                         FROM employees e
+                         LEFT JOIN roles r ON e.role_id = r.id
+                         WHERE e.tenant_id = $1
+                           AND e.is_active = TRUE
+                           AND (e.is_owner = TRUE OR r.mobile_access_type = 'admin')
+                         ORDER BY e.is_owner DESC, e.id ASC
                          LIMIT 1`;
                 params = [tenantId];
             }
