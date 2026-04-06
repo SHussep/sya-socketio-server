@@ -3020,6 +3020,37 @@ async function runMigrations() {
                 console.error(`[Schema] ⚠️ telemetry branch_id nullable error: ${telErr.message}`);
             }
 
+            // ── Migration: Deduplicate categorias_productos by tenant+nombre ──
+            // Desktop and Flutter each create system categories with random global_ids,
+            // causing duplicates. Keep the oldest per tenant+nombre, delete the rest.
+            try {
+                const dupCheck = await client.query(`
+                    SELECT tenant_id, nombre, COUNT(*) as cnt
+                    FROM categorias_productos
+                    WHERE is_deleted = false
+                    GROUP BY tenant_id, nombre
+                    HAVING COUNT(*) > 1
+                `);
+                if (dupCheck.rows.length > 0) {
+                    console.log(`[Schema] 📝 Found ${dupCheck.rows.length} duplicated category names, cleaning up...`);
+                    const deleteResult = await client.query(`
+                        DELETE FROM categorias_productos
+                        WHERE id IN (
+                            SELECT id FROM (
+                                SELECT id,
+                                    ROW_NUMBER() OVER (PARTITION BY tenant_id, nombre ORDER BY created_at ASC, id ASC) as rn
+                                FROM categorias_productos
+                                WHERE is_deleted = false
+                            ) ranked
+                            WHERE rn > 1
+                        )
+                    `);
+                    console.log(`[Schema] ✅ Removed ${deleteResult.rowCount} duplicate categories`);
+                }
+            } catch (dedupErr) {
+                console.error(`[Schema] ⚠️ Category dedup error: ${dedupErr.message}`);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {
