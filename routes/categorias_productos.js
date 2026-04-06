@@ -180,7 +180,7 @@ module.exports = (pool) => {
 
             // IDEMPOTENCIA: Verificar si ya existe por global_id CON LOCK
             const existingCheck = await client.query(
-                'SELECT id FROM categorias_productos WHERE global_id = $1 FOR UPDATE',
+                'SELECT id, global_id FROM categorias_productos WHERE global_id = $1 FOR UPDATE',
                 [global_id]
             );
 
@@ -191,6 +191,22 @@ module.exports = (pool) => {
                     success: true,
                     message: 'Categoría ya sincronizada anteriormente',
                     data: { id: existingCheck.rows[0].id, global_id }
+                });
+            }
+
+            // DEDUP POR NOMBRE: Verificar si ya existe una categoría con el mismo nombre para este tenant
+            const nameCheck = await client.query(
+                'SELECT id, global_id FROM categorias_productos WHERE tenant_id = $1 AND LOWER(nombre) = LOWER($2) AND is_deleted = false FOR UPDATE',
+                [tenantId, nombre]
+            );
+
+            if (nameCheck.rows.length > 0) {
+                await client.query('COMMIT');
+                console.log(`[CategoriasProductos/Sync] ⚠️ Categoría "${nombre}" ya existe para tenant ${tenantId} (ID: ${nameCheck.rows[0].id}, GlobalId: ${nameCheck.rows[0].global_id}) - Retornando existente`);
+                return res.json({
+                    success: true,
+                    message: 'Categoría con mismo nombre ya existe',
+                    data: { id: nameCheck.rows[0].id, global_id: nameCheck.rows[0].global_id }
                 });
             }
 

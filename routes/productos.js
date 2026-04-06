@@ -206,6 +206,7 @@ module.exports = (pool, io) => {
             let query = `
                 SELECT
                     p.id,
+                    p.id_producto,
                     p.global_id,
                     p.tenant_id,
                     p.descripcion as name,
