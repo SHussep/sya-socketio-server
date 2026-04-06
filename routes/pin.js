@@ -103,12 +103,16 @@ module.exports = (pool) => {
             const targetId = parseInt(req.params.id);
             const { pin } = req.body;
 
-            // Query caller's is_owner from DB (not in JWT yet)
-            const callerResult = await pool.query(
-                'SELECT is_owner FROM employees WHERE id = $1 AND tenant_id = $2 AND is_active = true',
-                [callerId, tenantId]
-            );
-            const callerIsOwner = callerResult.rows[0]?.is_owner;
+            // Check is_owner from JWT first, then fallback to DB
+            let callerIsOwner = req.user.is_owner === true;
+            if (!callerIsOwner) {
+                const callerResult = await pool.query(
+                    'SELECT is_owner FROM employees WHERE id = $1 AND tenant_id = $2 AND is_active = true',
+                    [callerId, tenantId]
+                );
+                callerIsOwner = callerResult.rows[0]?.is_owner === true;
+                console.log(`[PIN] 🔍 is_owner DB fallback for employee ${callerId}: ${callerIsOwner}`);
+            }
 
             if (!callerIsOwner) {
                 return res.status(403).json({ success: false, message: 'Solo el propietario puede resetear PINs' });
