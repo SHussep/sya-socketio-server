@@ -581,6 +581,36 @@ module.exports = (pool, io) => {
                 });
             }
 
+            // 📲 Send FCM notification for shift close
+            try {
+                const empNameResult = await pool.query(
+                    'SELECT full_name, global_id FROM employees WHERE id = $1', [employeeId]
+                );
+                const branchNameResult = await pool.query(
+                    'SELECT name FROM branches WHERE id = $1', [shiftBranchId]
+                );
+                const empName = empNameResult.rows[0]?.full_name || 'Empleado';
+                const empGlobalId = empNameResult.rows[0]?.global_id;
+                const bName = branchNameResult.rows[0]?.name || 'Sucursal';
+
+                if (empGlobalId) {
+                    await notifyShiftEnded(
+                        shiftBranchId,
+                        empGlobalId,
+                        {
+                            employeeName: empName,
+                            branchName: bName,
+                            difference: parseFloat(difference) || 0,
+                            countedCash: parseFloat(counted_cash) || 0,
+                            expectedCash: parseFloat(expected_cash) || 0
+                        }
+                    );
+                    console.log(`[Shifts] 📲 FCM notificación enviada para cierre de ${empName}`);
+                }
+            } catch (fcmErr) {
+                console.warn(`[Shifts] ⚠️ FCM notification failed: ${fcmErr.message}`);
+            }
+
             // Format timestamps as ISO strings in UTC
             const formattedShift = {
                 ...shift,
