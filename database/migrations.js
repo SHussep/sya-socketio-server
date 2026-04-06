@@ -2196,7 +2196,8 @@ async function runMigrations() {
                             (NEW.id, 'Administrador', 'Acceso total al sistema', true, 'admin'),
                             (NEW.id, 'Encargado', 'Gerente de turno - permisos extensos', true, 'none'),
                             (NEW.id, 'Repartidor', 'Acceso limitado como repartidor', true, 'distributor'),
-                            (NEW.id, 'Ayudante', 'Soporte - acceso limitado', true, 'none');
+                            (NEW.id, 'Ayudante', 'Soporte - acceso limitado', true, 'none'),
+                            (NEW.id, 'Cajero', 'Ventas, liquidaciones y producción', true, 'cashier');
 
                         -- Administrador gets ALL permissions
                         INSERT INTO role_permissions (role_id, permission_id)
@@ -2228,6 +2229,13 @@ async function runMigrations() {
                         FROM roles r CROSS JOIN permissions p
                         WHERE r.tenant_id = NEW.id AND r.name = 'Ayudante'
                         AND p.code IN ('AccessPointOfSale', 'AccessProduction');
+
+                        -- Cajero gets POS, liquidaciones, gastos, producción
+                        INSERT INTO role_permissions (role_id, permission_id)
+                        SELECT r.id, p.id
+                        FROM roles r CROSS JOIN permissions p
+                        WHERE r.tenant_id = NEW.id AND r.name = 'Cajero'
+                        AND p.code IN ('AccessPointOfSale', 'SettleDeliveries', 'ManageExpenses', 'AccessProduction');
 
                         RETURN NEW;
                     END;
@@ -2959,6 +2967,39 @@ async function runMigrations() {
                 }
             } catch (tenantCatErr) {
                 console.error(`[Schema] ⚠️ global_expense_categories tenant_id migration error: ${tenantCatErr.message}`);
+            }
+
+            // ── Migration 042: Add Cajero role to existing tenants ──
+            try {
+                const tenantsWithoutCajero = await client.query(`
+                    SELECT t.id FROM tenants t
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM roles r WHERE r.tenant_id = t.id AND r.name = 'Cajero'
+                    )
+                `);
+                if (tenantsWithoutCajero.rows.length > 0) {
+                    console.log(`[Schema] 📝 Adding Cajero role to ${tenantsWithoutCajero.rows.length} tenants (Migration 042)...`);
+                    for (const row of tenantsWithoutCajero.rows) {
+                        await client.query(`
+                            INSERT INTO roles (tenant_id, name, description, is_system, mobile_access_type)
+                            VALUES ($1, 'Cajero', 'Ventas, liquidaciones y producción', true, 'cashier')
+                            ON CONFLICT DO NOTHING
+                        `, [row.id]);
+
+                        // Assign Cajero permissions
+                        await client.query(`
+                            INSERT INTO role_permissions (role_id, permission_id)
+                            SELECT r.id, p.id
+                            FROM roles r CROSS JOIN permissions p
+                            WHERE r.tenant_id = $1 AND r.name = 'Cajero'
+                            AND p.code IN ('AccessPointOfSale', 'SettleDeliveries', 'ManageExpenses', 'AccessProduction')
+                            ON CONFLICT DO NOTHING
+                        `, [row.id]);
+                    }
+                    console.log(`[Schema] ✅ Cajero role added to ${tenantsWithoutCajero.rows.length} tenants`);
+                }
+            } catch (cajeroErr) {
+                console.error(`[Schema] ⚠️ Cajero role migration error: ${cajeroErr.message}`);
             }
 
             console.log('[Schema] ✅ Database initialization complete');
