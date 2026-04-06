@@ -60,7 +60,19 @@ module.exports = (pool, io) => {
 
             // ═══ is_owner guard: only owners can open shifts on behalf of other employees ═══
             if (employeeGlobalId && employeeId !== jwtEmployeeId) {
-                const callerIsOwner = req.user.is_owner === true;
+                // Check is_owner from JWT or verify from DB as fallback
+                let callerIsOwner = req.user.is_owner === true;
+
+                if (!callerIsOwner) {
+                    // JWT might lack is_owner (old token) — verify from DB
+                    const ownerCheck = await client.query(
+                        'SELECT is_owner FROM employees WHERE id = $1 AND tenant_id = $2',
+                        [jwtEmployeeId, tenantId]
+                    );
+                    callerIsOwner = ownerCheck.rows[0]?.is_owner === true;
+                    console.log(`[Shifts] 🔍 is_owner fallback check for JWT employee ${jwtEmployeeId}: ${callerIsOwner}`);
+                }
+
                 if (!callerIsOwner) {
                     await client.query('ROLLBACK');
                     return res.status(403).json({
@@ -378,7 +390,17 @@ module.exports = (pool, io) => {
 
             // ═══ is_owner guard: only owners can close shifts on behalf of other employees ═══
             if (employeeGlobalId && employeeId !== jwtEmployeeId) {
-                const callerIsOwner = req.user.is_owner === true;
+                let callerIsOwner = req.user.is_owner === true;
+
+                if (!callerIsOwner) {
+                    const ownerCheck = await pool.query(
+                        'SELECT is_owner FROM employees WHERE id = $1 AND tenant_id = $2',
+                        [jwtEmployeeId, tenantId]
+                    );
+                    callerIsOwner = ownerCheck.rows[0]?.is_owner === true;
+                    console.log(`[Shifts] 🔍 is_owner fallback check for JWT employee ${jwtEmployeeId}: ${callerIsOwner}`);
+                }
+
                 if (!callerIsOwner) {
                     return res.status(403).json({
                         success: false,
