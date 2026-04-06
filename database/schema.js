@@ -292,6 +292,16 @@ async function initializeDatabase() {
             ALTER SEQUENCE global_expense_categories_id_seq OWNED BY global_expense_categories.id
         `);
 
+        // Ensure tenant_id column exists (for databases created before this column was added)
+        try {
+            await client.query(`
+                ALTER TABLE global_expense_categories
+                ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE
+            `);
+        } catch (e) {
+            // Column already exists - ignore
+        }
+
         // Unique name within global scope
         await client.query(`
             CREATE UNIQUE INDEX IF NOT EXISTS idx_expense_categories_name_global
