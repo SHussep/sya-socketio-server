@@ -811,7 +811,7 @@ module.exports = (pool, io) => {
             });
         } catch (error) {
             console.error('[Sync/Expenses] Error:', error);
-            res.status(500).json({ success: false, message: 'Error al sincronizar gasto', error: undefined });
+            res.status(500).json({ success: false, message: 'Error al sincronizar gasto', detail: error?.message || String(error) });
         }
     });
 
