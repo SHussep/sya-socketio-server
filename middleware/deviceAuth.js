@@ -91,7 +91,7 @@ function createDeviceAuthMiddleware(pool) {
  */
 function createTenantValidationMiddleware(pool) {
     return async function validateSyncTenant(req, res, next) {
-        const tenant_id = req.body?.tenant_id || req.body?.tenantId;
+        const tenant_id = req.body?.tenant_id || req.body?.tenantId || req.params?.tenantId || req.query?.tenant_id;
         const employee_global_id = req.body?.employee_global_id || req.body?.employeeGlobalId;
 
         if (!tenant_id) {
