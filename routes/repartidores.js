@@ -85,13 +85,14 @@ module.exports = (pool) => {
                     LEFT JOIN employees e ON ra.employee_id = e.id
                     LEFT JOIN roles r ON e.role_id = r.id
                     LEFT JOIN branches b ON e.main_branch_id = b.id
+                    LEFT JOIN shifts s ON ra.repartidor_shift_id = s.id
                     WHERE ra.tenant_id = $1
             `;
 
-            // NOTA: No filtrar assignment_stats por is_cash_cut_open.
-            // Un assignment "pending" sigue siendo pendiente aunque el turno del repartidor
-            // se haya cerrado. El filtro only_open_shifts solo controla qué empleados
-            // aparecen (los que tienen turno abierto), no qué assignments se cuentan.
+            // Solo filtrar por turnos abiertos si se especifica explícitamente
+            if (only_open_shifts === 'true') {
+                query += ` AND (s.id IS NULL OR s.is_cash_cut_open = true)`;
+            }
 
             const params = [tenantId];
             let paramIndex = 2;
@@ -167,12 +168,16 @@ module.exports = (pool) => {
                         SUM(CASE WHEN ra.status IN ('pending', 'in_progress') THEN ra.assigned_quantity ELSE 0 END) as active_qty,
                         SUM(CASE WHEN ra.status IN ('pending', 'in_progress') THEN ra.assigned_amount ELSE 0 END) as active_amt
                     FROM repartidor_assignments ra
+                    LEFT JOIN shifts s ON ra.repartidor_shift_id = s.id
                     WHERE ra.tenant_id = $1
                       AND ra.status IN ('pending', 'in_progress')
             `;
 
             // Repetir filtros para quantity_by_unit (usando los mismos índices de params)
             let qbuParamIndex = 2;
+            if (only_open_shifts === 'true') {
+                query += ` AND (s.id IS NULL OR s.is_cash_cut_open = true)`;
+            }
             if (all_branches !== 'true' && targetBranchId) {
                 query += ` AND ra.branch_id = $${qbuParamIndex}`;
                 qbuParamIndex++;
@@ -259,14 +264,11 @@ module.exports = (pool) => {
                 LEFT JOIN quantity_by_unit_agg qbu ON cos.employee_id = qbu.employee_id
             `;
 
-            // SIEMPRE agregar UNION con assignment_stats para incluir repartidores
-            // que tienen asignaciones activas pero NO tienen turno abierto.
-            // Con only_open_shifts=true: solo incluir los que tienen pending/in_progress
-            // Con only_open_shifts=false: incluir todos (histórico completo)
-            const activeFilter = only_open_shifts === 'true'
-                ? ` AND (a.pending_count > 0 OR a.in_progress_count > 0)`
-                : '';
-            query += `
+            // Si only_open_shifts=true, ya estamos partiendo de current_open_shifts (turno abierto)
+            // Si only_open_shifts=false, necesitamos UNION con assignment_stats para ver histórico
+            if (only_open_shifts !== 'true') {
+                // Agregar empleados con asignaciones aunque no tengan turno abierto (histórico)
+                query += `
                 UNION
                 SELECT
                     a.employee_id,
@@ -305,14 +307,18 @@ module.exports = (pool) => {
                 LEFT JOIN quantity_by_unit_agg qbu ON a.employee_id = qbu.employee_id
                 LEFT JOIN current_open_shifts cos ON a.employee_id = cos.employee_id
                 WHERE NOT EXISTS (SELECT 1 FROM current_open_shifts cos2 WHERE cos2.employee_id = a.employee_id)
-                ${activeFilter}
-            `;
+                `;
+            }
 
             query += ` ORDER BY last_assignment_date DESC NULLS LAST`;
 
             const result = await pool.query(query, params);
 
             console.log(`[Repartidores Summary] ✅ Found ${result.rows.length} repartidores with assignments`);
+            // DEBUG: Log each repartidor's counts to diagnose visibility issues
+            result.rows.forEach(row => {
+                console.log(`[Repartidores Summary] 📊 ${row.repartidor_name} (empId=${row.employee_id}): pending=${row.pending_count}, in_progress=${row.in_progress_count}, total=${row.total_assignments}, shift=${row.current_shift_global_id ? 'open' : 'none'}`);
+            });
 
             res.json({
                 success: true,
@@ -436,10 +442,14 @@ module.exports = (pool) => {
                 paramIndex++;
                 console.log(`[Repartidor Assignments] 🎯 Filtrando por shift_id=${shift_id}`);
             } else if (only_open_shifts === 'true') {
-                // No filtrar por is_cash_cut_open — un assignment pendiente sigue siendo pendiente
-                // aunque el turno del repartidor se haya cerrado. Solo excluir ventas canceladas.
+                // Filtrar turnos abiertos si se solicita (solo cuando NO se especifica un turno específico)
+                // 🔧 FIX: Devolver TODAS las asignaciones del turno (pending, in_progress Y liquidated)
+                // El filtro de status se aplica en el cliente, no aquí
+                query += ` AND (s.id IS NULL OR s.is_cash_cut_open = true)`;
+                // 🔧 Ya NO filtrar por status - incluir pending, in_progress Y liquidated
+                // query += ` AND ra.status IN ('pending', 'in_progress')`;  // REMOVED
                 query += ` AND (ra.venta_id IS NULL OR COALESCE(v.status, 'active') NOT IN ('cancelled', 'voided'))`;
-                console.log(`[Repartidor Assignments] ✅ Filtrando asignaciones activas (sin filtro de turno)`);
+                console.log(`[Repartidor Assignments] ✅ Filtrando asignaciones de turnos abiertos (todos los status)`);
             }
 
             // Filtrar por status si se proporciona
