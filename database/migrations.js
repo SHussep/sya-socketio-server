@@ -963,7 +963,7 @@ async function runMigrations() {
                         (11, 'Limpieza', 'Materiales limpieza', FALSE, NULL, 11),
                         (12, 'Otros Gastos', 'No clasificados', FALSE, NULL, 12),
                         (13, 'Comida', 'Viáticos y alimentación', FALSE, NULL, 13),
-                        (14, 'Otros', 'Otros gastos', FALSE, NULL, 14)
+                        (14, 'Otros', 'Otros gastos (usar Otros Gastos)', FALSE, NULL, 14)
                     ON CONFLICT (id) DO NOTHING
                 `);
 
@@ -3051,6 +3051,18 @@ async function runMigrations() {
                 }
             } catch (dedupErr) {
                 console.error(`[Schema] ⚠️ Category dedup error: ${dedupErr.message}`);
+            }
+
+            // ── Migration 043: Disable duplicate "Otros" expense category (ID 14) ──
+            // "Otros Gastos" (ID 12) already covers this. ID 14 is redundant.
+            try {
+                await client.query(`
+                    UPDATE global_expense_categories
+                    SET is_available = false
+                    WHERE id = 14 AND name = 'Otros' AND is_available = true
+                `);
+            } catch (otrosErr) {
+                console.error(`[Schema] ⚠️ Otros category disable error: ${otrosErr.message}`);
             }
 
             console.log('[Schema] ✅ Database initialization complete');
