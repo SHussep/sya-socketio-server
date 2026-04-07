@@ -28,6 +28,12 @@ module.exports = (pool, io) => {
         }
     });
 
+    // GET /api/expenses/debug-last-errors - Últimos intentos fallidos de sync (temporal)
+    const _lastSyncAttempts = [];
+    router.get('/debug-last-errors', (req, res) => {
+        res.json({ attempts: _lastSyncAttempts });
+    });
+
     // GET /api/expenses - Obtener gastos por sucursal y rango de fechas
     // 🔧 FIX: Agregar authenticateToken para que req.user tenga tenantId
     router.get('/', authenticateToken, async (req, res) => {
@@ -381,7 +387,20 @@ module.exports = (pool, io) => {
     // Ahora también acepta localShiftId para offline-first reconciliation
     // Soporta estados: draft, confirmed, deleted (para flujo de borradores)
     router.post('/sync', async (req, res) => {
+        const syncAttempt = { ts: new Date().toISOString(), payload: {}, error: null };
         try {
+            syncAttempt.payload = {
+                tenantId: req.body.tenantId,
+                branchId: req.body.branchId,
+                employeeId: req.body.employeeId,
+                category: req.body.category,
+                amount: req.body.amount,
+                id_turno: req.body.id_turno,
+                payment_type_id: req.body.payment_type_id,
+                terminal_id: req.body.terminal_id ? '(set)' : '(null)',
+                global_id: req.body.global_id ? '(set)' : '(null)',
+                receipt_image: req.body.receipt_image ? `(${Math.round((req.body.receipt_image||'').length/1024)}KB)` : '(null)',
+            };
             const {
                 tenantId, branchId,
                 employeeId,              // LEGACY: ID local (no usar)
@@ -826,6 +845,9 @@ module.exports = (pool, io) => {
             });
         } catch (error) {
             console.error('[Sync/Expenses] Error:', error);
+            syncAttempt.error = error?.message || String(error);
+            _lastSyncAttempts.unshift(syncAttempt);
+            if (_lastSyncAttempts.length > 10) _lastSyncAttempts.pop();
             res.status(500).json({ success: false, message: 'Error al sincronizar gasto', detail: error?.message || String(error) });
         }
     });
