@@ -1349,13 +1349,13 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
 
                 // Always set session_revoked_at — the device may have a dead socket
                 // and won't receive the force_logout emit. The heartbeat check will catch it.
-                const revokedDeviceType = activeShift?.terminal_id?.startsWith('mobile-') ? 'mobile' : 'desktop';
+                // Usar 'all' para revocar TODOS los dispositivos del empleado, no solo un tipo
                 await client.query(
-                    `UPDATE employees SET session_revoked_at = NOW(), session_revoked_for_device = $2
+                    `UPDATE employees SET session_revoked_at = NOW(), session_revoked_for_device = 'all'
                      WHERE id = $1`,
-                    [forceEmployeeIdInt, revokedDeviceType]
+                    [forceEmployeeIdInt]
                 );
-                console.log(`[Socket] 🚫 Employee ${forceEmployeeIdInt} marked as revoked (${revokedDeviceType}, isOnline=${isOnline}, directKicks=${kickedCount})`);
+                console.log(`[Socket] 🚫 Employee ${forceEmployeeIdInt} marked as revoked (all devices, isOnline=${isOnline}, directKicks=${kickedCount})`);
 
                 // Transfer shift ownership to the new device
                 if (newTerminalId && activeShift) {
