@@ -177,9 +177,11 @@ module.exports = (pool) => {
                 SELECT eb.id, eb.tenant_id, eb.employee_id, eb.branch_id,
                        eb.assigned_at, eb.removed_at, eb.updated_at,
                        (eb.removed_at IS NULL) as is_active,
-                       b.name as branch_name, b.branch_code as branch_code
+                       b.name as branch_name, b.branch_code as branch_code,
+                       e.global_id as employee_global_id
                 FROM employee_branches eb
                 JOIN branches b ON b.id = eb.branch_id
+                JOIN employees e ON e.id = eb.employee_id
                 WHERE eb.tenant_id = $1
             `;
             const params = [tenantId];
