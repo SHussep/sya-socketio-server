@@ -223,6 +223,7 @@ module.exports = (pool, io) => {
                     p.unidad_medida_id,
                     p.bascula as pesable,
                     p.is_pos_shortcut,
+                    p.image_url,
                     NOT p.eliminado as is_active,
                     p.created_at,
                     p.updated_at,

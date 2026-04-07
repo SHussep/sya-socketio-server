@@ -3022,7 +3022,8 @@ async function runMigrations() {
 
             // ── Migration: Deduplicate categorias_productos by tenant+nombre ──
             // Desktop and Flutter each create system categories with random global_ids,
-            // causing duplicates. Keep the oldest per tenant+nombre, delete the rest.
+            // causing duplicates. Soft-delete duplicates (keep oldest per tenant+nombre)
+            // so Desktop RemoteId mappings aren't broken.
             try {
                 const dupCheck = await client.query(`
                     SELECT tenant_id, nombre, COUNT(*) as cnt
@@ -3032,9 +3033,10 @@ async function runMigrations() {
                     HAVING COUNT(*) > 1
                 `);
                 if (dupCheck.rows.length > 0) {
-                    console.log(`[Schema] 📝 Found ${dupCheck.rows.length} duplicated category names, cleaning up...`);
-                    const deleteResult = await client.query(`
-                        DELETE FROM categorias_productos
+                    console.log(`[Schema] 📝 Found ${dupCheck.rows.length} duplicated category names, soft-deleting extras...`);
+                    const softDeleteResult = await client.query(`
+                        UPDATE categorias_productos
+                        SET is_deleted = true, is_available = false, deleted_at = NOW(), updated_at = NOW()
                         WHERE id IN (
                             SELECT id FROM (
                                 SELECT id,
@@ -3045,7 +3047,7 @@ async function runMigrations() {
                             WHERE rn > 1
                         )
                     `);
-                    console.log(`[Schema] ✅ Removed ${deleteResult.rowCount} duplicate categories`);
+                    console.log(`[Schema] ✅ Soft-deleted ${softDeleteResult.rowCount} duplicate categories`);
                 }
             } catch (dedupErr) {
                 console.error(`[Schema] ⚠️ Category dedup error: ${dedupErr.message}`);
