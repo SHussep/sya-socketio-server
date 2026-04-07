@@ -3053,6 +3053,47 @@ async function runMigrations() {
                 console.error(`[Schema] ⚠️ Category dedup error: ${dedupErr.message}`);
             }
 
+            // ── Migration 044: Add missing columns to expenses table for mobile sync ──
+            // The POST /api/expenses/sync endpoint references columns that don't exist yet
+            try {
+                const missingCols = [
+                    { name: 'consumer_employee_id', sql: 'INTEGER REFERENCES employees(id) ON DELETE SET NULL' },
+                    { name: 'payment_type_id', sql: 'INTEGER DEFAULT 1' },
+                    { name: 'id_turno', sql: 'INTEGER' },
+                    { name: 'quantity', sql: 'DECIMAL(10,3)' },
+                    { name: 'status', sql: "VARCHAR(50) DEFAULT 'confirmed'" },
+                    { name: 'reviewed_by_desktop', sql: 'BOOLEAN DEFAULT false' },
+                    { name: 'is_active', sql: 'BOOLEAN DEFAULT true' },
+                    { name: 'global_id', sql: 'VARCHAR(255)' },
+                    { name: 'terminal_id', sql: 'VARCHAR(100)' },
+                    { name: 'local_op_seq', sql: 'BIGINT DEFAULT 0' },
+                    { name: 'created_local_utc', sql: 'TEXT' },
+                    { name: 'device_event_raw', sql: 'BIGINT' },
+                ];
+
+                let addedCount = 0;
+                for (const col of missingCols) {
+                    const check = await client.query(`
+                        SELECT column_name FROM information_schema.columns
+                        WHERE table_name = 'expenses' AND column_name = $1
+                    `, [col.name]);
+                    if (check.rows.length === 0) {
+                        await client.query(`ALTER TABLE expenses ADD COLUMN ${col.name} ${col.sql}`);
+                        addedCount++;
+                    }
+                }
+
+                if (addedCount > 0) {
+                    // Add unique index on global_id for idempotency
+                    await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_expenses_global_id ON expenses(global_id) WHERE global_id IS NOT NULL`);
+                    await client.query(`CREATE INDEX IF NOT EXISTS idx_expenses_status ON expenses(status)`);
+                    await client.query(`CREATE INDEX IF NOT EXISTS idx_expenses_is_active ON expenses(is_active) WHERE is_active = true`);
+                    console.log(`[Schema] ✅ Added ${addedCount} missing columns to expenses table (Migration 044)`);
+                }
+            } catch (expColErr) {
+                console.error(`[Schema] ⚠️ Expenses columns migration error: ${expColErr.message}`);
+            }
+
             // ── Migration 043: Disable duplicate "Otros" expense category (ID 14) ──
             // "Otros Gastos" (ID 12) already covers this. ID 14 is redundant.
             try {
