@@ -268,6 +268,11 @@ module.exports = (pool, io) => {
 
             console.log(`[Productos/Pull] ✅ ${result.rows.length} productos encontrados`);
 
+            // Debug bascula values
+            result.rows.forEach(r => {
+                if (r.pesable !== false) console.log(`[Productos/Pull] 🔍 ${r.name}: pesable=${r.pesable} (type=${typeof r.pesable})`);
+            });
+
             res.json({
                 success: true,
                 data: {
