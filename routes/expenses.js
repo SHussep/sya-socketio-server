@@ -13,6 +13,21 @@ module.exports = (pool, io) => {
     const router = express.Router();
     const authenticateToken = createAuthMiddleware(pool);
 
+    // GET /api/expenses/debug-columns - Verifica que las columnas de la migración existen
+    router.get('/debug-columns', async (req, res) => {
+        try {
+            const result = await pool.query(`
+                SELECT column_name, data_type
+                FROM information_schema.columns
+                WHERE table_name = 'expenses'
+                ORDER BY ordinal_position
+            `);
+            res.json({ columns: result.rows.map(r => r.column_name), details: result.rows });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
     // GET /api/expenses - Obtener gastos por sucursal y rango de fechas
     // 🔧 FIX: Agregar authenticateToken para que req.user tenga tenantId
     router.get('/', authenticateToken, async (req, res) => {
