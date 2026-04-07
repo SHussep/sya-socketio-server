@@ -1113,11 +1113,22 @@ module.exports = (pool, io) => {
 
             const sortOrder = maxSortOrder.rows[0].next_sort;
 
+            // Obtener el siguiente ID (la secuencia puede no existir en instancias antiguas)
+            let nextId;
+            try {
+                const seqResult = await pool.query(`SELECT nextval('global_expense_categories_id_seq') as next_id`);
+                nextId = seqResult.rows[0].next_id;
+            } catch (seqErr) {
+                // Si la secuencia no existe, calcular manualmente
+                const maxResult = await pool.query(`SELECT COALESCE(MAX(id), 14) + 1 as next_id FROM global_expense_categories`);
+                nextId = Math.max(maxResult.rows[0].next_id, 100);
+            }
+
             const result = await pool.query(`
-                INSERT INTO global_expense_categories (name, description, is_measurable, unit_abbreviation, tenant_id, sort_order, is_available)
-                VALUES ($1, $2, $3, $4, $5, $6, true)
+                INSERT INTO global_expense_categories (id, name, description, is_measurable, unit_abbreviation, tenant_id, sort_order, is_available)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, true)
                 RETURNING id, name, description, is_measurable, unit_abbreviation, is_available, sort_order, tenant_id, created_at, updated_at
-            `, [trimmedName, description || null, is_measurable || false, unit_abbreviation || null, tenant_id, sortOrder]);
+            `, [nextId, trimmedName, description || null, is_measurable || false, unit_abbreviation || null, tenant_id, sortOrder]);
 
             console.log(`[Expenses/Categories] ✅ Categoría creada con ID ${result.rows[0].id}`);
 
