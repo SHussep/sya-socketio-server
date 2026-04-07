@@ -54,7 +54,16 @@ module.exports = (pool, io) => {
                     }
                     employeeId = resolvedId;
                 } else {
-                    console.log(`[Shifts] ⚠️ employeeGlobalId=${employeeGlobalId} not found in tenant ${tenantId}, falling back to JWT employeeId=${jwtEmployeeId}`);
+                    // ✅ FIX: No hacer fallback al JWT — devolver error claro.
+                    // El fallback anterior abría turnos para el DUEÑO en vez del empleado,
+                    // causando conflictos "ya tienes turno abierto en otro lado".
+                    console.log(`[Shifts] ❌ employeeGlobalId=${employeeGlobalId} not found in tenant ${tenantId}. Employee not synced yet — rejecting.`);
+                    await client.query('ROLLBACK');
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Empleado aún no sincronizado con el servidor. Espera a que se complete la sincronización e intenta de nuevo.',
+                        code: 'EMPLOYEE_NOT_SYNCED'
+                    });
                 }
             }
 

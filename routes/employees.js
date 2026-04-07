@@ -123,6 +123,7 @@ module.exports = (pool) => {
                 email,
                 password,  // Plain text from mobile, BCrypt hash from Desktop
                 roleId,
+                roleName,  // Fallback: Desktop envía nombre del rol para resolver si roleId local no mapea
                 isActive,
                 isOwner,
                 mainBranchId,
@@ -189,20 +190,46 @@ module.exports = (pool) => {
                 );
 
                 if (roleCheck.rows.length === 0) {
-                    // Buscar roles válidos para mostrar en el mensaje de error
-                    const validRoles = await client.query(
-                        `SELECT id, name FROM roles WHERE tenant_id = $1 OR tenant_id IS NULL ORDER BY id`,
-                        [tenantId]
-                    );
-                    const validRolesList = validRoles.rows.map(r => `${r.id} (${r.name})`).join(', ');
-                    console.log(`[Employees/Sync] ❌ Rol no válido: ${roleId}. Roles válidos para tenant ${tenantId}: ${validRolesList}`);
-                    return res.status(400).json({
-                        success: false,
-                        message: `Rol no válido. Roles disponibles para este tenant: ${validRolesList}`
-                    });
+                    // ✅ FIX: Antes de rechazar, intentar resolver por roleName (fallback)
+                    // Desktop envía roleId local (ej: 1) que no existe en PG, pero también
+                    // envía roleName (ej: "Administrador") que sí se puede resolver.
+                    if (roleName) {
+                        const roleByName = await client.query(
+                            `SELECT id, name, mobile_access_type FROM roles WHERE LOWER(name) = LOWER($1) AND (tenant_id = $2 OR tenant_id IS NULL) LIMIT 1`,
+                            [roleName, tenantId]
+                        );
+                        if (roleByName.rows.length > 0) {
+                            mappedRoleId = roleByName.rows[0].id;
+                            roleMobileAccessType = roleByName.rows[0].mobile_access_type || 'none';
+                            console.log(`[Employees/Sync] 🔗 roleId ${roleId} no válido, resuelto por roleName: "${roleName}" → ID ${mappedRoleId}`);
+                        } else {
+                            const validRoles = await client.query(
+                                `SELECT id, name FROM roles WHERE tenant_id = $1 OR tenant_id IS NULL ORDER BY id`,
+                                [tenantId]
+                            );
+                            const validRolesList = validRoles.rows.map(r => `${r.id} (${r.name})`).join(', ');
+                            console.log(`[Employees/Sync] ❌ Rol no válido: ${roleId}, roleName "${roleName}" tampoco encontrado. Válidos: ${validRolesList}`);
+                            return res.status(400).json({
+                                success: false,
+                                message: `Rol no válido. Roles disponibles para este tenant: ${validRolesList}`
+                            });
+                        }
+                    } else {
+                        const validRoles = await client.query(
+                            `SELECT id, name FROM roles WHERE tenant_id = $1 OR tenant_id IS NULL ORDER BY id`,
+                            [tenantId]
+                        );
+                        const validRolesList = validRoles.rows.map(r => `${r.id} (${r.name})`).join(', ');
+                        console.log(`[Employees/Sync] ❌ Rol no válido: ${roleId}. Roles válidos para tenant ${tenantId}: ${validRolesList}`);
+                        return res.status(400).json({
+                            success: false,
+                            message: `Rol no válido. Roles disponibles para este tenant: ${validRolesList}`
+                        });
+                    }
+                } else {
+                    mappedRoleId = roleId;
+                    roleMobileAccessType = roleCheck.rows[0].mobile_access_type || 'none';
                 }
-                mappedRoleId = roleId;
-                roleMobileAccessType = roleCheck.rows[0].mobile_access_type || 'none';
             }
 
             // Determine if employee can use mobile app
