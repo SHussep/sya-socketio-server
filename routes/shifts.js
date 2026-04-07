@@ -1583,7 +1583,7 @@ module.exports = (pool, io) => {
                     transaction_counter || 0,
                     is_cash_cut_open,
                     global_id,
-                    terminal_id || null,
+                    terminal_id || 'unknown',
                     local_op_seq || null,
                     created_local_utc || null,
                     device_event_raw || null
@@ -2165,6 +2165,7 @@ module.exports = (pool, io) => {
                 SELECT
                     s.id, s.employee_id, s.branch_id, s.tenant_id,
                     s.start_time, s.initial_amount, s.is_cash_cut_open,
+                    s.terminal_id,
                     CONCAT(e.first_name, ' ', e.last_name) as employee_name,
                     r.name as employee_role,
                     b.name as branch_name
@@ -2384,6 +2385,7 @@ module.exports = (pool, io) => {
                         branch_name: shift.branch_name,
                         tenant_id: shift.tenant_id,
                         start_time: shift.start_time,
+                        terminal_id: shift.terminal_id,
 
                         // Montos básicos
                         initial_amount: initialAmount,
