@@ -259,11 +259,14 @@ module.exports = (pool) => {
                 LEFT JOIN quantity_by_unit_agg qbu ON cos.employee_id = qbu.employee_id
             `;
 
-            // Si only_open_shifts=true, ya estamos partiendo de current_open_shifts (turno abierto)
-            // Si only_open_shifts=false, necesitamos UNION con assignment_stats para ver histórico
-            if (only_open_shifts !== 'true') {
-                // Agregar empleados con asignaciones aunque no tengan turno abierto (histórico)
-                query += `
+            // SIEMPRE agregar UNION con assignment_stats para incluir repartidores
+            // que tienen asignaciones activas pero NO tienen turno abierto.
+            // Con only_open_shifts=true: solo incluir los que tienen pending/in_progress
+            // Con only_open_shifts=false: incluir todos (histórico completo)
+            const activeFilter = only_open_shifts === 'true'
+                ? ` AND (a.pending_count > 0 OR a.in_progress_count > 0)`
+                : '';
+            query += `
                 UNION
                 SELECT
                     a.employee_id,
@@ -302,8 +305,8 @@ module.exports = (pool) => {
                 LEFT JOIN quantity_by_unit_agg qbu ON a.employee_id = qbu.employee_id
                 LEFT JOIN current_open_shifts cos ON a.employee_id = cos.employee_id
                 WHERE NOT EXISTS (SELECT 1 FROM current_open_shifts cos2 WHERE cos2.employee_id = a.employee_id)
-                `;
-            }
+                ${activeFilter}
+            `;
 
             query += ` ORDER BY last_assignment_date DESC NULLS LAST`;
 
