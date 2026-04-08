@@ -360,6 +360,29 @@ module.exports = (pool, io) => {
                 }
             }
 
+            // ✅ Fallback: si no hay proveedor, asignar "Productos propios" (crear si no existe)
+            if (!resolvedProveedorId) {
+                const defaultGlobalId = `SEED_SUPPLIER_PRODUCTOS_PROPIOS_${tenant_id}`;
+                const defaultResult = await pool.query(
+                    'SELECT id FROM suppliers WHERE global_id = $1 AND tenant_id = $2',
+                    [defaultGlobalId, tenant_id]
+                );
+                if (defaultResult.rows.length > 0) {
+                    resolvedProveedorId = defaultResult.rows[0].id;
+                } else {
+                    // Crear "Productos propios" para este tenant
+                    const insertResult = await pool.query(
+                        `INSERT INTO suppliers (tenant_id, name, contact_person, phone_number, global_id, is_active, created_at, updated_at)
+                         VALUES ($1, 'Productos propios', 'N/A', 'N/A', $2, true, NOW(), NOW())
+                         ON CONFLICT (global_id) DO UPDATE SET updated_at = NOW()
+                         RETURNING id`,
+                        [tenant_id, defaultGlobalId]
+                    );
+                    resolvedProveedorId = insertResult.rows[0].id;
+                    console.log(`[Productos/Sync] ✅ Proveedor 'Productos propios' creado automáticamente (ID: ${resolvedProveedorId})`);
+                }
+            }
+
             // ✅ Resolver categoria_id desde categoria_global_id (opcional, no rompe si no existe)
             let resolvedCategoriaId = null;
             if (categoria_global_id) {
@@ -542,6 +565,28 @@ module.exports = (pool, io) => {
                             );
                             if (supplierResult.rows.length > 0) {
                                 resolvedProveedorId = supplierResult.rows[0].id;
+                            }
+                        }
+
+                        // ✅ Fallback: asignar "Productos propios" si no hay proveedor
+                        if (!resolvedProveedorId) {
+                            const defaultGlobalId = `SEED_SUPPLIER_PRODUCTOS_PROPIOS_${tenant_id}`;
+                            const defaultResult = await client.query(
+                                'SELECT id FROM suppliers WHERE global_id = $1 AND tenant_id = $2',
+                                [defaultGlobalId, tenant_id]
+                            );
+                            if (defaultResult.rows.length > 0) {
+                                resolvedProveedorId = defaultResult.rows[0].id;
+                            } else {
+                                const insertResult = await client.query(
+                                    `INSERT INTO suppliers (tenant_id, name, contact_person, phone_number, global_id, is_active, created_at, updated_at)
+                                     VALUES ($1, 'Productos propios', 'N/A', 'N/A', $2, true, NOW(), NOW())
+                                     ON CONFLICT (global_id) DO UPDATE SET updated_at = NOW()
+                                     RETURNING id`,
+                                    [tenant_id, defaultGlobalId]
+                                );
+                                resolvedProveedorId = insertResult.rows[0].id;
+                                console.log(`[Productos/SyncBatch] ✅ Proveedor 'Productos propios' creado (ID: ${resolvedProveedorId})`);
                             }
                         }
 
