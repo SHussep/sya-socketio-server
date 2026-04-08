@@ -198,7 +198,7 @@ difference = countedCash - expectedCashInDrawer
 
 ### Componente 3: Test Suite (`multi-caja-qa.test.js`)
 
-**7 bloques de escenarios, 16+ tests:**
+**8 bloques de escenarios, 19+ tests:**
 
 #### Bloque 1: Terminal Única — Operaciones Básicas
 Verifica que el corte cuadre con operaciones simples.
@@ -326,6 +326,22 @@ Verifica qué pasa cuando el cliente envía valores de liquidación incorrectos.
 - Este test documenta que las liquidaciones son un "trust the client" model.
   Si en el futuro el servidor valida las liquidaciones, este test fallará — señalando
   que el modelo cambió y los tests deben actualizarse.
+
+#### Bloque 8: Inventario — Cancelaciones y Crédito
+Verifica que el inventario se restaure correctamente al cancelar ventas.
+
+- Producto con `inventariar=true`, inventario inicial = 100
+- Crear venta en efectivo (5 unidades), decrementar inventario manualmente a 95
+- Cancelar venta via `POST /api/sales/:id/cancel`
+- Verificar inventario restaurado a 100
+- Repetir con venta a crédito (8 unidades) — misma lógica de restauración
+- Crear venta sin cancelar — verificar que el servidor NO decrementa inventario
+
+**Assertions:**
+- Inventario se restaura en cancelación de venta en efectivo (`inventariar=true`)
+- Inventario se restaura en cancelación de venta a crédito (mismo comportamiento)
+- La creación de venta via sync NO decrementa inventario (eso lo hace Desktop)
+- Si el producto tiene `inventariar=false`, la cancelación NO modifica inventario
 
 ## Cleanup y Seguridad de Datos
 
@@ -503,7 +519,7 @@ Los tests nuevos complementan los existentes. No reemplazan nada.
 | Sync retiro | POST | `/api/sync/withdrawals` | Acepta batch |
 | Sync pago crédito | POST | `/api/sync/credit-payments` | Acepta batch |
 | Aprobar gasto | PATCH | `/api/expenses/:global_id/approve` | Mantiene `is_active=true` |
-| Rechazar gasto | PUT | `/api/expenses/:global_id/deactivate` | Pone `is_active=false` |
+| Rechazar gasto | PATCH | `/api/expenses/:global_id/deactivate` | Pone `is_active=false` |
 | Editar gasto | PATCH | `/api/expenses/:global_id` | Actualiza campos |
 | Cancelar venta | POST | `/api/sync/cancelaciones` | Cambia `estado_venta_id` a 4 |
 | Asignar repartidor | POST | `/api/sync/repartidor-assignments` | Acepta batch |
