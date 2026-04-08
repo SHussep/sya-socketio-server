@@ -348,13 +348,19 @@ module.exports = (pool, io) => {
             // ✅ Resolver proveedor_id desde proveedor_global_id
             let resolvedProveedorId = null;
             if (proveedor_global_id) {
+                // Normalizar: si Desktop envía _0 (seed antes de login), usar el tenant real
+                let lookupGlobalId = proveedor_global_id;
+                if (proveedor_global_id === 'SEED_SUPPLIER_PRODUCTOS_PROPIOS_0') {
+                    lookupGlobalId = `SEED_SUPPLIER_PRODUCTOS_PROPIOS_${tenant_id}`;
+                    console.log(`[Productos/Sync] 🔄 Normalizando proveedor seed: _0 -> _${tenant_id}`);
+                }
                 const supplierResult = await pool.query(
                     'SELECT id FROM suppliers WHERE global_id = $1 AND tenant_id = $2',
-                    [proveedor_global_id, tenant_id]
+                    [lookupGlobalId, tenant_id]
                 );
                 if (supplierResult.rows.length > 0) {
                     resolvedProveedorId = supplierResult.rows[0].id;
-                    console.log(`[Productos/Sync] ✅ Proveedor resuelto: GlobalId=${proveedor_global_id} -> PostgresID=${resolvedProveedorId}`);
+                    console.log(`[Productos/Sync] ✅ Proveedor resuelto: GlobalId=${lookupGlobalId} -> PostgresID=${resolvedProveedorId}`);
                 } else {
                     console.log(`[Productos/Sync] ⚠️ Proveedor no encontrado por GlobalId: ${proveedor_global_id}`);
                 }
@@ -557,9 +563,13 @@ module.exports = (pool, io) => {
                         // ✅ Resolver proveedor_id desde proveedor_global_id
                         let resolvedProveedorId = null;
                         if (prod.proveedor_global_id) {
+                            // Normalizar seed con _0
+                            const lookupGlobalId = prod.proveedor_global_id === 'SEED_SUPPLIER_PRODUCTOS_PROPIOS_0'
+                                ? `SEED_SUPPLIER_PRODUCTOS_PROPIOS_${tenant_id}`
+                                : prod.proveedor_global_id;
                             const supplierResult = await client.query(
                                 'SELECT id FROM suppliers WHERE global_id = $1 AND tenant_id = $2',
-                                [prod.proveedor_global_id, tenant_id]
+                                [lookupGlobalId, tenant_id]
                             );
                             if (supplierResult.rows.length > 0) {
                                 resolvedProveedorId = supplierResult.rows[0].id;
