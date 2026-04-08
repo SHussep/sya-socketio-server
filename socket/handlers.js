@@ -302,7 +302,11 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
 
                 // Check if shift was taken over by another device
                 const shiftCheck = await pool.query(
-                    `SELECT terminal_id, is_cash_cut_open FROM shifts WHERE id = $1`,
+                    `SELECT s.terminal_id, s.is_cash_cut_open, s.employee_id,
+                            e.session_revoked_at
+                     FROM shifts s
+                     LEFT JOIN employees e ON e.id = s.employee_id
+                     WHERE s.id = $1`,
                     [shiftId]
                 );
                 const shift = shiftCheck.rows[0];
@@ -318,14 +322,20 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
                 }
 
                 if (terminalId && shift.terminal_id && shift.terminal_id !== terminalId) {
-                    // Shift was taken by another device — revoke this session
-                    console.log(`[Socket] ⚠️ shift_heartbeat: shift ${shiftId} terminal mismatch (DB=${shift.terminal_id}, caller=${terminalId}) — revoking ${socket.clientType}`);
-                    socket.emit('force_logout', {
-                        reason: 'session_taken',
-                        takenByDevice: shift.terminal_id.startsWith('mobile-') ? 'mobile' : 'desktop',
-                        message: 'Tu sesión fue tomada por otro dispositivo'
-                    });
-                    return;
+                    // Terminal mismatch — but only force_logout if a genuine takeover was initiated.
+                    // force_takeover always sets session_revoked_at, so if it's NULL this is
+                    // likely a network glitch or reconnection artifact, not a real takeover.
+                    if (shift.session_revoked_at) {
+                        console.log(`[Socket] ⚠️ shift_heartbeat: shift ${shiftId} terminal mismatch + session_revoked_at set (DB=${shift.terminal_id}, caller=${terminalId}) — revoking ${socket.clientType}`);
+                        socket.emit('force_logout', {
+                            reason: 'session_taken',
+                            takenByDevice: shift.terminal_id.startsWith('mobile-') ? 'mobile' : 'desktop',
+                            message: 'Tu sesión fue tomada por otro dispositivo'
+                        });
+                        return;
+                    }
+                    // No revocation flag — likely a reconnection glitch, log and continue
+                    console.warn(`[Socket] ⚠️ shift_heartbeat: terminal mismatch WITHOUT revocation (DB=${shift.terminal_id}, caller=${terminalId}, shift=${shiftId}) — ignoring, not a real takeover`);
                 }
 
                 // All good — update heartbeat
