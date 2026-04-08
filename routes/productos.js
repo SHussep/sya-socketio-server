@@ -430,7 +430,11 @@ module.exports = (pool, io) => {
                     tipos_de_salida_id = EXCLUDED.tipos_de_salida_id,
                     notificar = EXCLUDED.notificar,
                     minimo = COALESCE(EXCLUDED.minimo, productos.minimo),
-                    inventario = COALESCE(EXCLUDED.inventario, productos.inventario),
+                    inventario = CASE
+                        WHEN EXCLUDED.inventario IS NOT NULL AND EXCLUDED.inventario > 0 THEN EXCLUDED.inventario
+                        WHEN (EXCLUDED.inventario IS NULL OR EXCLUDED.inventario = 0) AND productos.inventario > 0 THEN productos.inventario
+                        ELSE COALESCE(EXCLUDED.inventario, 0)
+                    END,
                     proveedor_id = EXCLUDED.proveedor_id,
                     unidad_medida_id = EXCLUDED.unidad_medida_id,
                     eliminado = EXCLUDED.eliminado,
@@ -624,7 +628,11 @@ module.exports = (pool, io) => {
                                 tipos_de_salida_id = EXCLUDED.tipos_de_salida_id,
                                 notificar = EXCLUDED.notificar,
                                 minimo = COALESCE(EXCLUDED.minimo, productos.minimo),
-                                inventario = COALESCE(EXCLUDED.inventario, productos.inventario),
+                                inventario = CASE
+                                    WHEN EXCLUDED.inventario IS NOT NULL AND EXCLUDED.inventario > 0 THEN EXCLUDED.inventario
+                                    WHEN (EXCLUDED.inventario IS NULL OR EXCLUDED.inventario = 0) AND productos.inventario > 0 THEN productos.inventario
+                                    ELSE COALESCE(EXCLUDED.inventario, 0)
+                                END,
                                 proveedor_id = EXCLUDED.proveedor_id,
                                 unidad_medida_id = EXCLUDED.unidad_medida_id,
                                 eliminado = EXCLUDED.eliminado,
@@ -1361,7 +1369,11 @@ module.exports = (pool, io) => {
                             tipos_de_salida_id = EXCLUDED.tipos_de_salida_id,
                             notificar = EXCLUDED.notificar,
                             minimo = COALESCE(EXCLUDED.minimo, productos.minimo),
-                            inventario = COALESCE(EXCLUDED.inventario, productos.inventario),
+                            inventario = CASE
+                                WHEN EXCLUDED.inventario IS NOT NULL AND EXCLUDED.inventario > 0 THEN EXCLUDED.inventario
+                                WHEN (EXCLUDED.inventario IS NULL OR EXCLUDED.inventario = 0) AND productos.inventario > 0 THEN productos.inventario
+                                ELSE COALESCE(EXCLUDED.inventario, 0)
+                            END,
                             proveedor_id = EXCLUDED.proveedor_id,
                             unidad_medida_id = EXCLUDED.unidad_medida_id,
                             eliminado = EXCLUDED.eliminado,
