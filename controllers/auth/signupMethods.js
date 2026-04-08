@@ -282,6 +282,17 @@ module.exports = {
             `, [tenant.id, branch.id]);
             console.log(`[Google Signup] ✅ Licencia de sucursal creada para branch ${branch.id}`);
 
+            // ===== Seed supplier "Productos propios" =====
+            const supplierGlobalId = `SEED_SUPPLIER_PRODUCTOS_PROPIOS_${tenant.id}`;
+            const supplierResult = await client.query(`
+                INSERT INTO suppliers (tenant_id, name, contact_person, phone_number, global_id, is_active, created_at, updated_at)
+                VALUES ($1, 'Productos propios', 'N/A', 'N/A', $2, true, NOW(), NOW())
+                ON CONFLICT (global_id) DO UPDATE SET updated_at = NOW()
+                RETURNING id
+            `, [tenant.id, supplierGlobalId]);
+            const defaultSupplierId = supplierResult.rows[0].id;
+            console.log(`[Google Signup] ✅ Proveedor 'Productos propios' creado (ID: ${defaultSupplierId})`);
+
             // ===== Seed products (6 productos iniciales con imágenes Cloudinary) =====
             const seedProducts = [
                 { id: 9001, desc: 'Tortilla de Maíz', precio: 26.00, bascula: true, unidad: 1, img: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1774822301/TortillaMaiz_scug2v.webp' },
@@ -296,12 +307,12 @@ module.exports = {
                     INSERT INTO productos (
                         tenant_id, id_producto, descripcion,
                         precio_venta, bascula, is_pos_shortcut,
-                        unidad_medida_id, global_id, terminal_id, image_url
-                    ) VALUES ($1, $2, $3, $4, $5, true, $6, $7, $8, $9)
+                        unidad_medida_id, proveedor_id, global_id, terminal_id, image_url
+                    ) VALUES ($1, $2, $3, $4, $5, true, $6, $7, $8, $9, $10)
                 `, [
                     tenant.id, p.id, p.desc,
                     p.precio, p.bascula,
-                    p.unidad, `SEED_PRODUCT_${tenant.id}_${p.id}`, `mobile-signup-${Date.now()}`,
+                    p.unidad, defaultSupplierId, `SEED_PRODUCT_${tenant.id}_${p.id}`, `mobile-signup-${Date.now()}`,
                     p.img
                 ]);
             }
