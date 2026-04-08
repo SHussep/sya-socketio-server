@@ -307,16 +307,8 @@ module.exports = {
                 });
             }
 
-            // Generar tenant code
-            const baseCode = businessName.substring(0, 3).toUpperCase();
-            let tenantCode = baseCode;
-            let codeExists = true;
-            let counter = 1;
-            while (codeExists) {
-                const check = await client.query('SELECT id FROM tenants WHERE tenant_code = $1', [tenantCode]);
-                codeExists = check.rows.length > 0;
-                if (codeExists) tenantCode = `${baseCode}${counter++}`;
-            }
+            // Generar tenant code (mismo formato que Google signup)
+            const tenantCode = `TEN${Date.now()}`;
 
             // Crear tenant
             const tenantResult = await client.query(
