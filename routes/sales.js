@@ -271,7 +271,7 @@ module.exports = (pool, io) => {
         try {
             const saleId = parseInt(req.params.id);
             const tenantId = req.user.tenantId;
-            const { employee_name, terminal_id } = req.body;
+            const { employee_name, terminal_id, cancel_reason, cancel_reason_id } = req.body;
 
             await client.query('BEGIN');
 
@@ -315,8 +315,13 @@ module.exports = (pool, io) => {
 
             // 3. Para pagos mixtos (tipo_pago_id=4), revertir la porción de crédito manualmente
             // (el trigger solo maneja tipo_pago_id=3)
-            if (sale.tipo_pago_id === 4 && sale.id_cliente && parseFloat(sale.credit_amount || 0) > 0) {
+            let reversedCredit = 0;
+            if (sale.tipo_pago_id === 3 && sale.id_cliente) {
+                // Crédito puro: el trigger ya revirtió saldo_deudor, solo rastrear monto
+                reversedCredit = parseFloat(sale.total || 0);
+            } else if (sale.tipo_pago_id === 4 && sale.id_cliente && parseFloat(sale.credit_amount || 0) > 0) {
                 const creditToRevert = parseFloat(sale.credit_amount);
+                reversedCredit = creditToRevert;
                 await client.query(
                     `UPDATE customers SET saldo_deudor = GREATEST(saldo_deudor - $1, 0)
                      WHERE id = $2 AND tenant_id = $3`,
@@ -364,7 +369,7 @@ module.exports = (pool, io) => {
                     [
                         tenantId, sale.branch_id, sale.id_turno, sale.id_empleado,
                         saleId, detail.id_producto, detail.descripcion_producto,
-                        parseFloat(detail.cantidad), 'Venta cancelada desde dashboard multi-caja',
+                        parseFloat(detail.cantidad), cancel_reason || 'Venta cancelada',
                         bitGlobalId, terminal_id || sale.terminal_id, new Date().toISOString()
                     ]
                 );
@@ -385,10 +390,20 @@ module.exports = (pool, io) => {
 
             console.log(`[Sales/Cancel] ✅ Venta ${saleId} cancelada server-first (${detailsResult.rows.length} líneas)`);
 
+            const restoredItems = detailsResult.rows
+                .filter(d => d.inventariar)
+                .map(d => ({ product_name: d.descripcion_producto, quantity: parseFloat(d.cantidad) }));
+
             res.json({
                 success: true,
                 message: 'Venta cancelada correctamente',
-                data: { saleId, linesReverted: detailsResult.rows.length }
+                data: {
+                    saleId,
+                    ticketNumber: sale.ticket_number,
+                    linesReverted: detailsResult.rows.length,
+                    reversed_credit: reversedCredit,
+                    restored_items: restoredItems
+                }
             });
 
         } catch (error) {
