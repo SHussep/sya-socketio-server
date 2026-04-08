@@ -1428,6 +1428,148 @@ function createRepartidorAssignmentRoutes(io) {
     }
   });
 
+  // ═══════════════════════════════════════════════════════════════
+  // PATCH /api/repartidor-assignments/:globalId/change-client
+  // Cambiar el cliente de una asignación (actualiza la venta asociada y recalcula precios)
+  // ═══════════════════════════════════════════════════════════════
+  router.patch('/:globalId/change-client', extractJwtData, async (req, res) => {
+    const { globalId } = req.params;
+    const { new_customer_id } = req.body;
+    const tenant_id = req.jwtData?.tenantId;
+
+    if (!new_customer_id) {
+      return res.status(400).json({ success: false, message: 'new_customer_id es requerido' });
+    }
+
+    try {
+      // 1. Buscar la asignación y su venta asociada
+      const assignmentResult = await pool.query(
+        `SELECT ra.id, ra.venta_id, ra.assigned_quantity, ra.assigned_amount, ra.unit_price, ra.status,
+                ra.product_id, p.base_price, p.global_id as product_global_id
+         FROM repartidor_assignments ra
+         LEFT JOIN products p ON p.id = ra.product_id
+         WHERE ra.global_id = $1 AND ra.tenant_id = $2`,
+        [globalId, tenant_id]
+      );
+
+      if (assignmentResult.rows.length === 0) {
+        return res.status(404).json({ success: false, message: 'Asignación no encontrada' });
+      }
+
+      const assignment = assignmentResult.rows[0];
+
+      if (assignment.status === 'liquidated' || assignment.status === 'cancelled') {
+        return res.status(400).json({ success: false, message: 'No se puede cambiar cliente en asignación liquidada o cancelada' });
+      }
+
+      // 2. Obtener datos del nuevo cliente (descuentos)
+      const customerResult = await pool.query(
+        `SELECT id, name, discount_percentage, tipo_descuento, monto_descuento_fijo, aplicar_redondeo
+         FROM customers WHERE id = $1 AND tenant_id = $2`,
+        [new_customer_id, tenant_id]
+      );
+
+      if (customerResult.rows.length === 0) {
+        return res.status(404).json({ success: false, message: 'Cliente no encontrado' });
+      }
+
+      const customer = customerResult.rows[0];
+
+      // 3. Calcular nuevo precio según tipo de descuento del cliente
+      let newUnitPrice = assignment.base_price || assignment.unit_price;
+      const basePrice = assignment.base_price || assignment.unit_price;
+
+      // Buscar precio especial por producto
+      if (assignment.product_global_id) {
+        const specialPrice = await pool.query(
+          `SELECT special_price, discount_percentage FROM customer_product_prices
+           WHERE customer_global_id = (SELECT global_id FROM customers WHERE id = $1)
+             AND product_global_id = $2 AND is_active = true`,
+          [new_customer_id, assignment.product_global_id]
+        );
+        if (specialPrice.rows.length > 0 && specialPrice.rows[0].special_price) {
+          newUnitPrice = parseFloat(specialPrice.rows[0].special_price);
+        } else if (specialPrice.rows.length > 0 && specialPrice.rows[0].discount_percentage > 0) {
+          newUnitPrice = basePrice * (1 - specialPrice.rows[0].discount_percentage / 100);
+        } else {
+          // Aplicar descuento general del cliente
+          switch (customer.tipo_descuento) {
+            case 1: // Porcentaje
+              newUnitPrice = basePrice * (1 - (customer.discount_percentage || 0) / 100);
+              break;
+            case 2: // Monto fijo
+              newUnitPrice = basePrice - (customer.monto_descuento_fijo || 0);
+              break;
+            // tipo_descuento 3 = por producto (ya manejado arriba)
+            default:
+              newUnitPrice = basePrice;
+          }
+        }
+      }
+
+      if (customer.aplicar_redondeo) {
+        newUnitPrice = Math.round(newUnitPrice);
+      }
+      newUnitPrice = Math.max(0, newUnitPrice);
+
+      const newAmount = parseFloat((assignment.assigned_quantity * newUnitPrice).toFixed(2));
+
+      // 4. Actualizar asignación
+      await pool.query(
+        `UPDATE repartidor_assignments
+         SET unit_price = $1, assigned_amount = $2, needs_update = true,
+             last_modified_local_utc = NOW()
+         WHERE id = $3`,
+        [newUnitPrice, newAmount, assignment.id]
+      );
+
+      // 5. Actualizar la venta asociada si existe
+      if (assignment.venta_id) {
+        await pool.query(
+          `UPDATE ventas SET id_cliente = $1, needs_update = true WHERE id = $2 AND tenant_id = $3`,
+          [new_customer_id, assignment.venta_id, tenant_id]
+        );
+
+        // Actualizar detalle de venta si hay product_id
+        if (assignment.product_id) {
+          await pool.query(
+            `UPDATE venta_detalles
+             SET precio_unitario = $1, total_linea = $2, needs_update = true
+             WHERE venta_id = $3 AND producto_id = $4`,
+            [newUnitPrice, newAmount, assignment.venta_id, assignment.product_id]
+          );
+
+          // Recalcular total de la venta
+          await pool.query(
+            `UPDATE ventas SET subtotal = sub.total, total = sub.total, needs_update = true
+             FROM (SELECT SUM(total_linea) as total FROM venta_detalles WHERE venta_id = $1) sub
+             WHERE ventas.id = $1`,
+            [assignment.venta_id]
+          );
+        }
+      }
+
+      console.log(`[ChangeClient] ✅ Asignación ${globalId}: cliente cambiado a ${customer.name} (ID: ${new_customer_id}), precio: $${assignment.unit_price} → $${newUnitPrice}`);
+
+      res.json({
+        success: true,
+        data: {
+          assignment_global_id: globalId,
+          new_customer_id: new_customer_id,
+          new_customer_name: customer.name,
+          new_unit_price: newUnitPrice,
+          new_assigned_amount: newAmount,
+          old_unit_price: assignment.unit_price,
+          old_assigned_amount: parseFloat(assignment.assigned_amount),
+        }
+      });
+
+    } catch (error) {
+      console.error('[ChangeClient] ❌ Error:', error.message);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
   return router;
 }
 
