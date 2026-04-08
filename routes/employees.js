@@ -129,6 +129,7 @@ module.exports = (pool) => {
                 mainBranchId,
                 googleUserIdentifier,
                 mobileAccessTypes,    // Comma-separated: "cashier,distributor"
+                pin_hash,             // BCrypt hash del PIN para kiosco (desde Desktop)
                 // ✅ OFFLINE-FIRST FIELDS
                 global_id,
                 terminal_id,
@@ -458,8 +459,8 @@ module.exports = (pool) => {
 
                 const insertResult = await client.query(
                     `INSERT INTO employees
-                     (tenant_id, first_name, last_name, username, email, password_hash, main_branch_id, role_id, can_use_mobile_app, mobile_access_type, is_active, email_verified, global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw, mobile_access_types, updated_at, created_at)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $18, $10, $11, $12, $13, $14, $15, $16, $19, NOW(), NOW())
+                     (tenant_id, first_name, last_name, username, email, password_hash, main_branch_id, role_id, can_use_mobile_app, mobile_access_type, is_active, email_verified, global_id, terminal_id, local_op_seq, created_local_utc, device_event_raw, mobile_access_types, pin_hash, updated_at, created_at)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $18, $10, $11, $12, $13, $14, $15, $16, $19, $20, NOW(), NOW())
                      ON CONFLICT (global_id) DO UPDATE
                      SET first_name = EXCLUDED.first_name,
                          last_name = EXCLUDED.last_name,
@@ -473,8 +474,9 @@ module.exports = (pool) => {
                          mobile_access_types = COALESCE(EXCLUDED.mobile_access_types, employees.mobile_access_types),
                          is_active = COALESCE(EXCLUDED.is_active, employees.is_active),
                          email_verified = CASE WHEN EXCLUDED.email_verified = true THEN true ELSE employees.email_verified END,
+                         pin_hash = COALESCE(EXCLUDED.pin_hash, employees.pin_hash),
                          updated_at = NOW()
-                     RETURNING id, tenant_id, first_name, last_name, username, email, main_branch_id, role_id, can_use_mobile_app, mobile_access_type, mobile_access_types, is_active, email_verified, global_id, is_owner, created_at, updated_at`,
+                     RETURNING id, tenant_id, first_name, last_name, username, email, main_branch_id, role_id, can_use_mobile_app, mobile_access_type, mobile_access_types, is_active, email_verified, global_id, is_owner, pin_hash, created_at, updated_at`,
                     [
                         tenantId,
                         firstName,
@@ -494,7 +496,8 @@ module.exports = (pool) => {
                         device_event_raw,     // ✅ OFFLINE-FIRST
                         explicitCanUseMobileApp,  // $17: flag — only update can_use_mobile_app on conflict if explicitly sent
                         mobileAccessType,     // $18: mobile_access_type (admin/distributor/none)
-                        mobileAccessTypes || null  // $19: mobile_access_types (comma-separated)
+                        mobileAccessTypes || null,  // $19: mobile_access_types (comma-separated)
+                        pin_hash || null      // $20: pin_hash BCrypt (desde Desktop kiosco)
                     ]
                 );
 
