@@ -331,6 +331,8 @@ module.exports = (pool, io) => {
             console.log(`[Productos/Sync] 💰 Precios: venta=${precio_venta}, compra=${precio_compra}`);
             console.log(`[Productos/Sync] 🏭 Proveedor: ID=${proveedor_id}, GlobalId=${proveedor_global_id}`);
             console.log(`[Productos/Sync] 🖼️ ImageUrl recibido: ${image_url || '(null)'}`);  // Debug image
+            console.log(`[Productos/Sync] 📦 Inventario recibido: ${inventario} (type=${typeof inventario}, inventariar=${inventariar})`);
+            console.log(`[Productos/Sync] 📦 Valor que se insertará: ${inventario != null ? inventario : 'NULL (preservará existente)'}`);  // Debug inventory
 
             // Validar campos requeridos
             if (!tenant_id || !descripcion || !global_id) {
