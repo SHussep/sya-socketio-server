@@ -370,16 +370,14 @@ module.exports = (pool, io) => {
                 if (defaultResult.rows.length > 0) {
                     resolvedProveedorId = defaultResult.rows[0].id;
                 } else {
-                    // Crear "Productos propios" para este tenant
                     const insertResult = await pool.query(
                         `INSERT INTO suppliers (tenant_id, name, contact_person, phone_number, global_id, is_active, created_at, updated_at)
                          VALUES ($1, 'Productos propios', 'N/A', 'N/A', $2, true, NOW(), NOW())
-                         ON CONFLICT (global_id) DO UPDATE SET updated_at = NOW()
                          RETURNING id`,
                         [tenant_id, defaultGlobalId]
                     );
                     resolvedProveedorId = insertResult.rows[0].id;
-                    console.log(`[Productos/Sync] ✅ Proveedor 'Productos propios' creado automáticamente (ID: ${resolvedProveedorId})`);
+                    console.log(`[Productos/Sync] ✅ Proveedor 'Productos propios' creado (ID: ${resolvedProveedorId})`);
                 }
             }
 
@@ -581,7 +579,6 @@ module.exports = (pool, io) => {
                                 const insertResult = await client.query(
                                     `INSERT INTO suppliers (tenant_id, name, contact_person, phone_number, global_id, is_active, created_at, updated_at)
                                      VALUES ($1, 'Productos propios', 'N/A', 'N/A', $2, true, NOW(), NOW())
-                                     ON CONFLICT (global_id) DO UPDATE SET updated_at = NOW()
                                      RETURNING id`,
                                     [tenant_id, defaultGlobalId]
                                 );

@@ -287,7 +287,6 @@ module.exports = {
             const supplierResult = await client.query(`
                 INSERT INTO suppliers (tenant_id, name, contact_person, phone_number, global_id, is_active, created_at, updated_at)
                 VALUES ($1, 'Productos propios', 'N/A', 'N/A', $2, true, NOW(), NOW())
-                ON CONFLICT (global_id) DO UPDATE SET updated_at = NOW()
                 RETURNING id
             `, [tenant.id, supplierGlobalId]);
             const defaultSupplierId = supplierResult.rows[0].id;
