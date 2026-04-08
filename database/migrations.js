@@ -3106,6 +3106,51 @@ async function runMigrations() {
                 console.error(`[Schema] ⚠️ Otros category disable error: ${otrosErr.message}`);
             }
 
+            // ── Migration 045: Create kardex_entries table ──
+            try {
+                const kardexCheck = await client.query(`
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables
+                        WHERE table_name = 'kardex_entries'
+                    );
+                `);
+                if (!kardexCheck.rows[0].exists) {
+                    await client.query(`
+                        CREATE TABLE kardex_entries (
+                            id SERIAL PRIMARY KEY,
+                            tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+                            branch_id INTEGER REFERENCES branches(id),
+                            product_id INTEGER REFERENCES productos(id),
+                            product_global_id VARCHAR(36),
+                            timestamp TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                            movement_type VARCHAR(50) NOT NULL,
+                            employee_id INTEGER REFERENCES employees(id),
+                            employee_global_id VARCHAR(36),
+                            quantity_before NUMERIC(10,2) DEFAULT 0,
+                            quantity_change NUMERIC(10,2) DEFAULT 0,
+                            quantity_after NUMERIC(10,2) DEFAULT 0,
+                            description TEXT DEFAULT '',
+                            sale_id INTEGER,
+                            purchase_id INTEGER,
+                            adjustment_id INTEGER,
+                            global_id VARCHAR(36) NOT NULL UNIQUE,
+                            terminal_id VARCHAR(100),
+                            source VARCHAR(20) DEFAULT 'desktop',
+                            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                        );
+                        CREATE INDEX idx_kardex_tenant ON kardex_entries(tenant_id);
+                        CREATE INDEX idx_kardex_product ON kardex_entries(product_id);
+                        CREATE INDEX idx_kardex_branch ON kardex_entries(branch_id);
+                        CREATE INDEX idx_kardex_timestamp ON kardex_entries(timestamp);
+                        CREATE INDEX idx_kardex_global_id ON kardex_entries(global_id);
+                    `);
+                    console.log('[Schema] ✅ Created kardex_entries table (Migration 045)');
+                }
+            } catch (kardexErr) {
+                console.error(`[Schema] ⚠️ kardex_entries migration error: ${kardexErr.message}`);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {
