@@ -716,7 +716,8 @@ module.exports = (pool) => {
     // ═══════════════════════════════════════════════════════════════════════════
     router.get('/pull', async (req, res) => {
         try {
-            const { tenantId, branchId, since } = req.query;
+            const { tenantId, branchId, branch_id, since } = req.query;
+            const effectiveBranchId = branchId || branch_id; // Accept both camelCase and snake_case
 
             if (!tenantId) {
                 return res.status(400).json({
@@ -725,7 +726,7 @@ module.exports = (pool) => {
                 });
             }
 
-            console.log(`[Employees/Pull] 📥 Descargando empleados - Tenant: ${tenantId}, Branch: ${branchId || 'ALL'}, Since: ${since || 'ALL'}`);
+            console.log(`[Employees/Pull] 📥 Descargando empleados - Tenant: ${tenantId}, Branch: ${effectiveBranchId || 'ALL'}, Since: ${since || 'ALL'}`);
 
             let query = `
                 SELECT
@@ -756,11 +757,11 @@ module.exports = (pool) => {
             let paramIndex = 2;
 
             // Si hay branchId, filtrar por empleados de esa sucursal
-            if (branchId) {
+            if (effectiveBranchId) {
                 query += `
                     INNER JOIN employee_branches eb ON e.id = eb.employee_id AND eb.branch_id = $${paramIndex}
                 `;
-                params.push(branchId);
+                params.push(effectiveBranchId);
                 paramIndex++;
             }
 
