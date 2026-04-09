@@ -31,6 +31,7 @@ const PARTIAL_CLEANUP_TABLES = [
     { name: 'repartidor_locations', description: 'Ubicaciones GPS repartidores', fkColumn: 'tenant_id' },
     { name: 'geofence_events', description: 'Eventos de geofence', fkColumn: 'tenant_id' },
     { name: 'telemetry_events', description: 'Telemetria', fkColumn: 'tenant_id' },
+    { name: 'sync_error_reports', description: 'Reportes de errores de sync', fkColumn: 'tenant_id' },
     { name: 'backup_metadata', description: 'Metadata respaldos', fkColumn: 'tenant_id' },
 ];
 
@@ -71,6 +72,7 @@ const FULL_CLEANUP_TABLES = [
     { name: 'sessions', description: 'Sesiones', fkColumn: 'tenant_id' },
     { name: 'device_tokens', description: 'Tokens FCM', fkColumn: null, customQuery: 'employee_id' },
     { name: 'employee_branches', description: 'Empleados-Sucursales', fkColumn: 'tenant_id' },
+    { name: 'producto_branches', description: 'Productos asignados por sucursal', fkColumn: 'tenant_id' },
     { name: 'productos_branch_precios', description: 'Precios por sucursal', fkColumn: 'tenant_id' },
     { name: 'branch_inventory', description: 'Inventario por sucursal', fkColumn: 'tenant_id' },
     { name: 'branch_devices', description: 'Dispositivos por sucursal', fkColumn: 'tenant_id' },
@@ -90,6 +92,7 @@ const FULL_CLEANUP_TABLES = [
     { name: 'fcm_tokens', description: 'Tokens FCM', fkColumn: 'tenant_id' },
     { name: 'followup_emails', description: 'Emails de seguimiento', fkColumn: 'tenant_id' },
     // Nivel 6: Tenant/Branch (solo en cleanup completo con --mode=full)
+    { name: 'sync_error_reports', description: 'Reportes de errores de sync', fkColumn: 'tenant_id' },
     { name: 'branch_licenses', description: 'Licencias de sucursal', fkColumn: 'tenant_id' },
     { name: 'branches', description: 'SUCURSALES', fkColumn: 'tenant_id', critical: true, structural: true },
     { name: 'tenants', description: 'TENANT', fkColumn: 'id', critical: true, isTenantTable: true, structural: true },
