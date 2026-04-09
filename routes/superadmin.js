@@ -881,7 +881,7 @@ module.exports = function(pool, io) {
         try {
             const { id } = req.params;
 
-            // Verify tenant exists and get info for confirmation
+            // Verify tenant exists
             const tenantResult = await client.query(
                 'SELECT id, business_name, email FROM tenants WHERE id = $1',
                 [id]
@@ -898,10 +898,33 @@ module.exports = function(pool, io) {
 
             await client.query('BEGIN');
 
-            // Disable trigger that prevents deleting the generic "Público en General" customer
+            // Find ALL tables with a tenant_id FK referencing tenants(id)
+            // This catches tables created in migrations without ON DELETE CASCADE
+            const fkResult = await client.query(`
+                SELECT DISTINCT kcu.table_name
+                FROM information_schema.table_constraints tc
+                JOIN information_schema.key_column_usage kcu
+                  ON tc.constraint_name = kcu.constraint_name
+                  AND tc.table_schema = kcu.table_schema
+                JOIN information_schema.constraint_column_usage ccu
+                  ON tc.constraint_name = ccu.constraint_name
+                  AND tc.table_schema = ccu.table_schema
+                WHERE tc.constraint_type = 'FOREIGN KEY'
+                  AND ccu.table_name = 'tenants'
+                  AND ccu.column_name = 'id'
+                  AND kcu.column_name = 'tenant_id'
+                  AND kcu.table_name != 'tenants'
+            `);
+
+            // Disable trigger that prevents deleting generic customer
             await client.query('DROP TRIGGER IF EXISTS trg_prevent_generic_customer_delete ON customers');
 
-            // Delete tenant — ON DELETE CASCADE handles all related tables
+            // Delete from ALL referencing tables first
+            for (const row of fkResult.rows) {
+                await client.query(`DELETE FROM "${row.table_name}" WHERE tenant_id = $1`, [id]);
+            }
+
+            // Now delete the tenant itself (remaining CASCADE FKs handle the rest)
             await client.query('DELETE FROM tenants WHERE id = $1', [id]);
 
             // Restore the trigger
@@ -914,7 +937,7 @@ module.exports = function(pool, io) {
 
             await client.query('COMMIT');
 
-            console.log(`[Superadmin] 🗑️ Tenant eliminado: ${tenant.business_name} (ID: ${id})`);
+            console.log(`[Superadmin] 🗑️ Tenant eliminado: ${tenant.business_name} (ID: ${id}) — ${fkResult.rows.length} tablas limpiadas`);
 
             res.json({
                 success: true,
@@ -926,7 +949,6 @@ module.exports = function(pool, io) {
                 }
             });
         } catch (error) {
-            // ROLLBACK undoes the DROP TRIGGER, restoring it automatically
             await client.query('ROLLBACK').catch(() => {});
             console.error('[Superadmin] Error eliminando tenant:', error);
             res.status(500).json({
