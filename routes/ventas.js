@@ -647,6 +647,30 @@ module.exports = function(pool) {
                         ]);
                     }
                     console.log(`[Ventas/Create] ✅ ${items.length} detalles insertados`);
+
+                    // Deduct inventory for products that track stock (inventariar = true)
+                    const detailsForInventory = await client.query(
+                        `SELECT vd.id_producto, vd.cantidad, p.inventariar, p.descripcion
+                         FROM ventas_detalle vd
+                         JOIN productos p ON vd.id_producto = p.id AND p.tenant_id = $2
+                         WHERE vd.id_venta = $1`,
+                        [newVenta.id_venta, tenant_id]
+                    );
+
+                    let deductedCount = 0;
+                    for (const detail of detailsForInventory.rows) {
+                        if (detail.inventariar) {
+                            await client.query(
+                                `UPDATE productos SET inventario = inventario - $1, updated_at = NOW()
+                                 WHERE id = $2 AND tenant_id = $3`,
+                                [parseFloat(detail.cantidad), detail.id_producto, tenant_id]
+                            );
+                            deductedCount++;
+                        }
+                    }
+                    if (deductedCount > 0) {
+                        console.log(`[Ventas/Create] 📦 Inventario descontado: ${deductedCount} productos`);
+                    }
                 }
 
                 await client.query('COMMIT');
