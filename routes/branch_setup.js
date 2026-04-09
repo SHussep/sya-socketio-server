@@ -20,10 +20,10 @@ module.exports = (pool) => {
             // Products: active, not deleted
             const productsResult = await pool.query(`
                 SELECT p.id, p.global_id, p.descripcion, p.precio_venta, p.precio_compra,
-                       p.image_url, p.unidad_medida,
+                       p.image_url, p.unidad_medida_id as unidad_medida,
                        COALESCE(cp.nombre, 'Sin categoria') as categoria
                 FROM productos p
-                LEFT JOIN categorias_productos cp ON cp.id = p.categoria_id AND cp.tenant_id = $1
+                LEFT JOIN categorias_productos cp ON cp.global_id = p.categoria_global_id AND cp.tenant_id = $1
                 WHERE p.tenant_id = $1 AND p.eliminado = FALSE
                 ORDER BY p.descripcion
             `, [tenantId]);
