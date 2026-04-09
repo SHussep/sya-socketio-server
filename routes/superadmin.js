@@ -873,6 +873,53 @@ module.exports = function(pool, io) {
     });
 
     // ─────────────────────────────────────────────────────────
+    // DELETE /api/superadmin/tenants/:id
+    // Eliminar un tenant y TODOS sus datos (CASCADE)
+    // ─────────────────────────────────────────────────────────
+    router.delete('/tenants/:id', async (req, res) => {
+        try {
+            const { id } = req.params;
+
+            // Verify tenant exists and get info for confirmation
+            const tenantResult = await pool.query(
+                'SELECT id, business_name, email FROM tenants WHERE id = $1',
+                [id]
+            );
+
+            if (tenantResult.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Tenant no encontrado'
+                });
+            }
+
+            const tenant = tenantResult.rows[0];
+
+            // Delete tenant — ON DELETE CASCADE handles all related tables
+            await pool.query('DELETE FROM tenants WHERE id = $1', [id]);
+
+            console.log(`[Superadmin] 🗑️ Tenant eliminado: ${tenant.business_name} (ID: ${id})`);
+
+            res.json({
+                success: true,
+                message: `Tenant "${tenant.business_name}" eliminado correctamente`,
+                deleted: {
+                    id: parseInt(id),
+                    businessName: tenant.business_name,
+                    email: tenant.email
+                }
+            });
+        } catch (error) {
+            console.error('[Superadmin] Error eliminando tenant:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al eliminar tenant',
+                error: process.env.NODE_ENV !== 'production' ? error.message : undefined
+            });
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
     // POST /api/superadmin/tenants/:id/send-followup
     // Enviar email de seguimiento al owner del tenant
     // ─────────────────────────────────────────────────────────
