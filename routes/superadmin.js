@@ -888,7 +888,6 @@ module.exports = function(pool, io) {
             );
 
             if (tenantResult.rows.length === 0) {
-                client.release();
                 return res.status(404).json({
                     success: false,
                     message: 'Tenant no encontrado'
@@ -932,8 +931,7 @@ module.exports = function(pool, io) {
             console.error('[Superadmin] Error eliminando tenant:', error);
             res.status(500).json({
                 success: false,
-                message: 'Error al eliminar tenant',
-                error: process.env.NODE_ENV !== 'production' ? error.message : undefined
+                message: 'Error al eliminar tenant: ' + error.message
             });
         } finally {
             client.release();
