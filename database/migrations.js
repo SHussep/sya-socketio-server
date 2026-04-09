@@ -3151,6 +3151,34 @@ async function runMigrations() {
                 console.error(`[Schema] ⚠️ kardex_entries migration error: ${kardexErr.message}`);
             }
 
+            // ── Migration 046: Fix producto_branches UUID columns → TEXT ──
+            // productos.global_id is VARCHAR(255) but producto_branches.product_global_id was UUID,
+            // causing failures with legacy seed global_ids like "SEED_PRODUCT_63_9001"
+            try {
+                await client.query(`ALTER TABLE producto_branches ALTER COLUMN product_global_id TYPE TEXT`);
+                await client.query(`ALTER TABLE producto_branches ALTER COLUMN global_id TYPE TEXT`);
+                console.log('[Schema] ✅ producto_branches UUID columns changed to TEXT (Migration 046)');
+            } catch (m046err) {
+                // Already TEXT or doesn't exist — safe to ignore
+                console.log('[Schema] ⚠️ Migration 046:', m046err.message);
+            }
+
+            // ── Migration 047: Ensure employee_branches unique constraint exists ──
+            try {
+                await client.query(`
+                    ALTER TABLE employee_branches
+                    DROP CONSTRAINT IF EXISTS employee_branches_employee_id_branch_id_key
+                `);
+                await client.query(`
+                    ALTER TABLE employee_branches
+                    ADD CONSTRAINT employee_branches_employee_id_branch_id_key
+                    UNIQUE (employee_id, branch_id)
+                `);
+                console.log('[Schema] ✅ employee_branches unique constraint ensured (Migration 047)');
+            } catch (m047err) {
+                console.log('[Schema] ⚠️ Migration 047:', m047err.message);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {

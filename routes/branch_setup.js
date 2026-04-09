@@ -90,15 +90,7 @@ module.exports = (pool) => {
 
                 const productsData = await client.query(productsQuery, [productFilter, tenantId]);
 
-                // UUID regex to filter out legacy seed global_ids (e.g. "SEED_PRODUCT_63_9001")
-                const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
                 for (const product of productsData.rows) {
-                    if (!uuidRegex.test(product.global_id)) {
-                        console.log(`[BranchSetup] ⚠️ Skipping product with non-UUID global_id: ${product.global_id}`);
-                        continue;
-                    }
-
                     const result = await client.query(`
                         INSERT INTO producto_branches
                           (tenant_id, branch_id, product_global_id, precio_venta, precio_compra,
