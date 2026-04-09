@@ -61,5 +61,75 @@ module.exports = (pool) => {
         }
     });
 
+    // POST /api/branch-setup/import
+    // Import selected products and employees into a new branch
+    router.post('/import', authenticateToken, async (req, res) => {
+        const client = await pool.connect();
+        try {
+            const { tenantId, branchId, productIds, employeeIds } = req.body;
+
+            if (!tenantId || !branchId) {
+                return res.status(400).json({ error: 'tenantId and branchId are required' });
+            }
+
+            await client.query('BEGIN');
+
+            let productsImported = 0;
+            let employeesImported = 0;
+
+            // 1. Products → create producto_branches rows with inventory=0 and base prices
+            if (productIds && productIds.length > 0) {
+                const productsData = await client.query(`
+                    SELECT id, global_id, precio_venta, precio_compra
+                    FROM productos
+                    WHERE id = ANY($1) AND tenant_id = $2 AND eliminado = FALSE
+                `, [productIds, tenantId]);
+
+                for (const product of productsData.rows) {
+                    const result = await client.query(`
+                        INSERT INTO producto_branches
+                          (tenant_id, branch_id, product_global_id, precio_venta, precio_compra,
+                           inventario, minimo, is_active, global_id)
+                        VALUES ($1, $2, $3, $4, $5, 0, 0, true, gen_random_uuid())
+                        ON CONFLICT (tenant_id, product_global_id, branch_id) DO NOTHING
+                        RETURNING id
+                    `, [tenantId, branchId, product.global_id, product.precio_venta, product.precio_compra]);
+
+                    if (result.rows.length > 0) productsImported++;
+                }
+            }
+
+            // 2. Employees → create employee_branches relationships
+            if (employeeIds && employeeIds.length > 0) {
+                for (const employeeId of employeeIds) {
+                    const result = await client.query(`
+                        INSERT INTO employee_branches (tenant_id, employee_id, branch_id)
+                        VALUES ($1, $2, $3)
+                        ON CONFLICT (employee_id, branch_id) DO NOTHING
+                        RETURNING id
+                    `, [tenantId, employeeId, branchId]);
+
+                    if (result.rows.length > 0) employeesImported++;
+                }
+            }
+
+            await client.query('COMMIT');
+
+            res.json({
+                success: true,
+                imported: {
+                    products: productsImported,
+                    employees: employeesImported
+                }
+            });
+        } catch (error) {
+            await client.query('ROLLBACK');
+            console.error('Error importing branch setup data:', error);
+            res.status(500).json({ error: 'Error al importar datos de sucursal' });
+        } finally {
+            client.release();
+        }
+    });
+
     return router;
 };
