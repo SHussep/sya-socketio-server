@@ -2910,6 +2910,55 @@ async function runMigrations() {
             }
 
             // ═══════════════════════════════════════════════════════════
+            // sync_events — Eventos individuales de sincronización con contexto completo
+            // Reemplaza los JSONB opacos de sync_error_reports con datos estructurados y consultables
+            // ═══════════════════════════════════════════════════════════
+            try {
+                await client.query(`
+                    CREATE TABLE IF NOT EXISTS sync_events (
+                        id SERIAL PRIMARY KEY,
+                        tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+                        branch_id INTEGER NOT NULL REFERENCES branches(id),
+                        device_id TEXT NOT NULL,
+                        device_type TEXT NOT NULL DEFAULT 'desktop',
+                        device_name TEXT,
+                        entity_type TEXT NOT NULL,
+                        entity_global_id TEXT,
+                        entity_description TEXT,
+                        operation TEXT NOT NULL DEFAULT 'create',
+                        sync_mode TEXT DEFAULT 'offline_first',
+                        status TEXT NOT NULL DEFAULT 'failed',
+                        http_status_code INTEGER,
+                        error_category TEXT,
+                        error_message TEXT,
+                        error_detail TEXT,
+                        endpoint TEXT,
+                        request_summary JSONB,
+                        dependency_info JSONB,
+                        connection_info JSONB,
+                        retry_count INTEGER DEFAULT 0,
+                        first_occurred_at TIMESTAMPTZ,
+                        resolved_at TIMESTAMPTZ,
+                        app_version TEXT,
+                        employee_id INTEGER,
+                        employee_name TEXT,
+                        shift_global_id TEXT,
+                        sync_cycle_id TEXT,
+                        created_at TIMESTAMPTZ DEFAULT NOW()
+                    )
+                `);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_sync_events_tenant ON sync_events(tenant_id)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_sync_events_branch ON sync_events(tenant_id, branch_id)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_sync_events_status ON sync_events(tenant_id, status)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_sync_events_entity ON sync_events(tenant_id, entity_type, entity_global_id)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_sync_events_created ON sync_events(created_at)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_sync_events_cycle ON sync_events(sync_cycle_id)`);
+                console.log('[Schema] ✅ sync_events table ensured');
+            } catch (seEvtErr) {
+                console.error(`[Schema] ⚠️ sync_events error: ${seEvtErr.message}`);
+            }
+
+            // ═══════════════════════════════════════════════════════════
             // Patch: Add tenant_id to global_expense_categories for custom categories
             // ═══════════════════════════════════════════════════════════
             try {

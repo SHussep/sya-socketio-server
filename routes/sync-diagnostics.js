@@ -409,5 +409,234 @@ module.exports = (pool) => {
         }
     });
 
+    // =========================================================================
+    // POST /api/sync-diagnostics/events
+    // Recibe un batch de eventos de sincronización individuales desde Desktop/Mobile.
+    // Cada evento tiene contexto completo: dependencias, conexión, error detail.
+    // =========================================================================
+    router.post('/events', validateTenant, async (req, res) => {
+        const { tenantId, branchId, deviceId, deviceType, deviceName, appVersion, syncCycleId, events } = req.body;
+
+        if (!tenantId || !branchId || !deviceId || !Array.isArray(events)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Se requiere tenantId, branchId, deviceId y events (array)'
+            });
+        }
+
+        if (events.length > 500) {
+            return res.status(400).json({ success: false, message: 'Máximo 500 eventos por batch' });
+        }
+
+        try {
+            let inserted = 0;
+            for (const evt of events) {
+                try {
+                    await pool.query(`
+                        INSERT INTO sync_events (
+                            tenant_id, branch_id, device_id, device_type, device_name,
+                            entity_type, entity_global_id, entity_description,
+                            operation, sync_mode, status,
+                            http_status_code, error_category, error_message, error_detail,
+                            endpoint, request_summary, dependency_info, connection_info,
+                            retry_count, first_occurred_at, resolved_at,
+                            app_version, employee_id, employee_name,
+                            shift_global_id, sync_cycle_id
+                        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
+                    `, [
+                        tenantId, branchId, deviceId,
+                        deviceType || 'desktop', deviceName || null,
+                        evt.entityType, evt.entityGlobalId || null, evt.entityDescription || null,
+                        evt.operation || 'create', evt.syncMode || 'offline_first', evt.status || 'failed',
+                        evt.httpStatusCode || null, evt.errorCategory || null,
+                        evt.errorMessage || null, evt.errorDetail || null,
+                        evt.endpoint || null,
+                        evt.requestSummary ? JSON.stringify(evt.requestSummary) : null,
+                        evt.dependencyInfo ? JSON.stringify(evt.dependencyInfo) : null,
+                        evt.connectionInfo ? JSON.stringify(evt.connectionInfo) : null,
+                        evt.retryCount || 0,
+                        evt.firstOccurredAt || null, evt.resolvedAt || null,
+                        appVersion || null, evt.employeeId || null, evt.employeeName || null,
+                        evt.shiftGlobalId || null, syncCycleId || null
+                    ]);
+                    inserted++;
+                } catch (evtErr) {
+                    console.error(`[SyncEvents] ❌ Error inserting event: ${evtErr.message}`);
+                }
+            }
+
+            console.log(`[SyncEvents] 📊 ${inserted}/${events.length} eventos insertados (tenant=${tenantId}, branch=${branchId}, cycle=${syncCycleId || 'N/A'})`);
+
+            res.json({ success: true, inserted, total: events.length });
+        } catch (error) {
+            console.error('[SyncEvents] ❌ Error:', error.message);
+            res.status(500).json({ success: false, message: 'Error guardando eventos' });
+        }
+    });
+
+    // =========================================================================
+    // GET /api/sync-diagnostics/events/:tenantId
+    // Lista eventos de sincronización con filtros avanzados.
+    // Query params: branchId, status, entityType, deviceType, since, syncCycleId, limit
+    // =========================================================================
+    router.get('/events/:tenantId', validateTenant, async (req, res) => {
+        const { tenantId } = req.params;
+        const {
+            branchId, status, entityType, deviceType,
+            since, syncCycleId,
+            limit: rawLimit
+        } = req.query;
+        const limit = Math.min(parseInt(rawLimit) || 50, 500);
+
+        try {
+            let query = `
+                SELECT se.*, b.name as branch_name
+                FROM sync_events se
+                LEFT JOIN branches b ON se.branch_id = b.id
+                WHERE se.tenant_id = $1
+            `;
+            const params = [tenantId];
+            let paramIdx = 2;
+
+            if (branchId) {
+                query += ` AND se.branch_id = $${paramIdx++}`;
+                params.push(branchId);
+            }
+            if (status) {
+                query += ` AND se.status = $${paramIdx++}`;
+                params.push(status);
+            }
+            if (entityType) {
+                query += ` AND se.entity_type = $${paramIdx++}`;
+                params.push(entityType);
+            }
+            if (deviceType) {
+                query += ` AND se.device_type = $${paramIdx++}`;
+                params.push(deviceType);
+            }
+            if (since) {
+                query += ` AND se.created_at >= $${paramIdx++}`;
+                params.push(since);
+            }
+            if (syncCycleId) {
+                query += ` AND se.sync_cycle_id = $${paramIdx++}`;
+                params.push(syncCycleId);
+            }
+
+            query += ` ORDER BY se.created_at DESC LIMIT $${paramIdx}`;
+            params.push(limit);
+
+            const result = await pool.query(query, params);
+
+            res.json({
+                success: true,
+                data: result.rows,
+                count: result.rows.length
+            });
+        } catch (error) {
+            console.error('[SyncEvents] ❌ Error listing events:', error.message);
+            res.status(500).json({ success: false, message: 'Error listando eventos' });
+        }
+    });
+
+    // =========================================================================
+    // GET /api/sync-diagnostics/events/:tenantId/summary
+    // Resumen agregado para soporte remoto.
+    // Agrupa por entity_type, error_category, device_type.
+    // Query params: branchId, hours (default 24)
+    // =========================================================================
+    router.get('/events/:tenantId/summary', validateTenant, async (req, res) => {
+        const { tenantId } = req.params;
+        const branchId = req.query.branchId || null;
+        const hours = parseInt(req.query.hours) || 24;
+        const since = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+
+        try {
+            const params = [tenantId, since];
+            let branchFilter = '';
+            if (branchId) {
+                branchFilter = ' AND se.branch_id = $3';
+                params.push(branchId);
+            }
+
+            // Failures by entity type
+            const byEntity = await pool.query(`
+                SELECT entity_type, status, COUNT(*) as count,
+                       MAX(created_at) as last_occurrence,
+                       array_agg(DISTINCT error_category) FILTER (WHERE error_category IS NOT NULL) as error_categories
+                FROM sync_events se
+                WHERE tenant_id = $1 AND created_at >= $2 ${branchFilter}
+                GROUP BY entity_type, status
+                ORDER BY count DESC
+            `, params);
+
+            // Failures by error category
+            const byCategory = await pool.query(`
+                SELECT error_category, COUNT(*) as count,
+                       array_agg(DISTINCT entity_type) as affected_entities,
+                       MIN(created_at) as first_occurrence,
+                       MAX(created_at) as last_occurrence
+                FROM sync_events se
+                WHERE tenant_id = $1 AND created_at >= $2 AND status = 'failed' ${branchFilter}
+                GROUP BY error_category
+                ORDER BY count DESC
+            `, params);
+
+            // Activity by device
+            const byDevice = await pool.query(`
+                SELECT device_type, device_name, device_id,
+                       COUNT(*) FILTER (WHERE status = 'failed') as failures,
+                       COUNT(*) FILTER (WHERE status = 'success') as successes,
+                       MAX(created_at) as last_activity
+                FROM sync_events se
+                WHERE tenant_id = $1 AND created_at >= $2 ${branchFilter}
+                GROUP BY device_type, device_name, device_id
+                ORDER BY failures DESC
+            `, params);
+
+            // Unresolved failures with full detail
+            const unresolved = await pool.query(`
+                SELECT entity_type, entity_global_id, entity_description,
+                       error_category, error_message, error_detail, endpoint,
+                       dependency_info, connection_info,
+                       retry_count, first_occurred_at, created_at,
+                       device_type, device_name, employee_name,
+                       shift_global_id, sync_cycle_id
+                FROM sync_events se
+                WHERE tenant_id = $1 AND created_at >= $2
+                  AND status = 'failed' AND resolved_at IS NULL ${branchFilter}
+                ORDER BY created_at DESC
+                LIMIT 50
+            `, params);
+
+            // Dependency chain failures (root cause analysis)
+            const depFailures = await pool.query(`
+                SELECT entity_type, entity_global_id, entity_description,
+                       error_message, dependency_info, created_at,
+                       device_name, employee_name
+                FROM sync_events se
+                WHERE tenant_id = $1 AND created_at >= $2
+                  AND status = 'failed' AND dependency_info IS NOT NULL ${branchFilter}
+                ORDER BY created_at DESC
+                LIMIT 20
+            `, params);
+
+            res.json({
+                success: true,
+                period: { hours, since },
+                summary: {
+                    byEntityType: byEntity.rows,
+                    byErrorCategory: byCategory.rows,
+                    byDevice: byDevice.rows,
+                    unresolvedFailures: unresolved.rows,
+                    dependencyFailures: depFailures.rows
+                }
+            });
+        } catch (error) {
+            console.error('[SyncEvents] ❌ Error generating summary:', error.message);
+            res.status(500).json({ success: false, message: 'Error generando resumen' });
+        }
+    });
+
     return router;
 };
