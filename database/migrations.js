@@ -3228,6 +3228,120 @@ async function runMigrations() {
                 console.log('[Schema] ⚠️ Migration 047:', m047err.message);
             }
 
+            // ── Migration 048: Production module tables ──
+
+            // 048a: production_entries
+            try {
+                await client.query(`
+                    CREATE TABLE IF NOT EXISTS production_entries (
+                        id SERIAL PRIMARY KEY,
+                        tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+                        branch_id INTEGER NOT NULL REFERENCES branches(id),
+                        shift_id INTEGER REFERENCES shifts(id),
+                        employee_id INTEGER REFERENCES employees(id),
+                        weight_kg DECIMAL(10,4) NOT NULL,
+                        target_product_id INTEGER REFERENCES productos(id),
+                        expected_output_kg DECIMAL(10,4),
+                        is_auto_calculated BOOLEAN DEFAULT true,
+                        entry_mode VARCHAR(20) DEFAULT 'automatic',
+                        notes TEXT,
+                        is_accumulated BOOLEAN DEFAULT false,
+                        accumulation_count INTEGER DEFAULT 0,
+                        accumulation_detail TEXT,
+                        global_id UUID NOT NULL UNIQUE,
+                        terminal_id VARCHAR(100),
+                        local_op_seq BIGINT,
+                        created_local_utc TIMESTAMPTZ,
+                        device_event_raw BIGINT,
+                        last_modified_local_utc TIMESTAMPTZ,
+                        is_deleted BOOLEAN DEFAULT false,
+                        created_at TIMESTAMPTZ DEFAULT NOW(),
+                        updated_at TIMESTAMPTZ DEFAULT NOW()
+                    )
+                `);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_pe_branch ON production_entries(branch_id)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_pe_tenant ON production_entries(tenant_id)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_pe_shift ON production_entries(shift_id)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_pe_created ON production_entries(created_local_utc)`);
+                console.log('[Schema] ✅ production_entries table created (Migration 048)');
+            } catch (m048err) {
+                console.log('[Schema] ⚠️ Migration 048 (production_entries):', m048err.message);
+            }
+
+            // 048b: production_yield_configs
+            try {
+                await client.query(`
+                    CREATE TABLE IF NOT EXISTS production_yield_configs (
+                        id SERIAL PRIMARY KEY,
+                        tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+                        branch_id INTEGER NOT NULL REFERENCES branches(id),
+                        product_id INTEGER NOT NULL REFERENCES productos(id),
+                        yield_per_kg_masa DECIMAL(5,4) NOT NULL DEFAULT 0.9500,
+                        is_active BOOLEAN DEFAULT true,
+                        notes TEXT,
+                        created_by_employee_id INTEGER REFERENCES employees(id),
+                        global_id UUID NOT NULL UNIQUE,
+                        terminal_id VARCHAR(100),
+                        local_op_seq BIGINT,
+                        created_local_utc TIMESTAMPTZ,
+                        device_event_raw BIGINT,
+                        last_modified_local_utc TIMESTAMPTZ,
+                        is_deleted BOOLEAN DEFAULT false,
+                        created_at TIMESTAMPTZ DEFAULT NOW(),
+                        updated_at TIMESTAMPTZ DEFAULT NOW()
+                    )
+                `);
+                await client.query(`
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_pyc_product_branch
+                    ON production_yield_configs(tenant_id, branch_id, product_id)
+                    WHERE is_active = true AND is_deleted = false
+                `);
+                console.log('[Schema] ✅ production_yield_configs table created (Migration 048)');
+            } catch (m048err) {
+                console.log('[Schema] ⚠️ Migration 048 (production_yield_configs):', m048err.message);
+            }
+
+            // 048c: production_alerts
+            try {
+                await client.query(`
+                    CREATE TABLE IF NOT EXISTS production_alerts (
+                        id SERIAL PRIMARY KEY,
+                        tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+                        branch_id INTEGER NOT NULL REFERENCES branches(id),
+                        shift_id INTEGER REFERENCES shifts(id),
+                        employee_id INTEGER REFERENCES employees(id),
+                        alert_type VARCHAR(50) NOT NULL,
+                        scenario_code VARCHAR(20) NOT NULL,
+                        severity VARCHAR(20) NOT NULL,
+                        detected_weight_kg DECIMAL(10,4),
+                        details TEXT,
+                        cycle_duration_seconds DECIMAL(10,2),
+                        max_weight_in_cycle DECIMAL(10,4),
+                        points_assigned INTEGER DEFAULT 0,
+                        additional_data_json JSONB,
+                        was_reviewed BOOLEAN DEFAULT false,
+                        reviewed_by_employee_id INTEGER REFERENCES employees(id),
+                        review_notes TEXT,
+                        reviewed_at TIMESTAMPTZ,
+                        global_id UUID NOT NULL UNIQUE,
+                        terminal_id VARCHAR(100),
+                        local_op_seq BIGINT,
+                        created_local_utc TIMESTAMPTZ,
+                        device_event_raw BIGINT,
+                        last_modified_local_utc TIMESTAMPTZ,
+                        is_deleted BOOLEAN DEFAULT false,
+                        created_at TIMESTAMPTZ DEFAULT NOW(),
+                        updated_at TIMESTAMPTZ DEFAULT NOW()
+                    )
+                `);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_pa_branch ON production_alerts(branch_id)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_pa_severity ON production_alerts(severity)`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_pa_created ON production_alerts(created_local_utc)`);
+                console.log('[Schema] ✅ production_alerts table created (Migration 048)');
+            } catch (m048err) {
+                console.log('[Schema] ⚠️ Migration 048 (production_alerts):', m048err.message);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {
