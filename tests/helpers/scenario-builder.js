@@ -166,7 +166,7 @@ class Terminal {
     async createSale({ items = [], tipoPagoId, total, clientGlobalId, estadoVentaId = 3, fechaLiquidacionUtc, subtotal, totalDescuentos = 0 }) {
         const globalId = crypto.randomUUID();
         const now = new Date().toISOString();
-        const actualSubtotal = subtotal || total + totalDescuentos;
+        const actualSubtotal = subtotal !== undefined ? subtotal : total + totalDescuentos;
         const cashAmount = tipoPagoId === 1 ? total : 0;
         const cardAmount = tipoPagoId === 2 ? total : 0;
         const creditAmount = tipoPagoId === 3 ? total : 0;

@@ -703,7 +703,7 @@ describe('Bloque 8: Inventory on Cancellation & Credit', () => {
     });
 
     test('cancelled credit sale restores inventory same as cash', async () => {
-        if (!PRODUCT_GLOBAL_ID) return;
+        if (!PRODUCT_GLOBAL_ID || !QA_CONFIG.clientCreditGlobalId) return;
 
         // Reset inventory
         await cajaA.setProductInventory(PRODUCT_GLOBAL_ID, 100);
