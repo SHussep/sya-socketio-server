@@ -898,36 +898,94 @@ module.exports = function(pool, io) {
 
             await client.query('BEGIN');
 
-            // Disable ALL foreign key checks and triggers for this session.
-            // This bypasses CASCADE issues, missing CASCADE constraints, and
-            // the generic customer delete trigger — all in one shot.
-            await client.query("SET session_replication_role = 'replica'");
+            // Delete in correct dependency order (leaves → parents).
+            // Based on cleanup_tenant_13.sql + all migration tables.
+            // Tables with CASCADE are included for explicitness — we want
+            // zero orphans guaranteed regardless of FK configuration.
 
-            // Find ALL tables that have a tenant_id column and delete their rows
-            const tablesResult = await client.query(`
-                SELECT DISTINCT c.table_name
-                FROM information_schema.columns c
-                JOIN information_schema.tables t
-                  ON c.table_name = t.table_name AND c.table_schema = t.table_schema
-                WHERE c.column_name = 'tenant_id'
-                  AND c.table_schema = 'public'
-                  AND t.table_type = 'BASE TABLE'
-                  AND c.table_name != 'tenants'
+            // Phase 1: Deep leaf tables (depend on ventas, shifts, etc.)
+            await client.query('DELETE FROM repartidor_returns WHERE tenant_id = $1', [id]);
+            await client.query('DELETE FROM repartidor_assignments WHERE tenant_id = $1', [id]);
+            await client.query(`DELETE FROM ventas_detalle WHERE id_venta IN (SELECT id_venta FROM ventas WHERE tenant_id = $1)`, [id]);
+            await client.query('DELETE FROM cancelaciones_bitacora WHERE tenant_id = $1', [id]).catch(() => {});
+            await client.query(`DELETE FROM purchase_details WHERE purchase_id IN (SELECT id FROM purchases WHERE tenant_id = $1)`, [id]).catch(() => {});
+
+            // Phase 2: Financial / operational tables
+            await client.query('DELETE FROM ventas WHERE tenant_id = $1', [id]);
+            await client.query('DELETE FROM credit_payments WHERE tenant_id = $1', [id]);
+            await client.query('DELETE FROM cash_cuts WHERE tenant_id = $1', [id]);
+            await client.query('DELETE FROM deposits WHERE tenant_id = $1', [id]);
+            await client.query('DELETE FROM withdrawals WHERE tenant_id = $1', [id]);
+            await client.query('DELETE FROM expenses WHERE tenant_id = $1', [id]);
+            await client.query('DELETE FROM purchases WHERE tenant_id = $1', [id]).catch(() => {});
+            await client.query('DELETE FROM notas_credito WHERE tenant_id = $1', [id]).catch(() => {});
+
+            // Phase 3: Guardian / logs
+            await client.query('DELETE FROM suspicious_weighing_logs WHERE tenant_id = $1', [id]).catch(() => {});
+            await client.query('DELETE FROM scale_disconnection_logs WHERE tenant_id = $1', [id]).catch(() => {});
+            await client.query('DELETE FROM preparation_mode_logs WHERE tenant_id = $1', [id]).catch(() => {});
+            await client.query('DELETE FROM sync_events WHERE tenant_id = $1', [id]).catch(() => {});
+
+            // Phase 4: Shifts (many tables depend on this)
+            await client.query('DELETE FROM shifts WHERE tenant_id = $1', [id]);
+
+            // Phase 5: Products and pricing
+            await client.query('DELETE FROM productos_branch_precios WHERE tenant_id = $1', [id]).catch(() => {});
+            await client.query('DELETE FROM producto_branches WHERE tenant_id = $1', [id]).catch(() => {});
+            await client.query('DELETE FROM customer_product_prices WHERE tenant_id = $1', [id]).catch(() => {});
+            await client.query('DELETE FROM productos WHERE tenant_id = $1', [id]);
+
+            // Phase 6: Inventory
+            await client.query('DELETE FROM branch_inventory WHERE tenant_id = $1', [id]).catch(() => {});
+            await client.query('DELETE FROM inventory_transfers WHERE tenant_id = $1', [id]).catch(() => {});
+
+            // Phase 7: Customers (disable generic customer trigger)
+            await client.query('DROP TRIGGER IF EXISTS trg_prevent_generic_customer_delete ON customers');
+            await client.query('DELETE FROM cliente_branches WHERE tenant_id = $1', [id]).catch(() => {});
+            await client.query('DELETE FROM customers WHERE tenant_id = $1', [id]);
+            await client.query(`
+                CREATE TRIGGER trg_prevent_generic_customer_delete
+                    BEFORE DELETE ON customers FOR EACH ROW
+                    EXECUTE FUNCTION prevent_generic_customer_delete()
             `);
 
-            for (const row of tablesResult.rows) {
-                await client.query(`DELETE FROM "${row.table_name}" WHERE tenant_id = $1`, [id]);
-            }
+            // Phase 8: Metadata, telemetry, notifications
+            await client.query('DELETE FROM backup_metadata WHERE tenant_id = $1', [id]).catch(() => {});
+            await client.query('DELETE FROM telemetry_events WHERE tenant_id = $1', [id]);
+            await client.query('DELETE FROM notifications WHERE tenant_id = $1', [id]).catch(() => {});
+            await client.query('DELETE FROM followup_emails WHERE tenant_id = $1', [id]).catch(() => {});
+            await client.query('DELETE FROM sessions WHERE tenant_id = $1', [id]);
 
-            // Delete the tenant itself
+            // Phase 9: Devices
+            await client.query(`DELETE FROM device_tokens WHERE employee_id IN (SELECT id FROM employees WHERE tenant_id = $1)`, [id]).catch(() => {});
+            await client.query('DELETE FROM branch_devices WHERE tenant_id = $1', [id]).catch(() => {});
+            await client.query('DELETE FROM notification_preferences WHERE tenant_id = $1', [id]).catch(() => {});
+
+            // Phase 10: GPS / Geofence
+            await client.query('DELETE FROM gps_locations WHERE tenant_id = $1', [id]).catch(() => {});
+            await client.query('DELETE FROM geofence_zones WHERE tenant_id = $1', [id]).catch(() => {});
+            await client.query('DELETE FROM employee_geofence_zones WHERE tenant_id = $1', [id]).catch(() => {});
+            await client.query('DELETE FROM geofence_events WHERE tenant_id = $1', [id]).catch(() => {});
+
+            // Phase 11: Employee debts
+            await client.query('DELETE FROM employee_debts WHERE tenant_id = $1', [id]).catch(() => {});
+            await client.query('DELETE FROM employee_debt_payments WHERE tenant_id = $1', [id]).catch(() => {});
+
+            // Phase 12: Employees and relations
+            await client.query('DELETE FROM employee_branches WHERE tenant_id = $1', [id]);
+            await client.query('DELETE FROM employees WHERE tenant_id = $1', [id]);
+
+            // Phase 13: Suppliers, licenses, branches
+            await client.query('DELETE FROM suppliers WHERE tenant_id = $1', [id]);
+            await client.query('DELETE FROM branch_licenses WHERE tenant_id = $1', [id]).catch(() => {});
+            await client.query('DELETE FROM branches WHERE tenant_id = $1', [id]);
+
+            // Phase 14: The tenant itself
             await client.query('DELETE FROM tenants WHERE id = $1', [id]);
-
-            // Restore normal FK enforcement
-            await client.query("SET session_replication_role = 'origin'");
 
             await client.query('COMMIT');
 
-            console.log(`[Superadmin] 🗑️ Tenant eliminado: ${tenant.business_name} (ID: ${id}) — ${fkResult.rows.length} tablas limpiadas`);
+            console.log(`[Superadmin] 🗑️ Tenant eliminado: ${tenant.business_name} (ID: ${id})`);
 
             res.json({
                 success: true,
