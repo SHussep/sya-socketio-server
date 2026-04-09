@@ -16,6 +16,11 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
     const SHIFT_FCM_DEBOUNCE_MS = 30000; // 30s — evita doble FCM si se re-inicia turno
     const lastProductionFcm = new Map(); // key: "branchId:scenarioCode" → timestamp
     const PRODUCTION_FCM_DEBOUNCE_MS = 30000; // 30s — produccion genera muchos eventos
+    const recentDirectProductionAlerts = new Map(); // dedup: direct socket vs REST sync
+    const DIRECT_ALERT_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+    // Attach to io so routes/production.js can check for dedup
+    io.recentDirectProductionAlerts = recentDirectProductionAlerts;
 
     function shouldSendScaleFcm(branchId, eventType) {
         const key = `${branchId}:${eventType}`;
@@ -86,6 +91,9 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
         }
         for (const [key, ts] of lastProductionFcm) {
             if (now - ts > DEBOUNCE_CLEANUP_MAX_AGE_MS) { lastProductionFcm.delete(key); cleaned++; }
+        }
+        for (const [key, ts] of recentDirectProductionAlerts) {
+            if (now - ts > DEBOUNCE_CLEANUP_MAX_AGE_MS) { recentDirectProductionAlerts.delete(key); cleaned++; }
         }
 
         // Limpiar scaleStatusByBranch (almacena objetos con updatedAt ISO string)
@@ -477,6 +485,12 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
                 ...data,
                 receivedAt: new Date().toISOString()
             });
+
+            // Track for dedup with sync REST path. Use scenarioCode as key since
+            // Desktop's direct socket event may not include global_id.
+            const directKey = `${data.branchId}:${data.scenarioCode}:${Math.floor(Date.now() / 30000)}`;
+            recentDirectProductionAlerts.set(directKey, Date.now());
+            setTimeout(() => recentDirectProductionAlerts.delete(directKey), DIRECT_ALERT_TTL_MS);
 
             // Enviar FCM con debounce
             if (shouldSendProductionFcm(data.branchId, data.scenarioCode)) {
