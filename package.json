@@ -9,7 +9,8 @@
     "list-no-password": "node list_employees_without_password.js",
     "set-password": "node set_employee_password.js",
     "test": "jest --runInBand --forceExit",
-    "test:multi-branch": "jest tests/multi-branch.test.js --runInBand --forceExit"
+    "test:multi-branch": "jest tests/multi-branch.test.js --runInBand --forceExit",
+    "test:qa": "jest tests/multi-caja-qa.test.js --runInBand --forceExit --testTimeout=120000"
   },
   "keywords": [
     "socketio",
