@@ -139,6 +139,7 @@ const customerProductPricesRoutes = require('./routes/customer_product_prices');
 const kardexRoutes = require('./routes/kardex');
 const productoBranchRoutes = require('./routes/productoBranch');
 const pinRoutes = require('./routes/pin');
+const branchSetupRoutes = require('./routes/branch_setup')(pool);
 const { processGuardianDigests, initializeDigestSchedules } = require('./jobs/guardianEmailDigest');
 const { processLicenseExpiryNotifications } = require('./jobs/licenseExpiryNotifier');
 const { purgeExpiredResets } = require('./jobs/dataResetPurge');
@@ -172,6 +173,7 @@ app.use('/api/employees', employeesRoutes);
 app.use('/api/employees', pinRoutes(pool));
 app.use('/api/employee-branches', employeeBranchesRoutes);
 app.use('/api/cliente-branches', clienteBranchesRoutes);
+app.use('/api/branch-setup', branchSetupRoutes);
 
 // ✅ SECURITY: Create tenant validation middleware for sync endpoints
 const validateTenant = createTenantValidationMiddleware(pool);
