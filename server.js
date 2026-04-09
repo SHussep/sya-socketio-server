@@ -92,7 +92,7 @@ const createRepartidorDebtsRoutes = require('./routes/repartidor_debts');
 const createEmployeeDebtsRoutes = require('./routes/employee_debts');
 const notificationRoutes = require('./routes/notifications');
 const salesRoutes = require('./routes/sales');
-const ventasRoutes = require('./routes/ventas')(pool);
+const ventasRoutes = require('./routes/ventas');
 const expensesRoutes = require('./routes/expenses');
 const shiftsRoutes = require('./routes/shifts');
 const purchasesRoutes = require('./routes/purchases');
@@ -271,7 +271,7 @@ app.use('/api/employee-debts', employeeDebtsRoutes);
 
 app.use('/api/sales', salesRoutes(pool, io));
 app.use('/api/sales-items', salesRoutes(pool, io));
-app.use('/api/ventas', ventasRoutes);
+app.use('/api/ventas', ventasRoutes(pool, io));
 app.use('/api/expenses', expensesRoutes(pool, io));
 app.use('/api/shifts', shiftsRoutes(pool, io));
 app.use('/api/shift-requests', shiftRequestsRoutes(pool, io));

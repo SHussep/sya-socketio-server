@@ -8,7 +8,7 @@
 const express = require('express');
 const router = express.Router();
 
-module.exports = function(pool) {
+module.exports = function(pool, io) {
 
     // ─────────────────────────────────────────────────────────
     // GET /api/ventas - Listar ventas de una sucursal
@@ -686,6 +686,47 @@ module.exports = function(pool) {
                 }
 
                 await client.query('COMMIT');
+
+                // Emit product_updated for inventory-tracked products so Desktop/Flutter refresh
+                if (io && items && items.length > 0) {
+                    try {
+                        const branches = await pool.query(
+                            'SELECT id FROM branches WHERE tenant_id = $1 AND is_active = true',
+                            [tenant_id]
+                        );
+                        // Fetch updated products to emit accurate inventory values
+                        const updatedProducts = await pool.query(
+                            `SELECT p.id, p.global_id, p.descripcion, p.inventario, p.precio_venta,
+                                    p.inventariar, p.pesable, p.unidad_medida
+                             FROM ventas_detalle vd
+                             JOIN productos p ON vd.id_producto = p.id AND p.tenant_id = $2
+                             WHERE vd.id_venta = $1 AND p.inventariar = true`,
+                            [newVenta.id_venta, tenant_id]
+                        );
+                        for (const prod of updatedProducts.rows) {
+                            const payload = {
+                                id_producto: String(prod.id),
+                                global_id: prod.global_id,
+                                descripcion: prod.descripcion,
+                                inventario: parseFloat(prod.inventario),
+                                precio_venta: parseFloat(prod.precio_venta),
+                                inventariar: prod.inventariar,
+                                pesable: prod.pesable,
+                                unidad_medida: prod.unidad_medida,
+                                action: 'updated',
+                                updatedAt: new Date().toISOString()
+                            };
+                            for (const b of branches.rows) {
+                                io.to(`branch_${b.id}`).emit('product_updated', payload);
+                            }
+                        }
+                        if (updatedProducts.rows.length > 0) {
+                            console.log(`[Ventas/Create] 📡 product_updated emitido para ${updatedProducts.rows.length} productos`);
+                        }
+                    } catch (emitErr) {
+                        console.error('[Ventas/Create] ⚠️ Error emitting product_updated:', emitErr.message);
+                    }
+                }
 
                 res.status(201).json({
                     success: true,
