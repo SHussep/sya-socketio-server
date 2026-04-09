@@ -898,42 +898,32 @@ module.exports = function(pool, io) {
 
             await client.query('BEGIN');
 
-            // Find ALL tables with a tenant_id FK referencing tenants(id)
-            // This catches tables created in migrations without ON DELETE CASCADE
-            const fkResult = await client.query(`
-                SELECT DISTINCT kcu.table_name
-                FROM information_schema.table_constraints tc
-                JOIN information_schema.key_column_usage kcu
-                  ON tc.constraint_name = kcu.constraint_name
-                  AND tc.table_schema = kcu.table_schema
-                JOIN information_schema.constraint_column_usage ccu
-                  ON tc.constraint_name = ccu.constraint_name
-                  AND tc.table_schema = ccu.table_schema
-                WHERE tc.constraint_type = 'FOREIGN KEY'
-                  AND ccu.table_name = 'tenants'
-                  AND ccu.column_name = 'id'
-                  AND kcu.column_name = 'tenant_id'
-                  AND kcu.table_name != 'tenants'
+            // Disable ALL foreign key checks and triggers for this session.
+            // This bypasses CASCADE issues, missing CASCADE constraints, and
+            // the generic customer delete trigger — all in one shot.
+            await client.query("SET session_replication_role = 'replica'");
+
+            // Find ALL tables that have a tenant_id column and delete their rows
+            const tablesResult = await client.query(`
+                SELECT DISTINCT c.table_name
+                FROM information_schema.columns c
+                JOIN information_schema.tables t
+                  ON c.table_name = t.table_name AND c.table_schema = t.table_schema
+                WHERE c.column_name = 'tenant_id'
+                  AND c.table_schema = 'public'
+                  AND t.table_type = 'BASE TABLE'
+                  AND c.table_name != 'tenants'
             `);
 
-            // Disable trigger that prevents deleting generic customer
-            await client.query('DROP TRIGGER IF EXISTS trg_prevent_generic_customer_delete ON customers');
-
-            // Delete from ALL referencing tables first
-            for (const row of fkResult.rows) {
+            for (const row of tablesResult.rows) {
                 await client.query(`DELETE FROM "${row.table_name}" WHERE tenant_id = $1`, [id]);
             }
 
-            // Now delete the tenant itself (remaining CASCADE FKs handle the rest)
+            // Delete the tenant itself
             await client.query('DELETE FROM tenants WHERE id = $1', [id]);
 
-            // Restore the trigger
-            await client.query(`
-                CREATE TRIGGER trg_prevent_generic_customer_delete
-                    BEFORE DELETE ON customers
-                    FOR EACH ROW
-                    EXECUTE FUNCTION prevent_generic_customer_delete()
-            `);
+            // Restore normal FK enforcement
+            await client.query("SET session_replication_role = 'origin'");
 
             await client.query('COMMIT');
 
