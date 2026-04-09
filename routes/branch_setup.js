@@ -36,7 +36,7 @@ module.exports = (pool) => {
                        COALESCE(r.name, 'Empleado') as role_name,
                        (e.pin_hash IS NOT NULL) as has_pin
                 FROM employees e
-                LEFT JOIN employee_roles r ON r.id = e.role_id AND r.tenant_id = $1
+                LEFT JOIN roles r ON r.id = e.role_id
                 WHERE e.tenant_id = $1 AND e.is_active = true AND e.is_owner = false
                 ORDER BY full_name
             `, [tenantId]);
@@ -63,10 +63,11 @@ module.exports = (pool) => {
 
     // POST /api/branch-setup/import
     // Import selected products and employees into a new branch
+    // Accepts global_ids (preferred) or legacy integer ids for backwards compatibility
     router.post('/import', authenticateToken, async (req, res) => {
         const client = await pool.connect();
         try {
-            const { tenantId, branchId, productIds, employeeIds } = req.body;
+            const { tenantId, branchId, productIds, employeeIds, productGlobalIds, employeeGlobalIds } = req.body;
 
             if (!tenantId || !branchId) {
                 return res.status(400).json({ error: 'tenantId and branchId are required' });
@@ -78,12 +79,16 @@ module.exports = (pool) => {
             let employeesImported = 0;
 
             // 1. Products → create producto_branches rows with inventory=0 and base prices
-            if (productIds && productIds.length > 0) {
-                const productsData = await client.query(`
-                    SELECT id, global_id, precio_venta, precio_compra
-                    FROM productos
-                    WHERE id = ANY($1) AND tenant_id = $2 AND eliminado = FALSE
-                `, [productIds, tenantId]);
+            // Prefer global_ids, fallback to legacy integer ids
+            const useProductGlobalIds = productGlobalIds && productGlobalIds.length > 0;
+            const productFilter = useProductGlobalIds ? productGlobalIds : productIds;
+
+            if (productFilter && productFilter.length > 0) {
+                const productsQuery = useProductGlobalIds
+                    ? `SELECT id, global_id, precio_venta, precio_compra FROM productos WHERE global_id = ANY($1) AND tenant_id = $2 AND eliminado = FALSE`
+                    : `SELECT id, global_id, precio_venta, precio_compra FROM productos WHERE id = ANY($1) AND tenant_id = $2 AND eliminado = FALSE`;
+
+                const productsData = await client.query(productsQuery, [productFilter, tenantId]);
 
                 for (const product of productsData.rows) {
                     const result = await client.query(`
@@ -100,8 +105,24 @@ module.exports = (pool) => {
             }
 
             // 2. Employees → create employee_branches relationships
-            if (employeeIds && employeeIds.length > 0) {
-                for (const employeeId of employeeIds) {
+            // Prefer global_ids, fallback to legacy integer ids
+            const useEmployeeGlobalIds = employeeGlobalIds && employeeGlobalIds.length > 0;
+            const employeeFilter = useEmployeeGlobalIds ? employeeGlobalIds : employeeIds;
+
+            if (employeeFilter && employeeFilter.length > 0) {
+                // Resolve global_ids to integer ids if needed (employee_branches uses integer employee_id)
+                let resolvedEmployeeIds;
+                if (useEmployeeGlobalIds) {
+                    const empResult = await client.query(
+                        `SELECT id FROM employees WHERE global_id = ANY($1) AND tenant_id = $2`,
+                        [employeeFilter, tenantId]
+                    );
+                    resolvedEmployeeIds = empResult.rows.map(r => r.id);
+                } else {
+                    resolvedEmployeeIds = employeeFilter;
+                }
+
+                for (const employeeId of resolvedEmployeeIds) {
                     const result = await client.query(`
                         INSERT INTO employee_branches (tenant_id, employee_id, branch_id)
                         VALUES ($1, $2, $3)
