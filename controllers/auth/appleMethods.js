@@ -218,9 +218,9 @@ module.exports = {
                     timezone: b.timezone || 'America/Mexico_City'
                 })),
                 planLimits: {
-                    maxBranches: licenseInfo?.total_licenses || 0,
-                    usedBranches: licenseInfo?.used_licenses || 0,
-                    availableBranches: licenseInfo?.available_licenses || 0,
+                    maxBranches: parseInt(licenseInfo?.total_licenses, 10) || 0,
+                    usedBranches: parseInt(licenseInfo?.used_licenses, 10) || 0,
+                    availableBranches: parseInt(licenseInfo?.available_licenses, 10) || 0,
                     maxEmployees: tenant.max_employees || 0,
                     maxDevicesPerBranch: tenant.max_devices_per_branch || 0
                 }
