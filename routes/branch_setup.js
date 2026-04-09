@@ -43,11 +43,11 @@ module.exports = (pool) => {
 
             // Customers: active, exclude generic
             const customersResult = await pool.query(`
-                SELECT c.id, c.global_id, c.name, c.phone, c.address
+                SELECT c.id, c.global_id, c.nombre AS name, c.telefono AS phone, c.direccion AS address
                 FROM customers c
                 WHERE c.tenant_id = $1 AND c.activo = true
-                  AND LOWER(c.name) != 'publico en general'
-                ORDER BY c.name
+                  AND LOWER(c.nombre) != 'publico en general'
+                ORDER BY c.nombre
             `, [tenantId]);
 
             res.json({
