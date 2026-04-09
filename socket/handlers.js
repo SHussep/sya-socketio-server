@@ -358,6 +358,16 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
             const empId = employeeId || socket.user?.employeeId;
             if (!empId) return;
 
+            // If this socket already took over the session via force_takeover,
+            // the flush_complete is stale (from an OLD revocation cycle).
+            // Do NOT send force_logout — this device is now the session owner.
+            // Also do NOT clear session_revoked_at — it was re-set by the takeover
+            // for the OTHER device that got kicked.
+            if (socket._tookOverSession) {
+                console.log(`[Socket] ⏭️ flush_complete from employee ${empId} ignored — this socket took over the session (stale flush)`);
+                return;
+            }
+
             try {
                 await pool.query(
                     `UPDATE employees SET session_revoked_at = NULL, session_revoked_for_device = NULL
@@ -1377,6 +1387,14 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
                 }
 
                 await client.query('COMMIT');
+
+                // Mark this socket as takeover owner — prevents stale flush_complete
+                // from triggering force_logout on this same socket.
+                // Race condition: identify_client may have started a flush cycle for
+                // an OLD revocation; if this socket then takes over, the delayed
+                // flush_complete must NOT cause a force_logout.
+                socket._tookOverSession = true;
+
                 socket.emit('force_takeover_result', { success: true, wasOnline: kickedCount > 0 });
             } catch (err) {
                 await client.query('ROLLBACK').catch(() => {});
