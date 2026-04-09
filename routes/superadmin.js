@@ -408,7 +408,8 @@ module.exports = function(pool, io) {
                     (SELECT app_version FROM telemetry_events WHERE tenant_id = t.id AND app_version IS NOT NULL AND platform IS NULL ORDER BY event_timestamp DESC LIMIT 1) as desktop_version,
                     (SELECT app_version FROM telemetry_events WHERE tenant_id = t.id AND app_version IS NOT NULL AND platform IN ('android', 'ios') ORDER BY event_timestamp DESC LIMIT 1) as mobile_version,
                     (SELECT theme_name FROM telemetry_events WHERE tenant_id = t.id AND theme_name IS NOT NULL ORDER BY event_timestamp DESC LIMIT 1) as theme_name,
-                    (SELECT name FROM employees WHERE tenant_id = t.id AND is_owner = true LIMIT 1) as owner_name
+                    (SELECT name FROM employees WHERE tenant_id = t.id AND is_owner = true LIMIT 1) as owner_name,
+                    (SELECT MAX(created_at) FROM backup_metadata WHERE tenant_id = t.id) as last_backup
                 FROM tenants t
                 JOIN subscriptions s ON t.subscription_id = s.id
                 WHERE 1=1
@@ -482,6 +483,7 @@ module.exports = function(pool, io) {
                     mobileVersion: tenant.mobile_version,
                     appVersion: tenant.desktop_version || tenant.mobile_version,
                     themeName: tenant.theme_name,
+                    lastBackup: tenant.last_backup,
                     isActive: tenant.is_active,
                     createdAt: tenant.created_at
                 };
@@ -647,6 +649,15 @@ module.exports = function(pool, io) {
                 LIMIT 1
             `, [id]);
 
+            // Último respaldo en Dropbox
+            const backupResult = await pool.query(`
+                SELECT created_at, backup_filename
+                FROM backup_metadata
+                WHERE tenant_id = $1
+                ORDER BY created_at DESC
+                LIMIT 1
+            `, [id]);
+
             const now = new Date();
             const trialEndsAt = tenant.trial_ends_at ? new Date(tenant.trial_ends_at) : null;
             const daysRemaining = trialEndsAt ? Math.ceil((trialEndsAt - now) / (1000 * 60 * 60 * 24)) : null;
@@ -665,7 +676,8 @@ module.exports = function(pool, io) {
                         desktopVersion: desktopVersionResult.rows[0]?.app_version || null,
                         mobileVersion: mobileVersionResult.rows[0]?.app_version || null,
                         appVersion: desktopVersionResult.rows[0]?.app_version || mobileVersionResult.rows[0]?.app_version || null,
-                        themeName: themeResult.rows[0]?.theme_name || null
+                        themeName: themeResult.rows[0]?.theme_name || null,
+                        lastBackup: backupResult.rows[0]?.created_at || null
                     },
                     subscription: {
                         id: tenant.subscription_id,
@@ -898,28 +910,39 @@ module.exports = function(pool, io) {
 
             await client.query('BEGIN');
 
-            // Helper: try a DELETE, rollback to savepoint if table doesn't exist
+            // Helper: try a DELETE, rollback to savepoint if table doesn't exist or has issues
             async function safeDel(sql, params) {
                 const sp = 'sp_' + Math.random().toString(36).slice(2, 8);
                 await client.query(`SAVEPOINT ${sp}`);
                 try {
-                    await client.query(sql, params);
+                    const r = await client.query(sql, params);
+                    await client.query(`RELEASE SAVEPOINT ${sp}`);
+                    return r.rowCount;
                 } catch (e) {
+                    console.log(`[DeleteTenant] safeDel skipped: ${e.message.substring(0, 100)}`);
                     await client.query(`ROLLBACK TO SAVEPOINT ${sp}`);
+                    return 0;
                 }
             }
 
-            // Delete in correct dependency order (leaves → parents).
-            // safeDel() for tables that may not exist in all environments.
+            // Comprehensive delete in dependency order (leaves → parents).
+            // Every table with a FK to tenants/branches/employees/productos
+            // must be deleted BEFORE its parent. safeDel() for tables that
+            // may not exist in all environments; direct query for critical ones.
 
-            // Phase 1: Deep leaf tables
+            console.log(`[DeleteTenant] Starting deletion of tenant ${id} (${tenant.business_name})`);
+
+            // ── Phase 1: Deepest leaf tables ──
             await safeDel('DELETE FROM repartidor_returns WHERE tenant_id = $1', [id]);
             await safeDel('DELETE FROM repartidor_assignments WHERE tenant_id = $1', [id]);
+            await safeDel('DELETE FROM repartidor_locations WHERE tenant_id = $1', [id]);
             await safeDel('DELETE FROM ventas_detalle WHERE id_venta IN (SELECT id_venta FROM ventas WHERE tenant_id = $1)', [id]);
             await safeDel('DELETE FROM cancelaciones_bitacora WHERE tenant_id = $1', [id]);
+            await safeDel('DELETE FROM venta_cancelaciones WHERE tenant_id = $1', [id]);
             await safeDel('DELETE FROM purchase_details WHERE purchase_id IN (SELECT id FROM purchases WHERE tenant_id = $1)', [id]);
+            await safeDel('DELETE FROM kardex_entries WHERE tenant_id = $1', [id]);
 
-            // Phase 2: Financial / operational
+            // ── Phase 2: Financial / operational ──
             await safeDel('DELETE FROM ventas WHERE tenant_id = $1', [id]);
             await safeDel('DELETE FROM credit_payments WHERE tenant_id = $1', [id]);
             await safeDel('DELETE FROM cash_cuts WHERE tenant_id = $1', [id]);
@@ -929,67 +952,76 @@ module.exports = function(pool, io) {
             await safeDel('DELETE FROM purchases WHERE tenant_id = $1', [id]);
             await safeDel('DELETE FROM notas_credito WHERE tenant_id = $1', [id]);
 
-            // Phase 3: Guardian / logs
+            // ── Phase 3: Guardian / logs / sync ──
             await safeDel('DELETE FROM suspicious_weighing_logs WHERE tenant_id = $1', [id]);
             await safeDel('DELETE FROM scale_disconnection_logs WHERE tenant_id = $1', [id]);
             await safeDel('DELETE FROM preparation_mode_logs WHERE tenant_id = $1', [id]);
-            await safeDel('DELETE FROM sync_events WHERE tenant_id = $1', [id]);
+            await safeDel('DELETE FROM preparation_mode_windows WHERE tenant_id = $1', [id]);
+            await safeDel('DELETE FROM sync_error_reports WHERE tenant_id = $1', [id]);
+            await safeDel('DELETE FROM data_resets WHERE tenant_id = $1', [id]);
 
-            // Phase 4: Shifts
+            // ── Phase 4: Shifts ──
             await safeDel('DELETE FROM shifts WHERE tenant_id = $1', [id]);
 
-            // Phase 5: Products and pricing
+            // ── Phase 5: Products and pricing ──
             await safeDel('DELETE FROM productos_branch_precios WHERE tenant_id = $1', [id]);
             await safeDel('DELETE FROM producto_branches WHERE tenant_id = $1', [id]);
             await safeDel('DELETE FROM customer_product_prices WHERE tenant_id = $1', [id]);
+            await safeDel('DELETE FROM categorias_productos WHERE tenant_id = $1', [id]);
             await safeDel('DELETE FROM productos WHERE tenant_id = $1', [id]);
 
-            // Phase 6: Inventory
+            // ── Phase 6: Inventory ──
             await safeDel('DELETE FROM branch_inventory WHERE tenant_id = $1', [id]);
             await safeDel('DELETE FROM inventory_transfers WHERE tenant_id = $1', [id]);
 
-            // Phase 7: Customers (disable generic customer trigger)
+            // ── Phase 7: Customers (disable generic customer trigger) ──
             await client.query('DROP TRIGGER IF EXISTS trg_prevent_generic_customer_delete ON customers');
             await safeDel('DELETE FROM cliente_branches WHERE tenant_id = $1', [id]);
-            await safeDel('DELETE FROM customers WHERE tenant_id = $1', [id]);
+            await client.query('DELETE FROM customers WHERE tenant_id = $1', [id]);
             await client.query(`
                 CREATE TRIGGER trg_prevent_generic_customer_delete
                     BEFORE DELETE ON customers FOR EACH ROW
                     EXECUTE FUNCTION prevent_generic_customer_delete()
             `);
 
-            // Phase 8: Metadata, telemetry, notifications
+            // ── Phase 8: Metadata, telemetry, notifications ──
             await safeDel('DELETE FROM backup_metadata WHERE tenant_id = $1', [id]);
-            await safeDel('DELETE FROM telemetry_events WHERE tenant_id = $1', [id]);
+            await client.query('DELETE FROM telemetry_events WHERE tenant_id = $1', [id]);
             await safeDel('DELETE FROM notifications WHERE tenant_id = $1', [id]);
             await safeDel('DELETE FROM followup_emails WHERE tenant_id = $1', [id]);
             await safeDel('DELETE FROM sessions WHERE tenant_id = $1', [id]);
+            await safeDel('DELETE FROM beta_enrollments WHERE tenant_id = $1', [id]);
 
-            // Phase 9: Devices
+            // ── Phase 9: Devices ──
             await safeDel('DELETE FROM device_tokens WHERE employee_id IN (SELECT id FROM employees WHERE tenant_id = $1)', [id]);
             await safeDel('DELETE FROM branch_devices WHERE tenant_id = $1', [id]);
             await safeDel('DELETE FROM notification_preferences WHERE tenant_id = $1', [id]);
 
-            // Phase 10: GPS / Geofence
+            // ── Phase 10: GPS / Geofence ──
             await safeDel('DELETE FROM gps_locations WHERE tenant_id = $1', [id]);
             await safeDel('DELETE FROM geofence_zones WHERE tenant_id = $1', [id]);
             await safeDel('DELETE FROM employee_geofence_zones WHERE tenant_id = $1', [id]);
             await safeDel('DELETE FROM geofence_events WHERE tenant_id = $1', [id]);
+            await safeDel('DELETE FROM gps_consent_log WHERE tenant_id = $1', [id]);
 
-            // Phase 11: Employee debts
+            // ── Phase 11: Employee debts ──
             await safeDel('DELETE FROM employee_debts WHERE tenant_id = $1', [id]);
             await safeDel('DELETE FROM employee_debt_payments WHERE tenant_id = $1', [id]);
 
-            // Phase 12: Employees and relations
-            await safeDel('DELETE FROM employee_branches WHERE tenant_id = $1', [id]);
-            await safeDel('DELETE FROM employees WHERE tenant_id = $1', [id]);
+            // ── Phase 12: Employees and relations ──
+            await client.query('DELETE FROM employee_branches WHERE tenant_id = $1', [id]);
+            await client.query('DELETE FROM employees WHERE tenant_id = $1', [id]);
 
-            // Phase 13: Suppliers, licenses, branches
+            // ── Phase 13: sync_events, suppliers, licenses, roles, branches ──
+            await client.query('DELETE FROM sync_events WHERE tenant_id = $1', [id]);
+            await safeDel('DELETE FROM branch_settings WHERE tenant_id = $1', [id]);
             await safeDel('DELETE FROM suppliers WHERE tenant_id = $1', [id]);
-            await safeDel('DELETE FROM branch_licenses WHERE tenant_id = $1', [id]);
-            await safeDel('DELETE FROM branches WHERE tenant_id = $1', [id]);
+            await safeDel('DELETE FROM roles WHERE tenant_id = $1', [id]);
+            await safeDel('DELETE FROM global_expense_categories WHERE tenant_id = $1', [id]);
+            await client.query('DELETE FROM branch_licenses WHERE tenant_id = $1', [id]);
+            await client.query('DELETE FROM branches WHERE tenant_id = $1', [id]);
 
-            // Phase 14: The tenant itself
+            // ── Phase 14: The tenant itself ──
             await client.query('DELETE FROM tenants WHERE id = $1', [id]);
 
             await client.query('COMMIT');
