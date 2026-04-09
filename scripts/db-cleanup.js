@@ -563,66 +563,73 @@ async function main() {
 
         const isFullCleanup = modeChoice === '2';
 
-        // Mostrar tenants
-        header('Tenants Disponibles');
-        const tenants = await getTenants();
+        // Loop: mostrar tenants → elegir → limpiar → repetir
+        while (true) {
+            header('Tenants Disponibles');
+            const tenants = await getTenants();
 
-        if (tenants.length === 0) {
-            error('No hay tenants en la base de datos');
-            process.exit(1);
-        }
-
-        console.log(`  ${'ID'.padEnd(5)} ${'Codigo'.padEnd(12)} ${'Negocio'.padEnd(22)} ${'Suc'.padEnd(4)} ${'Emp'.padEnd(4)} ${'Cli'.padEnd(5)} ${'Prod'.padEnd(5)} Ventas`);
-        console.log(`  ${'-'.repeat(5)} ${'-'.repeat(12)} ${'-'.repeat(22)} ${'-'.repeat(4)} ${'-'.repeat(4)} ${'-'.repeat(5)} ${'-'.repeat(5)} ------`);
-
-        for (const t of tenants) {
-            console.log(`  ${String(t.id).padEnd(5)} ${(t.tenant_code || '-').padEnd(12)} ${(t.business_name || '-').substring(0, 20).padEnd(22)} ${String(t.branch_count).padEnd(4)} ${String(t.employee_count).padEnd(4)} ${String(t.customer_count).padEnd(5)} ${String(t.product_count).padEnd(5)} ${t.venta_count}`);
-        }
-
-        console.log('');
-        const tenantIdStr = await ask('Ingresa el ID del tenant:');
-        const tenantId = parseInt(tenantIdStr);
-
-        if (isNaN(tenantId) || !tenants.find(t => t.id === tenantId)) {
-            error('Tenant ID invalido');
-            process.exit(1);
-        }
-
-        const selectedTenant = tenants.find(t => t.id === tenantId);
-        success(`Tenant seleccionado: ${selectedTenant.business_name}`);
-
-        if (isFullCleanup) {
-            // Limpieza completa
-            await runFullCleanup(tenantId, selectedTenant);
-        } else {
-            // Limpieza parcial - preguntar por sucursal
-            const branches = await getBranches(tenantId);
-            let branchId = null;
-
-            if (branches.length > 0) {
-                console.log('');
-                console.log('Sucursales disponibles:');
-                console.log(`  ${'ID'.padEnd(5)} ${'Nombre'.padEnd(20)} Ventas`);
-                console.log(`  ${'-'.repeat(5)} ${'-'.repeat(20)} ------`);
-
-                for (const b of branches) {
-                    console.log(`  ${String(b.id).padEnd(5)} ${(b.name || '-').substring(0, 18).padEnd(20)} ${b.ventas_count}`);
-                }
-
-                console.log('');
-                log('Deja en blanco para limpiar TODAS las sucursales', 'yellow');
-                const branchIdStr = await ask('ID de sucursal (o Enter para todas):');
-
-                if (branchIdStr) {
-                    branchId = parseInt(branchIdStr);
-                    if (isNaN(branchId) || !branches.find(b => b.id === branchId)) {
-                        error('Branch ID invalido');
-                        process.exit(1);
-                    }
-                }
+            if (tenants.length === 0) {
+                error('No hay tenants en la base de datos');
+                break;
             }
 
-            await runPartialCleanup(tenantId, selectedTenant, branchId);
+            console.log(`  ${'ID'.padEnd(5)} ${'Codigo'.padEnd(12)} ${'Negocio'.padEnd(22)} ${'Suc'.padEnd(4)} ${'Emp'.padEnd(4)} ${'Cli'.padEnd(5)} ${'Prod'.padEnd(5)} Ventas`);
+            console.log(`  ${'-'.repeat(5)} ${'-'.repeat(12)} ${'-'.repeat(22)} ${'-'.repeat(4)} ${'-'.repeat(4)} ${'-'.repeat(5)} ${'-'.repeat(5)} ------`);
+
+            for (const t of tenants) {
+                console.log(`  ${String(t.id).padEnd(5)} ${(t.tenant_code || '-').padEnd(12)} ${(t.business_name || '-').substring(0, 20).padEnd(22)} ${String(t.branch_count).padEnd(4)} ${String(t.employee_count).padEnd(4)} ${String(t.customer_count).padEnd(5)} ${String(t.product_count).padEnd(5)} ${t.venta_count}`);
+            }
+
+            console.log('');
+            log('Escribe "salir" o presiona Enter vacio para terminar', 'dim');
+            const tenantIdStr = await ask('Ingresa el ID del tenant:');
+
+            if (!tenantIdStr || tenantIdStr.toLowerCase() === 'salir' || tenantIdStr.toLowerCase() === 'exit') {
+                log('\nSaliendo...', 'cyan');
+                break;
+            }
+
+            const tenantId = parseInt(tenantIdStr);
+
+            if (isNaN(tenantId) || !tenants.find(t => t.id === tenantId)) {
+                error('Tenant ID invalido, intenta de nuevo');
+                continue;
+            }
+
+            const selectedTenant = tenants.find(t => t.id === tenantId);
+            success(`Tenant seleccionado: ${selectedTenant.business_name}`);
+
+            if (isFullCleanup) {
+                await runFullCleanup(tenantId, selectedTenant);
+            } else {
+                const branches = await getBranches(tenantId);
+                let branchId = null;
+
+                if (branches.length > 0) {
+                    console.log('');
+                    console.log('Sucursales disponibles:');
+                    console.log(`  ${'ID'.padEnd(5)} ${'Nombre'.padEnd(20)} Ventas`);
+                    console.log(`  ${'-'.repeat(5)} ${'-'.repeat(20)} ------`);
+
+                    for (const b of branches) {
+                        console.log(`  ${String(b.id).padEnd(5)} ${(b.name || '-').substring(0, 18).padEnd(20)} ${b.ventas_count}`);
+                    }
+
+                    console.log('');
+                    log('Deja en blanco para limpiar TODAS las sucursales', 'yellow');
+                    const branchIdStr = await ask('ID de sucursal (o Enter para todas):');
+
+                    if (branchIdStr) {
+                        branchId = parseInt(branchIdStr);
+                        if (isNaN(branchId) || !branches.find(b => b.id === branchId)) {
+                            error('Branch ID invalido');
+                            continue;
+                        }
+                    }
+                }
+
+                await runPartialCleanup(tenantId, selectedTenant, branchId);
+            }
         }
 
     } catch (err) {
