@@ -673,6 +673,18 @@ module.exports = function(pool) {
                     }
                 }
 
+                // Update customer credit balance for mixed payments (tipo_pago_id=4)
+                // Note: tipo_pago_id=3 (pure credit) is handled by PostgreSQL trigger automatically
+                if (id_cliente && parseInt(tipo_pago_id) === 4 && parseFloat(finalCreditAmount) > 0) {
+                    const creditToAdd = parseFloat(finalCreditAmount);
+                    await client.query(
+                        `UPDATE customers SET saldo_deudor = saldo_deudor + $1, updated_at = NOW()
+                         WHERE id = $2 AND tenant_id = $3`,
+                        [creditToAdd, id_cliente, tenant_id]
+                    );
+                    console.log(`[Ventas/Create] 💳 Saldo deudor actualizado: +$${creditToAdd} para cliente ${id_cliente}`);
+                }
+
                 await client.query('COMMIT');
 
                 res.status(201).json({
