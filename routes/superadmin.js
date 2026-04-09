@@ -877,16 +877,18 @@ module.exports = function(pool, io) {
     // Eliminar un tenant y TODOS sus datos (CASCADE)
     // ─────────────────────────────────────────────────────────
     router.delete('/tenants/:id', async (req, res) => {
+        const client = await pool.connect();
         try {
             const { id } = req.params;
 
             // Verify tenant exists and get info for confirmation
-            const tenantResult = await pool.query(
+            const tenantResult = await client.query(
                 'SELECT id, business_name, email FROM tenants WHERE id = $1',
                 [id]
             );
 
             if (tenantResult.rows.length === 0) {
+                client.release();
                 return res.status(404).json({
                     success: false,
                     message: 'Tenant no encontrado'
@@ -895,8 +897,23 @@ module.exports = function(pool, io) {
 
             const tenant = tenantResult.rows[0];
 
+            await client.query('BEGIN');
+
+            // Disable trigger that prevents deleting the generic "Público en General" customer
+            await client.query('DROP TRIGGER IF EXISTS trg_prevent_generic_customer_delete ON customers');
+
             // Delete tenant — ON DELETE CASCADE handles all related tables
-            await pool.query('DELETE FROM tenants WHERE id = $1', [id]);
+            await client.query('DELETE FROM tenants WHERE id = $1', [id]);
+
+            // Restore the trigger
+            await client.query(`
+                CREATE TRIGGER trg_prevent_generic_customer_delete
+                    BEFORE DELETE ON customers
+                    FOR EACH ROW
+                    EXECUTE FUNCTION prevent_generic_customer_delete()
+            `);
+
+            await client.query('COMMIT');
 
             console.log(`[Superadmin] 🗑️ Tenant eliminado: ${tenant.business_name} (ID: ${id})`);
 
@@ -910,12 +927,16 @@ module.exports = function(pool, io) {
                 }
             });
         } catch (error) {
+            // ROLLBACK undoes the DROP TRIGGER, restoring it automatically
+            await client.query('ROLLBACK').catch(() => {});
             console.error('[Superadmin] Error eliminando tenant:', error);
             res.status(500).json({
                 success: false,
                 message: 'Error al eliminar tenant',
                 error: process.env.NODE_ENV !== 'production' ? error.message : undefined
             });
+        } finally {
+            client.release();
         }
     });
 
