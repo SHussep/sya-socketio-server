@@ -670,7 +670,8 @@ module.exports = (pool) => {
     // Parámetro opcional: includeInactive=true para admins que necesitan ver todos
     router.get('/', async (req, res) => {
         try {
-            const { tenantId, includeInactive } = req.query;
+            const { tenantId, branchId, branch_id, includeInactive } = req.query;
+            const effectiveBranchId = branchId || branch_id; // Accept both camelCase and snake_case
 
             if (!tenantId) {
                 return res.status(400).json({
@@ -682,6 +683,17 @@ module.exports = (pool) => {
             // Por defecto solo retornar empleados activos (soft delete)
             const activeFilter = includeInactive === 'true' ? '' : 'AND is_active = true';
 
+            const params = [tenantId];
+            let paramIndex = 2;
+
+            // Si hay branchId, filtrar por empleados asignados a esa sucursal
+            let branchJoin = '';
+            if (effectiveBranchId) {
+                branchJoin = `INNER JOIN employee_branches eb ON e.id = eb.employee_id AND eb.branch_id = $${paramIndex}`;
+                params.push(effectiveBranchId);
+                paramIndex++;
+            }
+
             const result = await pool.query(
                 `SELECT e.id, e.tenant_id, e.first_name, e.last_name, e.username, e.email, e.is_active,
                         e.role_id, r.name as role_name,
@@ -691,9 +703,10 @@ module.exports = (pool) => {
                         e.created_at, e.updated_at
                  FROM employees e
                  LEFT JOIN roles r ON e.role_id = r.id
+                 ${branchJoin}
                  WHERE e.tenant_id = $1 ${activeFilter}
                  ORDER BY e.first_name ASC, e.last_name ASC`,
-                [tenantId]
+                params
             );
 
             res.json({
