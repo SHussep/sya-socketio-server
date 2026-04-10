@@ -134,7 +134,7 @@ module.exports = (pool, io) => {
 
                 // Resolve producto_id from global_id
                 const prodResult = await client.query(
-                    `SELECT id, descripcion, unidad_medida_id
+                    `SELECT id, global_id, descripcion, unidad_medida_id
                      FROM productos
                      WHERE global_id = $1 AND tenant_id = $2 AND eliminado = FALSE`,
                     [producto_global_id, tenantId]
@@ -159,22 +159,22 @@ module.exports = (pool, io) => {
 
                 // Lock source row and check stock
                 const sourceStock = await client.query(
-                    `SELECT quantity FROM branch_inventory
-                     WHERE branch_id = $1 AND producto_id = $2 AND tenant_id = $3
+                    `SELECT inventario FROM producto_branches
+                     WHERE branch_id = $1 AND product_global_id = $2 AND tenant_id = $3
                      FOR UPDATE`,
-                    [from_branch_id, product.id, tenantId]
+                    [from_branch_id, product.global_id, tenantId]
                 );
 
-                const stockBeforeSource = parseFloat(sourceStock.rows[0]?.quantity || 0);
+                const stockBeforeSource = parseFloat(sourceStock.rows[0]?.inventario || 0);
 
                 // Get target stock before transfer
                 const targetStock = await client.query(
-                    `SELECT quantity FROM branch_inventory
-                     WHERE branch_id = $1 AND producto_id = $2 AND tenant_id = $3
+                    `SELECT inventario FROM producto_branches
+                     WHERE branch_id = $1 AND product_global_id = $2 AND tenant_id = $3
                      FOR UPDATE`,
-                    [to_branch_id, product.id, tenantId]
+                    [to_branch_id, product.global_id, tenantId]
                 );
-                const stockBeforeTarget = parseFloat(targetStock.rows[0]?.quantity || 0);
+                const stockBeforeTarget = parseFloat(targetStock.rows[0]?.inventario || 0);
 
                 if (stockBeforeSource < quantity) {
                     console.log(`[Transfers/POST]   ⚠️ Stock insuficiente de "${product.descripcion}": disponible ${stockBeforeSource}, solicitado ${quantity} — se permite de todas formas`);
@@ -183,28 +183,28 @@ module.exports = (pool, io) => {
                 // Deduct from source (upsert: create row if not exists, then subtract)
                 if (sourceStock.rows.length === 0) {
                     await client.query(
-                        `INSERT INTO branch_inventory (tenant_id, branch_id, producto_id, quantity, minimum)
-                         VALUES ($1, $2, $3, (0 - $4::numeric), 0)
-                         ON CONFLICT (tenant_id, branch_id, producto_id)
-                         DO UPDATE SET quantity = branch_inventory.quantity - $4::numeric, updated_at = NOW()`,
-                        [tenantId, from_branch_id, product.id, quantity]
+                        `INSERT INTO producto_branches (tenant_id, branch_id, product_global_id, inventario, global_id)
+                         VALUES ($1, $2, $3, (0 - $4::numeric), gen_random_uuid())
+                         ON CONFLICT (tenant_id, product_global_id, branch_id)
+                         DO UPDATE SET inventario = producto_branches.inventario - $4::numeric, updated_at = NOW()`,
+                        [tenantId, from_branch_id, product.global_id, quantity]
                     );
                 } else {
                     await client.query(
-                        `UPDATE branch_inventory
-                         SET quantity = quantity - $1::numeric, updated_at = NOW()
-                         WHERE branch_id = $2 AND producto_id = $3 AND tenant_id = $4`,
-                        [quantity, from_branch_id, product.id, tenantId]
+                        `UPDATE producto_branches
+                         SET inventario = inventario - $1::numeric, updated_at = NOW()
+                         WHERE branch_id = $2 AND product_global_id = $3 AND tenant_id = $4`,
+                        [quantity, from_branch_id, product.global_id, tenantId]
                     );
                 }
 
                 // Add to target (upsert)
                 await client.query(
-                    `INSERT INTO branch_inventory (tenant_id, branch_id, producto_id, quantity, minimum)
-                     VALUES ($1, $2, $3, $4, 0)
-                     ON CONFLICT (tenant_id, branch_id, producto_id)
-                     DO UPDATE SET quantity = branch_inventory.quantity + $4, updated_at = NOW()`,
-                    [tenantId, to_branch_id, product.id, quantity]
+                    `INSERT INTO producto_branches (tenant_id, branch_id, product_global_id, inventario, global_id)
+                     VALUES ($1, $2, $3, $4, gen_random_uuid())
+                     ON CONFLICT (tenant_id, product_global_id, branch_id)
+                     DO UPDATE SET inventario = producto_branches.inventario + $4, updated_at = NOW()`,
+                    [tenantId, to_branch_id, product.global_id, quantity]
                 );
 
                 const stockAfterSource = stockBeforeSource - parseFloat(quantity);
@@ -589,17 +589,17 @@ module.exports = (pool, io) => {
             for (const item of itemsResult.rows) {
                 // Add back to source (was deducted)
                 await client.query(
-                    `UPDATE branch_inventory
-                     SET quantity = quantity + $1, updated_at = NOW()
-                     WHERE branch_id = $2 AND producto_id = $3 AND tenant_id = $4`,
+                    `UPDATE producto_branches
+                     SET inventario = inventario + $1, updated_at = NOW()
+                     WHERE branch_id = $2 AND product_global_id = (SELECT global_id FROM productos WHERE id = $3 AND tenant_id = $4) AND tenant_id = $4`,
                     [item.quantity, transfer.from_branch_id, item.producto_id, tenantId]
                 );
 
                 // Deduct from target (was added)
                 await client.query(
-                    `UPDATE branch_inventory
-                     SET quantity = GREATEST(0, quantity - $1), updated_at = NOW()
-                     WHERE branch_id = $2 AND producto_id = $3 AND tenant_id = $4`,
+                    `UPDATE producto_branches
+                     SET inventario = GREATEST(0, inventario - $1), updated_at = NOW()
+                     WHERE branch_id = $2 AND product_global_id = (SELECT global_id FROM productos WHERE id = $3 AND tenant_id = $4) AND tenant_id = $4`,
                     [item.quantity, transfer.to_branch_id, item.producto_id, tenantId]
                 );
 
@@ -663,14 +663,14 @@ module.exports = (pool, io) => {
             const branchId = req.params.branch_id;
 
             const result = await pool.query(
-                `SELECT bi.producto_id, bi.quantity, bi.minimum, bi.updated_at,
+                `SELECT p.id AS producto_id, pb.inventario AS quantity, pb.minimo AS minimum, pb.updated_at,
                         p.descripcion AS product_name, p.global_id AS producto_global_id,
                         p.bascula, p.inventariar,
-                        um.abreviacion AS unit_abbreviation
-                 FROM branch_inventory bi
-                 JOIN productos p ON p.id = bi.producto_id
+                        um.abbreviation AS unit_abbreviation
+                 FROM producto_branches pb
+                 JOIN productos p ON p.global_id = pb.product_global_id AND p.tenant_id = pb.tenant_id
                  LEFT JOIN units_of_measure um ON um.id = p.unidad_medida_id
-                 WHERE bi.branch_id = $1 AND bi.tenant_id = $2 AND p.eliminado = FALSE
+                 WHERE pb.branch_id = $1 AND pb.tenant_id = $2 AND p.eliminado = FALSE
                  ORDER BY p.descripcion`,
                 [branchId, tenantId]
             );
