@@ -158,7 +158,9 @@ function createRepartidorReturnRoutes(io) {
 
       // ✅ OFFLINE-FIRST: Buscar asignación por GlobalId en lugar de ID numérico
       const assignmentCheck = await pool.query(
-        'SELECT id, assigned_quantity, assigned_amount, unit_price, global_id FROM repartidor_assignments WHERE global_id = $1::uuid AND tenant_id = $2',
+        `SELECT id, assigned_quantity, assigned_amount, unit_price, global_id,
+                product_id, product_global_id, product_name
+         FROM repartidor_assignments WHERE global_id = $1::uuid AND tenant_id = $2`,
         [assignment_global_id, tenant_id]
       );
 
@@ -196,7 +198,7 @@ function createRepartidorReturnRoutes(io) {
         SET quantity = EXCLUDED.quantity,
             amount = EXCLUDED.amount,
             notes = EXCLUDED.notes
-        RETURNING *
+        RETURNING *, (xmax = 0) AS was_inserted
       `;
 
       const result = await pool.query(query, [
@@ -220,6 +222,98 @@ function createRepartidorReturnRoutes(io) {
       ]);
 
       const returnRecord = result.rows[0];
+      const wasInserted = returnRecord.was_inserted;
+
+      // ═══════════════════════════════════════════════════════════════════════════════
+      // INVENTARIO: Restaurar stock al registrar devolución (fuente de verdad: PostgreSQL)
+      // Solo en INSERT nuevo (no en UPDATE por idempotencia) y producto inventariable
+      // ═══════════════════════════════════════════════════════════════════════════════
+      let kardexGlobalId = null;
+      if (wasInserted && assignment.product_id) {
+        try {
+          const productCheck = await pool.query(
+            `SELECT id, global_id, inventariar, inventario, descripcion FROM productos WHERE id = $1 AND tenant_id = $2`,
+            [assignment.product_id, tenant_id]
+          );
+          const prod = productCheck.rows[0];
+          if (prod && prod.inventariar) {
+            const qty = parseFloat(quantity);
+            const stockBefore = parseFloat(prod.inventario);
+            const stockAfter = stockBefore + qty;
+
+            await pool.query(
+              `UPDATE productos SET inventario = inventario + $1, updated_at = NOW() WHERE id = $2 AND tenant_id = $3`,
+              [qty, assignment.product_id, tenant_id]
+            );
+
+            // Create kardex entry
+            kardexGlobalId = require('crypto').randomUUID();
+            await pool.query(
+              `INSERT INTO kardex_entries (
+                  tenant_id, branch_id, product_id, product_global_id,
+                  timestamp, movement_type, employee_id, employee_global_id,
+                  quantity_before, quantity_change, quantity_after,
+                  description, global_id, terminal_id, source
+              ) VALUES ($1, $2, $3, $4, NOW(), 'DevolucionRepartidor', $5, $6, $7, $8, $9, $10, $11, $12, $13)
+              ON CONFLICT (global_id) DO NOTHING`,
+              [
+                tenant_id, branch_id, assignment.product_id, assignment.product_global_id || prod.global_id,
+                resolvedEmployeeId, employee_global_id,
+                stockBefore, qty, stockAfter,
+                `Devolución repartidor: ${assignment.product_name || prod.descripcion} +${qty} kg`,
+                kardexGlobalId, terminal_id || null, source || 'desktop'
+              ]
+            );
+
+            console.log(`[RepartidorReturns] 🔄 Inventario restaurado: ${prod.descripcion} ${stockBefore} → ${stockAfter} (+${qty})`);
+
+            // Emit product_updated + kardex_entries_created via Socket.IO
+            if (io) {
+              try {
+                const branches = await pool.query(
+                  'SELECT id FROM branches WHERE tenant_id = $1 AND is_active = true', [tenant_id]
+                );
+                const updatedProd = await pool.query(
+                  `SELECT id, global_id, descripcion, inventario, precio_venta, inventariar, bascula, unidad_medida
+                   FROM productos WHERE id = $1`, [assignment.product_id]
+                );
+                if (updatedProd.rows.length > 0) {
+                  const p = updatedProd.rows[0];
+                  const productPayload = {
+                    id_producto: String(p.id), global_id: p.global_id,
+                    descripcion: p.descripcion, inventario: parseFloat(p.inventario),
+                    precio_venta: parseFloat(p.precio_venta), inventariar: p.inventariar,
+                    pesable: p.bascula, unidad_medida: p.unidad_medida,
+                    action: 'updated', updatedAt: new Date().toISOString()
+                  };
+                  const kardexPayload = {
+                    entries: [{
+                      global_id: kardexGlobalId, product_global_id: prod.global_id,
+                      product_id: assignment.product_id, descripcion: prod.descripcion,
+                      movement_type: 'DevolucionRepartidor',
+                      quantity_before: stockBefore, quantity_change: qty, quantity_after: stockAfter,
+                      description: `Devolución repartidor: ${assignment.product_name || prod.descripcion} +${qty} kg`,
+                      employee_global_id: employee_global_id,
+                      employee_id: resolvedEmployeeId,
+                      timestamp: new Date().toISOString(), terminal_id: terminal_id || null,
+                      source: source || 'desktop'
+                    }]
+                  };
+                  for (const b of branches.rows) {
+                    io.to(`branch_${b.id}`).emit('product_updated', productPayload);
+                    io.to(`branch_${b.id}`).emit('kardex_entries_created', kardexPayload);
+                  }
+                  console.log(`[RepartidorReturns] 📡 product_updated + kardex emitidos para devolución`);
+                }
+              } catch (emitErr) {
+                console.error('[RepartidorReturns] ⚠️ Error emitting socket events:', emitErr.message);
+              }
+            }
+          }
+        } catch (invErr) {
+          console.error('[RepartidorReturns] ⚠️ Error restaurando inventario:', invErr.message);
+        }
+      }
 
       // Emitir evento en tiempo real (usar mismo nombre y estructura que el relay de server.js)
       const branchRoom = `branch_${branch_id}`;
