@@ -110,9 +110,9 @@ module.exports = (pool, io) => {
                     p.inventariar,
                     p.tipos_de_salida_id,
                     p.notificar,
-                    p.minimo,
+                    COALESCE(pb.minimo, p.minimo) AS minimo,
                     p.inventario AS inventario_global,
-                    COALESCE(bi.quantity, p.inventario) AS inventario,
+                    COALESCE(pb.inventario, p.inventario) AS inventario,
                     p.proveedor_id,
                     p.unidad_medida_id,
                     p.eliminado,
@@ -129,10 +129,10 @@ module.exports = (pool, io) => {
                     ON pbp.producto_id = p.id
                     AND pbp.branch_id = $2
                     AND pbp.eliminado = FALSE
-                LEFT JOIN branch_inventory bi
-                    ON bi.producto_id = p.id
-                    AND bi.branch_id = $2
-                    AND bi.tenant_id = $1
+                LEFT JOIN producto_branches pb
+                    ON p.global_id = pb.product_global_id
+                    AND pb.branch_id = $2
+                    AND pb.tenant_id = $1
                 LEFT JOIN units_of_measure um
                     ON um.id = p.unidad_medida_id
                 WHERE p.tenant_id = $1
@@ -217,8 +217,8 @@ module.exports = (pool, io) => {
                     p.inventariar,
                     p.tipos_de_salida_id,
                     p.notificar,
-                    p.minimo,
-                    p.inventario,
+                    COALESCE(pb.minimo, p.minimo) AS minimo,
+                    COALESCE(pb.inventario, p.inventario) AS inventario,
                     p.proveedor_id,
                     p.unidad_medida_id,
                     p.bascula as pesable,
@@ -240,7 +240,8 @@ module.exports = (pool, io) => {
                 query = query.replace(
                     'FROM productos p',
                     `FROM productos p
-                     LEFT JOIN productos_branch_precios pbp ON p.id = pbp.producto_id AND pbp.branch_id = $${paramIndex}`
+                     LEFT JOIN productos_branch_precios pbp ON p.id = pbp.producto_id AND pbp.branch_id = $${paramIndex}
+                     LEFT JOIN producto_branches pb ON p.global_id = pb.product_global_id AND pb.branch_id = $${paramIndex} AND pb.tenant_id = $1`
                 );
                 params.push(branchId);
                 paramIndex++;
@@ -847,6 +848,21 @@ module.exports = (pool, io) => {
                     eliminado || false
                 ]
             );
+
+            // Also sync inventario/minimo to producto_branches if provided
+            const { inventario, minimo } = req.body;
+            if (inventario !== undefined || minimo !== undefined) {
+                await pool.query(
+                    `INSERT INTO producto_branches (tenant_id, branch_id, product_global_id, inventario, minimo, global_id)
+                     VALUES ($1, $2, (SELECT global_id FROM productos WHERE id = $3 AND tenant_id = $1), COALESCE($4, 0), COALESCE($5, 0), gen_random_uuid())
+                     ON CONFLICT (tenant_id, product_global_id, branch_id)
+                     DO UPDATE SET
+                        inventario = COALESCE($4, producto_branches.inventario),
+                        minimo = COALESCE($5, producto_branches.minimo),
+                        updated_at = NOW()`,
+                    [tenant_id, branch_id, producto_id, inventario ?? null, minimo ?? null]
+                );
+            }
 
             const precio = result.rows[0];
             const action = precio.inserted ? 'INSERTADO' : 'ACTUALIZADO';
