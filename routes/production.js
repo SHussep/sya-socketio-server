@@ -122,7 +122,7 @@ module.exports = (pool, io) => {
         try {
             const { tenantId, branchId, since } = req.query;
             let query = `
-                SELECT pe.*, e.nombre AS employee_name, p.nombre AS product_name
+                SELECT pe.*, e.nombre AS employee_name, p.descripcion AS product_name
                 FROM production_entries pe
                 LEFT JOIN employees e ON pe.employee_id = e.id
                 LEFT JOIN productos p ON pe.target_product_id = p.id
@@ -151,7 +151,7 @@ module.exports = (pool, io) => {
         try {
             const { branch_id, start_date, end_date, employee_id, limit = 50, offset = 0 } = req.query;
             let query = `
-                SELECT pe.*, e.nombre AS employee_name, p.nombre AS product_name
+                SELECT pe.*, e.nombre AS employee_name, p.descripcion AS product_name
                 FROM production_entries pe
                 LEFT JOIN employees e ON pe.employee_id = e.id
                 LEFT JOIN productos p ON pe.target_product_id = p.id
@@ -218,7 +218,7 @@ module.exports = (pool, io) => {
             const byProductResult = await pool.query(`
                 SELECT
                     pe.target_product_id AS product_id,
-                    p.nombre AS product_name,
+                    p.descripcion AS product_name,
                     COUNT(*) AS entry_count,
                     COALESCE(SUM(pe.weight_kg), 0) AS total_masa_kg,
                     COALESCE(SUM(pe.expected_output_kg), 0) AS total_expected_output_kg
@@ -227,7 +227,7 @@ module.exports = (pool, io) => {
                 WHERE pe.branch_id = $1
                     AND pe.is_deleted = false
                     AND (pe.created_local_utc AT TIME ZONE $2)::date = $3::date
-                GROUP BY pe.target_product_id, p.nombre
+                GROUP BY pe.target_product_id, p.descripcion
                 ORDER BY total_masa_kg DESC
             `, [branch_id, timezone, date]);
 
@@ -594,7 +594,7 @@ module.exports = (pool, io) => {
         try {
             const { tenantId, branchId, since } = req.query;
             let query = `
-                SELECT pyc.*, p.nombre AS product_name
+                SELECT pyc.*, p.descripcion AS product_name
                 FROM production_yield_configs pyc
                 LEFT JOIN productos p ON pyc.product_id = p.id
                 WHERE pyc.tenant_id = $1 AND pyc.branch_id = $2
@@ -622,12 +622,12 @@ module.exports = (pool, io) => {
         try {
             const { branch_id, tenant_id } = req.query;
             const result = await pool.query(`
-                SELECT pyc.*, p.nombre AS product_name
+                SELECT pyc.*, p.descripcion AS product_name
                 FROM production_yield_configs pyc
                 LEFT JOIN productos p ON pyc.product_id = p.id
                 WHERE pyc.branch_id = $1 AND pyc.tenant_id = $2
                     AND pyc.is_active = true AND pyc.is_deleted = false
-                ORDER BY p.nombre ASC
+                ORDER BY p.descripcion ASC
             `, [branch_id, tenant_id]);
             res.json({ success: true, data: result.rows });
         } catch (err) {
