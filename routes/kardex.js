@@ -153,7 +153,7 @@ module.exports = (pool) => {
     router.get('/pull', async (req, res) => {
         try {
             const tenantId = req.user.tenantId || req.query.tenantId;
-            const { product_global_id, since, limit = 500, branch_id } = req.query;
+            const { product_global_id, since, limit = 500, branch_id, date_from, date_to, product_sku } = req.query;
 
             if (!tenantId) {
                 return res.status(400).json({ success: false, message: 'Se requiere tenantId' });
@@ -194,6 +194,24 @@ module.exports = (pool) => {
             if (since) {
                 query += ` AND k.created_at > $${paramIndex}`;
                 params.push(since);
+                paramIndex++;
+            }
+
+            if (date_from) {
+                query += ` AND k.timestamp >= $${paramIndex}`;
+                params.push(date_from);
+                paramIndex++;
+            }
+
+            if (date_to) {
+                query += ` AND k.timestamp < $${paramIndex}`;
+                params.push(date_to);
+                paramIndex++;
+            }
+
+            if (product_sku) {
+                query += ` AND p.sku = $${paramIndex}`;
+                params.push(product_sku);
                 paramIndex++;
             }
 
