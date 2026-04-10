@@ -212,9 +212,11 @@ module.exports = (pool) => {
             }
 
             if (product_sku) {
-                query += ` AND p.descripcion ILIKE $${paramIndex}`;
+                // Buscar por SKU (id_producto) o por nombre (descripcion)
+                query += ` AND (p.id_producto::text = $${paramIndex} OR p.descripcion ILIKE $${paramIndex + 1})`;
+                params.push(product_sku);
                 params.push(`%${product_sku}%`);
-                paramIndex++;
+                paramIndex += 2;
             }
 
             query += ` ORDER BY k.timestamp DESC LIMIT $${paramIndex}`;
