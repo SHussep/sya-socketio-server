@@ -172,6 +172,7 @@ module.exports = (pool) => {
                     k.global_id, k.terminal_id, k.source,
                     k.created_at,
                     p.descripcion as product_name,
+                    p.id_producto as product_sku,
                     CONCAT(e.first_name, ' ', e.last_name) as employee_name
                 FROM kardex_entries k
                 LEFT JOIN productos p ON k.product_id = p.id
