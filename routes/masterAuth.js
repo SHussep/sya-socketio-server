@@ -309,7 +309,7 @@ module.exports = function (pool) {
                     );
                 }
 
-                const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: '24h' });
+                const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: '15m' });
 
                 // Registrar éxito
                 await pool.query(

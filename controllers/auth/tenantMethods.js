@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken');
 const archiver = require('archiver');
 const { Readable } = require('stream');
 const dropboxManager = require('../../utils/dropbox-manager');
+const { BCRYPT_ROUNDS } = require('../../config/security');
 const JWT_SECRET = process.env.JWT_SECRET;
 
 module.exports = {
@@ -41,7 +42,7 @@ module.exports = {
         const client = await this.pool.connect();
 
         try {
-            const decoded = jwt.verify(token, JWT_SECRET);
+            const decoded = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
 
             if (decoded.tenantId !== tenantId) {
                 return res.status(403).json({
@@ -74,7 +75,7 @@ module.exports = {
 
             console.log(`[Tenant Overwrite] ✅ Tenant actualizado: ${businessName} (ID: ${tenantId})`);
 
-            const passwordHash = await bcrypt.hash(password, 10);
+            const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
             const ownerNameParts = ownerName.trim().split(/\s+/);
             const ownerFirstName = ownerNameParts[0] || ownerName;

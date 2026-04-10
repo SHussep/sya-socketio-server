@@ -3,6 +3,7 @@
 
 const jwt = require('jsonwebtoken');
 const jwksClient = require('jwks-rsa');
+const { BCRYPT_ROUNDS } = require('../../config/security');
 
 const JWT_SECRET = process.env.JWT_SECRET;
 const APPLE_BUNDLE_ID = process.env.APPLE_BUNDLE_ID || 'com.sya.mobileapp';
@@ -176,7 +177,7 @@ module.exports = {
                 is_owner: false
             };
 
-            const accessToken = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: '7d' });
+            const accessToken = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: '15m' });
             const refreshToken = jwt.sign(
                 employee ? { employeeId: employee.id, tenantId: tenant.id, is_owner: employee.is_owner === true }
                          : { tenantId: tenant.id, is_owner: false },
@@ -330,7 +331,7 @@ module.exports = {
             // Crear employee owner con apple_user_identifier
             const { v4: uuidv4 } = require('uuid');
             const globalId = uuidv4();
-            const hashedPassword = await bcrypt.hash(password, 10);
+            const hashedPassword = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
             const employeeResult = await client.query(
                 `INSERT INTO employees (
@@ -408,7 +409,7 @@ module.exports = {
             // Generar tokens
             const token = jwt.sign(
                 { employeeId: employee.id, tenantId: tenant.id, branchId: branch.id, roleId: 1, email, is_owner: true },
-                JWT_SECRET, { expiresIn: '7d' }
+                JWT_SECRET, { expiresIn: '15m' }
             );
             const refreshToken = jwt.sign(
                 { employeeId: employee.id, tenantId: tenant.id, is_owner: true },

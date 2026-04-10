@@ -17,7 +17,7 @@ module.exports = function setupSocketAuth(io) {
         }
 
         try {
-            const user = jwt.verify(token, JWT_SECRET);
+            const user = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
             socket.user = user;
             socket.authenticated = true;
 

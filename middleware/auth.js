@@ -17,7 +17,7 @@ function authenticateToken(req, res, next) {
         return res.status(401).json({ success: false, message: 'Token no proporcionado' });
     }
 
-    jwt.verify(token, JWT_SECRET, (err, user) => {
+    jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] }, (err, user) => {
         if (err) {
             return res.status(403).json({ success: false, message: 'Token inválido o expirado' });
         }
@@ -40,7 +40,7 @@ function createAuthMiddleware(pool) {
         }
 
         try {
-            const user = jwt.verify(token, JWT_SECRET);
+            const user = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
 
             if (user.tenantId && pool) {
                 try {
@@ -102,7 +102,7 @@ function requireSuperAdminPIN(req, res, next) {
     if (!SUPER_ADMIN_PIN_HASH) {
         return res.status(503).json({ success: false, message: 'Superadmin no configurado' });
     }
-    const pin = req.headers['x-admin-pin'];
+    const pin = req.body?.adminPin || req.headers['x-admin-pin'];
     if (!pin) {
         return res.status(401).json({ success: false, message: 'PIN de superadmin requerido' });
     }

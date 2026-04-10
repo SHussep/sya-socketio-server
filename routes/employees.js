@@ -7,6 +7,7 @@ const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const { createTenantValidationMiddleware } = require('../middleware/deviceAuth');
 const { sendVerificationEmail } = require('../utils/emailService');
+const { BCRYPT_ROUNDS } = require('../config/security');
 
 module.exports = (pool) => {
     const router = express.Router();
@@ -28,7 +29,7 @@ module.exports = (pool) => {
         if (!password) return null;
         if (isBcryptHash(password)) return password; // Already hashed
         // Hash plain text password
-        return await bcrypt.hash(password, 10);
+        return await bcrypt.hash(password, BCRYPT_ROUNDS);
     };
 
     // ═════════════════════════════════════════════════════════════

@@ -4,6 +4,7 @@
 
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { BCRYPT_ROUNDS } = require('../config/security');
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
@@ -74,7 +75,7 @@ module.exports = function(pool, io) {
             console.log(`[Tenant Register] ✅ Email disponible. Iniciando registro...`);
 
             // Hash de contraseña
-            const hashedPassword = await bcrypt.hash(password, 10);
+            const hashedPassword = await bcrypt.hash(password, BCRYPT_ROUNDS);
             console.log(`[Tenant Register] 🔐 Password hasheado`);
 
             // Iniciar transacción

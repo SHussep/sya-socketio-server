@@ -3,6 +3,7 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
+const { BCRYPT_ROUNDS } = require('../../config/security');
 const JWT_SECRET = process.env.JWT_SECRET;
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
@@ -24,7 +25,7 @@ module.exports = {
         }
 
         try {
-            const decoded = jwt.verify(refreshToken, JWT_SECRET);
+            const decoded = jwt.verify(refreshToken, JWT_SECRET, { algorithms: ['HS256'] });
 
             const employeeResult = await this.pool.query(
                 'SELECT * FROM employees WHERE id = $1 AND is_active = true',
@@ -240,7 +241,7 @@ module.exports = {
                 });
             }
 
-            const passwordHash = await bcrypt.hash(password, 10);
+            const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
             const username = displayName.replace(/\s+/g, '').toLowerCase();
 
             const nameParts = displayName.trim().split(/\s+/);
@@ -383,7 +384,7 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                     is_owner: employee.is_owner === true
                 },
                 JWT_SECRET,
-                { expiresIn: '7d' }
+                { expiresIn: '15m' }
             );
 
             const refreshToken = jwt.sign(
@@ -602,7 +603,7 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                 is_owner: false
             };
 
-            const accessToken = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: '7d' });
+            const accessToken = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: '15m' });
 
             const refreshPayload = employee ? {
                 employeeId: employee.id,
@@ -694,7 +695,7 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
         const client = await this.pool.connect();
 
         try {
-            const decoded = jwt.verify(token, JWT_SECRET);
+            const decoded = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
 
             // Validar que el tenantId coincida
             if (decoded.tenantId !== tenantId) {
