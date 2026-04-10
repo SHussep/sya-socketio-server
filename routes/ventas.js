@@ -590,6 +590,9 @@ module.exports = function(pool, io) {
                 const newVenta = insertResult.rows[0];
                 console.log(`[Ventas/Create] ✅ Venta creada: ID=${newVenta.id_venta}, GlobalId=${newVenta.global_id}`);
 
+                // Kardex entries tracker (declared here so socket emission block can access it)
+                const kardexEntries = [];
+
                 // Insertar detalles si vienen
                 if (items && items.length > 0) {
                     let detailSeq = 0;
@@ -659,7 +662,6 @@ module.exports = function(pool, io) {
                     );
 
                     let deductedCount = 0;
-                    const kardexEntries = [];
                     for (const detail of detailsForInventory.rows) {
                         if (detail.inventariar) {
                             const qty = parseFloat(detail.cantidad);
