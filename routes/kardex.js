@@ -155,6 +155,8 @@ module.exports = (pool) => {
             const tenantId = req.user.tenantId || req.query.tenantId;
             const { product_global_id, since, limit = 500, branch_id, date_from, date_to, product_sku } = req.query;
 
+            console.log(`[Kardex/Pull] 📥 tenantId=${tenantId} (jwt=${req.user.tenantId}, query=${req.query.tenantId}), branch_id=${branch_id}, date_from=${date_from}, date_to=${date_to}, product_sku=${product_sku}`);
+
             if (!tenantId) {
                 return res.status(400).json({ success: false, message: 'Se requiere tenantId' });
             }
@@ -218,7 +220,9 @@ module.exports = (pool) => {
             query += ` ORDER BY k.timestamp DESC LIMIT $${paramIndex}`;
             params.push(parseInt(limit));
 
+            console.log(`[Kardex/Pull] 🔍 Query params: ${JSON.stringify(params)}`);
             const result = await pool.query(query, params);
+            console.log(`[Kardex/Pull] ✅ ${result.rows.length} entries encontradas`);
 
             res.json({
                 success: true,
