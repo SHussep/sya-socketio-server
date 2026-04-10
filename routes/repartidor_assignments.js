@@ -533,6 +533,96 @@ function createRepartidorAssignmentRoutes(io) {
       const wasInserted = assignment.inserted; // true = nueva asignación, false = actualización
 
       // ═══════════════════════════════════════════════════════════════════════════════
+      // INVENTARIO: Descontar stock al crear asignación (fuente de verdad: PostgreSQL)
+      // Solo en INSERT nuevo con status pending/in_progress y producto inventariable
+      // ═══════════════════════════════════════════════════════════════════════════════
+      if (wasInserted && resolvedProductId && ['pending', 'in_progress'].includes(assignment.status)) {
+        try {
+          const productCheck = await pool.query(
+            `SELECT id, global_id, inventariar, inventario, descripcion FROM productos WHERE id = $1 AND tenant_id = $2`,
+            [resolvedProductId, tenant_id]
+          );
+          const prod = productCheck.rows[0];
+          if (prod && prod.inventariar) {
+            const qty = parseFloat(assigned_quantity);
+            const stockBefore = parseFloat(prod.inventario);
+            const stockAfter = stockBefore - qty;
+
+            await pool.query(
+              `UPDATE productos SET inventario = inventario - $1, updated_at = NOW() WHERE id = $2 AND tenant_id = $3`,
+              [qty, resolvedProductId, tenant_id]
+            );
+
+            // Create kardex entry
+            const kardexGlobalId = require('crypto').randomUUID();
+            await pool.query(
+              `INSERT INTO kardex_entries (
+                  tenant_id, branch_id, product_id, product_global_id,
+                  timestamp, movement_type, employee_id, employee_global_id,
+                  quantity_before, quantity_change, quantity_after,
+                  description, global_id, terminal_id, source
+              ) VALUES ($1, $2, $3, $4, NOW(), 'AsignacionRepartidor', $5, $6, $7, $8, $9, $10, $11, $12, $13)
+              ON CONFLICT (global_id) DO NOTHING`,
+              [
+                tenant_id, branch_id, resolvedProductId, prod.global_id,
+                resolvedCreatedByEmployeeId, created_by_employee_global_id,
+                stockBefore, -qty, stockAfter,
+                `Asignación repartidor: ${product_name || prod.descripcion} x${qty}`,
+                kardexGlobalId, terminal_id || null, source || 'desktop'
+              ]
+            );
+
+            console.log(`[RepartidorAssignments] 📦 Inventario descontado: ${prod.descripcion} ${stockBefore} → ${stockAfter} (-${qty})`);
+
+            // Emit product_updated + kardex_entries_created via Socket.IO
+            if (io) {
+              try {
+                const branches = await pool.query(
+                  'SELECT id FROM branches WHERE tenant_id = $1 AND is_active = true', [tenant_id]
+                );
+                const updatedProd = await pool.query(
+                  `SELECT id, global_id, descripcion, inventario, precio_venta, inventariar, bascula, unidad_medida
+                   FROM productos WHERE id = $1`, [resolvedProductId]
+                );
+                if (updatedProd.rows.length > 0) {
+                  const p = updatedProd.rows[0];
+                  const productPayload = {
+                    id_producto: String(p.id), global_id: p.global_id,
+                    descripcion: p.descripcion, inventario: parseFloat(p.inventario),
+                    precio_venta: parseFloat(p.precio_venta), inventariar: p.inventariar,
+                    pesable: p.bascula, unidad_medida: p.unidad_medida,
+                    action: 'updated', updatedAt: new Date().toISOString()
+                  };
+                  const kardexPayload = {
+                    entries: [{
+                      global_id: kardexGlobalId, product_global_id: prod.global_id,
+                      product_id: resolvedProductId, descripcion: prod.descripcion,
+                      movement_type: 'AsignacionRepartidor',
+                      quantity_before: stockBefore, quantity_change: -qty, quantity_after: stockAfter,
+                      description: `Asignación repartidor: ${product_name || prod.descripcion} x${qty}`,
+                      employee_global_id: created_by_employee_global_id,
+                      employee_id: resolvedCreatedByEmployeeId,
+                      timestamp: new Date().toISOString(), terminal_id: terminal_id || null,
+                      source: source || 'desktop'
+                    }]
+                  };
+                  for (const b of branches.rows) {
+                    io.to(`branch_${b.id}`).emit('product_updated', productPayload);
+                    io.to(`branch_${b.id}`).emit('kardex_entries_created', kardexPayload);
+                  }
+                  console.log(`[RepartidorAssignments] 📡 product_updated + kardex emitidos`);
+                }
+              } catch (emitErr) {
+                console.error('[RepartidorAssignments] ⚠️ Error emitting socket events:', emitErr.message);
+              }
+            }
+          }
+        } catch (invErr) {
+          console.error('[RepartidorAssignments] ⚠️ Error descontando inventario:', invErr.message);
+        }
+      }
+
+      // ═══════════════════════════════════════════════════════════════════════════════
       // 🆕 ACTUALIZAR VENTA: tipo_pago_id cuando se liquida con método de pago específico
       // Esto es CRÍTICO para que el corte de caja calcule correctamente efectivo/tarjeta/crédito
       // ═══════════════════════════════════════════════════════════════════════════════

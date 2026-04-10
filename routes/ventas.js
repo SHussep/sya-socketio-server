@@ -735,7 +735,7 @@ module.exports = function(pool, io) {
                         // Fetch updated products to emit accurate inventory values
                         const updatedProducts = await pool.query(
                             `SELECT p.id, p.global_id, p.descripcion, p.inventario, p.precio_venta,
-                                    p.inventariar, p.pesable, p.unidad_medida
+                                    p.inventariar, p.bascula, p.unidad_medida
                              FROM ventas_detalle vd
                              JOIN productos p ON vd.id_producto = p.id AND p.tenant_id = $2
                              WHERE vd.id_venta = $1 AND p.inventariar = true`,
@@ -749,7 +749,7 @@ module.exports = function(pool, io) {
                                 inventario: parseFloat(prod.inventario),
                                 precio_venta: parseFloat(prod.precio_venta),
                                 inventariar: prod.inventariar,
-                                pesable: prod.pesable,
+                                pesable: prod.bascula,
                                 unidad_medida: prod.unidad_medida,
                                 action: 'updated',
                                 updatedAt: new Date().toISOString()
