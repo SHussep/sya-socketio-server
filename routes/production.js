@@ -122,7 +122,7 @@ module.exports = (pool, io) => {
         try {
             const { tenantId, branchId, since } = req.query;
             let query = `
-                SELECT pe.*, e.nombre AS employee_name, p.descripcion AS product_name
+                SELECT pe.*, CONCAT(e.first_name, ' ', e.last_name) AS employee_name, p.descripcion AS product_name
                 FROM production_entries pe
                 LEFT JOIN employees e ON pe.employee_id = e.id
                 LEFT JOIN productos p ON pe.target_product_id = p.id
@@ -151,7 +151,7 @@ module.exports = (pool, io) => {
         try {
             const { branch_id, start_date, end_date, employee_id, limit = 50, offset = 0 } = req.query;
             let query = `
-                SELECT pe.*, e.nombre AS employee_name, p.descripcion AS product_name
+                SELECT pe.*, CONCAT(e.first_name, ' ', e.last_name) AS employee_name, p.descripcion AS product_name
                 FROM production_entries pe
                 LEFT JOIN employees e ON pe.employee_id = e.id
                 LEFT JOIN productos p ON pe.target_product_id = p.id
@@ -381,7 +381,7 @@ module.exports = (pool, io) => {
         try {
             const { tenantId, branchId, since } = req.query;
             let query = `
-                SELECT pa.*, e.nombre AS employee_name
+                SELECT pa.*, CONCAT(e.first_name, ' ', e.last_name) AS employee_name
                 FROM production_alerts pa
                 LEFT JOIN employees e ON pa.employee_id = e.id
                 WHERE pa.tenant_id = $1 AND pa.branch_id = $2
@@ -409,7 +409,7 @@ module.exports = (pool, io) => {
         try {
             const { branch_id, start_date, end_date, severity, reviewed, limit = 50, offset = 0 } = req.query;
             let query = `
-                SELECT pa.*, e.nombre AS employee_name, re.nombre AS reviewed_by_name
+                SELECT pa.*, CONCAT(e.first_name, ' ', e.last_name) AS employee_name, re.nombre AS reviewed_by_name
                 FROM production_alerts pa
                 LEFT JOIN employees e ON pa.employee_id = e.id
                 LEFT JOIN employees re ON pa.reviewed_by_employee_id = re.id
