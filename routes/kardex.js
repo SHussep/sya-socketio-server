@@ -210,8 +210,8 @@ module.exports = (pool) => {
             }
 
             if (product_sku) {
-                query += ` AND p.sku = $${paramIndex}`;
-                params.push(product_sku);
+                query += ` AND p.descripcion ILIKE $${paramIndex}`;
+                params.push(`%${product_sku}%`);
                 paramIndex++;
             }
 
