@@ -414,8 +414,9 @@ module.exports = (pool) => {
                     COALESCE(ra.is_credit, false) as is_credit,
                     ra.payment_reference,
                     ra.liquidated_by_employee_id,
-                    -- Customer name
+                    -- Customer info
                     c.nombre as customer_name,
+                    v.id_cliente as customer_id,
                     v.status as venta_status
                 FROM repartidor_assignments ra
                 LEFT JOIN employees e_created ON ra.created_by_employee_id = e_created.id
@@ -587,7 +588,8 @@ module.exports = (pool) => {
                         is_credit: row.is_credit || false,
                         payment_reference: row.payment_reference,
                         liquidated_by_employee_id: row.liquidated_by_employee_id ? parseInt(row.liquidated_by_employee_id) : null,
-                        customer_name: row.customer_name || null
+                        customer_name: row.customer_name || null,
+                        customer_id: row.customer_id ? parseInt(row.customer_id) : null
                     };
                 })
             });
