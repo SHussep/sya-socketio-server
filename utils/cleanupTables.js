@@ -74,7 +74,6 @@ const FULL_CLEANUP_TABLES = [
     { name: 'employee_branches', description: 'Empleados-Sucursales', fkColumn: 'tenant_id' },
     { name: 'producto_branches', description: 'Productos asignados por sucursal', fkColumn: 'tenant_id' },
     { name: 'productos_branch_precios', description: 'Precios por sucursal', fkColumn: 'tenant_id' },
-    { name: 'branch_inventory', description: 'Inventario por sucursal', fkColumn: 'tenant_id' },
     { name: 'branch_devices', description: 'Dispositivos por sucursal', fkColumn: 'tenant_id' },
     { name: 'notification_preferences', description: 'Preferencias notificaciones', fkColumn: 'tenant_id' },
     { name: 'cliente_branches', description: 'Clientes-Sucursales', fkColumn: 'tenant_id' },

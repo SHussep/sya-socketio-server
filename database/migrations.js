@@ -2376,23 +2376,12 @@ async function runMigrations() {
                 }
             }
 
-            // Patch: Create branch_inventory table for inter-branch transfer tracking
+            // Patch: Drop legacy branch_inventory table (replaced by producto_branches.inventario)
             try {
-                await client.query(`
-                    CREATE TABLE IF NOT EXISTS branch_inventory (
-                        id SERIAL PRIMARY KEY,
-                        tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-                        branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
-                        producto_id INTEGER NOT NULL REFERENCES productos(id) ON DELETE CASCADE,
-                        quantity NUMERIC(12, 2) DEFAULT 0,
-                        minimum NUMERIC(12, 2) DEFAULT 0,
-                        updated_at TIMESTAMP DEFAULT NOW(),
-                        UNIQUE(tenant_id, branch_id, producto_id)
-                    )
-                `);
-                console.log('[Schema] ✅ branch_inventory table ready');
+                await client.query(`DROP TABLE IF EXISTS branch_inventory`);
+                console.log('[Schema] ✅ branch_inventory table dropped (replaced by producto_branches)');
             } catch (biErr) {
-                console.error(`[Schema] ⚠️ branch_inventory migration error: ${biErr.message}`);
+                console.error(`[Schema] ⚠️ branch_inventory drop error: ${biErr.message}`);
             }
 
             // Patch: Create inventory_transfers + items tables

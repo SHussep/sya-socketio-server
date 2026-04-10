@@ -971,7 +971,6 @@ module.exports = function(pool, io) {
             await safeDel('DELETE FROM productos WHERE tenant_id = $1', [id]);
 
             // ── Phase 6: Inventory ──
-            await safeDel('DELETE FROM branch_inventory WHERE tenant_id = $1', [id]);
             await safeDel('DELETE FROM inventory_transfers WHERE tenant_id = $1', [id]);
 
             // ── Phase 7: Customers (disable generic customer trigger) ──

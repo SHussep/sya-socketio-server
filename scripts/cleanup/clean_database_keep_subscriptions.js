@@ -28,7 +28,6 @@ async function cleanDatabase() {
       'expenses',
       'suppliers',
       'customers',
-      'branch_inventory',
       'products',
       'employee_branches',
       'employees',
