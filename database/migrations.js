@@ -1993,10 +1993,14 @@ async function runMigrations() {
                     RETURNS TRIGGER AS $$
                     DECLARE
                         v_tenant_id INTEGER;
+                        v_branch_id INTEGER;
+                        v_product_global_id TEXT;
                     BEGIN
                         IF NEW.devuelve_a_inventario = TRUE THEN
-                            SELECT tenant_id INTO v_tenant_id FROM notas_credito WHERE id = NEW.nota_credito_id;
-                            UPDATE productos SET inventario = inventario + NEW.cantidad, updated_at = CURRENT_TIMESTAMP WHERE id = NEW.producto_id AND tenant_id = v_tenant_id;
+                            SELECT nc.tenant_id, nc.branch_id INTO v_tenant_id, v_branch_id FROM notas_credito nc WHERE nc.id = NEW.nota_credito_id;
+                            SELECT global_id INTO v_product_global_id FROM productos WHERE id = NEW.producto_id AND tenant_id = v_tenant_id;
+                            UPDATE producto_branches SET inventario = inventario + NEW.cantidad, updated_at = CURRENT_TIMESTAMP
+                                WHERE product_global_id = v_product_global_id AND branch_id = v_branch_id AND tenant_id = v_tenant_id;
                         END IF;
                         RETURN NEW;
                     END;
