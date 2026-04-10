@@ -652,7 +652,10 @@ module.exports = function(pool, io) {
                     console.log(`[Ventas/Create] ✅ ${items.length} detalles insertados`);
 
                     // Deduct inventory for products that track stock (inventariar = true)
-                    const detailsForInventory = await client.query(
+                    // ⚠️ Skip for venta_tipo_id=2 (Repartidor): inventory is deducted by
+                    //    POST /api/repartidor-assignments/sync instead, as "AsignacionRepartidor".
+                    const isRepartidorSale = parseInt(venta_tipo_id) === 2;
+                    const detailsForInventory = isRepartidorSale ? { rows: [] } : await client.query(
                         `SELECT vd.id_producto, vd.cantidad, p.inventariar, p.descripcion,
                                 p.inventario AS stock_before, p.global_id AS product_global_id
                          FROM ventas_detalle vd

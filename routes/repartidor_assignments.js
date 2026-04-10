@@ -535,11 +535,10 @@ function createRepartidorAssignmentRoutes(io) {
       // ═══════════════════════════════════════════════════════════════════════════════
       // INVENTARIO: Descontar stock al crear asignación (fuente de verdad: PostgreSQL)
       // Solo en INSERT nuevo con status pending/in_progress y producto inventariable
-      // ⚠️ Si la asignación viene de una venta (resolvedVentaId != null), NO descontar
-      //    porque POST /api/ventas ya descontó el inventario al crear la venta.
-      //    Solo descontar en asignaciones DIRECTAS (sin venta asociada).
+      // NOTA: POST /api/ventas NO descuenta inventario para venta_tipo_id=2 (Repartidor),
+      //       así que la deducción siempre ocurre aquí, sea con o sin venta asociada.
       // ═══════════════════════════════════════════════════════════════════════════════
-      if (wasInserted && resolvedProductId && !resolvedVentaId && ['pending', 'in_progress'].includes(assignment.status)) {
+      if (wasInserted && resolvedProductId && ['pending', 'in_progress'].includes(assignment.status)) {
         try {
           const productCheck = await pool.query(
             `SELECT id, global_id, inventariar, inventario, descripcion FROM productos WHERE id = $1 AND tenant_id = $2`,
