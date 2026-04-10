@@ -349,7 +349,7 @@ module.exports = (pool) => {
                             await client.query(
                                 `INSERT INTO employee_branches (tenant_id, employee_id, branch_id, created_at, updated_at)
                                  VALUES ($1, $2, $3, NOW(), NOW())
-                                 ON CONFLICT (tenant_id, employee_id, branch_id) DO UPDATE SET updated_at = NOW()`,
+                                 ON CONFLICT (employee_id, branch_id) DO UPDATE SET tenant_id = EXCLUDED.tenant_id, updated_at = NOW()`,
                                 [tenantId, employee.id, employee.main_branch_id]
                             );
 
@@ -521,11 +521,11 @@ module.exports = (pool) => {
                     );
 
                     if (branchCheck.rows.length > 0) {
-                        // Insert into employee_branches
+                        // Insert into employee_branches (constraint is UNIQUE(employee_id, branch_id))
                         await client.query(
                             `INSERT INTO employee_branches (tenant_id, employee_id, branch_id, created_at, updated_at)
                              VALUES ($1, $2, $3, NOW(), NOW())
-                             ON CONFLICT (tenant_id, employee_id, branch_id) DO UPDATE SET updated_at = NOW()`,
+                             ON CONFLICT (employee_id, branch_id) DO UPDATE SET tenant_id = EXCLUDED.tenant_id, updated_at = NOW()`,
                             [tenantId, employee.id, employee.main_branch_id]
                         );
 
@@ -562,9 +562,10 @@ module.exports = (pool) => {
                     }
                 }
 
-                // Send verification email if employee has mobile access and email
+                // Send verification email if employee has mobile access, email, and not already verified
+                // (Desktop verifies before creating, so emailVerified=true skips this)
                 let verificationEmailSent = false;
-                if (canUseMobileApp && email && isFromMobile) {
+                if (canUseMobileApp && email && !emailVerified) {
                     verificationEmailSent = await generateAndSendVerificationCode(
                         client, employee.id, tenantId, email, fullName
                     );
@@ -1743,14 +1744,21 @@ module.exports = (pool) => {
                 paramIndex++;
             }
 
-            // ✅ Nuevo: Sincronizar cambios de contraseña desde Desktop
+            // ✅ Sincronizar cambios de contraseña desde Desktop (pre-hashed) o Mobile (plaintext)
             if (password_hash !== undefined && password_hash !== null && password_hash.length > 0) {
                 updates.push(`password_hash = $${paramIndex}`);
                 params.push(password_hash);
                 paramIndex++;
-                // También actualizar password_updated_at
                 updates.push(`password_updated_at = NOW()`);
                 console.log(`[Employees/Update] 🔐 Actualizando password_hash para empleado ${employeeId}`);
+            } else if (req.body.password !== undefined && req.body.password !== null && req.body.password.length > 0) {
+                // Plaintext password from mobile — hash it server-side
+                const hashedPwd = await ensurePasswordHashed(req.body.password);
+                updates.push(`password_hash = $${paramIndex}`);
+                params.push(hashedPwd);
+                paramIndex++;
+                updates.push(`password_updated_at = NOW()`);
+                console.log(`[Employees/Update] 🔐 Contraseña (plaintext) hasheada y guardada para empleado ${employeeId}`);
             }
 
             // ✅ Sincronizar email_verified desde Desktop (bidireccional)
