@@ -1629,5 +1629,49 @@ module.exports = (pool, io) => {
         }
     });
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // GET /api/customers/:clienteId/credit-info - Validación rápida de crédito
+    // Endpoint liviano para Flutter POS durante liquidación
+    // ═══════════════════════════════════════════════════════════════════════════
+    router.get('/:clienteId/credit-info', authenticateToken, async (req, res) => {
+        const { clienteId } = req.params;
+        const tenantId = req.user.tenantId;
+
+        try {
+            const result = await pool.query(
+                `SELECT id, global_id, nombre, tiene_credito,
+                        COALESCE(credito_limite, 0) as limite_credito,
+                        COALESCE(saldo_deudor, 0) as saldo_deudor,
+                        (COALESCE(credito_limite, 0) - COALESCE(saldo_deudor, 0)) as credito_disponible
+                 FROM customers
+                 WHERE id = $1 AND tenant_id = $2 AND activo = TRUE`,
+                [clienteId, tenantId]
+            );
+
+            if (result.rows.length === 0) {
+                return res.status(404).json({ success: false, message: 'Cliente no encontrado' });
+            }
+
+            const customer = result.rows[0];
+            console.log(`[Customers/CreditInfo] 💳 ${customer.nombre} - Límite: $${customer.limite_credito}, Deuda: $${customer.saldo_deudor}, Disponible: $${customer.credito_disponible}`);
+
+            res.json({
+                success: true,
+                data: {
+                    id: customer.id,
+                    global_id: customer.global_id,
+                    nombre: customer.nombre,
+                    tiene_credito: customer.tiene_credito,
+                    limite_credito: parseFloat(customer.limite_credito),
+                    saldo_deudor: parseFloat(customer.saldo_deudor),
+                    credito_disponible: parseFloat(customer.credito_disponible)
+                }
+            });
+        } catch (error) {
+            console.error('[Customers/CreditInfo] ❌ Error:', error.message);
+            res.status(500).json({ success: false, message: 'Error al obtener información de crédito' });
+        }
+    });
+
     return router;
 };
