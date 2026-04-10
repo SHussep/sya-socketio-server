@@ -1080,12 +1080,11 @@ function createRepartidorAssignmentRoutes(io) {
           const prod = prodCheck.rows[0];
           if (prod && prod.inventariar) {
             const returnQty = parseFloat(cantidad_devuelta);
-            const stockBefore = parseFloat(prod.inventario);
-            const stockAfter = stockBefore + returnQty;
 
-            await client.query(
-              `UPDATE productos SET inventario = inventario + $1, updated_at = NOW() WHERE id = $2 AND tenant_id = $3`,
-              [returnQty, assignment.product_id, tenant_id]
+            const { stockBefore, stockAfter } = await restoreBranchStock(
+              client, tenant_id, branch_id,
+              prod.global_id, returnQty,
+              parseFloat(prod.inventario)
             );
 
             const kardexGlobalId = require('crypto').randomUUID();
@@ -1129,20 +1128,23 @@ function createRepartidorAssignmentRoutes(io) {
           const branches = await pool.query(
             'SELECT id FROM branches WHERE tenant_id = $1 AND is_active = true', [tenant_id]
           );
-          const updatedProd = await pool.query(
-            `SELECT id, global_id, descripcion, inventario, precio_venta, inventariar, bascula, unidad_medida
+          const prodForEmit = await pool.query(
+            `SELECT id, global_id, descripcion, inventario, precio_venta, inventariar, bascula, unidad_medida_id
              FROM productos WHERE id = $1`, [assignment.product_id]
           );
-          if (updatedProd.rows.length > 0) {
-            const p = updatedProd.rows[0];
-            const productPayload = {
-              id_producto: String(p.id), global_id: p.global_id,
-              descripcion: p.descripcion, inventario: parseFloat(p.inventario),
-              precio_venta: parseFloat(p.precio_venta), inventariar: p.inventariar,
-              pesable: p.bascula, unidad_medida: p.unidad_medida_id,
-              action: 'updated', updatedAt: new Date().toISOString()
-            };
+          if (prodForEmit.rows.length > 0) {
+            const p = prodForEmit.rows[0];
             for (const b of branches.rows) {
+              const branchInv = await getBranchInventarioForEmit(
+                pool, tenant_id, b.id, p.global_id, parseFloat(p.inventario)
+              );
+              const productPayload = {
+                id_producto: String(p.id), global_id: p.global_id,
+                descripcion: p.descripcion, inventario: branchInv,
+                precio_venta: parseFloat(p.precio_venta), inventariar: p.inventariar,
+                pesable: p.bascula, unidad_medida: p.unidad_medida_id,
+                action: 'updated', updatedAt: new Date().toISOString()
+              };
               io.to(`branch_${b.id}`).emit('product_updated', productPayload);
             }
             console.log(`[RepartidorAssignments] 📡 product_updated emitido (devolución)`);
