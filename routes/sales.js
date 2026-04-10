@@ -26,6 +26,7 @@ function authenticateToken(req, res, next) {
 }
 
 module.exports = (pool, io) => {
+    const { restoreBranchStock } = require('../utils/branchInventory');
     const router = express.Router();
 
     // GET /api/sales - Lista de ventas (con soporte de timezone)
@@ -332,7 +333,7 @@ module.exports = (pool, io) => {
 
             // 4. Obtener detalles de la venta para revertir inventario
             const detailsResult = await client.query(
-                `SELECT vd.*, p.inventariar, p.inventario as stock_actual
+                `SELECT vd.*, p.inventariar, p.inventario as global_inventario, p.global_id as product_global_id
                  FROM ventas_detalle vd
                  LEFT JOIN productos p ON vd.id_producto = p.id AND p.tenant_id = $2
                  WHERE vd.id_venta = $1`,
@@ -342,11 +343,11 @@ module.exports = (pool, io) => {
             // 5. Revertir inventario y crear bitácora
             for (const detail of detailsResult.rows) {
                 // Revertir inventario si el producto lo requiere
-                if (detail.inventariar) {
-                    await client.query(
-                        `UPDATE productos SET inventario = inventario + $1, updated_at = NOW()
-                         WHERE id = $2 AND tenant_id = $3`,
-                        [parseFloat(detail.cantidad), detail.id_producto, tenantId]
+                if (detail.inventariar && detail.product_global_id) {
+                    await restoreBranchStock(
+                        client, tenantId, sale.branch_id,
+                        detail.product_global_id, parseFloat(detail.cantidad),
+                        parseFloat(detail.global_inventario)
                     );
                 }
 
