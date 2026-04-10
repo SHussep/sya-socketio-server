@@ -11,6 +11,7 @@ const express = require('express');
 const { pool } = require('../database');
 
 function createRepartidorReturnRoutes(io) {
+  const { restoreBranchStock, getBranchInventarioForEmit } = require('../utils/branchInventory');
   const router = express.Router();
 
   // ═══════════════════════════════════════════════════════════════
@@ -232,18 +233,16 @@ function createRepartidorReturnRoutes(io) {
       if (wasInserted && assignment.product_id) {
         try {
           const productCheck = await pool.query(
-            `SELECT id, global_id, inventariar, inventario, descripcion FROM productos WHERE id = $1 AND tenant_id = $2`,
+            `SELECT id, global_id, inventariar, inventario, descripcion, precio_venta, bascula, unidad_medida_id FROM productos WHERE id = $1 AND tenant_id = $2`,
             [assignment.product_id, tenant_id]
           );
           const prod = productCheck.rows[0];
           if (prod && prod.inventariar) {
             const qty = parseFloat(quantity);
-            const stockBefore = parseFloat(prod.inventario);
-            const stockAfter = stockBefore + qty;
-
-            await pool.query(
-              `UPDATE productos SET inventario = inventario + $1, updated_at = NOW() WHERE id = $2 AND tenant_id = $3`,
-              [qty, assignment.product_id, tenant_id]
+            const { stockBefore, stockAfter } = await restoreBranchStock(
+              pool, tenant_id, branch_id,
+              prod.global_id, qty,
+              parseFloat(prod.inventario)
             );
 
             // Create kardex entry
@@ -273,38 +272,35 @@ function createRepartidorReturnRoutes(io) {
                 const branches = await pool.query(
                   'SELECT id FROM branches WHERE tenant_id = $1 AND is_active = true', [tenant_id]
                 );
-                const updatedProd = await pool.query(
-                  `SELECT id, global_id, descripcion, inventario, precio_venta, inventariar, bascula, unidad_medida_id
-                   FROM productos WHERE id = $1`, [assignment.product_id]
-                );
-                if (updatedProd.rows.length > 0) {
-                  const p = updatedProd.rows[0];
+                const p = prod; // already have product data from productCheck
+                const kardexPayload = {
+                  entries: [{
+                    global_id: kardexGlobalId, product_global_id: prod.global_id,
+                    product_id: assignment.product_id, descripcion: prod.descripcion,
+                    movement_type: 'DevolucionRepartidor',
+                    quantity_before: stockBefore, quantity_change: qty, quantity_after: stockAfter,
+                    description: `Devolución repartidor: ${assignment.product_name || prod.descripcion} +${qty} kg`,
+                    employee_global_id: employee_global_id,
+                    employee_id: resolvedEmployeeId,
+                    timestamp: new Date().toISOString(), terminal_id: terminal_id || null,
+                    source: source || 'desktop'
+                  }]
+                };
+                for (const b of branches.rows) {
+                  const branchInv = await getBranchInventarioForEmit(
+                    pool, tenant_id, b.id, p.global_id, parseFloat(p.inventario)
+                  );
                   const productPayload = {
                     id_producto: String(p.id), global_id: p.global_id,
-                    descripcion: p.descripcion, inventario: parseFloat(p.inventario),
-                    precio_venta: parseFloat(p.precio_venta), inventariar: p.inventariar,
+                    descripcion: p.descripcion, inventario: branchInv,
+                    precio_venta: parseFloat(p.precio_venta || 0), inventariar: p.inventariar,
                     pesable: p.bascula, unidad_medida: p.unidad_medida_id,
                     action: 'updated', updatedAt: new Date().toISOString()
                   };
-                  const kardexPayload = {
-                    entries: [{
-                      global_id: kardexGlobalId, product_global_id: prod.global_id,
-                      product_id: assignment.product_id, descripcion: prod.descripcion,
-                      movement_type: 'DevolucionRepartidor',
-                      quantity_before: stockBefore, quantity_change: qty, quantity_after: stockAfter,
-                      description: `Devolución repartidor: ${assignment.product_name || prod.descripcion} +${qty} kg`,
-                      employee_global_id: employee_global_id,
-                      employee_id: resolvedEmployeeId,
-                      timestamp: new Date().toISOString(), terminal_id: terminal_id || null,
-                      source: source || 'desktop'
-                    }]
-                  };
-                  for (const b of branches.rows) {
-                    io.to(`branch_${b.id}`).emit('product_updated', productPayload);
-                    io.to(`branch_${b.id}`).emit('kardex_entries_created', kardexPayload);
-                  }
-                  console.log(`[RepartidorReturns] 📡 product_updated + kardex emitidos para devolución`);
+                  io.to(`branch_${b.id}`).emit('product_updated', productPayload);
+                  io.to(`branch_${b.id}`).emit('kardex_entries_created', kardexPayload);
                 }
+                console.log(`[RepartidorReturns] 📡 product_updated + kardex emitidos para devolución`);
               } catch (emitErr) {
                 console.error('[RepartidorReturns] ⚠️ Error emitting socket events:', emitErr.message);
               }
