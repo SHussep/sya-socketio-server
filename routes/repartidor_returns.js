@@ -274,7 +274,7 @@ function createRepartidorReturnRoutes(io) {
                   'SELECT id FROM branches WHERE tenant_id = $1 AND is_active = true', [tenant_id]
                 );
                 const updatedProd = await pool.query(
-                  `SELECT id, global_id, descripcion, inventario, precio_venta, inventariar, bascula, unidad_medida
+                  `SELECT id, global_id, descripcion, inventario, precio_venta, inventariar, bascula, unidad_medida_id
                    FROM productos WHERE id = $1`, [assignment.product_id]
                 );
                 if (updatedProd.rows.length > 0) {
@@ -283,7 +283,7 @@ function createRepartidorReturnRoutes(io) {
                     id_producto: String(p.id), global_id: p.global_id,
                     descripcion: p.descripcion, inventario: parseFloat(p.inventario),
                     precio_venta: parseFloat(p.precio_venta), inventariar: p.inventariar,
-                    pesable: p.bascula, unidad_medida: p.unidad_medida,
+                    pesable: p.bascula, unidad_medida: p.unidad_medida_id,
                     action: 'updated', updatedAt: new Date().toISOString()
                   };
                   const kardexPayload = {
