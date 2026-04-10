@@ -27,6 +27,7 @@ function authenticateToken(req, res, next) {
 
 module.exports = (pool, io) => {
     const router = express.Router();
+    const { deductBranchStock } = require('../utils/branchInventory');
 
     // GET /api/purchases/summary - Resumen de compras con filtros
     router.get('/summary', authenticateToken, async (req, res) => {
@@ -648,9 +649,9 @@ module.exports = (pool, io) => {
                 [purchaseId, tenantId]
             );
 
-            // 3. Revert inventory for each detail
+            // 3. Revert inventory for each detail (per-branch)
             const detailsResult = await client.query(
-                `SELECT pd.*, pr.inventariar
+                `SELECT pd.*, pr.inventariar, pr.inventario AS global_inventario, pr.global_id AS product_global_id
                  FROM purchase_details pd
                  LEFT JOIN productos pr ON pd.product_id = pr.id AND pr.tenant_id = $2
                  WHERE pd.purchase_id = $1`,
@@ -658,11 +659,11 @@ module.exports = (pool, io) => {
             );
 
             for (const detail of detailsResult.rows) {
-                if (detail.inventariar && detail.product_id) {
-                    await client.query(
-                        `UPDATE productos SET inventario = GREATEST(inventario - $1, 0), updated_at = NOW()
-                         WHERE id = $2 AND tenant_id = $3`,
-                        [parseFloat(detail.quantity), detail.product_id, tenantId]
+                if (detail.inventariar && detail.product_id && detail.product_global_id) {
+                    await deductBranchStock(
+                        client, tenantId, purchase.branch_id,
+                        detail.product_global_id, parseFloat(detail.quantity),
+                        parseFloat(detail.global_inventario)
                     );
                 }
             }
