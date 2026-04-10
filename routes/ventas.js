@@ -10,6 +10,8 @@ const router = express.Router();
 
 module.exports = function(pool, io) {
 
+    const { deductBranchStock, getBranchInventarioForEmit } = require('../utils/branchInventory');
+
     // ─────────────────────────────────────────────────────────
     // GET /api/ventas - Listar ventas de una sucursal
     // Query params: tenantId, branchId, shiftId (opcional), fecha_desde, fecha_hasta
@@ -657,7 +659,7 @@ module.exports = function(pool, io) {
                     const isRepartidorSale = parseInt(venta_tipo_id) === 2;
                     const detailsForInventory = isRepartidorSale ? { rows: [] } : await client.query(
                         `SELECT vd.id_producto, vd.cantidad, p.inventariar, p.descripcion,
-                                p.inventario AS stock_before, p.global_id AS product_global_id
+                                p.inventario AS global_inventario, p.global_id AS product_global_id
                          FROM ventas_detalle vd
                          JOIN productos p ON vd.id_producto = p.id AND p.tenant_id = $2
                          WHERE vd.id_venta = $1`,
@@ -668,13 +670,12 @@ module.exports = function(pool, io) {
                     for (const detail of detailsForInventory.rows) {
                         if (detail.inventariar) {
                             const qty = parseFloat(detail.cantidad);
-                            const stockBefore = parseFloat(detail.stock_before);
-                            const stockAfter = stockBefore - qty;
 
-                            await client.query(
-                                `UPDATE productos SET inventario = inventario - $1, updated_at = NOW()
-                                 WHERE id = $2 AND tenant_id = $3`,
-                                [qty, detail.id_producto, tenant_id]
+                            // Deduct from branch-specific inventory (producto_branches)
+                            const { stockBefore, stockAfter } = await deductBranchStock(
+                                client, tenant_id, branch_id,
+                                detail.product_global_id, qty,
+                                parseFloat(detail.global_inventario)
                             );
 
                             // Create kardex entry for this movement
@@ -712,7 +713,7 @@ module.exports = function(pool, io) {
                         }
                     }
                     if (deductedCount > 0) {
-                        console.log(`[Ventas/Create] 📦 Inventario descontado: ${deductedCount} productos, ${deductedCount} kardex entries creados`);
+                        console.log(`[Ventas/Create] 📦 Inventario branch descontado: ${deductedCount} productos, ${deductedCount} kardex entries creados`);
                     }
                 }
 
@@ -739,27 +740,31 @@ module.exports = function(pool, io) {
                         );
                         // Fetch updated products to emit accurate inventory values
                         const updatedProducts = await pool.query(
-                            `SELECT p.id, p.global_id, p.descripcion, p.inventario, p.precio_venta,
-                                    p.inventariar, p.bascula, p.unidad_medida_id
+                            `SELECT p.id, p.global_id, p.descripcion, p.inventario AS global_inventario,
+                                    p.precio_venta, p.inventariar, p.bascula, p.unidad_medida_id
                              FROM ventas_detalle vd
                              JOIN productos p ON vd.id_producto = p.id AND p.tenant_id = $2
                              WHERE vd.id_venta = $1 AND p.inventariar = true`,
                             [newVenta.id_venta, tenant_id]
                         );
                         for (const prod of updatedProducts.rows) {
-                            const payload = {
-                                id_producto: String(prod.id),
-                                global_id: prod.global_id,
-                                descripcion: prod.descripcion,
-                                inventario: parseFloat(prod.inventario),
-                                precio_venta: parseFloat(prod.precio_venta),
-                                inventariar: prod.inventariar,
-                                pesable: prod.bascula,
-                                unidad_medida: prod.unidad_medida_id,
-                                action: 'updated',
-                                updatedAt: new Date().toISOString()
-                            };
                             for (const b of branches.rows) {
+                                const branchInv = await getBranchInventarioForEmit(
+                                    pool, tenant_id, b.id,
+                                    prod.global_id, parseFloat(prod.global_inventario)
+                                );
+                                const payload = {
+                                    id_producto: String(prod.id),
+                                    global_id: prod.global_id,
+                                    descripcion: prod.descripcion,
+                                    inventario: branchInv,
+                                    precio_venta: parseFloat(prod.precio_venta),
+                                    inventariar: prod.inventariar,
+                                    pesable: prod.bascula,
+                                    unidad_medida: prod.unidad_medida_id,
+                                    action: 'updated',
+                                    updatedAt: new Date().toISOString()
+                                };
                                 io.to(`branch_${b.id}`).emit('product_updated', payload);
                             }
                         }
