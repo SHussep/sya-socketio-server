@@ -650,7 +650,8 @@ module.exports = function(pool, io) {
 
                     // Deduct inventory for products that track stock (inventariar = true)
                     const detailsForInventory = await client.query(
-                        `SELECT vd.id_producto, vd.cantidad, p.inventariar, p.descripcion
+                        `SELECT vd.id_producto, vd.cantidad, p.inventariar, p.descripcion,
+                                p.inventario AS stock_before, p.global_id AS product_global_id
                          FROM ventas_detalle vd
                          JOIN productos p ON vd.id_producto = p.id AND p.tenant_id = $2
                          WHERE vd.id_venta = $1`,
@@ -658,18 +659,55 @@ module.exports = function(pool, io) {
                     );
 
                     let deductedCount = 0;
+                    const kardexEntries = [];
                     for (const detail of detailsForInventory.rows) {
                         if (detail.inventariar) {
+                            const qty = parseFloat(detail.cantidad);
+                            const stockBefore = parseFloat(detail.stock_before);
+                            const stockAfter = stockBefore - qty;
+
                             await client.query(
                                 `UPDATE productos SET inventario = inventario - $1, updated_at = NOW()
                                  WHERE id = $2 AND tenant_id = $3`,
-                                [parseFloat(detail.cantidad), detail.id_producto, tenant_id]
+                                [qty, detail.id_producto, tenant_id]
                             );
+
+                            // Create kardex entry for this movement
+                            const kardexGlobalId = require('crypto').randomUUID();
+                            await client.query(
+                                `INSERT INTO kardex_entries (
+                                    tenant_id, branch_id, product_id, product_global_id,
+                                    timestamp, movement_type, employee_id, employee_global_id,
+                                    quantity_before, quantity_change, quantity_after,
+                                    description, sale_id, global_id, terminal_id, source
+                                ) VALUES ($1, $2, $3, $4, NOW(), 'Venta', $5, $6, $7, $8, $9, $10, $11, $12, $13, 'mobile')`,
+                                [
+                                    tenant_id, branch_id, detail.id_producto, detail.product_global_id,
+                                    id_empleado, empleado_global_id,
+                                    stockBefore, -qty, stockAfter,
+                                    `Venta móvil #${currentTicket}: ${detail.descripcion} x${qty}`,
+                                    newVenta.id_venta, kardexGlobalId, mobileTerminalId
+                                ]
+                            );
+
+                            kardexEntries.push({
+                                global_id: kardexGlobalId,
+                                product_global_id: detail.product_global_id,
+                                product_id: detail.id_producto,
+                                descripcion: detail.descripcion,
+                                movement_type: 'Venta',
+                                quantity_before: stockBefore,
+                                quantity_change: -qty,
+                                quantity_after: stockAfter,
+                                sale_id: newVenta.id_venta,
+                                description: `Venta móvil #${currentTicket}: ${detail.descripcion} x${qty}`
+                            });
+
                             deductedCount++;
                         }
                     }
                     if (deductedCount > 0) {
-                        console.log(`[Ventas/Create] 📦 Inventario descontado: ${deductedCount} productos`);
+                        console.log(`[Ventas/Create] 📦 Inventario descontado: ${deductedCount} productos, ${deductedCount} kardex entries creados`);
                     }
                 }
 
@@ -722,6 +760,26 @@ module.exports = function(pool, io) {
                         }
                         if (updatedProducts.rows.length > 0) {
                             console.log(`[Ventas/Create] 📡 product_updated emitido para ${updatedProducts.rows.length} productos`);
+                        }
+
+                        // Emit kardex entries so Desktop can insert into local SQLite
+                        if (kardexEntries.length > 0) {
+                            const kardexPayload = {
+                                entries: kardexEntries.map(k => ({
+                                    ...k,
+                                    employee_global_id: empleado_global_id,
+                                    employee_id: id_empleado,
+                                    timestamp: new Date().toISOString(),
+                                    terminal_id: mobileTerminalId,
+                                    source: 'mobile',
+                                    sale_global_id: newVenta.global_id
+                                })),
+                                sale_ticket: currentTicket
+                            };
+                            for (const b of branches.rows) {
+                                io.to(`branch_${b.id}`).emit('kardex_entries_created', kardexPayload);
+                            }
+                            console.log(`[Ventas/Create] 📡 kardex_entries_created emitido: ${kardexEntries.length} entries`);
                         }
                     } catch (emitErr) {
                         console.error('[Ventas/Create] ⚠️ Error emitting product_updated:', emitErr.message);
