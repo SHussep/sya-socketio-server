@@ -367,12 +367,7 @@ module.exports = (pool) => {
                     COALESCE(AVG(swl.max_weight_in_cycle), 0) as avg_kg,
                     COALESCE(SUM(swl.max_weight_in_cycle * COALESCE(pbp.precio_venta, p.precio_venta)), 0) as total_amount_lost
                 FROM suspicious_weighing_logs swl
-                LEFT JOIN productos p ON
-                    CASE
-                        WHEN swl.additional_data_json IS NOT NULL AND swl.additional_data_json != ''
-                        THEN (swl.additional_data_json::jsonb->>'ProductId')::INTEGER
-                        ELSE NULL
-                    END = p.id
+                LEFT JOIN productos p ON p.id = swl.related_product_id
                     AND p.tenant_id = swl.tenant_id
                 LEFT JOIN productos_branch_precios pbp ON
                     pbp.producto_id = p.id
@@ -441,7 +436,7 @@ module.exports = (pool) => {
                         SUM(vd.total_linea) as total_revenue
                     FROM ventas v
                     JOIN ventas_detalle vd ON vd.id_venta = v.id_venta
-                    JOIN productos p ON vd.id_producto = p.id_producto AND p.tenant_id = v.tenant_id
+                    JOIN productos p ON vd.id_producto = p.id AND p.tenant_id = v.tenant_id
                     LEFT JOIN productos_branch_precios pbp ON
                         pbp.producto_id = p.id
                         AND pbp.branch_id = v.branch_id
