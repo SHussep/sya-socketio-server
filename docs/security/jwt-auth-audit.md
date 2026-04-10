@@ -45,7 +45,7 @@ Cambiar todas las instancias de `expiresIn: '7d'` y `expiresIn: '24h'` a `expire
 
 ---
 
-## 2. CRÍTICO: Sin revocación de refresh tokens
+## 2. CRÍTICO: Sin revocación de refresh tokens — PENDIENTE
 
 **Problema**: Los refresh tokens son JWT stateless. No hay tabla en la base de datos para rastrearlos. Si un token es robado, no hay forma de invalidarlo — sigue siendo válido hasta que expire (30 días).
 
@@ -55,22 +55,18 @@ Cambiar todas las instancias de `expiresIn: '7d'` y `expiresIn: '24h'` a `expire
 - Sin tabla de blacklist — no se puede revocar en logout
 - Sin tracking de "familia" de tokens — no se detecta reuso
 
-### Fix requerido (en orden)
+### ⚠️ Riesgo de breaking change
 
-**Paso 1**: Agregar `jti` claim a todos los tokens:
-```javascript
-const crypto = require('crypto');
+Los refresh tokens existentes en producción NO tienen `jti`. Si se implementa la verificación contra la tabla `refresh_tokens` sin un periodo de transición, **todos los usuarios activos serían forzados a re-login** dentro de los primeros 15 minutos (cuando su access token expire y el refresh falle).
 
-// Al generar cualquier token:
-const jti = crypto.randomUUID();
-const refreshToken = jwt.sign(
-    { employeeId: employee.id, tenantId: tenant.id, jti },
-    JWT_SECRET,
-    { expiresIn: '30d' }
-);
-```
+- **Flutter**: El interceptor recibiría 401 en refresh → redirige a login → re-auth con Google/Apple (semi-transparente)
+- **Desktop**: `GetValidJwtTokenAsync` fallaría → el usuario debe volver a escribir usuario y contraseña manualmente (disruptivo)
 
-**Paso 2**: Crear tabla de refresh tokens:
+### Estrategia de migración segura (3 fases)
+
+#### Fase 1: Migración SQL + deploy con fallback legacy (día 0)
+
+**1a.** Crear tabla:
 ```sql
 CREATE TABLE refresh_tokens (
     id SERIAL PRIMARY KEY,
@@ -80,7 +76,7 @@ CREATE TABLE refresh_tokens (
     issued_at TIMESTAMPTZ DEFAULT NOW(),
     expires_at TIMESTAMPTZ NOT NULL,
     revoked_at TIMESTAMPTZ,
-    replaced_by_jti UUID,  -- Para tracking de rotación
+    replaced_by_jti UUID,
     device_info TEXT,
     ip_address TEXT
 );
@@ -88,34 +84,115 @@ CREATE INDEX idx_refresh_tokens_jti ON refresh_tokens(jti);
 CREATE INDEX idx_refresh_tokens_employee ON refresh_tokens(employee_id);
 ```
 
-**Paso 3**: Al hacer refresh, verificar en la tabla:
+**1b.** Agregar `jti` a TODOS los endpoints que emiten tokens (login, signup, refresh):
 ```javascript
-// En refreshToken handler:
-const decoded = jwt.verify(refreshToken, JWT_SECRET);
+const crypto = require('crypto');
 
-// Verificar que no esté revocado
-const tokenRecord = await pool.query(
-    'SELECT * FROM refresh_tokens WHERE jti = $1 AND revoked_at IS NULL',
-    [decoded.jti]
+const jti = crypto.randomUUID();
+const refreshToken = jwt.sign(
+    { employeeId: employee.id, tenantId: tenant.id, jti },
+    JWT_SECRET,
+    { expiresIn: '30d' }
 );
-if (tokenRecord.rows.length === 0) {
-    return res.status(401).json({ message: 'Token revocado' });
-}
 
-// Revocar el anterior y emitir nuevo
-await pool.query('UPDATE refresh_tokens SET revoked_at = NOW(), replaced_by_jti = $1 WHERE jti = $2',
-    [newJti, decoded.jti]);
+// Guardar en tabla
+await pool.query(
+    `INSERT INTO refresh_tokens (jti, employee_id, tenant_id, expires_at, device_info, ip_address)
+     VALUES ($1, $2, $3, NOW() + INTERVAL '30 days', $4, $5)`,
+    [jti, employee.id, tenant.id, req.headers['user-agent'], req.ip]
+);
 ```
 
-**Paso 4**: Endpoint de logout:
+**1c.** En el handler de refresh, usar fallback legacy:
+```javascript
+const decoded = jwt.verify(refreshToken, JWT_SECRET, { algorithms: ['HS256'] });
+
+if (decoded.jti) {
+    // Token NUEVO (con jti): verificar en tabla
+    const tokenRecord = await pool.query(
+        'SELECT * FROM refresh_tokens WHERE jti = $1 AND revoked_at IS NULL',
+        [decoded.jti]
+    );
+    if (tokenRecord.rows.length === 0) {
+        return res.status(401).json({ message: 'Token revocado' });
+    }
+    // Revocar el anterior
+    await pool.query(
+        'UPDATE refresh_tokens SET revoked_at = NOW(), replaced_by_jti = $1 WHERE jti = $2',
+        [newJti, decoded.jti]
+    );
+} else {
+    // Token VIEJO (sin jti): aceptar como legacy
+    // El nuevo token que se emita ya tendrá jti → migración transparente
+    console.log(`[Auth] Legacy refresh token sin jti para employee ${decoded.employeeId} — migrando a jti`);
+}
+
+// Emitir nuevos tokens CON jti (ambos casos)
+const newJti = crypto.randomUUID();
+// ... generar y guardar nuevo token con jti
+```
+
+**Resultado**: Ningún usuario nota el cambio. Tokens legacy se aceptan y se reemplazan por tokens con `jti` automáticamente.
+
+#### Fase 2: Endpoint de logout (día 0, junto con fase 1)
+
 ```javascript
 router.post('/logout', authenticateToken, async (req, res) => {
     const { refreshToken } = req.body;
-    const decoded = jwt.verify(refreshToken, JWT_SECRET);
-    await pool.query('UPDATE refresh_tokens SET revoked_at = NOW() WHERE jti = $1', [decoded.jti]);
+    if (!refreshToken) {
+        return res.json({ success: true }); // Logout sin token = solo limpiar cliente
+    }
+    try {
+        const decoded = jwt.verify(refreshToken, JWT_SECRET, { algorithms: ['HS256'] });
+        if (decoded.jti) {
+            await pool.query(
+                'UPDATE refresh_tokens SET revoked_at = NOW() WHERE jti = $1',
+                [decoded.jti]
+            );
+        }
+    } catch (e) {
+        // Token ya expirado o inválido — logout de todas formas
+    }
     res.json({ success: true });
 });
 ```
+
+#### Fase 3: Remover fallback legacy (día 30+)
+
+Después de 30 días, todos los refresh tokens sin `jti` habrán expirado naturalmente. Se puede:
+1. Eliminar el bloque `else` (legacy) del handler de refresh
+2. Hacer `jti` obligatorio: rechazar tokens sin `jti` con 401
+
+### Endpoints que emiten tokens (todos deben agregar jti)
+
+| Endpoint | Archivo | Emite refresh token |
+|----------|---------|:-------------------:|
+| `POST /api/auth/desktop-login` | `controllers/auth/loginMethods.js:226` | ✅ |
+| `POST /api/auth/mobile-login` | `controllers/auth/loginMethods.js:454` | ✅ |
+| `POST /api/auth/google-signup` | `controllers/auth/signupMethods.js:396` | ✅ |
+| `POST /api/auth/google-login` | `controllers/auth/signupMethods.js:616` | ✅ |
+| `POST /api/auth/apple-login` | `controllers/auth/appleMethods.js:184` | ✅ |
+| `POST /api/auth/apple-signup` | `controllers/auth/appleMethods.js:415` | ✅ |
+| `POST /api/auth/refresh-token` | `controllers/auth/signupMethods.js:99` | ✅ (rolling) |
+| `POST /api/auth/master-login` (mobile) | `routes/masterAuth.js:234` | ✅ |
+| `POST /api/auth/master-login` (desktop) | `routes/masterAuth.js:308` | ✅ (condicional) |
+
+### Limpieza periódica
+
+Agregar cron job o cleanup en el server para eliminar tokens expirados:
+```javascript
+// Ejecutar diariamente
+await pool.query('DELETE FROM refresh_tokens WHERE expires_at < NOW()');
+```
+
+### Testing después de implementar
+
+1. **Login nuevo** → verificar que el refresh token tiene `jti` y aparece en la tabla
+2. **Refresh con token legacy** (sin jti) → debe aceptarse y emitir token nuevo con `jti`
+3. **Refresh con token nuevo** (con jti) → debe verificar en tabla y rotar
+4. **Logout** → refresh token se marca `revoked_at` → siguiente refresh falla con 401
+5. **Reuso de token revocado** → debe devolver 401
+6. **Después de 30 días** → remover fallback legacy y verificar que tokens sin `jti` se rechazan
 
 ---
 
