@@ -3360,6 +3360,34 @@ async function runMigrations() {
                 console.log('[Schema] ⚠️ Migration 049 (trigger fix):', m049err.message);
             }
 
+            // Migration 050: Fix trigger to NOT add balance when sale arrives already cancelled
+            // When Desktop syncs a sale that was created+cancelled before sync, the INSERT has status='cancelled'
+            // The old trigger would ADD to balance on INSERT (regardless of status) but never SUBTRACT
+            try {
+                await client.query(`
+                    CREATE OR REPLACE FUNCTION update_customer_balance()
+                    RETURNS TRIGGER AS $$
+                    BEGIN
+                        -- INSERT venta a crédito (no cancelada) → aumenta saldo_deudor
+                        IF TG_OP = 'INSERT' AND NEW.tipo_pago_id = 3 AND (NEW.status IS NULL OR NEW.status != 'cancelled') THEN
+                            UPDATE customers
+                            SET saldo_deudor = saldo_deudor + NEW.total, updated_at = NOW()
+                            WHERE id = NEW.id_cliente;
+                        -- UPDATE status='cancelled' → revierte saldo
+                        ELSIF TG_OP = 'UPDATE' AND OLD.status != 'cancelled' AND NEW.status = 'cancelled' AND NEW.tipo_pago_id = 3 THEN
+                            UPDATE customers
+                            SET saldo_deudor = saldo_deudor - NEW.total, updated_at = NOW()
+                            WHERE id = NEW.id_cliente;
+                        END IF;
+                        RETURN NEW;
+                    END;
+                    $$ LANGUAGE plpgsql;
+                `);
+                console.log('[Schema] ✅ Trigger update_customer_balance: skip cancelled INSERTs (Migration 050)');
+            } catch (m050err) {
+                console.log('[Schema] ⚠️ Migration 050 (trigger cancelled fix):', m050err.message);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {

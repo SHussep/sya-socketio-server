@@ -842,8 +842,8 @@ CREATE INDEX IF NOT EXISTS idx_credit_payments_method ON credit_payments(tenant_
 CREATE OR REPLACE FUNCTION update_customer_balance()
 RETURNS TRIGGER AS $$
 BEGIN
-    -- INSERT venta a crédito → aumenta saldo_deudor
-    IF TG_OP = 'INSERT' AND NEW.tipo_pago_id = 3 THEN
+    -- INSERT venta a crédito (no cancelada) → aumenta saldo_deudor
+    IF TG_OP = 'INSERT' AND NEW.tipo_pago_id = 3 AND (NEW.status IS NULL OR NEW.status != 'cancelled') THEN
         UPDATE customers
         SET saldo_deudor = saldo_deudor + NEW.total, updated_at = NOW()
         WHERE id = NEW.id_cliente;
