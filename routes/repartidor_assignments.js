@@ -776,7 +776,6 @@ function createRepartidorAssignmentRoutes(io) {
                  total = CASE WHEN $5 > 0 THEN $5 ELSE total END,
                  credito_original = $6,
                  estado_venta_id = 5,
-                 fecha_liquidacion_utc = COALESCE(fecha_liquidacion_utc, NOW()),
                  updated_at = NOW()
              WHERE id_venta = $3 AND tenant_id = $4
              RETURNING id_venta, tipo_pago_id, monto_pagado, total`,
