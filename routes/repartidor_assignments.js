@@ -534,6 +534,12 @@ function createRepartidorAssignmentRoutes(io) {
       const assignment = result.rows[0];
       const wasInserted = assignment.inserted; // true = nueva asignación, false = actualización
 
+      // Si resolvedVentaId era null (móvil no lo envió), tomarlo del registro existente
+      if (!resolvedVentaId && assignment.venta_id) {
+        resolvedVentaId = assignment.venta_id;
+        console.log(`[RepartidorAssignments] 📎 venta_id recuperado del registro existente: ${resolvedVentaId}`);
+      }
+
       // ═══════════════════════════════════════════════════════════════════════════════
       // INVENTARIO: Descontar stock al crear asignación (fuente de verdad: PostgreSQL)
       // Solo en INSERT nuevo con status pending/in_progress y producto inventariable
