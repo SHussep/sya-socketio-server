@@ -159,9 +159,11 @@ function createRepartidorReturnRoutes(io) {
 
       // ✅ OFFLINE-FIRST: Buscar asignación por GlobalId en lugar de ID numérico
       const assignmentCheck = await pool.query(
-        `SELECT id, assigned_quantity, assigned_amount, unit_price, global_id,
-                product_id, product_global_id, product_name
-         FROM repartidor_assignments WHERE global_id = $1::uuid AND tenant_id = $2`,
+        `SELECT ra.id, ra.assigned_quantity, ra.assigned_amount, ra.unit_price, ra.global_id,
+                ra.product_id, p.global_id as product_global_id, ra.product_name
+         FROM repartidor_assignments ra
+         LEFT JOIN productos p ON p.id = ra.product_id
+         WHERE ra.global_id = $1::uuid AND ra.tenant_id = $2`,
         [assignment_global_id, tenant_id]
       );
 
