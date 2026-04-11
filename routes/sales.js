@@ -341,9 +341,16 @@ module.exports = (pool, io) => {
             );
 
             // 5. Revertir inventario y crear bitácora
+            // NOTA: Para ventas de repartidor (venta_tipo_id=2), el inventario se gestiona
+            // desde las asignaciones, no desde la venta. No revertir aquí para evitar duplicación.
+            const isRepartidorSale = sale.venta_tipo_id === 2;
+            if (isRepartidorSale) {
+                console.log(`[Sales/Cancel] ⚠️ Venta repartidor: inventario NO revertido (se gestiona desde asignaciones)`);
+            }
+
             for (const detail of detailsResult.rows) {
-                // Revertir inventario si el producto lo requiere
-                if (detail.inventariar && detail.product_global_id) {
+                // Revertir inventario si el producto lo requiere (excepto repartidor)
+                if (!isRepartidorSale && detail.inventariar && detail.product_global_id) {
                     await restoreBranchStock(
                         client, tenantId, sale.branch_id,
                         detail.product_global_id, parseFloat(detail.cantidad),
