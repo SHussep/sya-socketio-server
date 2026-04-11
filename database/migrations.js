@@ -3388,6 +3388,32 @@ async function runMigrations() {
                 console.log('[Schema] ⚠️ Migration 050 (trigger cancelled fix):', m050err.message);
             }
 
+            // Migration 051: Fix trigger UPDATE branch to handle NULL OLD.status
+            // OLD.status != 'cancelled' evaluates to NULL (not true) when status is NULL
+            // Must use IS NULL OR to handle ventas created without status column
+            try {
+                await client.query(`
+                    CREATE OR REPLACE FUNCTION update_customer_balance()
+                    RETURNS TRIGGER AS $$
+                    BEGIN
+                        IF TG_OP = 'INSERT' AND NEW.tipo_pago_id = 3 AND (NEW.status IS NULL OR NEW.status != 'cancelled') THEN
+                            UPDATE customers
+                            SET saldo_deudor = saldo_deudor + NEW.total, updated_at = NOW()
+                            WHERE id = NEW.id_cliente;
+                        ELSIF TG_OP = 'UPDATE' AND (OLD.status IS NULL OR OLD.status != 'cancelled') AND NEW.status = 'cancelled' AND NEW.tipo_pago_id = 3 THEN
+                            UPDATE customers
+                            SET saldo_deudor = saldo_deudor - NEW.total, updated_at = NOW()
+                            WHERE id = NEW.id_cliente;
+                        END IF;
+                        RETURN NEW;
+                    END;
+                    $$ LANGUAGE plpgsql;
+                `);
+                console.log('[Schema] ✅ Trigger update_customer_balance: handle NULL OLD.status (Migration 051)');
+            } catch (m051err) {
+                console.log('[Schema] ⚠️ Migration 051 (trigger NULL fix):', m051err.message);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {
