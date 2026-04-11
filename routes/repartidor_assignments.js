@@ -750,24 +750,68 @@ function createRepartidorAssignmentRoutes(io) {
             finalTipoPagoId = 1; // Efectivo (default)
           }
 
+          // Leer credito_original ANTES del update para calcular delta
+          const prevVentaResult = await pool.query(
+            `SELECT id_cliente, COALESCE(credito_original, 0) as old_credito
+             FROM ventas WHERE id_venta = $1 AND tenant_id = $2`,
+            [resolvedVentaId, tenant_id]
+          );
+          const oldCredito = parseFloat(prevVentaResult.rows[0]?.old_credito || 0);
+          const ventaClienteId = prevVentaResult.rows[0]?.id_cliente;
+
           // Actualizar la venta con totales recalculados
           const updateVentaResult = await pool.query(
             `UPDATE ventas
              SET tipo_pago_id = $1,
                  monto_pagado = $2,
                  total = CASE WHEN $5 > 0 THEN $5 ELSE total END,
+                 credito_original = $6,
                  estado_venta_id = 5,
                  fecha_liquidacion_utc = COALESCE(fecha_liquidacion_utc, NOW()),
                  updated_at = NOW()
              WHERE id_venta = $3 AND tenant_id = $4
              RETURNING id_venta, tipo_pago_id, monto_pagado, total`,
-            [finalTipoPagoId, totalPagado, resolvedVentaId, tenant_id, totalVenta]
+            [finalTipoPagoId, totalPagado, resolvedVentaId, tenant_id, totalVenta, totalCredito]
           );
 
           if (updateVentaResult.rows.length > 0) {
             const v = updateVentaResult.rows[0];
             console.log(`[RepartidorAssignments] 💰 Venta #${resolvedVentaId} actualizada:`);
             console.log(`   tipo_pago_id=${finalTipoPagoId} | monto_pagado=$${totalPagado.toFixed(2)} | credito=$${totalCredito.toFixed(2)}`);
+
+            // ═══════════════════════════════════════════════════════════════════
+            // 💳 ACTUALIZAR SALDO DE CLIENTE cuando liquidación incluye crédito
+            // El trigger update_customer_balance solo funciona en INSERT de ventas
+            // con tipo_pago_id=3, pero la venta ya existía como tipo_pago_id=1
+            // al crear la asignación. Debemos actualizar manualmente.
+            // ═══════════════════════════════════════════════════════════════════
+            if (totalCredito > 0 && ventaClienteId) {
+              const creditDelta = totalCredito - oldCredito;
+              if (creditDelta !== 0) {
+                try {
+                  if (creditDelta > 0) {
+                    await pool.query(
+                      `UPDATE customers
+                       SET saldo_deudor = saldo_deudor + $1, updated_at = NOW()
+                       WHERE id = $2 AND tenant_id = $3`,
+                      [creditDelta, ventaClienteId, tenant_id]
+                    );
+                  } else {
+                    await pool.query(
+                      `UPDATE customers
+                       SET saldo_deudor = GREATEST(saldo_deudor + $1, 0), updated_at = NOW()
+                       WHERE id = $2 AND tenant_id = $3`,
+                      [creditDelta, ventaClienteId, tenant_id]
+                    );
+                  }
+                  console.log(`[RepartidorAssignments] 💳 Cliente #${ventaClienteId} saldo actualizado: ${creditDelta > 0 ? '+' : ''}$${creditDelta.toFixed(2)} (prev=$${oldCredito.toFixed(2)}, total=$${totalCredito.toFixed(2)})`);
+                } catch (creditErr) {
+                  console.error(`[RepartidorAssignments] ⚠️ Error actualizando saldo cliente:`, creditErr.message);
+                }
+              }
+            } else if (totalCredito > 0 && !ventaClienteId) {
+              console.warn(`[RepartidorAssignments] ⚠️ Liquidación a crédito pero venta #${resolvedVentaId} no tiene id_cliente`);
+            }
           }
         } catch (ventaUpdateError) {
           // No fallar la liquidación si la actualización de venta falla
