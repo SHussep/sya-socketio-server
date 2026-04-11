@@ -721,6 +721,8 @@ function createRepartidorAssignmentRoutes(io) {
       // Determinar si hay info de pago (payment_method_id O montos de pago)
       const hasPaymentInfo = payment_method_id || cash_amount || card_amount || credit_amount;
 
+      console.log(`[RepartidorAssignments] 🔍 Credit check: status=${status}, resolvedVentaId=${resolvedVentaId}, hasPaymentInfo=${!!hasPaymentInfo}, credit_amount=${credit_amount}`);
+
       if (status === 'liquidated' && resolvedVentaId && hasPaymentInfo) {
         try {
           // Recalcular totales de TODAS las asignaciones liquidadas de esta venta
@@ -792,8 +794,10 @@ function createRepartidorAssignmentRoutes(io) {
             // con tipo_pago_id=3, pero la venta ya existía como tipo_pago_id=1
             // al crear la asignación. Debemos actualizar manualmente.
             // ═══════════════════════════════════════════════════════════════════
+            console.log(`[RepartidorAssignments] 🔍 Credit detail: totalCredito=${totalCredito}, ventaClienteId=${ventaClienteId}, oldCredito=${oldCredito}`);
             if (totalCredito > 0 && ventaClienteId) {
               const creditDelta = totalCredito - oldCredito;
+              console.log(`[RepartidorAssignments] 🔍 creditDelta=${creditDelta}`);
               if (creditDelta !== 0) {
                 try {
                   if (creditDelta > 0) {
