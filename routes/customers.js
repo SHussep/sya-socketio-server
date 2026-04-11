@@ -1497,8 +1497,7 @@ module.exports = (pool, io) => {
                 paramIndex++;
             }
 
-            // Excluir canceladas
-            whereConditions.push("(v.status IS NULL OR v.status != 'cancelled')");
+            // Incluir TODAS las ventas (incluyendo canceladas) para mostrar historial completo
 
             const salesQuery = `
                 SELECT
@@ -1548,7 +1547,7 @@ module.exports = (pool, io) => {
 
             const salesResult = await pool.query(salesQuery, queryParams);
 
-            // Calcular estadísticas por tipo de pago (del período filtrado)
+            // Calcular estadísticas por tipo de pago (del período filtrado, solo activas para totales)
             let statsWhereConditions = ['v.id_cliente = $1', 'v.tenant_id = $2', "(v.status IS NULL OR v.status != 'cancelled')"];
             const statsParams = [customerId, tenantId];
             let statsParamIndex = 3;
@@ -1582,7 +1581,15 @@ module.exports = (pool, io) => {
             const statsResult = await pool.query(statsQuery, statsParams);
             const stats = statsResult.rows[0];
 
-            console.log(`[Customers/SalesHistory] ✅ ${salesResult.rows.length} ventas encontradas`);
+            console.log(`[Customers/SalesHistory] ✅ ${salesResult.rows.length} ventas encontradas (customerId: ${customerId}, tenant: ${tenantId})`);
+            if (salesResult.rows.length === 0) {
+                // Debug: verificar si hay ventas con este id_cliente sin filtros
+                const debugResult = await pool.query(
+                    'SELECT id_venta, status, estado_venta_id, tipo_pago_id FROM ventas WHERE id_cliente = $1 AND tenant_id = $2 LIMIT 5',
+                    [customerId, tenantId]
+                );
+                console.log(`[Customers/SalesHistory] 🔍 DEBUG ventas sin filtro para id_cliente=${customerId}: ${JSON.stringify(debugResult.rows)}`);
+            }
 
             res.json({
                 success: true,

@@ -45,12 +45,12 @@ module.exports = (pool, io) => {
             const userTimezone = safeTimezone(timezone);
 
             // ✅ FILTRO DE ESTADOS:
-            // - Por defecto: solo ventas COBRADAS (3=Completada, 5=Liquidada)
+            // - Por defecto: ventas COBRADAS + CANCELADAS (3=Completada, 4=Cancelada, 5=Liquidada)
             // - Con include_pending=true: incluye asignadas (2) para monitoreo
-            // - Siempre excluye: 1=Borrador, 4=Cancelada
+            // - Siempre excluye: 1=Borrador
             const estadoFilter = include_pending === 'true'
-                ? 'v.estado_venta_id IN (2, 3, 5)'  // Asignada + Completada + Liquidada
-                : 'v.estado_venta_id IN (3, 5)';    // Solo Completada + Liquidada (cobradas)
+                ? 'v.estado_venta_id IN (2, 3, 4, 5)'  // Asignada + Completada + Cancelada + Liquidada
+                : 'v.estado_venta_id IN (3, 4, 5)';    // Completada + Cancelada + Liquidada
 
             // ✅ FIX: Usar subconsulta para assignment_id en lugar de LEFT JOIN
             // Esto evita duplicados cuando una venta tiene múltiples asignaciones
