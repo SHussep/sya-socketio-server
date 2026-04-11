@@ -1744,9 +1744,9 @@ function createRepartidorAssignmentRoutes(io) {
       // 1. Buscar la asignación y su venta asociada
       const assignmentResult = await pool.query(
         `SELECT ra.id, ra.venta_id, ra.assigned_quantity, ra.assigned_amount, ra.unit_price, ra.status,
-                ra.product_id, p.base_price, p.global_id as product_global_id
+                ra.product_id, p.precio_venta as base_price, p.global_id as product_global_id
          FROM repartidor_assignments ra
-         LEFT JOIN products p ON p.id = ra.product_id
+         LEFT JOIN productos p ON p.id = ra.product_id
          WHERE ra.global_id = $1 AND ra.tenant_id = $2`,
         [globalId, tenant_id]
       );
@@ -1763,7 +1763,7 @@ function createRepartidorAssignmentRoutes(io) {
 
       // 2. Obtener datos del nuevo cliente (descuentos)
       const customerResult = await pool.query(
-        `SELECT id, name, discount_percentage, tipo_descuento, monto_descuento_fijo, aplicar_redondeo
+        `SELECT id, nombre, discount_percentage, tipo_descuento, monto_descuento_fijo, aplicar_redondeo
          FROM customers WHERE id = $1 AND tenant_id = $2`,
         [new_customer_id, tenant_id]
       );
@@ -1825,37 +1825,37 @@ function createRepartidorAssignmentRoutes(io) {
       // 5. Actualizar la venta asociada si existe
       if (assignment.venta_id) {
         await pool.query(
-          `UPDATE ventas SET id_cliente = $1, needs_update = true WHERE id = $2 AND tenant_id = $3`,
+          `UPDATE ventas SET id_cliente = $1, needs_update = true WHERE id_venta = $2 AND tenant_id = $3`,
           [new_customer_id, assignment.venta_id, tenant_id]
         );
 
         // Actualizar detalle de venta si hay product_id
         if (assignment.product_id) {
           await pool.query(
-            `UPDATE venta_detalles
-             SET precio_unitario = $1, total_linea = $2, needs_update = true
-             WHERE venta_id = $3 AND producto_id = $4`,
+            `UPDATE ventas_detalle
+             SET precio_unitario = $1, total_linea = $2
+             WHERE id_venta = $3 AND id_producto = $4`,
             [newUnitPrice, newAmount, assignment.venta_id, assignment.product_id]
           );
 
           // Recalcular total de la venta
           await pool.query(
-            `UPDATE ventas SET subtotal = sub.total, total = sub.total, needs_update = true
-             FROM (SELECT SUM(total_linea) as total FROM venta_detalles WHERE venta_id = $1) sub
-             WHERE ventas.id = $1`,
+            `UPDATE ventas SET subtotal = sub.total, total = sub.total
+             FROM (SELECT SUM(total_linea) as total FROM ventas_detalle WHERE id_venta = $1) sub
+             WHERE ventas.id_venta = $1`,
             [assignment.venta_id]
           );
         }
       }
 
-      console.log(`[ChangeClient] ✅ Asignación ${globalId}: cliente cambiado a ${customer.name} (ID: ${new_customer_id}), precio: $${assignment.unit_price} → $${newUnitPrice}`);
+      console.log(`[ChangeClient] ✅ Asignación ${globalId}: cliente cambiado a ${customer.nombre} (ID: ${new_customer_id}), precio: $${assignment.unit_price} → $${newUnitPrice}`);
 
       res.json({
         success: true,
         data: {
           assignment_global_id: globalId,
           new_customer_id: new_customer_id,
-          new_customer_name: customer.name,
+          new_customer_name: customer.nombre,
           new_unit_price: newUnitPrice,
           new_assigned_amount: newAmount,
           old_unit_price: assignment.unit_price,
