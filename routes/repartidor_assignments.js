@@ -1800,8 +1800,7 @@ function createRepartidorAssignmentRoutes(io) {
       // 4. Actualizar asignación
       await pool.query(
         `UPDATE repartidor_assignments
-         SET unit_price = $1, assigned_amount = $2, needs_update = true,
-             last_modified_local_utc = NOW()
+         SET unit_price = $1, assigned_amount = $2, updated_at = NOW()
          WHERE id = $3`,
         [newUnitPrice, newAmount, assignment.id]
       );
@@ -1809,7 +1808,7 @@ function createRepartidorAssignmentRoutes(io) {
       // 5. Actualizar la venta asociada si existe
       if (assignment.venta_id) {
         await pool.query(
-          `UPDATE ventas SET id_cliente = $1, needs_update = true WHERE id_venta = $2 AND tenant_id = $3`,
+          `UPDATE ventas SET id_cliente = $1, updated_at = NOW() WHERE id_venta = $2 AND tenant_id = $3`,
           [new_customer_id, assignment.venta_id, tenant_id]
         );
 
