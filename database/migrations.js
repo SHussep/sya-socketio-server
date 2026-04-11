@@ -3335,6 +3335,31 @@ async function runMigrations() {
                 console.log('[Schema] ⚠️ Migration 048 (production_alerts):', m048err.message);
             }
 
+            // Migration 049: Fix trigger update_customer_balance to set updated_at
+            // Without updated_at, Desktop sync skips customers whose balance changed
+            try {
+                await client.query(`
+                    CREATE OR REPLACE FUNCTION update_customer_balance()
+                    RETURNS TRIGGER AS $$
+                    BEGIN
+                        IF TG_OP = 'INSERT' AND NEW.tipo_pago_id = 3 THEN
+                            UPDATE customers
+                            SET saldo_deudor = saldo_deudor + NEW.total, updated_at = NOW()
+                            WHERE id = NEW.id_cliente;
+                        ELSIF TG_OP = 'UPDATE' AND OLD.status != 'cancelled' AND NEW.status = 'cancelled' AND NEW.tipo_pago_id = 3 THEN
+                            UPDATE customers
+                            SET saldo_deudor = saldo_deudor - NEW.total, updated_at = NOW()
+                            WHERE id = NEW.id_cliente;
+                        END IF;
+                        RETURN NEW;
+                    END;
+                    $$ LANGUAGE plpgsql;
+                `);
+                console.log('[Schema] ✅ Trigger update_customer_balance updated with updated_at (Migration 049)');
+            } catch (m049err) {
+                console.log('[Schema] ⚠️ Migration 049 (trigger fix):', m049err.message);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {

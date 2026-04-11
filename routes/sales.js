@@ -324,7 +324,7 @@ module.exports = (pool, io) => {
                 const creditToRevert = parseFloat(sale.credit_amount);
                 reversedCredit = creditToRevert;
                 await client.query(
-                    `UPDATE customers SET saldo_deudor = GREATEST(saldo_deudor - $1, 0)
+                    `UPDATE customers SET saldo_deudor = GREATEST(saldo_deudor - $1, 0), updated_at = NOW()
                      WHERE id = $2 AND tenant_id = $3`,
                     [creditToRevert, sale.id_cliente, tenantId]
                 );

@@ -845,13 +845,13 @@ BEGIN
     -- INSERT venta a crédito → aumenta saldo_deudor
     IF TG_OP = 'INSERT' AND NEW.tipo_pago_id = 3 THEN
         UPDATE customers
-        SET saldo_deudor = saldo_deudor + NEW.total
+        SET saldo_deudor = saldo_deudor + NEW.total, updated_at = NOW()
         WHERE id = NEW.id_cliente;
 
     -- UPDATE status='cancelled' → revierte saldo
     ELSIF TG_OP = 'UPDATE' AND OLD.status != 'cancelled' AND NEW.status = 'cancelled' AND NEW.tipo_pago_id = 3 THEN
         UPDATE customers
-        SET saldo_deudor = saldo_deudor - NEW.total
+        SET saldo_deudor = saldo_deudor - NEW.total, updated_at = NOW()
         WHERE id = NEW.id_cliente;
     END IF;
 
