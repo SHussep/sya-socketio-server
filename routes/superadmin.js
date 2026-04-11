@@ -546,6 +546,11 @@ module.exports = function(pool, io) {
                     (SELECT COUNT(*) FROM employees e
                      JOIN employee_branches eb ON e.id = eb.employee_id
                      WHERE eb.branch_id = b.id AND e.is_active = true) as employee_count,
+                    (SELECT COUNT(*) FROM employees e
+                     JOIN employee_branches eb ON e.id = eb.employee_id
+                     WHERE eb.branch_id = b.id) as total_employee_count,
+                    (SELECT COUNT(DISTINCT cb.customer_id) FROM cliente_branches cb
+                     WHERE cb.branch_id = b.id AND cb.is_active = true) as customer_count,
                     (SELECT COUNT(*) FROM telemetry_events WHERE branch_id = b.id AND event_type = 'scale_configured') > 0 as has_scale,
                     (SELECT MAX(event_timestamp) FROM telemetry_events WHERE branch_id = b.id) as last_activity
                 FROM branches b
@@ -710,7 +715,9 @@ module.exports = function(pool, io) {
                         code: b.branch_code,
                         name: b.name,
                         address: b.address,
-                        employeeCount: parseInt(b.employee_count),
+                        employeeCount: parseInt(b.employee_count) || 0,
+                        totalEmployeeCount: parseInt(b.total_employee_count) || 0,
+                        customerCount: parseInt(b.customer_count) || 0,
                         hasScale: b.has_scale,
                         lastActivity: b.last_activity,
                         isActive: b.is_active,
