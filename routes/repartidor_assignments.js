@@ -1763,7 +1763,7 @@ function createRepartidorAssignmentRoutes(io) {
 
       // 2. Obtener datos del nuevo cliente (descuentos)
       const customerResult = await pool.query(
-        `SELECT id, nombre, discount_percentage, tipo_descuento, monto_descuento_fijo, aplicar_redondeo
+        `SELECT id, nombre, porcentaje_descuento, tipo_descuento, monto_descuento_fijo, aplicar_redondeo
          FROM customers WHERE id = $1 AND tenant_id = $2`,
         [new_customer_id, tenant_id]
       );
@@ -1778,32 +1778,16 @@ function createRepartidorAssignmentRoutes(io) {
       let newUnitPrice = assignment.base_price || assignment.unit_price;
       const basePrice = assignment.base_price || assignment.unit_price;
 
-      // Buscar precio especial por producto
-      if (assignment.product_global_id) {
-        const specialPrice = await pool.query(
-          `SELECT special_price, discount_percentage FROM customer_product_prices
-           WHERE customer_global_id = (SELECT global_id FROM customers WHERE id = $1)
-             AND product_global_id = $2 AND is_active = true`,
-          [new_customer_id, assignment.product_global_id]
-        );
-        if (specialPrice.rows.length > 0 && specialPrice.rows[0].special_price) {
-          newUnitPrice = parseFloat(specialPrice.rows[0].special_price);
-        } else if (specialPrice.rows.length > 0 && specialPrice.rows[0].discount_percentage > 0) {
-          newUnitPrice = basePrice * (1 - specialPrice.rows[0].discount_percentage / 100);
-        } else {
-          // Aplicar descuento general del cliente
-          switch (customer.tipo_descuento) {
-            case 1: // Porcentaje
-              newUnitPrice = basePrice * (1 - (customer.discount_percentage || 0) / 100);
-              break;
-            case 2: // Monto fijo
-              newUnitPrice = basePrice - (customer.monto_descuento_fijo || 0);
-              break;
-            // tipo_descuento 3 = por producto (ya manejado arriba)
-            default:
-              newUnitPrice = basePrice;
-          }
-        }
+      // Aplicar descuento general del cliente
+      switch (customer.tipo_descuento) {
+        case 1: // Porcentaje
+          newUnitPrice = basePrice * (1 - (customer.porcentaje_descuento || 0) / 100);
+          break;
+        case 2: // Monto fijo
+          newUnitPrice = basePrice - (customer.monto_descuento_fijo || 0);
+          break;
+        default:
+          newUnitPrice = basePrice;
       }
 
       if (customer.aplicar_redondeo) {
