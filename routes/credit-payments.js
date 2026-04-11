@@ -137,30 +137,52 @@ module.exports = (pool, io) => {
             const finalBranchId = branchId || req.user.branchId;
 
             // Idempotency: DO NOTHING on conflict
-            const result = await pool.query(`
-                INSERT INTO credit_payments (
-                    tenant_id, branch_id, customer_id, shift_id, employee_id,
-                    amount, payment_method, payment_date, notes,
-                    global_id, terminal_id, created_local_utc
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8, $9, $10, $11)
-                ON CONFLICT (global_id) DO NOTHING
-                RETURNING *
-            `, [tenantId, finalBranchId, finalCustomerId, finalShiftId,
-                finalEmployeeId, amount, paymentMethod || 'cash', notes,
-                finalGlobalId, terminal_id, created_local_utc]);
-
+            const client = await pool.connect();
             let paymentRow;
-            if (result.rows.length > 0) {
-                paymentRow = result.rows[0];
-            } else {
-                // Already existed — fetch existing
-                const existing = await pool.query(
-                    'SELECT * FROM credit_payments WHERE global_id = $1', [finalGlobalId]);
-                paymentRow = existing.rows[0];
+            let isNewPayment = false;
+            try {
+                await client.query('BEGIN');
+
+                const result = await client.query(`
+                    INSERT INTO credit_payments (
+                        tenant_id, branch_id, customer_id, shift_id, employee_id,
+                        amount, payment_method, payment_date, notes,
+                        global_id, terminal_id, created_local_utc
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8, $9, $10, $11)
+                    ON CONFLICT (global_id) DO NOTHING
+                    RETURNING *
+                `, [tenantId, finalBranchId, finalCustomerId, finalShiftId,
+                    finalEmployeeId, amount, paymentMethod || 'cash', notes,
+                    finalGlobalId, terminal_id, created_local_utc]);
+
+                if (result.rows.length > 0) {
+                    paymentRow = result.rows[0];
+                    isNewPayment = true;
+
+                    // Update customer balance (decrement saldo_deudor)
+                    await client.query(
+                        `UPDATE customers SET saldo_deudor = GREATEST(0, COALESCE(saldo_deudor, 0) - $1)
+                         WHERE id = $2 AND tenant_id = $3`,
+                        [parseFloat(amount), finalCustomerId, tenantId]
+                    );
+                    console.log(`[CreditPayments] ✅ Customer ${finalCustomerId} balance decremented by $${amount}`);
+                } else {
+                    // Already existed — fetch existing
+                    const existing = await client.query(
+                        'SELECT * FROM credit_payments WHERE global_id = $1', [finalGlobalId]);
+                    paymentRow = existing.rows[0];
+                }
+
+                await client.query('COMMIT');
+            } catch (txErr) {
+                await client.query('ROLLBACK');
+                throw txErr;
+            } finally {
+                client.release();
             }
 
-            // Socket notification
-            if (io) {
+            // Socket notification (only for new payments)
+            if (io && isNewPayment) {
                 const roomName = `branch_${paymentRow.branch_id}`;
                 io.to(roomName).emit('credit_payment_created', {
                     paymentId: paymentRow.id,
