@@ -7,6 +7,7 @@
  *   GET    /api/repartidor-assignments/employee/:employeeId - Obtener asignaciones de empleado
  *   GET    /api/repartidor-liquidations/employee/:employeeId - Obtener liquidaciones de empleado
  *   GET    /api/repartidor-liquidations/branch/:branchId/summary - Resumen por sucursal
+ *   POST   /api/repartidor-assignments/:globalId/cancel-liquidation - Cancelar liquidación
  */
 
 const express = require('express');
@@ -1860,6 +1861,217 @@ function createRepartidorAssignmentRoutes(io) {
     } catch (error) {
       console.error('[ChangeClient] ❌ Error:', error.message);
       res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // POST /api/repartidor-assignments/:globalId/cancel-liquidation
+  // Cancelar una liquidación existente y revertir a 'pending'
+  // Revierte crédito de cliente y tipo_pago de la venta
+  // ═══════════════════════════════════════════════════════════════
+  router.post('/:globalId/cancel-liquidation', extractJwtData, async (req, res) => {
+    const { globalId } = req.params;
+    const { cancel_reason, cancelled_by_employee_global_id } = req.body;
+    const tenant_id = req.jwtData?.tenantId;
+
+    if (!cancel_reason) {
+      return res.status(400).json({ success: false, message: 'cancel_reason es requerido' });
+    }
+    if (!cancelled_by_employee_global_id) {
+      return res.status(400).json({ success: false, message: 'cancelled_by_employee_global_id es requerido' });
+    }
+    if (!tenant_id) {
+      return res.status(401).json({ success: false, message: 'Token JWT inválido o ausente' });
+    }
+
+    const client = await pool.connect();
+
+    try {
+      console.log('[CancelLiquidation] 🔄 POST /api/repartidor-assignments/:globalId/cancel-liquidation');
+      console.log(`  global_id: ${globalId}, reason: ${cancel_reason}`);
+
+      // 1. Buscar asignación y verificar status
+      const assignmentResult = await client.query(
+        `SELECT * FROM repartidor_assignments WHERE global_id = $1 AND tenant_id = $2`,
+        [globalId, tenant_id]
+      );
+
+      if (assignmentResult.rows.length === 0) {
+        client.release();
+        return res.status(404).json({ success: false, message: 'Asignación no encontrada' });
+      }
+
+      const assignment = assignmentResult.rows[0];
+
+      if (assignment.status !== 'liquidated') {
+        client.release();
+        return res.status(400).json({
+          success: false,
+          message: "Solo se pueden cancelar liquidaciones con status 'liquidated'"
+        });
+      }
+
+      // 2. Resolver cancelled_by_employee_id desde global_id
+      let cancelledByEmployeeId = null;
+      try {
+        const empResult = await client.query(
+          `SELECT id FROM employees WHERE global_id = $1 AND tenant_id = $2`,
+          [cancelled_by_employee_global_id, tenant_id]
+        );
+        if (empResult.rows.length > 0) {
+          cancelledByEmployeeId = empResult.rows[0].id;
+        }
+      } catch (empErr) {
+        console.warn('[CancelLiquidation] ⚠️ No se pudo resolver employee:', empErr.message);
+      }
+
+      await client.query('BEGIN');
+
+      // 3. Revertir assignment a pending
+      const updateResult = await client.query(
+        `UPDATE repartidor_assignments
+         SET status = 'pending',
+             fecha_liquidacion = NULL,
+             payment_method_id = NULL,
+             cash_amount = NULL,
+             card_amount = NULL,
+             credit_amount = NULL,
+             amount_received = NULL,
+             is_credit = NULL,
+             payment_reference = NULL,
+             liquidated_by_employee_id = NULL,
+             cancel_reason = $2,
+             cancelled_at = NOW(),
+             cancelled_by_employee_id = $3,
+             updated_at = NOW()
+         WHERE global_id = $1 AND tenant_id = $4
+         RETURNING *`,
+        [globalId, cancel_reason, cancelledByEmployeeId, tenant_id]
+      );
+
+      const updatedAssignment = updateResult.rows[0];
+      console.log(`[CancelLiquidation] ✅ Asignación ${updatedAssignment.id} revertida a pending`);
+
+      // 4. Revertir crédito de cliente si la asignación tenía crédito
+      if (assignment.venta_id) {
+        try {
+          // Leer venta y su crédito actual
+          const ventaResult = await client.query(
+            `SELECT id_cliente, COALESCE(credito_original, 0) as old_credito
+             FROM ventas WHERE id_venta = $1 AND tenant_id = $2`,
+            [assignment.venta_id, tenant_id]
+          );
+
+          if (ventaResult.rows.length > 0) {
+            const ventaClienteId = ventaResult.rows[0].id_cliente;
+            const oldCredito = parseFloat(ventaResult.rows[0].old_credito);
+
+            // Recalcular totales de TODAS las asignaciones liquidadas restantes (excluyendo la cancelada)
+            const remainingTotals = await client.query(
+              `SELECT
+                 COALESCE(SUM(cash_amount), 0) as total_cash,
+                 COALESCE(SUM(card_amount), 0) as total_card,
+                 COALESCE(SUM(credit_amount), 0) as total_credit,
+                 COALESCE(SUM(assigned_amount), 0) as total_amount
+               FROM repartidor_assignments
+               WHERE venta_id = $1 AND tenant_id = $2 AND status = 'liquidated'`,
+              [assignment.venta_id, tenant_id]
+            );
+
+            const totals = remainingTotals.rows[0];
+            const totalPagado = parseFloat(totals.total_cash) + parseFloat(totals.total_card);
+            const totalCredito = parseFloat(totals.total_credit);
+            const totalVenta = parseFloat(totals.total_amount);
+
+            // Redeterminar tipo_pago_id basado en asignaciones restantes
+            const ventaHasCash = parseFloat(totals.total_cash) > 0;
+            const ventaHasCard = parseFloat(totals.total_card) > 0;
+            const ventaHasCredit = parseFloat(totals.total_credit) > 0;
+            const ventaPaymentTypes = [ventaHasCash, ventaHasCard, ventaHasCredit].filter(Boolean).length;
+
+            let finalTipoPagoId;
+            if (ventaPaymentTypes > 1) {
+              finalTipoPagoId = 4; // Mixto
+            } else if (ventaHasCredit && !ventaHasCash && !ventaHasCard) {
+              finalTipoPagoId = 3; // Crédito
+            } else if (ventaHasCard && !ventaHasCash && !ventaHasCredit) {
+              finalTipoPagoId = 2; // Tarjeta
+            } else {
+              finalTipoPagoId = 1; // Efectivo (default)
+            }
+
+            // Actualizar la venta con totales recalculados
+            await client.query(
+              `UPDATE ventas
+               SET tipo_pago_id = $1,
+                   monto_pagado = $2,
+                   total = CASE WHEN $5 > 0 THEN $5 ELSE total END,
+                   credito_original = $6,
+                   updated_at = NOW()
+               WHERE id_venta = $3 AND tenant_id = $4`,
+              [finalTipoPagoId, totalPagado, assignment.venta_id, tenant_id, totalVenta, totalCredito]
+            );
+
+            console.log(`[CancelLiquidation] 💰 Venta #${assignment.venta_id} actualizada: tipo_pago_id=${finalTipoPagoId}, monto_pagado=$${totalPagado.toFixed(2)}, credito=$${totalCredito.toFixed(2)}`);
+
+            // Ajustar saldo de cliente si cambió el crédito
+            if (ventaClienteId) {
+              const creditDelta = totalCredito - oldCredito;
+              if (creditDelta !== 0) {
+                if (creditDelta < 0) {
+                  // Crédito disminuyó → reducir saldo_deudor
+                  await client.query(
+                    `UPDATE customers
+                     SET saldo_deudor = GREATEST(saldo_deudor + $1, 0), updated_at = NOW()
+                     WHERE id = $2 AND tenant_id = $3`,
+                    [creditDelta, ventaClienteId, tenant_id]
+                  );
+                } else {
+                  // Crédito aumentó (caso raro en cancelación, pero por seguridad)
+                  await client.query(
+                    `UPDATE customers
+                     SET saldo_deudor = saldo_deudor + $1, updated_at = NOW()
+                     WHERE id = $2 AND tenant_id = $3`,
+                    [creditDelta, ventaClienteId, tenant_id]
+                  );
+                }
+                console.log(`[CancelLiquidation] 💳 Cliente #${ventaClienteId} saldo ajustado: ${creditDelta > 0 ? '+' : ''}$${creditDelta.toFixed(2)}`);
+              }
+            }
+          }
+        } catch (ventaErr) {
+          console.error('[CancelLiquidation] ⚠️ Error revirtiendo crédito de venta:', ventaErr.message);
+          // No fallar la cancelación por error en reversion de crédito
+        }
+      }
+
+      await client.query('COMMIT');
+
+      // 5. Emitir evento Socket.IO
+      const branchId = updatedAssignment.branch_id;
+      if (io && branchId) {
+        io.to(`branch_${branchId}`).emit('assignment_updated', {
+          assignment: updatedAssignment,
+          previousStatus: 'liquidated',
+          isLiquidationCancelled: true,
+          timestamp: new Date().toISOString()
+        });
+        console.log(`[CancelLiquidation] 📡 assignment_updated emitido: ${updatedAssignment.id} -> pending (liquidation cancelled)`);
+      }
+
+      // 6. Respuesta exitosa
+      res.json({
+        success: true,
+        message: 'Liquidación cancelada exitosamente',
+        assignment: updatedAssignment
+      });
+
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      console.error('[CancelLiquidation] ❌ Error:', error.message);
+      res.status(500).json({ success: false, message: error.message });
+    } finally {
+      client.release();
     }
   });
 
