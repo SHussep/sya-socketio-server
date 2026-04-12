@@ -278,9 +278,11 @@ module.exports = (pool, io) => {
 
             // 1. Obtener la venta con sus detalles
             const saleResult = await client.query(
-                `SELECT v.*, s.end_time as shift_end_time
+                `SELECT v.*, s.end_time as shift_end_time,
+                        sr.end_time as repartidor_shift_end_time
                  FROM ventas v
                  LEFT JOIN shifts s ON v.id_turno = s.id
+                 LEFT JOIN shifts sr ON v.id_turno_repartidor = sr.id
                  WHERE v.id_venta = $1 AND v.tenant_id = $2`,
                 [saleId, tenantId]
             );
@@ -297,12 +299,21 @@ module.exports = (pool, io) => {
                 return res.status(400).json({ success: false, message: 'La venta ya fue cancelada anteriormente' });
             }
 
-            // Validar turno abierto (opcional - el turno del cajero que creó la venta)
+            // Validar turno del cajero abierto
             if (sale.shift_end_time) {
                 await client.query('ROLLBACK');
                 return res.status(400).json({
                     success: false,
                     message: `No se puede cancelar: el turno fue cerrado el ${new Date(sale.shift_end_time).toLocaleString('es-MX')}`
+                });
+            }
+
+            // Validar turno del repartidor abierto
+            if (sale.repartidor_shift_end_time) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({
+                    success: false,
+                    message: `No se puede cancelar: el turno del repartidor fue cerrado el ${new Date(sale.repartidor_shift_end_time).toLocaleString('es-MX')}`
                 });
             }
 
