@@ -2190,7 +2190,7 @@ module.exports = (pool, io) => {
             // Construir query para obtener turnos abiertos
             let query = `
                 SELECT
-                    s.id, s.employee_id, s.branch_id, s.tenant_id,
+                    s.id, s.global_id, s.employee_id, s.branch_id, s.tenant_id,
                     s.start_time, s.initial_amount, s.is_cash_cut_open,
                     s.terminal_id,
                     e.global_id as employee_global_id,
@@ -2406,6 +2406,7 @@ module.exports = (pool, io) => {
                     let snapshotData = {
                         // Info del turno
                         shift_id: shift.id,
+                        shift_global_id: shift.global_id,
                         employee_id: shift.employee_id,
                         employee_global_id: shift.employee_global_id,
                         employee_name: shift.employee_name,
