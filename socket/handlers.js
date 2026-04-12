@@ -659,21 +659,22 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
             stats.totalEvents++;
             const roomName = `branch_${data.branchId}`;
             console.log(`[SALE] Sucursal ${data.branchId}: Ticket #${data.ticketNumber} - $${data.total} (source: ${data.source || 'desktop'})`);
-            io.to(roomName).emit('sale_completed', { ...data, receivedAt: new Date().toISOString() });
+            // socket.to() excludes sender — sender already has its own data locally
+            socket.to(roomName).emit('sale_completed', { ...data, receivedAt: new Date().toISOString() });
         });
 
         socket.on('deposit_created', (data) => {
             stats.totalEvents++;
             const roomName = `branch_${data.branchId}`;
             console.log(`[DEPOSIT] Sucursal ${data.branchId}: $${data.amount} (source: ${data.source || 'desktop'})`);
-            io.to(roomName).emit('deposit_created', { ...data, receivedAt: new Date().toISOString() });
+            socket.to(roomName).emit('deposit_created', { ...data, receivedAt: new Date().toISOString() });
         });
 
         socket.on('withdrawal_created', (data) => {
             stats.totalEvents++;
             const roomName = `branch_${data.branchId}`;
             console.log(`[WITHDRAWAL] Sucursal ${data.branchId}: $${data.amount} (source: ${data.source || 'desktop'})`);
-            io.to(roomName).emit('withdrawal_created', { ...data, receivedAt: new Date().toISOString() });
+            socket.to(roomName).emit('withdrawal_created', { ...data, receivedAt: new Date().toISOString() });
         });
 
         socket.on('weight_update', (data) => {
@@ -1066,28 +1067,28 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
             stats.totalEvents++;
             const roomName = `branch_${data.branchId}`;
             console.log(`[ASSIGNMENT] ✏️ Asignación editada en sucursal ${data.branchId}: ${data.productName} (${data.oldQuantity} → ${data.newQuantity})`);
-            io.to(roomName).emit('assignment_edited', { ...data, receivedAt: new Date().toISOString() });
+            socket.to(roomName).emit('assignment_edited', { ...data, receivedAt: new Date().toISOString() });
         });
 
         socket.on('assignment_cancelled', (data) => {
             stats.totalEvents++;
             const roomName = `branch_${data.branchId}`;
             console.log(`[ASSIGNMENT] ❌ Asignación cancelada en sucursal ${data.branchId}: ${data.productName} - Razón: ${data.reason}`);
-            io.to(roomName).emit('assignment_cancelled', { ...data, receivedAt: new Date().toISOString() });
+            socket.to(roomName).emit('assignment_cancelled', { ...data, receivedAt: new Date().toISOString() });
         });
 
         socket.on('assignment_liquidated', (data) => {
             stats.totalEvents++;
             const roomName = `branch_${data.branchId}`;
             console.log(`[ASSIGNMENT] ✅ Liquidación en sucursal ${data.branchId}: ${data.itemCount} items por ${data.employeeName}`);
-            io.to(roomName).emit('assignment_liquidated', { ...data, receivedAt: new Date().toISOString() });
+            socket.to(roomName).emit('assignment_liquidated', { ...data, receivedAt: new Date().toISOString() });
         });
 
         socket.on('assignment_created', (data) => {
             stats.totalEvents++;
             const roomName = `branch_${data.branchId}`;
             console.log(`[ASSIGNMENT] 📦 Nueva asignación en sucursal ${data.branchId}: ${data.assignment?.productName || '?'} (${data.assignment?.assignedQuantity || 0}${data.assignment?.unitAbbreviation || 'kg'}) para empleado ${data.assignment?.employeeId}`);
-            io.to(roomName).emit('assignment_created', { ...data, receivedAt: new Date().toISOString() });
+            socket.to(roomName).emit('assignment_created', { ...data, receivedAt: new Date().toISOString() });
         });
 
         // ═══════════════════════════════════════════════════════════════
