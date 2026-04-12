@@ -501,7 +501,7 @@ function createRepartidorAssignmentRoutes(io) {
         fecha_liquidacion || null,
         observaciones || null,
         global_id,
-        terminal_id,
+        terminal_id || null,
         local_op_seq || null,
         created_local_utc || new Date().toISOString(),
         device_event_raw || null,
@@ -995,8 +995,7 @@ function createRepartidorAssignmentRoutes(io) {
       console.error(error.stack);
       res.status(500).json({
         success: false,
-        message: 'Error al sincronizar asignación de repartidor',
-        error: undefined
+        message: `Error al sincronizar asignación de repartidor: ${error.message}`
       });
     }
   });
@@ -1412,12 +1411,15 @@ function createRepartidorAssignmentRoutes(io) {
           -- GlobalIds para resolución
           e.global_id as employee_global_id,
           cb.global_id as created_by_employee_global_id,
-          pr.global_id as product_global_id
+          pr.global_id as product_global_id,
+          s_seller.global_id as shift_global_id,
+          s.global_id as repartidor_shift_global_id
         FROM repartidor_assignments ra
         LEFT JOIN employees e ON e.id = ra.employee_id
         LEFT JOIN employees cb ON cb.id = ra.created_by_employee_id
         LEFT JOIN productos pr ON pr.id = ra.product_id
         LEFT JOIN shifts s ON s.id = ra.repartidor_shift_id
+        LEFT JOIN shifts s_seller ON s_seller.id = ra.shift_id
         WHERE ra.employee_id = $1
           AND (s.end_time IS NULL OR ra.repartidor_shift_id IS NULL)
       `;
