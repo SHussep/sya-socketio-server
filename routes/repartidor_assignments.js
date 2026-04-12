@@ -1384,7 +1384,7 @@ function createRepartidorAssignmentRoutes(io) {
       const employeeId = empResult.rows[0].id;
       console.log(`[API] 🔗 Resolved employee_global_id ${employee_global_id} -> employee_id ${employeeId}`);
 
-      // Construir query sin filtro de turno
+      // Construir query filtrando por turno activo del repartidor
       let query = `
         SELECT
           ra.id,
@@ -1417,7 +1417,9 @@ function createRepartidorAssignmentRoutes(io) {
         LEFT JOIN employees e ON e.id = ra.employee_id
         LEFT JOIN employees cb ON cb.id = ra.created_by_employee_id
         LEFT JOIN productos pr ON pr.id = ra.product_id
+        LEFT JOIN shifts s ON s.id = ra.repartidor_shift_id
         WHERE ra.employee_id = $1
+          AND (s.end_time IS NULL OR ra.repartidor_shift_id IS NULL)
       `;
 
       const params = [employeeId];
