@@ -383,9 +383,9 @@ module.exports = (pool, io) => {
     router.post('/close', authenticateToken, async (req, res) => {
         try {
             const { tenantId, employeeId: jwtEmployeeId, branchId } = req.user;
-            const { shiftId, finalAmount, counted_cash, expected_cash, difference, notes, employeeGlobalId } = req.body;
+            const { shiftId, finalAmount, counted_cash, expected_cash, difference, notes, employeeGlobalId, employee_id: bodyEmployeeId } = req.body;
 
-            // Resolve real employee_id from global_id if provided
+            // Resolve real employee_id: try global_id first, then explicit employee_id, then JWT
             let employeeId = jwtEmployeeId;
             if (employeeGlobalId) {
                 const empResult = await pool.query(
@@ -395,6 +395,10 @@ module.exports = (pool, io) => {
                 if (empResult.rows.length > 0) {
                     employeeId = empResult.rows[0].id;
                 }
+            } else if (bodyEmployeeId) {
+                // Fallback: Desktop sends numeric employee_id (RemoteId) when GlobalId is unavailable
+                employeeId = bodyEmployeeId;
+                console.log(`[Shifts] Using body employee_id=${bodyEmployeeId} (GlobalId not available)`);
             }
 
             // ═══ is_owner guard: only owners can close shifts on behalf of other employees ═══
