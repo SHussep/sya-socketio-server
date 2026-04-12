@@ -297,6 +297,7 @@ module.exports = (pool, io) => {
         try {
             const {
                 tenant_id,
+                branch_id,             // Branch del Desktop que sincroniza
                 id_producto,           // ID local de Desktop (SQLite)
                 descripcion,
                 categoria,
@@ -480,6 +481,26 @@ module.exports = (pool, io) => {
 
             const producto = result.rows[0];
             const action = producto.inserted ? 'INSERTADO' : 'ACTUALIZADO';
+
+            // ✅ Sync inventario/minimo a producto_branches (per-branch inventory)
+            if (branch_id && (inventario !== undefined || minimo !== undefined)) {
+                try {
+                    await pool.query(
+                        `INSERT INTO producto_branches (tenant_id, branch_id, product_global_id, inventario, minimo, global_id)
+                         VALUES ($1, $2, $3, COALESCE($4, 0), COALESCE($5, 0), gen_random_uuid())
+                         ON CONFLICT (tenant_id, product_global_id, branch_id)
+                         DO UPDATE SET
+                            inventario = COALESCE($4, producto_branches.inventario),
+                            minimo = COALESCE($5, producto_branches.minimo),
+                            updated_at = NOW()`,
+                        [tenant_id, branch_id, producto.global_id, inventario ?? null, minimo ?? null]
+                    );
+                    console.log(`[Productos/Sync] ✅ producto_branches actualizado: branch=${branch_id}, inventario=${inventario}, minimo=${minimo}`);
+                } catch (branchErr) {
+                    console.error(`[Productos/Sync] ⚠️ Error actualizando producto_branches: ${branchErr.message}`);
+                    // No fallar el sync principal por esto
+                }
+            }
 
             console.log(`[Productos/Sync] ✅ Producto ${action}: ${descripcion} (ID: ${producto.id}, ProveedorID: ${resolvedProveedorId})`);
 
