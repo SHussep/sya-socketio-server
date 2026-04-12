@@ -101,7 +101,9 @@ function createRepartidorAssignmentRoutes(io) {
       // Cancellation tracking fields
       cancel_reason,
       cancelled_at,
-      cancelled_by_employee_global_id
+      cancelled_by_employee_global_id,
+      // Batch grouping
+      batch_global_id
     } = req.body;
 
     try {
@@ -117,6 +119,7 @@ function createRepartidorAssignmentRoutes(io) {
       console.log(`  Mode: ${isDirectAssignment ? 'DIRECT (sin venta)' : 'FROM_SALE'}, VentaGlobalId: ${venta_global_id || venta_id || 'N/A'}`);
       console.log(`  Product: ${product_name || 'N/A'}, Quantity: ${assigned_quantity} ${unit_abbreviation || 'kg'}, Status: ${status}`);
       console.log(`  RepartidorShiftGlobalId: ${repartidor_shift_global_id || 'N/A'}, RepartidorShiftId: ${repartidor_shift_id || 'N/A'}`);
+      console.log(`  BatchGlobalId: ${batch_global_id || 'N/A'}`);
       console.log(`  Tenant: ${tenant_id} (from: ${body_tenant_id ? 'body' : 'jwt'}), Branch: ${branch_id} (from: ${body_branch_id ? 'body' : 'jwt'})`);
       // 🆕 Log payment info when liquidating
       if (payment_method_id || cash_amount || card_amount || credit_amount) {
@@ -422,14 +425,16 @@ function createRepartidorAssignmentRoutes(io) {
           source,
           was_edited, edit_reason, last_edited_at, last_edited_by_employee_id,
           original_quantity_before_edit, original_amount_before_edit,
-          cancel_reason, cancelled_at, cancelled_by_employee_id
+          cancel_reason, cancelled_at, cancelled_by_employee_id,
+          batch_global_id
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
           $16::uuid, $17::uuid, $18, $19, $20,
           $21, $22, $23,
           $24, $25, $26, $27, $28, $29, $30, $31, $32,
           $33, $34, $35, $36, $37, $38,
-          $39, $40, $41
+          $39, $40, $41,
+          $42::uuid
         )
         ON CONFLICT (global_id) DO UPDATE
         SET status = EXCLUDED.status,
@@ -480,6 +485,8 @@ function createRepartidorAssignmentRoutes(io) {
             -- ✅ Permitir vincular venta/turno desde Desktop cuando procesa asignación de móvil
             venta_id = COALESCE(EXCLUDED.venta_id, repartidor_assignments.venta_id),
             shift_id = COALESCE(EXCLUDED.shift_id, repartidor_assignments.shift_id),
+            -- Batch grouping
+            batch_global_id = COALESCE(EXCLUDED.batch_global_id, repartidor_assignments.batch_global_id),
             updated_at = NOW()
         RETURNING *, (xmax = 0) AS inserted
       `;
@@ -528,7 +535,9 @@ function createRepartidorAssignmentRoutes(io) {
         // Cancel tracking fields
         cancel_reason || null,
         cancelled_at || null,
-        resolvedCancelledByEmployeeId
+        resolvedCancelledByEmployeeId,
+        // Batch grouping
+        batch_global_id || null
       ]);
 
       const assignment = result.rows[0];
@@ -1413,7 +1422,9 @@ function createRepartidorAssignmentRoutes(io) {
           cb.global_id as created_by_employee_global_id,
           pr.global_id as product_global_id,
           s_seller.global_id as shift_global_id,
-          s.global_id as repartidor_shift_global_id
+          s.global_id as repartidor_shift_global_id,
+          ra.batch_global_id,
+          CONCAT(cb.nombre, ' ', cb.apellido_paterno) as created_by_employee_name
         FROM repartidor_assignments ra
         LEFT JOIN employees e ON e.id = ra.employee_id
         LEFT JOIN employees cb ON cb.id = ra.created_by_employee_id
