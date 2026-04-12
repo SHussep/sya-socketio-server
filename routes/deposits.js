@@ -26,6 +26,7 @@ function authenticateToken(req, res, next) {
 }
 
 module.exports = (pool, io) => {
+    const activeDeviceSessions = require('../socket/activeDeviceSessions');
     const router = express.Router();
 
     // GET /api/deposits - Get list of deposits
@@ -283,14 +284,21 @@ module.exports = (pool, io) => {
                     // 🔌 Emit deposit_created via Socket.IO (only on real INSERT)
                     if (io && wasInserted) {
                         const roomName = `branch_${branchId}`;
-                        io.to(roomName).emit('deposit_created', {
+                        const depositEvent = {
                             branchId,
                             depositId: depositRow.id,
                             amount: parseFloat(depositRow.amount),
                             description: depositRow.description,
                             source: 'rest_sync',
                             completedAt: depositRow.deposit_date || new Date().toISOString(),
-                        });
+                        };
+                        // Exclude sender's socket to prevent echo
+                        const depSenderSession = activeDeviceSessions.get(`${finalEmployeeId}_desktop`);
+                        if (depSenderSession?.socketId) {
+                            io.to(roomName).except(depSenderSession.socketId).emit('deposit_created', depositEvent);
+                        } else {
+                            io.to(roomName).emit('deposit_created', depositEvent);
+                        }
                         console.log(`[Deposits/Sync] 🔌 Socket.IO: deposit_created emitido a ${roomName} ($${numericAmount})`);
                     }
                 } catch (error) {

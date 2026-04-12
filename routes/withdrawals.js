@@ -26,6 +26,7 @@ function authenticateToken(req, res, next) {
 }
 
 module.exports = (pool, io) => {
+    const activeDeviceSessions = require('../socket/activeDeviceSessions');
     const router = express.Router();
 
     // GET /api/withdrawals - Get list of withdrawals
@@ -279,14 +280,21 @@ module.exports = (pool, io) => {
                     // 🔌 Emit withdrawal_created via Socket.IO (only on real INSERT)
                     if (io && wasInserted) {
                         const roomName = `branch_${branchId}`;
-                        io.to(roomName).emit('withdrawal_created', {
+                        const withdrawalEvent = {
                             branchId,
                             withdrawalId: withdrawalRow.id,
                             amount: parseFloat(withdrawalRow.amount),
                             description: withdrawalRow.description,
                             source: 'rest_sync',
                             completedAt: withdrawalRow.withdrawal_date || new Date().toISOString(),
-                        });
+                        };
+                        // Exclude sender's socket to prevent echo
+                        const wdSenderSession = activeDeviceSessions.get(`${finalEmployeeId}_desktop`);
+                        if (wdSenderSession?.socketId) {
+                            io.to(roomName).except(wdSenderSession.socketId).emit('withdrawal_created', withdrawalEvent);
+                        } else {
+                            io.to(roomName).emit('withdrawal_created', withdrawalEvent);
+                        }
                         console.log(`[Withdrawals/Sync] 🔌 Socket.IO: withdrawal_created emitido a ${roomName} ($${numericAmount})`);
                     }
                 } catch (error) {

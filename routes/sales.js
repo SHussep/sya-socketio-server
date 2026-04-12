@@ -27,6 +27,7 @@ function authenticateToken(req, res, next) {
 
 module.exports = (pool, io) => {
     const { restoreBranchStock } = require('../utils/branchInventory');
+    const activeDeviceSessions = require('../socket/activeDeviceSessions');
     const router = express.Router();
 
     // GET /api/sales - Lista de ventas (con soporte de timezone)
@@ -769,8 +770,16 @@ module.exports = (pool, io) => {
                     source: 'rest_sync',
                     receivedAt: new Date().toISOString(),
                 };
-                io.to(roomName).emit('sale_completed', saleEvent);
-                console.log(`[Sync/Sales] 🔌 Socket.IO: sale_completed emitido a ${roomName} (Ticket #${insertedVenta.ticket_number})`);
+                // Exclude sender's socket to prevent echo — Desktop syncs via HTTP
+                // but is also connected via Socket.IO in the same room
+                const senderSession = activeDeviceSessions.get(`${id_empleado}_desktop`);
+                if (senderSession?.socketId) {
+                    io.to(roomName).except(senderSession.socketId).emit('sale_completed', saleEvent);
+                    console.log(`[Sync/Sales] 🔌 Socket.IO: sale_completed emitido a ${roomName} excepto sender ${senderSession.socketId} (Ticket #${insertedVenta.ticket_number})`);
+                } else {
+                    io.to(roomName).emit('sale_completed', saleEvent);
+                    console.log(`[Sync/Sales] 🔌 Socket.IO: sale_completed emitido a ${roomName} (Ticket #${insertedVenta.ticket_number})`);
+                }
             } else if (!wasInserted) {
                 console.log(`[Sync/Sales] ⏭️ Socket.IO: Venta ya existía (UPDATE), no se emite notificación (Ticket #${insertedVenta.ticket_number})`);
             }
