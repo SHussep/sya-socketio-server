@@ -191,12 +191,9 @@ router.post('/upload-desktop', async (req, res) => {
             device_id
         } = req.body;
 
-        console.log(`[Backup Upload Desktop] Request - Tenant: ${tenant_id}, Branch: ${branch_id}, Device: ${device_name}`);
-
         // Rate limiting: evitar loops de backup duplicado
         const throttledSecs = isUploadThrottled(tenant_id, branch_id);
         if (throttledSecs > 0) {
-            console.log(`[Backup Upload Desktop] ⛔ THROTTLED - Tenant: ${tenant_id}, Branch: ${branch_id} (esperar ${throttledSecs}s)`);
             return res.status(429).json({
                 success: false,
                 message: `Backup reciente ya existe. Espera ${Math.ceil(throttledSecs / 60)} minutos antes de subir otro.`,
@@ -216,7 +213,6 @@ router.post('/upload-desktop', async (req, res) => {
         const backupBuffer = Buffer.from(backup_base64, 'base64');
         const file_size_bytes = backupBuffer.length;
 
-        console.log(`[Backup Upload Desktop] Tamaño: ${(file_size_bytes / 1024 / 1024).toFixed(2)} MB`);
 
         // Usar nombre fijo por branch para sobrescribir backup anterior
         // Esto mantiene solo UN backup por branch, el más reciente
@@ -225,12 +221,10 @@ router.post('/upload-desktop', async (req, res) => {
         // Obtener email del tenant para organizar carpetas
         const ownerEmail = await getTenantEmail(tenant_id);
         if (!ownerEmail) {
-            console.warn(`[Backup Upload Desktop] ⚠️ No se encontró email para tenant ${tenant_id}, usando 'unknown'`);
         }
 
         // Construir ruta con nueva estructura: /SYA Backups/{email}/{tenant_id}/{branch_id}/{filename}
         const dropboxPath = buildDropboxPath(ownerEmail, tenant_id, branch_id, simpleFilename);
-        console.log(`[Backup Upload Desktop] 📁 Ruta Dropbox: ${dropboxPath}`);
 
         try {
             // PRIMERO: Eliminar backups viejos de esta branch de la BD (mantener solo el más reciente)
@@ -249,7 +243,6 @@ router.post('/upload-desktop', async (req, res) => {
                 mute: false
             });
 
-            console.log(`[Backup Upload Desktop] ✅ Subido a Dropbox: ${dropboxPath}`);
 
             // Registrar metadata en PostgreSQL (employee_id = null, Desktop no tiene ID de PG)
             const metadataResult = await pool.query(
@@ -274,7 +267,6 @@ router.post('/upload-desktop', async (req, res) => {
 
             const metadata = metadataResult.rows[0];
 
-            console.log(`[Backup Upload Desktop] ✅ Metadata registrada - ID: ${metadata.id}`);
 
             // Marcar upload exitoso para rate limiting
             markUploaded(tenant_id, branch_id);
@@ -292,8 +284,7 @@ router.post('/upload-desktop', async (req, res) => {
 
         } catch (dropboxError) {
             // Intentar refrescar token y reintentar para cualquier error de Dropbox
-            console.log(`[Backup Upload Desktop] ❌ Error Dropbox (status: ${dropboxError.status || 'N/A'}): ${dropboxError.message || dropboxError}`);
-            console.log('[Backup Upload Desktop] Intentando refrescar token y reintentar...');
+            console.error(`[Backup Upload Desktop] Error Dropbox (status: ${dropboxError.status || 'N/A'}): ${dropboxError.message || dropboxError}`);
 
             try {
                 await refreshDropboxToken();
@@ -306,7 +297,6 @@ router.post('/upload-desktop', async (req, res) => {
                     autorename: false
                 });
 
-                console.log(`[Backup Upload Desktop] ✅ Subido a Dropbox (reintento): ${dropboxPath}`);
 
                 const metadataResult = await pool.query(
                     `INSERT INTO backup_metadata (
