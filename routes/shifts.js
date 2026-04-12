@@ -2166,6 +2166,7 @@ module.exports = (pool, io) => {
                     s.id, s.employee_id, s.branch_id, s.tenant_id,
                     s.start_time, s.initial_amount, s.is_cash_cut_open,
                     s.terminal_id,
+                    e.global_id as employee_global_id,
                     CONCAT(e.first_name, ' ', e.last_name) as employee_name,
                     r.name as employee_role,
                     b.name as branch_name
@@ -2379,6 +2380,7 @@ module.exports = (pool, io) => {
                         // Info del turno
                         shift_id: shift.id,
                         employee_id: shift.employee_id,
+                        employee_global_id: shift.employee_global_id,
                         employee_name: shift.employee_name,
                         employee_role: shift.employee_role,
                         branch_id: shift.branch_id,
