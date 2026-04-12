@@ -383,7 +383,7 @@ module.exports = (pool, io) => {
     router.post('/close', authenticateToken, async (req, res) => {
         try {
             const { tenantId, employeeId: jwtEmployeeId, branchId } = req.user;
-            const { shiftId, finalAmount, counted_cash, expected_cash, difference, notes, employeeGlobalId, employee_id: bodyEmployeeId } = req.body;
+            const { shiftId, shiftGlobalId, finalAmount, counted_cash, expected_cash, difference, notes, employeeGlobalId, employee_id: bodyEmployeeId } = req.body;
 
             // Resolve real employee_id: try global_id first, then explicit employee_id, then JWT
             let employeeId = jwtEmployeeId;
@@ -424,13 +424,36 @@ module.exports = (pool, io) => {
             }
 
             // Verificar que el turno existe, pertenece al empleado y está abierto
-            const shiftCheck = await pool.query(
-                `SELECT id, start_time, branch_id, initial_amount FROM shifts
-                 WHERE id = $1 AND tenant_id = $2 AND employee_id = $3 AND is_cash_cut_open = true`,
-                [shiftId, tenantId, employeeId]
-            );
+            // Buscar por global_id (UUID, preferido) o por id numérico (fallback)
+            let shiftCheck;
+            let resolvedShiftId = shiftId;
+
+            if (shiftGlobalId) {
+                shiftCheck = await pool.query(
+                    `SELECT id, start_time, branch_id, initial_amount FROM shifts
+                     WHERE global_id = $1 AND tenant_id = $2 AND employee_id = $3 AND is_cash_cut_open = true`,
+                    [shiftGlobalId, tenantId, employeeId]
+                );
+                if (shiftCheck.rows.length > 0) {
+                    resolvedShiftId = shiftCheck.rows[0].id;
+                    console.log(`[Shifts] Resolved shift by global_id=${shiftGlobalId} → id=${resolvedShiftId}`);
+                }
+            }
+
+            if (!shiftCheck || shiftCheck.rows.length === 0) {
+                // Fallback: buscar por id numérico
+                shiftCheck = await pool.query(
+                    `SELECT id, start_time, branch_id, initial_amount FROM shifts
+                     WHERE id = $1 AND tenant_id = $2 AND employee_id = $3 AND is_cash_cut_open = true`,
+                    [shiftId, tenantId, employeeId]
+                );
+                if (shiftCheck.rows.length > 0) {
+                    resolvedShiftId = shiftCheck.rows[0].id;
+                }
+            }
 
             if (shiftCheck.rows.length === 0) {
+                console.log(`[Shifts] ❌ Shift not found: shiftId=${shiftId}, shiftGlobalId=${shiftGlobalId}, employeeId=${employeeId}, tenant=${tenantId}`);
                 return res.status(404).json({
                     success: false,
                     message: 'Turno no encontrado o ya está cerrado'
@@ -497,7 +520,7 @@ module.exports = (pool, io) => {
                      updated_at = CURRENT_TIMESTAMP
                  WHERE id = $2
                  RETURNING id, tenant_id, branch_id, employee_id, start_time, end_time, initial_amount, final_amount, transaction_counter, is_cash_cut_open`,
-                [finalAmount || 0, shiftId]
+                [finalAmount || 0, resolvedShiftId]
             );
 
             const shift = result.rows[0];
@@ -514,7 +537,7 @@ module.exports = (pool, io) => {
                         FROM ventas
                         WHERE id_turno = $1 AND tenant_id = $2 AND estado_venta_id IN (3, 5)
                         GROUP BY tipo_pago_id
-                    `, [shiftId, tenantId]);
+                    `, [resolvedShiftId, tenantId]);
 
                     let totalCashSales = 0, totalCardSales = 0, totalCreditSales = 0;
                     for (const row of salesResult.rows) {
@@ -529,21 +552,21 @@ module.exports = (pool, io) => {
                     // Expenses (column is id_turno)
                     const expResult = await pool.query(
                         'SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE id_turno = $1 AND tenant_id = $2 AND is_active = true',
-                        [shiftId, tenantId]
+                        [resolvedShiftId, tenantId]
                     );
                     const totalExpenses = parseFloat(expResult.rows[0].total);
 
                     // Deposits (column is shift_id)
                     const depResult = await pool.query(
                         'SELECT COALESCE(SUM(amount), 0) as total FROM deposits WHERE shift_id = $1 AND tenant_id = $2',
-                        [shiftId, tenantId]
+                        [resolvedShiftId, tenantId]
                     );
                     const totalDeposits = parseFloat(depResult.rows[0].total);
 
                     // Withdrawals (column is shift_id)
                     const wdResult = await pool.query(
                         'SELECT COALESCE(SUM(amount), 0) as total FROM withdrawals WHERE shift_id = $1 AND tenant_id = $2',
-                        [shiftId, tenantId]
+                        [resolvedShiftId, tenantId]
                     );
                     const totalWithdrawals = parseFloat(wdResult.rows[0].total);
 
@@ -570,7 +593,7 @@ module.exports = (pool, io) => {
                             $17, $18, 1, $19
                         )
                     `, [
-                        tenantId, shiftBranchId, employeeId, shiftId,
+                        tenantId, shiftBranchId, employeeId, resolvedShiftId,
                         shiftCheck.rows[0].start_time,
                         shiftInitialAmount,
                         totalCashSales, totalCardSales, totalCreditSales,
