@@ -214,32 +214,43 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
                     );
 
                     if (revocationCheck.rows.length > 0) {
-                        console.log(`[Socket] 🚫 Employee ${employeeId} (${data.type}) was revoked while offline — requesting flush`);
+                        const revokedAt = revocationCheck.rows[0].session_revoked_at;
+                        const ageMs = Date.now() - new Date(revokedAt).getTime();
+                        const REVOCATION_TTL_MS = 2 * 60 * 1000; // 2 minutes
 
-                        // Re-set revocation (the UPDATE above cleared it) — wait for flush_complete
-                        await pool.query(
-                            `UPDATE employees SET session_revoked_at = NOW(), session_revoked_for_device = $2
-                             WHERE id = $1`,
-                            [employeeId, data.type]
-                        );
+                        if (ageMs > REVOCATION_TTL_MS) {
+                            // Stale revocation (e.g., from before a deploy or old force_takeover
+                            // where flush_complete never arrived). Just clear it — don't kick.
+                            console.log(`[Socket] ⏭️ Employee ${employeeId} (${data.type}) stale revocation cleared (${Math.round(ageMs / 1000)}s old)`);
+                            // Already cleared by the UPDATE above — proceed normally
+                        } else {
+                            console.log(`[Socket] 🚫 Employee ${employeeId} (${data.type}) was revoked while offline (${Math.round(ageMs / 1000)}s ago) — requesting flush`);
 
-                        // Send flush request instead of immediate force_logout
-                        socket.emit('session_revoked_pending_flush', {
-                            reason: 'session_taken',
-                            message: 'Tu sesión fue revocada — sincronizando datos pendientes'
-                        });
+                            // Re-set revocation (the UPDATE above cleared it) — wait for flush_complete
+                            await pool.query(
+                                `UPDATE employees SET session_revoked_at = NOW(), session_revoked_for_device = $2
+                                 WHERE id = $1`,
+                                [employeeId, data.type]
+                            );
 
-                        // Register temporarily so flush_complete handler can find this socket
-                        const sessionKey = `${employeeId}_${data.type}`;
-                        activeDeviceSessions.set(sessionKey, {
-                            socketId: socket.id,
-                            clientType: data.type,
-                            branchId: socket.branchId || null,
-                            connectedAt: Date.now(),
-                            lastHeartbeat: Date.now(),
-                            pendingFlush: true
-                        });
-                        return;
+                            // Send flush request instead of immediate force_logout
+                            socket.emit('session_revoked_pending_flush', {
+                                reason: 'session_taken',
+                                message: 'Tu sesión fue revocada — sincronizando datos pendientes'
+                            });
+
+                            // Register temporarily so flush_complete handler can find this socket
+                            const sessionKey = `${employeeId}_${data.type}`;
+                            activeDeviceSessions.set(sessionKey, {
+                                socketId: socket.id,
+                                clientType: data.type,
+                                branchId: socket.branchId || null,
+                                connectedAt: Date.now(),
+                                lastHeartbeat: Date.now(),
+                                pendingFlush: true
+                            });
+                            return;
+                        }
                     }
 
                     // Register this device in the session registry (composite key: employeeId_deviceType)

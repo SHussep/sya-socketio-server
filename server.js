@@ -400,6 +400,22 @@ async function startServer() {
         // Run migrations
         await runMigrations();
 
+        // Cleanup stale session revocations from before this deploy
+        // Prevents force_logout on reconnection after a server restart
+        try {
+            const cleaned = await pool.query(
+                `UPDATE employees SET session_revoked_at = NULL, session_revoked_for_device = NULL
+                 WHERE session_revoked_at IS NOT NULL
+                   AND session_revoked_at < NOW() - INTERVAL '2 minutes'
+                 RETURNING id`
+            );
+            if (cleaned.rows.length > 0) {
+                console.log(`[Startup] Cleared ${cleaned.rows.length} stale session revocations`);
+            }
+        } catch (err) {
+            console.warn(`[Startup] Could not clean stale revocations: ${err.message}`);
+        }
+
         // Start server
         server.listen(PORT, () => {
             console.log('\n╔══════════════════════════════════════════════════════════╗');
