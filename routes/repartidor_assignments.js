@@ -1424,7 +1424,7 @@ function createRepartidorAssignmentRoutes(io) {
           s_seller.global_id as shift_global_id,
           s.global_id as repartidor_shift_global_id,
           ra.batch_global_id,
-          CONCAT(cb.nombre, ' ', cb.apellido_paterno) as created_by_employee_name
+          CONCAT(cb.first_name, ' ', cb.last_name) as created_by_employee_name
         FROM repartidor_assignments ra
         LEFT JOIN employees e ON e.id = ra.employee_id
         LEFT JOIN employees cb ON cb.id = ra.created_by_employee_id
