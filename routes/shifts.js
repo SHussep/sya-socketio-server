@@ -1914,6 +1914,35 @@ module.exports = (pool, io) => {
                 console.warn(`[Shifts/SyncClose] ⚠️ Error limpiando turnos huérfanos (no crítico): ${cleanupErr.message}`);
             }
 
+            // 📲 FCM: Enviar notificación de cierre de turno
+            try {
+                const empResult = await pool.query(
+                    'SELECT global_id, full_name FROM employees WHERE id = $1',
+                    [closedShift.employee_id]
+                );
+                const branchResult = await pool.query(
+                    'SELECT name FROM branches WHERE id = $1',
+                    [closedShift.branch_id]
+                );
+
+                if (empResult.rows.length > 0 && empResult.rows[0].global_id && branchResult.rows.length > 0) {
+                    await notifyShiftEnded(
+                        closedShift.branch_id,
+                        empResult.rows[0].global_id,
+                        {
+                            employeeName: empResult.rows[0].full_name || employee_name || 'Empleado',
+                            branchName: branchResult.rows[0].name || branch_name || 'Sucursal',
+                            difference: parseFloat(difference) || 0,
+                            countedCash: parseFloat(counted_cash) || 0,
+                            expectedCash: parseFloat(expected_cash) || 0
+                        }
+                    );
+                    console.log(`[Shifts/SyncClose] 📲 FCM enviado para cierre de ${empResult.rows[0].full_name}`);
+                }
+            } catch (fcmErr) {
+                console.warn(`[Shifts/SyncClose] ⚠️ FCM notification failed (no crítico): ${fcmErr.message}`);
+            }
+
             res.json({
                 success: true,
                 data: closedShift,
