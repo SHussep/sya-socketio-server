@@ -1356,6 +1356,184 @@ function createRepartidorAssignmentRoutes(io) {
   });
 
   // ═══════════════════════════════════════════════════════════════
+  // PUT /api/repartidor-assignments/change-customer
+  // Cambia el cliente de una asignación (batch) en modo multi-caja (server-first)
+  // Recalcula precios según descuentos del nuevo cliente
+  // ═══════════════════════════════════════════════════════════════
+  router.put('/change-customer', async (req, res) => {
+    const { batch_global_id, assignment_global_ids, new_customer_global_id } = req.body;
+
+    if (!new_customer_global_id) {
+      return res.status(400).json({ success: false, error: 'new_customer_global_id is required' });
+    }
+    if (!batch_global_id && (!assignment_global_ids || !assignment_global_ids.length)) {
+      return res.status(400).json({ success: false, error: 'batch_global_id or assignment_global_ids required' });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      console.log('[API] 🔄 PUT /api/repartidor-assignments/change-customer');
+      console.log(`  batch_global_id=${batch_global_id}, new_customer_global_id=${new_customer_global_id}`);
+
+      // 1. Resolve new customer
+      const custResult = await client.query(
+        'SELECT id, nombre, tipo_descuento, porcentaje_descuento, monto_descuento_fijo FROM customers WHERE global_id = $1',
+        [new_customer_global_id]
+      );
+      if (custResult.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ success: false, error: 'Customer not found' });
+      }
+      const newCustomer = custResult.rows[0];
+      console.log(`  Resolved customer: ${newCustomer.nombre} (id=${newCustomer.id})`);
+
+      // 2. Find assignments
+      let assignmentsResult;
+      if (batch_global_id) {
+        assignmentsResult = await client.query(
+          'SELECT id, venta_id, product_id, assigned_quantity FROM repartidor_assignments WHERE batch_global_id = $1',
+          [batch_global_id]
+        );
+      } else {
+        assignmentsResult = await client.query(
+          'SELECT id, venta_id, product_id, assigned_quantity FROM repartidor_assignments WHERE global_id = ANY($1)',
+          [assignment_global_ids]
+        );
+      }
+
+      if (assignmentsResult.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ success: false, error: 'No assignments found' });
+      }
+
+      const ventaId = assignmentsResult.rows[0].venta_id;
+      if (!ventaId) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ success: false, error: 'Assignments have no associated sale (direct assignments)' });
+      }
+
+      console.log(`  Found ${assignmentsResult.rows.length} assignments, venta_id=${ventaId}`);
+
+      // 3. Get venta detalles
+      const detallesResult = await client.query(
+        'SELECT id_venta_detalle, id_producto, cantidad, precio_lista FROM ventas_detalle WHERE id_venta = $1',
+        [ventaId]
+      );
+
+      // 4. Get special prices for new customer's products
+      const productIds = detallesResult.rows.map(d => d.id_producto);
+      const specialPricesResult = await client.query(
+        `SELECT product_id, special_price, discount_percentage
+         FROM customer_product_prices
+         WHERE customer_id = $1 AND product_id = ANY($2) AND is_active = TRUE`,
+        [newCustomer.id, productIds]
+      );
+      const specialPricesMap = {};
+      for (const sp of specialPricesResult.rows) {
+        specialPricesMap[sp.product_id] = sp;
+      }
+
+      // 5. Recalculate prices for each detalle
+      let totalSubtotal = 0;
+      let totalDescuentos = 0;
+      let discountDescription = '';
+
+      for (const detalle of detallesResult.rows) {
+        const precioLista = parseFloat(detalle.precio_lista);
+        const cantidad = parseFloat(detalle.cantidad);
+        let precioFinal = precioLista;
+        let descuento = 0;
+        let descDesc = '';
+
+        // Check special price first
+        const special = specialPricesMap[detalle.id_producto];
+        if (special) {
+          if (special.special_price && parseFloat(special.special_price) > 0) {
+            precioFinal = parseFloat(special.special_price);
+            descuento = (precioLista - precioFinal) * cantidad;
+            descDesc = 'Precio Especial';
+          } else if (special.discount_percentage && parseFloat(special.discount_percentage) > 0) {
+            const pct = parseFloat(special.discount_percentage) / 100;
+            precioFinal = Math.round(precioLista * (1 - pct) * 100) / 100;
+            descuento = (precioLista - precioFinal) * cantidad;
+            descDesc = `${special.discount_percentage}% por producto`;
+          }
+        }
+        // Fall back to global customer discount
+        else if (newCustomer.tipo_descuento === 1 && parseFloat(newCustomer.porcentaje_descuento) > 0) {
+          const pct = parseFloat(newCustomer.porcentaje_descuento) / 100;
+          precioFinal = Math.round(precioLista * (1 - pct) * 100) / 100;
+          descuento = (precioLista - precioFinal) * cantidad;
+          descDesc = `${newCustomer.porcentaje_descuento}% Global`;
+        }
+
+        const totalLinea = Math.round(precioFinal * cantidad * 100) / 100;
+        descuento = Math.round(descuento * 100) / 100;
+        totalSubtotal += precioLista * cantidad;
+        totalDescuentos += descuento;
+        if (!discountDescription && descDesc) discountDescription = descDesc;
+
+        // Update detalle
+        await client.query(
+          `UPDATE ventas_detalle
+           SET precio_unitario = $1, total_linea = $2, monto_cliente_descuento = $3
+           WHERE id_venta_detalle = $4`,
+          [precioFinal, totalLinea, descuento, detalle.id_venta_detalle]
+        );
+
+        // Update matching assignment
+        const matchingAssignment = assignmentsResult.rows.find(a => a.product_id === detalle.id_producto);
+        if (matchingAssignment) {
+          const assignedQty = parseFloat(matchingAssignment.assigned_quantity);
+          const newAmount = Math.round(precioFinal * assignedQty * 100) / 100;
+          const newUnitPrice = assignedQty > 0 ? Math.round(newAmount / assignedQty * 100) / 100 : precioFinal;
+          await client.query(
+            `UPDATE repartidor_assignments
+             SET assigned_amount = $1, unit_price = $2
+             WHERE id = $3`,
+            [newAmount, newUnitPrice, matchingAssignment.id]
+          );
+        }
+      }
+
+      totalSubtotal = Math.round(totalSubtotal * 100) / 100;
+      totalDescuentos = Math.round(totalDescuentos * 100) / 100;
+      const totalFinal = Math.round((totalSubtotal - totalDescuentos) * 100) / 100;
+
+      // 6. Update venta
+      await client.query(
+        `UPDATE ventas
+         SET id_cliente = $1, subtotal = $2, total_descuentos = $3, total = $4
+         WHERE id_venta = $5`,
+        [newCustomer.id, totalSubtotal, totalDescuentos, totalFinal, ventaId]
+      );
+
+      await client.query('COMMIT');
+      console.log(`[API] ✅ Customer changed to '${newCustomer.nombre}', total=${totalFinal}, descuentos=${totalDescuentos}`);
+
+      res.json({
+        success: true,
+        data: {
+          customer_name: newCustomer.nombre,
+          customer_id: newCustomer.id,
+          subtotal: totalSubtotal,
+          total_descuentos: totalDescuentos,
+          total: totalFinal,
+          discount_description: discountDescription
+        }
+      });
+
+    } catch (error) {
+      await client.query('ROLLBACK');
+      console.error('❌ Error changing customer:', error.message);
+      res.status(500).json({ success: false, error: error.message });
+    } finally {
+      client.release();
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════
   // GET /api/repartidor-assignments/by-employee-global
   // Obtener asignaciones usando employee_global_id (UUID) en lugar de ID numérico
   // IMPORTANTE: NO filtra por turno, permite sync entre múltiples PCs
@@ -1424,13 +1602,29 @@ function createRepartidorAssignmentRoutes(io) {
           s_seller.global_id as shift_global_id,
           s.global_id as repartidor_shift_global_id,
           ra.batch_global_id,
-          CONCAT(cb.first_name, ' ', cb.last_name) as created_by_employee_name
+          CONCAT(cb.first_name, ' ', cb.last_name) as created_by_employee_name,
+          -- Customer info from venta
+          COALESCE(c.nombre, 'Público General') as customer_name,
+          COALESCE(c.id_cliente, 0) as customer_id,
+          -- Liquidation payment fields
+          ra.cash_amount,
+          ra.card_amount,
+          ra.credit_amount,
+          ra.payment_method_id,
+          ra.amount_received,
+          -- Edit history fields
+          ra.was_edited,
+          ra.original_quantity_before_edit,
+          ra.original_amount_before_edit,
+          ra.edit_reason
         FROM repartidor_assignments ra
         LEFT JOIN employees e ON e.id = ra.employee_id
         LEFT JOIN employees cb ON cb.id = ra.created_by_employee_id
         LEFT JOIN productos pr ON pr.id = ra.product_id
         LEFT JOIN shifts s ON s.id = ra.repartidor_shift_id
         LEFT JOIN shifts s_seller ON s_seller.id = ra.shift_id
+        LEFT JOIN ventas v ON v.id_venta = ra.venta_id
+        LEFT JOIN clientes c ON c.id_cliente = v.id_cliente
         WHERE ra.employee_id = $1
           AND (s.end_time IS NULL OR ra.repartidor_shift_id IS NULL)
       `;
