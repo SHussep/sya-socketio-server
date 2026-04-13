@@ -1616,7 +1616,13 @@ function createRepartidorAssignmentRoutes(io) {
           ra.was_edited,
           ra.original_quantity_before_edit,
           ra.original_amount_before_edit,
-          ra.edit_reason
+          ra.edit_reason,
+          -- Discount info from venta_detalle
+          COALESCE(vd.monto_cliente_descuento, 0) as discount_amount,
+          COALESCE(vd.precio_lista, ra.unit_price) as precio_lista,
+          -- Customer discount config (for description)
+          c.tipo_descuento as customer_discount_type,
+          c.porcentaje_descuento as customer_discount_percentage
         FROM repartidor_assignments ra
         LEFT JOIN employees e ON e.id = ra.employee_id
         LEFT JOIN employees cb ON cb.id = ra.created_by_employee_id
@@ -1625,6 +1631,7 @@ function createRepartidorAssignmentRoutes(io) {
         LEFT JOIN shifts s_seller ON s_seller.id = ra.shift_id
         LEFT JOIN ventas v ON v.id_venta = ra.venta_id
         LEFT JOIN customers c ON c.id = v.id_cliente
+        LEFT JOIN ventas_detalle vd ON vd.id_venta_detalle = ra.venta_detalle_id
         WHERE ra.employee_id = $1
           AND (s.end_time IS NULL OR ra.repartidor_shift_id IS NULL)
       `;
