@@ -1606,6 +1606,7 @@ function createRepartidorAssignmentRoutes(io) {
           -- Customer info from venta
           COALESCE(c.nombre, 'Público General') as customer_name,
           COALESCE(c.id, 0) as customer_id,
+          c.global_id as customer_global_id,
           -- Liquidation payment fields
           ra.cash_amount,
           ra.card_amount,
