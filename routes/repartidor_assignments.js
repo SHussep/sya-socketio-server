@@ -1382,26 +1382,25 @@ function createRepartidorAssignmentRoutes(io) {
       let newCustomer;
 
       if (isPublicoGeneral) {
-        // Público General: buscar por global_id o nombre en la BD
+        // Buscar cliente genérico del sistema usando is_system_generic (más confiable)
+        // Desktop envía 'SYSTEM_GENERIC_CUSTOMER', PostgreSQL usa 'GENERIC_CUSTOMER_{tenantId}'
         const pgResult = await client.query(
           `SELECT id, nombre, tipo_descuento, porcentaje_descuento, monto_descuento_fijo
            FROM customers
-           WHERE global_id = 'SYSTEM_GENERIC_CUSTOMER'
-              OR LOWER(nombre) = 'público general'
-              OR LOWER(nombre) = 'publico general'
+           WHERE is_system_generic = TRUE
            ORDER BY id ASC LIMIT 1`
         );
         if (pgResult.rows.length > 0) {
           newCustomer = pgResult.rows[0];
-          // Reset discount fields to ensure no discounts applied
+          // Forzar sin descuentos para cliente genérico
           newCustomer.tipo_descuento = null;
           newCustomer.porcentaje_descuento = 0;
           newCustomer.monto_descuento_fijo = 0;
         } else {
-          // Fallback: use the venta's original id_cliente (just reset prices)
-          newCustomer = { id: null, nombre: 'Público General', tipo_descuento: null, porcentaje_descuento: 0, monto_descuento_fijo: 0 };
+          await client.query('ROLLBACK');
+          return res.status(404).json({ success: false, error: 'Generic customer (Público en General) not found in database' });
         }
-        console.log(`  Using Público General (id=${newCustomer.id}, no discounts, reset to list prices)`);
+        console.log(`  Using Público en General (id=${newCustomer.id}, no discounts, reset to list prices)`);
       } else {
         const custResult = await client.query(
           'SELECT id, nombre, tipo_descuento, porcentaje_descuento, monto_descuento_fijo FROM customers WHERE global_id = $1',
