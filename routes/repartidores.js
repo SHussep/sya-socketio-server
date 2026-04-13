@@ -600,13 +600,38 @@ module.exports = (pool) => {
     });
 
     // GET /api/repartidores/:employeeId/returns - Devoluciones de un repartidor
+    // Soporta employee_global_id como query param (multi-caja server-first)
+    // Soporta repartidor_shift_global_id para filtrar por turno específico
     router.get('/:employeeId/returns', authenticateToken, async (req, res) => {
         try {
             const { tenantId } = req.user;
             const { employeeId } = req.params;
-            const { limit = 50, offset = 0 } = req.query;
+            const { limit = 50, offset = 0, employee_global_id, repartidor_shift_global_id } = req.query;
 
-            console.log(`[Repartidor Returns] Fetching - Employee: ${employeeId}`);
+            // Multi-caja: resolver employee_global_id → numeric ID
+            let resolvedEmployeeId = parseInt(employeeId);
+            if (employee_global_id) {
+                const empResult = await pool.query(
+                    'SELECT id FROM employees WHERE global_id = $1 AND tenant_id = $2',
+                    [employee_global_id, tenantId]
+                );
+                if (empResult.rows.length > 0) {
+                    resolvedEmployeeId = empResult.rows[0].id;
+                } else {
+                    console.log(`[Repartidor Returns] Employee global_id ${employee_global_id} not found`);
+                    return res.json({ success: true, data: [] });
+                }
+            }
+
+            console.log(`[Repartidor Returns] Fetching - Employee: ${resolvedEmployeeId}${repartidor_shift_global_id ? ` (shift: ${repartidor_shift_global_id})` : ''}`);
+
+            // Build dynamic WHERE clause
+            const params = [tenantId, resolvedEmployeeId];
+            let shiftFilter = '';
+            if (repartidor_shift_global_id) {
+                params.push(repartidor_shift_global_id);
+                shiftFilter = `AND ra.repartidor_shift_global_id = $${params.length}`;
+            }
 
             const query = `
                 SELECT
@@ -622,6 +647,7 @@ module.exports = (pool) => {
                     rr.global_id,
                     rr.product_id,
                     rr.product_name,
+                    ra.global_id as assignment_global_id,
                     CONCAT(e_registered.first_name, ' ', e_registered.last_name) as registered_by_name,
                     ra.assigned_quantity,
                     ra.assigned_amount,
@@ -634,12 +660,14 @@ module.exports = (pool) => {
                 LEFT JOIN ventas v ON ra.venta_id = v.id_venta
                 WHERE rr.tenant_id = $1
                 AND rr.employee_id = $2
+                ${shiftFilter}
                 AND (rr.status IS NULL OR rr.status != 'deleted')
                 ORDER BY rr.return_date DESC
-                LIMIT $3 OFFSET $4
+                LIMIT $${params.length + 1} OFFSET $${params.length + 2}
             `;
+            params.push(limit, offset);
 
-            const result = await pool.query(query, [tenantId, parseInt(employeeId), limit, offset]);
+            const result = await pool.query(query, params);
 
             console.log(`[Repartidor Returns] ✅ Found ${result.rows.length} returns`);
 
@@ -648,6 +676,7 @@ module.exports = (pool) => {
                 data: result.rows.map(row => ({
                     id: row.id,
                     assignment_id: row.assignment_id,
+                    assignment_global_id: row.assignment_global_id,
                     ticket_number: row.ticket_number,
                     quantity: parseFloat(row.quantity),
                     amount: parseFloat(row.amount),
