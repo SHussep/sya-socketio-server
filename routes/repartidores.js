@@ -629,8 +629,18 @@ module.exports = (pool) => {
             const params = [tenantId, resolvedEmployeeId];
             let shiftFilter = '';
             if (repartidor_shift_global_id) {
-                params.push(repartidor_shift_global_id);
-                shiftFilter = `AND ra.repartidor_shift_global_id = $${params.length}`;
+                // Resolver UUID → numeric shift ID (la tabla usa repartidor_shift_id, no global_id)
+                const shiftResult = await pool.query(
+                    'SELECT id FROM shifts WHERE global_id = $1 AND tenant_id = $2',
+                    [repartidor_shift_global_id, tenantId]
+                );
+                if (shiftResult.rows.length > 0) {
+                    params.push(shiftResult.rows[0].id);
+                    shiftFilter = `AND ra.repartidor_shift_id = $${params.length}`;
+                } else {
+                    console.log(`[Repartidor Returns] Shift global_id ${repartidor_shift_global_id} not found`);
+                    return res.json({ success: true, data: [] });
+                }
             }
 
             const query = `
