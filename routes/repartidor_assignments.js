@@ -408,6 +408,19 @@ function createRepartidorAssignmentRoutes(io) {
         }
       }
 
+      // ═══ IDEMPOTENCIA CANCEL: Guardar status previo para no restaurar inventario dos veces ═══
+      let previousStatus = null;
+      if (status === 'cancelled') {
+        const prev = await pool.query(
+          'SELECT status FROM repartidor_assignments WHERE global_id = $1',
+          [global_id]
+        );
+        if (prev.rows.length > 0) {
+          previousStatus = prev.rows[0].status;
+          console.log(`[RepartidorAssignments] Cancel idempotency check: previousStatus=${previousStatus}`);
+        }
+      }
+
       // ✅ IDEMPOTENTE: Insertar con global_id único
       // ON CONFLICT: Permite updates de datos si el registro NO está liquidado
       // Si ya está liquidado, solo se actualizan campos de pago (para correcciones post-liquidación)
@@ -641,9 +654,10 @@ function createRepartidorAssignmentRoutes(io) {
 
       // ═══════════════════════════════════════════════════════════════════════════════
       // INVENTARIO: Restaurar stock al cancelar asignación
-      // Solo cuando es UPDATE (no INSERT) y status cambia a 'cancelled'
+      // Solo cuando es UPDATE (no INSERT), status cambia a 'cancelled', y NO era previamente cancelled
+      // Guard de idempotencia: si ya estaba cancelled, el inventario ya fue restaurado
       // ═══════════════════════════════════════════════════════════════════════════════
-      if (!wasInserted && assignment.status === 'cancelled' && resolvedProductId) {
+      if (!wasInserted && assignment.status === 'cancelled' && resolvedProductId && previousStatus !== 'cancelled') {
         try {
           const productCheck = await pool.query(
             `SELECT id, global_id, inventariar, inventario, descripcion, precio_venta, bascula, unidad_medida_id
