@@ -453,6 +453,48 @@ module.exports = (pool, io) => {
             }
 
             if (shiftCheck.rows.length === 0) {
+                // Check if shift exists but is already closed
+                let alreadyClosedCheck;
+                if (shiftGlobalId) {
+                    alreadyClosedCheck = await pool.query(
+                        `SELECT s.id, s.end_time, s.employee_id, s.closed_by_employee_id, s.closed_source,
+                                COALESCE(NULLIF(CONCAT(COALESCE(closer.first_name, ''), ' ', COALESCE(closer.last_name, '')), ' '), closer.username, 'Desconocido') as closed_by_name,
+                                COALESCE(NULLIF(CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, '')), ' '), e.username, 'Empleado') as employee_name
+                         FROM shifts s
+                         LEFT JOIN employees closer ON s.closed_by_employee_id = closer.id
+                         LEFT JOIN employees e ON s.employee_id = e.id
+                         WHERE s.global_id = $1 AND s.tenant_id = $2 AND s.is_cash_cut_open = false`,
+                        [shiftGlobalId, tenantId]
+                    );
+                }
+                if ((!alreadyClosedCheck || alreadyClosedCheck.rows.length === 0) && shiftId) {
+                    alreadyClosedCheck = await pool.query(
+                        `SELECT s.id, s.end_time, s.employee_id, s.closed_by_employee_id, s.closed_source,
+                                COALESCE(NULLIF(CONCAT(COALESCE(closer.first_name, ''), ' ', COALESCE(closer.last_name, '')), ' '), closer.username, 'Desconocido') as closed_by_name,
+                                COALESCE(NULLIF(CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, '')), ' '), e.username, 'Empleado') as employee_name
+                         FROM shifts s
+                         LEFT JOIN employees closer ON s.closed_by_employee_id = closer.id
+                         LEFT JOIN employees e ON s.employee_id = e.id
+                         WHERE s.id = $1 AND s.tenant_id = $2 AND s.is_cash_cut_open = false`,
+                        [shiftId, tenantId]
+                    );
+                }
+
+                if (alreadyClosedCheck && alreadyClosedCheck.rows.length > 0) {
+                    const closedShift = alreadyClosedCheck.rows[0];
+                    const closedByName = closedShift.closed_by_name || closedShift.employee_name || 'Desconocido';
+                    const closedSource = closedShift.closed_source || 'desconocido';
+                    console.log(`[Shifts] ⚠️ Shift already closed: id=${closedShift.id}, closed_by=${closedByName}, source=${closedSource}, end_time=${closedShift.end_time}`);
+                    return res.status(409).json({
+                        success: false,
+                        already_closed: true,
+                        message: `Este turno ya fue cerrado`,
+                        closed_by_name: closedByName,
+                        closed_source: closedSource,
+                        end_time: closedShift.end_time
+                    });
+                }
+
                 console.log(`[Shifts] ❌ Shift not found: shiftId=${shiftId}, shiftGlobalId=${shiftGlobalId}, employeeId=${employeeId}, tenant=${tenantId}`);
                 return res.status(404).json({
                     success: false,
@@ -512,15 +554,19 @@ module.exports = (pool, io) => {
             }
 
             // Cerrar el turno
+            // Determine source: JWT caller closing their own shift = same device, otherwise could be kiosk/multi-caja
+            const closedSource = req.body.closed_source || 'desktop';
             const result = await pool.query(
                 `UPDATE shifts
                  SET end_time = CURRENT_TIMESTAMP,
                      final_amount = $1,
                      is_cash_cut_open = false,
+                     closed_by_employee_id = $3,
+                     closed_source = $4,
                      updated_at = CURRENT_TIMESTAMP
                  WHERE id = $2
                  RETURNING id, tenant_id, branch_id, employee_id, start_time, end_time, initial_amount, final_amount, transaction_counter, is_cash_cut_open`,
-                [finalAmount || 0, resolvedShiftId]
+                [finalAmount || 0, resolvedShiftId, jwtEmployeeId, closedSource]
             );
 
             const shift = result.rows[0];
@@ -1838,17 +1884,32 @@ module.exports = (pool, io) => {
 
             const existingShift = shiftCheck.rows[0];
 
-            // Si ya está cerrado, retornar éxito (idempotente)
+            // Si ya está cerrado, retornar éxito (idempotente) con detalles de quién lo cerró
             if (!existingShift.is_cash_cut_open) {
-                console.log(`[Shifts/SyncClose] ℹ️ Turno ${global_id} ya estaba cerrado - operación idempotente`);
+                // Fetch close details
+                const closeDetails = await pool.query(
+                    `SELECT s.end_time, s.closed_by_employee_id, s.closed_source,
+                            COALESCE(NULLIF(CONCAT(COALESCE(closer.first_name, ''), ' ', COALESCE(closer.last_name, '')), ' '), closer.username, 'Desconocido') as closed_by_name
+                     FROM shifts s
+                     LEFT JOIN employees closer ON s.closed_by_employee_id = closer.id
+                     WHERE s.id = $1`,
+                    [existingShift.id]
+                );
+                const details = closeDetails.rows[0] || {};
+                console.log(`[Shifts/SyncClose] ℹ️ Turno ${global_id} ya estaba cerrado - operación idempotente (cerrado por ${details.closed_by_name || 'desconocido'} desde ${details.closed_source || 'desconocido'})`);
                 return res.json({
                     success: true,
                     data: existingShift,
-                    message: 'Turno ya estaba cerrado (idempotente)'
+                    already_closed: true,
+                    message: 'Turno ya estaba cerrado (idempotente)',
+                    closed_by_name: details.closed_by_name || null,
+                    closed_source: details.closed_source || null,
+                    end_time: details.end_time || null
                 });
             }
 
             // Cerrar el turno
+            const syncClosedSource = req.body.closed_source || 'desktop';
             const result = await pool.query(`
                 UPDATE shifts
                 SET
@@ -1856,6 +1917,8 @@ module.exports = (pool, io) => {
                     final_amount = $2,
                     is_cash_cut_open = $3,
                     transaction_counter = COALESCE($4, transaction_counter),
+                    closed_by_employee_id = $7,
+                    closed_source = $8,
                     updated_at = NOW()
                 WHERE global_id = $5 AND tenant_id = $6
                 RETURNING id, global_id, employee_id, branch_id, end_time, final_amount,
@@ -1866,7 +1929,9 @@ module.exports = (pool, io) => {
                 is_cash_cut_open ?? false,
                 transaction_counter,
                 global_id,
-                tenant_id
+                tenant_id,
+                existingShift.employee_id,
+                syncClosedSource
             ]);
 
             if (result.rows.length === 0) {

@@ -3414,6 +3414,17 @@ async function runMigrations() {
                 console.log('[Schema] ⚠️ Migration 051 (trigger NULL fix):', m051err.message);
             }
 
+            // ── Migration 052: Track who closed a shift ──
+            try {
+                await client.query(`
+                    ALTER TABLE shifts ADD COLUMN IF NOT EXISTS closed_by_employee_id INTEGER REFERENCES employees(id);
+                    ALTER TABLE shifts ADD COLUMN IF NOT EXISTS closed_source VARCHAR(20);
+                `);
+                console.log('[Schema] ✅ Migration 052: closed_by tracking columns on shifts');
+            } catch (m052err) {
+                console.log('[Schema] ⚠️ Migration 052:', m052err.message);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {
