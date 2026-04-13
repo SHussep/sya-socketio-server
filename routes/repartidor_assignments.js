@@ -1441,19 +1441,39 @@ function createRepartidorAssignmentRoutes(io) {
 
       console.log(`  Found ${assignmentsResult.rows.length} assignments, venta_id=${ventaId}`);
 
-      // 3. Get venta detalles
+      // 3. Get tenant_id for product resolution
+      const tenantResult = await client.query(
+        'SELECT tenant_id FROM ventas WHERE id_venta = $1', [ventaId]
+      );
+      const tenantId = tenantResult.rows[0]?.tenant_id;
+
+      // 4. Get venta detalles with resolved PG product IDs
+      // ventas_detalle.id_producto may store either:
+      //   - productos.id (PG serial) when created by server/mobile
+      //   - productos.id_producto (Desktop local ID) when synced from Desktop
+      // JOIN through productos on both possible columns to always get canonical PG ID
       const detallesResult = await client.query(
-        'SELECT id_venta_detalle, id_producto, cantidad, precio_lista FROM ventas_detalle WHERE id_venta = $1',
-        [ventaId]
+        `SELECT vd.id_venta_detalle, vd.id_producto, vd.cantidad, vd.precio_lista,
+                COALESCE(p_direct.id, p_local.id) AS pg_product_id
+         FROM ventas_detalle vd
+         LEFT JOIN productos p_direct ON p_direct.id = vd.id_producto AND p_direct.tenant_id = $2
+         LEFT JOIN productos p_local ON p_local.id_producto = vd.id_producto AND p_local.tenant_id = $2
+         WHERE vd.id_venta = $1`,
+        [ventaId, tenantId]
       );
 
-      // 4. Get special prices for new customer's products
-      const productIds = detallesResult.rows.map(d => d.id_producto);
+      // Log product ID resolution for debugging
+      for (const d of detallesResult.rows) {
+        console.log(`  detalle: id_producto=${d.id_producto} → pg_product_id=${d.pg_product_id}`);
+      }
+
+      // 5. Get special prices using resolved PG product IDs (NOT raw id_producto)
+      const pgProductIds = detallesResult.rows.map(d => d.pg_product_id).filter(Boolean);
       const specialPricesResult = await client.query(
         `SELECT product_id, special_price, discount_percentage
          FROM customer_product_prices
          WHERE customer_id = $1 AND product_id = ANY($2) AND is_active = TRUE`,
-        [newCustomer.id, productIds]
+        [newCustomer.id, pgProductIds]
       );
       const specialPricesMap = {};
       for (const sp of specialPricesResult.rows) {
@@ -1472,8 +1492,8 @@ function createRepartidorAssignmentRoutes(io) {
         let descuento = 0;
         let descDesc = '';
 
-        // Check special price first
-        const special = specialPricesMap[detalle.id_producto];
+        // Check special price first (using resolved PG product ID)
+        const special = specialPricesMap[detalle.pg_product_id];
         if (special) {
           if (special.special_price && parseFloat(special.special_price) > 0) {
             precioFinal = parseFloat(special.special_price);
@@ -1508,8 +1528,8 @@ function createRepartidorAssignmentRoutes(io) {
           [precioFinal, totalLinea, descuento, detalle.id_venta_detalle]
         );
 
-        // Update matching assignment
-        const matchingAssignment = assignmentsResult.rows.find(a => a.product_id === detalle.id_producto);
+        // Update matching assignment (using resolved PG product ID)
+        const matchingAssignment = assignmentsResult.rows.find(a => a.product_id === detalle.pg_product_id);
         if (matchingAssignment) {
           const assignedQty = parseFloat(matchingAssignment.assigned_quantity);
           const newAmount = Math.round(precioFinal * assignedQty * 100) / 100;
