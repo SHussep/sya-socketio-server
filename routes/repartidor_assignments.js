@@ -1377,15 +1377,25 @@ function createRepartidorAssignmentRoutes(io) {
       console.log(`  batch_global_id=${batch_global_id}, new_customer_global_id=${new_customer_global_id}`);
 
       // 1. Resolve new customer
-      const custResult = await client.query(
-        'SELECT id, nombre, tipo_descuento, porcentaje_descuento, monto_descuento_fijo FROM customers WHERE global_id = $1',
-        [new_customer_global_id]
-      );
-      if (custResult.rows.length === 0) {
-        await client.query('ROLLBACK');
-        return res.status(404).json({ success: false, error: 'Customer not found' });
+      // Handle "Público General" (SYSTEM_GENERIC_CUSTOMER) as a special case: remove customer, reset prices
+      const isPublicoGeneral = new_customer_global_id === 'SYSTEM_GENERIC_CUSTOMER';
+      let newCustomer;
+
+      if (isPublicoGeneral) {
+        // Público General: id=1 in all tenants, no discounts
+        newCustomer = { id: 1, nombre: 'Público General', tipo_descuento: null, porcentaje_descuento: 0, monto_descuento_fijo: 0 };
+        console.log('  Using Público General (no discounts, reset to list prices)');
+      } else {
+        const custResult = await client.query(
+          'SELECT id, nombre, tipo_descuento, porcentaje_descuento, monto_descuento_fijo FROM customers WHERE global_id = $1',
+          [new_customer_global_id]
+        );
+        if (custResult.rows.length === 0) {
+          await client.query('ROLLBACK');
+          return res.status(404).json({ success: false, error: 'Customer not found' });
+        }
+        newCustomer = custResult.rows[0];
       }
-      const newCustomer = custResult.rows[0];
       console.log(`  Resolved customer: ${newCustomer.nombre} (id=${newCustomer.id})`);
 
       // 2. Find assignments
