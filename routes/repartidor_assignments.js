@@ -1605,7 +1605,7 @@ function createRepartidorAssignmentRoutes(io) {
           CONCAT(cb.first_name, ' ', cb.last_name) as created_by_employee_name,
           -- Customer info from venta
           COALESCE(c.nombre, 'Público General') as customer_name,
-          COALESCE(c.id_cliente, 0) as customer_id,
+          COALESCE(c.id, 0) as customer_id,
           -- Liquidation payment fields
           ra.cash_amount,
           ra.card_amount,
@@ -1624,7 +1624,7 @@ function createRepartidorAssignmentRoutes(io) {
         LEFT JOIN shifts s ON s.id = ra.repartidor_shift_id
         LEFT JOIN shifts s_seller ON s_seller.id = ra.shift_id
         LEFT JOIN ventas v ON v.id_venta = ra.venta_id
-        LEFT JOIN clientes c ON c.id_cliente = v.id_cliente
+        LEFT JOIN customers c ON c.id = v.id_cliente
         WHERE ra.employee_id = $1
           AND (s.end_time IS NULL OR ra.repartidor_shift_id IS NULL)
       `;
