@@ -754,7 +754,9 @@ module.exports = (pool) => {
             console.log(`[RepartidorReturns] ${needs_update ? 'UPDATE' : 'INSERT'} - GlobalId: ${global_id}, Status: ${status}, Quantity: ${quantity}`);
 
             // Validar campos requeridos (aceptar IDs numéricos O GlobalIds)
-            if (!global_id || (!assignment_id && !assignment_global_id) || (!employee_id && !employee_global_id) || !quantity) {
+            // NOTA: Para status=deleted, quantity puede ser 0 (falsy en JS), así que solo validar quantity para no-deleted
+            const needsQuantity = status !== 'deleted';
+            if (!global_id || (!assignment_id && !assignment_global_id) || (!employee_id && !employee_global_id) || (needsQuantity && !quantity)) {
                 return res.status(400).json({
                     success: false,
                     message: 'Campos requeridos: global_id, (assignment_id o assignment_global_id), (employee_id o employee_global_id), quantity'
