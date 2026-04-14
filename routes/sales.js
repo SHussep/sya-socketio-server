@@ -26,7 +26,7 @@ function authenticateToken(req, res, next) {
 }
 
 module.exports = (pool, io) => {
-    const { restoreBranchStock } = require('../utils/branchInventory');
+    const { restoreBranchStock, getBranchInventarioForEmit } = require('../utils/branchInventory');
     const activeDeviceSessions = require('../socket/activeDeviceSessions');
     const router = express.Router();
 
@@ -362,8 +362,71 @@ module.exports = (pool, io) => {
             // NOTA: Para ventas de repartidor (venta_tipo_id=2), el inventario se gestiona
             // desde las asignaciones, no desde la venta. No revertir aquí para evitar duplicación.
             const isRepartidorSale = sale.venta_tipo_id === 2;
+            let cancelledAssignments = [];
+
+            // 5a. Para ventas de repartidor: cancelar asignaciones y restaurar inventario desde asignaciones
             if (isRepartidorSale) {
-                console.log(`[Sales/Cancel] ⚠️ Venta repartidor: inventario NO revertido (se gestiona desde asignaciones)`);
+                const assignmentsResult = await client.query(
+                    `SELECT ra.id, ra.global_id, ra.product_id, ra.assigned_quantity, ra.status,
+                            p.global_id as product_global_id, p.inventario as global_inventario,
+                            p.inventariar, p.descripcion, p.precio_venta, p.bascula, p.unidad_medida_id
+                     FROM repartidor_assignments ra
+                     LEFT JOIN productos p ON ra.product_id = p.id AND p.tenant_id = $2
+                     WHERE ra.venta_id = $1 AND ra.tenant_id = $2 AND ra.status != 'cancelled'`,
+                    [saleId, tenantId]
+                );
+
+                for (const assignment of assignmentsResult.rows) {
+                    // Actualizar assignment a cancelled
+                    await client.query(
+                        `UPDATE repartidor_assignments
+                         SET status = 'cancelled',
+                             cancel_reason = $3,
+                             cancelled_at = NOW(),
+                             updated_at = NOW()
+                         WHERE id = $1 AND tenant_id = $2`,
+                        [assignment.id, tenantId, cancel_reason || 'Venta cancelada desde Dashboard']
+                    );
+
+                    // Restaurar inventario desde la asignación
+                    if (assignment.inventariar && assignment.product_global_id) {
+                        const qty = parseFloat(assignment.assigned_quantity);
+                        const { stockBefore, stockAfter } = await restoreBranchStock(
+                            client, tenantId, sale.branch_id,
+                            assignment.product_global_id, qty,
+                            parseFloat(assignment.global_inventario)
+                        );
+
+                        // Kardex entry
+                        const kardexGlobalId = require('crypto').randomUUID();
+                        await client.query(
+                            `INSERT INTO kardex_entries (
+                                tenant_id, branch_id, product_id, product_global_id,
+                                timestamp, movement_type, employee_id,
+                                quantity_before, quantity_change, quantity_after,
+                                description, global_id, terminal_id, source
+                            ) VALUES ($1, $2, $3, $4, NOW(), 'CancelacionAsignacion', $5, $6, $7, $8, $9, $10, $11, $12)
+                            ON CONFLICT (global_id) DO NOTHING`,
+                            [
+                                tenantId, sale.branch_id, assignment.product_id, assignment.product_global_id,
+                                sale.id_empleado,
+                                stockBefore, qty, stockAfter,
+                                `Cancelación asignación (venta cancelada): ${assignment.descripcion} +${qty}`,
+                                kardexGlobalId, terminal_id || sale.terminal_id, 'server'
+                            ]
+                        );
+
+                        console.log(`[Sales/Cancel] 🔄 Inventario restaurado: ${assignment.descripcion} ${stockBefore} → ${stockAfter} (+${qty})`);
+                    }
+
+                    cancelledAssignments.push({
+                        global_id: assignment.global_id,
+                        product_name: assignment.descripcion,
+                        quantity: parseFloat(assignment.assigned_quantity)
+                    });
+                }
+
+                console.log(`[Sales/Cancel] 🚚 ${cancelledAssignments.length} asignaciones de repartidor canceladas`);
             }
 
             for (const detail of detailsResult.rows) {
@@ -410,11 +473,48 @@ module.exports = (pool, io) => {
                     ticketNumber: sale.ticket_number,
                     total: parseFloat(sale.total),
                     cancelledBy: employee_name || 'Sistema',
-                    branchId: sale.branch_id
+                    branchId: sale.branch_id,
+                    cancelledAssignments: cancelledAssignments.map(a => a.global_id)
                 });
+
+                // Emit product_updated for each assignment whose inventory was restored
+                if (isRepartidorSale && cancelledAssignments.length > 0) {
+                    try {
+                        const branches = await pool.query(
+                            'SELECT id FROM branches WHERE tenant_id = $1 AND is_active = true', [tenantId]
+                        );
+                        // Get fresh product data for each cancelled assignment
+                        for (const ca of cancelledAssignments) {
+                            const prodResult = await pool.query(
+                                `SELECT id, global_id, descripcion, inventario, precio_venta, inventariar, bascula, unidad_medida_id
+                                 FROM productos WHERE global_id = (
+                                    SELECT product_global_id FROM repartidor_assignments WHERE global_id = $1
+                                 ) AND tenant_id = $2`,
+                                [ca.global_id, tenantId]
+                            );
+                            if (prodResult.rows.length > 0) {
+                                const p = prodResult.rows[0];
+                                for (const b of branches.rows) {
+                                    const branchInv = await getBranchInventarioForEmit(
+                                        pool, tenantId, b.id, p.global_id, parseFloat(p.inventario)
+                                    );
+                                    io.to(`branch_${b.id}`).emit('product_updated', {
+                                        id_producto: String(p.id), global_id: p.global_id,
+                                        descripcion: p.descripcion, inventario: branchInv,
+                                        precio_venta: parseFloat(p.precio_venta || 0), inventariar: p.inventariar,
+                                        pesable: p.bascula, unidad_medida: p.unidad_medida_id,
+                                        action: 'updated', updatedAt: new Date().toISOString()
+                                    });
+                                }
+                            }
+                        }
+                    } catch (emitErr) {
+                        console.error('[Sales/Cancel] ⚠️ Error emitting product_updated for assignments:', emitErr.message);
+                    }
+                }
             }
 
-            console.log(`[Sales/Cancel] ✅ Venta ${saleId} cancelada server-first (${detailsResult.rows.length} líneas)`);
+            console.log(`[Sales/Cancel] ✅ Venta ${saleId} cancelada server-first (${detailsResult.rows.length} líneas, ${cancelledAssignments.length} asignaciones)`);
 
             const restoredItems = detailsResult.rows
                 .filter(d => d.inventariar)
@@ -428,7 +528,8 @@ module.exports = (pool, io) => {
                     ticketNumber: sale.ticket_number,
                     linesReverted: detailsResult.rows.length,
                     reversed_credit: reversedCredit,
-                    restored_items: restoredItems
+                    restored_items: restoredItems,
+                    cancelled_assignments: cancelledAssignments
                 }
             });
 
