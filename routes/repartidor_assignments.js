@@ -1143,41 +1143,56 @@ function createRepartidorAssignmentRoutes(io) {
       }
 
       // 4. Restaurar inventario por devolución del repartidor
+      // IMPORTANTE: Los return drafts ya restauran inventario al crearse.
+      // Solo restaurar la diferencia que NO fue cubierta por drafts.
       if (parseFloat(cantidad_devuelta) > 0 && assignment.product_id) {
         try {
-          const prodCheck = await client.query(
-            `SELECT id, global_id, inventariar, inventario, descripcion FROM productos WHERE id = $1 AND tenant_id = $2`,
-            [assignment.product_id, tenant_id]
+          // Verificar cuánto ya fue restaurado por return drafts
+          const draftReturnsResult = await client.query(
+            `SELECT COALESCE(SUM(quantity), 0) as total_drafted
+             FROM repartidor_returns
+             WHERE assignment_id = $1 AND tenant_id = $2 AND (status IS NULL OR status != 'deleted')`,
+            [id, tenant_id]
           );
-          const prod = prodCheck.rows[0];
-          if (prod && prod.inventariar) {
-            const returnQty = parseFloat(cantidad_devuelta);
+          const alreadyRestored = parseFloat(draftReturnsResult.rows[0].total_drafted);
+          const returnQty = parseFloat(cantidad_devuelta);
+          const additionalReturn = returnQty - alreadyRestored;
 
-            const { stockBefore, stockAfter } = await restoreBranchStock(
-              client, tenant_id, branch_id,
-              prod.global_id, returnQty,
-              parseFloat(prod.inventario)
+          if (additionalReturn > 0.001) {
+            const prodCheck = await client.query(
+              `SELECT id, global_id, inventariar, inventario, descripcion FROM productos WHERE id = $1 AND tenant_id = $2`,
+              [assignment.product_id, tenant_id]
             );
+            const prod = prodCheck.rows[0];
+            if (prod && prod.inventariar) {
+              const { stockBefore, stockAfter } = await restoreBranchStock(
+                client, tenant_id, branch_id,
+                prod.global_id, additionalReturn,
+                parseFloat(prod.inventario)
+              );
 
-            const kardexGlobalId = require('crypto').randomUUID();
-            await client.query(
-              `INSERT INTO kardex_entries (
-                  tenant_id, branch_id, product_id, product_global_id,
-                  timestamp, movement_type, employee_id,
-                  quantity_before, quantity_change, quantity_after,
-                  description, global_id, source
-              ) VALUES ($1, $2, $3, $4, NOW(), 'DevolucionRepartidor', $5, $6, $7, $8, $9, $10, 'server')
-              ON CONFLICT (global_id) DO NOTHING`,
-              [
-                tenant_id, branch_id, assignment.product_id, prod.global_id,
-                employee_id,
-                stockBefore, returnQty, stockAfter,
-                `Devolución repartidor: ${prod.descripcion} +${returnQty}`,
-                kardexGlobalId
-              ]
-            );
+              const kardexGlobalId = require('crypto').randomUUID();
+              await client.query(
+                `INSERT INTO kardex_entries (
+                    tenant_id, branch_id, product_id, product_global_id,
+                    timestamp, movement_type, employee_id,
+                    quantity_before, quantity_change, quantity_after,
+                    description, global_id, source
+                ) VALUES ($1, $2, $3, $4, NOW(), 'DevolucionRepartidor', $5, $6, $7, $8, $9, $10, 'server')
+                ON CONFLICT (global_id) DO NOTHING`,
+                [
+                  tenant_id, branch_id, assignment.product_id, prod.global_id,
+                  employee_id,
+                  stockBefore, additionalReturn, stockAfter,
+                  `Devolución repartidor (liquidación): ${prod.descripcion} +${additionalReturn}`,
+                  kardexGlobalId
+                ]
+              );
 
-            console.log(`[RepartidorAssignments] 🔄 Inventario restaurado (devolución): ${prod.descripcion} ${stockBefore} → ${stockAfter} (+${returnQty})`);
+              console.log(`[RepartidorAssignments] 🔄 Inventario restaurado (liquidación, adicional): ${prod.descripcion} ${stockBefore} → ${stockAfter} (+${additionalReturn}, drafts ya cubrieron ${alreadyRestored})`);
+            }
+          } else {
+            console.log(`[RepartidorAssignments] ℹ️ Inventario ya restaurado por drafts (${alreadyRestored} kg >= ${returnQty} kg devueltos), no se duplica`);
           }
         } catch (invErr) {
           console.error('[RepartidorAssignments] ⚠️ Error restaurando inventario (liquidación):', invErr.message);
