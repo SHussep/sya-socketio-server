@@ -848,19 +848,33 @@ module.exports = (pool) => {
                 if (needs_update) {
                     console.log(`[RepartidorReturns] Actualizando registro existente: ${global_id}`);
 
-                    const result = await pool.query(`
-                        UPDATE repartidor_returns
-                        SET
-                            quantity = $1,
-                            amount = $2,
-                            status = $3,
-                            notes = $4,
-                            product_id = COALESCE($5, product_id),
-                            product_name = COALESCE($6, product_name),
-                            updated_at = NOW()
-                        WHERE global_id = $7
-                        RETURNING *
-                    `, [quantity, amount, status, notes, finalProductId, product_name, global_id]);
+                    let result;
+                    if (status === 'deleted') {
+                        // Para status=deleted, solo cambiar status (no tocar quantity por CHECK > 0)
+                        result = await pool.query(`
+                            UPDATE repartidor_returns
+                            SET
+                                status = $1,
+                                notes = $2,
+                                updated_at = NOW()
+                            WHERE global_id = $3
+                            RETURNING *
+                        `, [status, notes, global_id]);
+                    } else {
+                        result = await pool.query(`
+                            UPDATE repartidor_returns
+                            SET
+                                quantity = $1,
+                                amount = $2,
+                                status = $3,
+                                notes = $4,
+                                product_id = COALESCE($5, product_id),
+                                product_name = COALESCE($6, product_name),
+                                updated_at = NOW()
+                            WHERE global_id = $7
+                            RETURNING *
+                        `, [quantity, amount, status, notes, finalProductId, product_name, global_id]);
+                    }
 
                     console.log(`[RepartidorReturns] ✅ Return actualizado: ${global_id} (status: ${status})`);
 
@@ -880,7 +894,17 @@ module.exports = (pool) => {
                 });
             }
 
-            // No existe, INSERT nuevo
+            // No existe — si status=deleted, no hay nada que borrar
+            if (status === 'deleted') {
+                console.log(`[RepartidorReturns] ⏭️ Ignorando INSERT con status=deleted (no existe): ${global_id}`);
+                return res.json({
+                    success: true,
+                    data: null,
+                    message: 'Nada que eliminar (registro no existía)'
+                });
+            }
+
+            // INSERT nuevo
             console.log(`[RepartidorReturns] Insertando nuevo registro: ${global_id}`);
 
             const result = await pool.query(`
