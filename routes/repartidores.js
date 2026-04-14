@@ -31,7 +31,8 @@ function authenticateToken(req, res, next) {
     });
 }
 
-module.exports = (pool) => {
+module.exports = (pool, io) => {
+    const { restoreBranchStock, deductBranchStock, getBranchInventarioForEmit } = require('../utils/branchInventory');
     // GET /api/repartidores/summary - Resumen de todos los repartidores con asignaciones
     router.get('/summary', authenticateToken, async (req, res) => {
         try {
@@ -878,6 +879,153 @@ module.exports = (pool) => {
 
                     console.log(`[RepartidorReturns] ✅ Return actualizado: ${global_id} (status: ${status})`);
 
+                    // ═══════════════════════════════════════════════════════════════
+                    // INVENTARIO: Revertir stock al eliminar devolución (status=deleted)
+                    // La devolución ya había restaurado inventario, ahora hay que descontarlo
+                    // ═══════════════════════════════════════════════════════════════
+                    if (status === 'deleted') {
+                        const oldReturn = existing.rows[0];
+                        const oldQty = parseFloat(oldReturn.quantity);
+                        const returnProductId = oldReturn.product_id;
+                        if (returnProductId && oldQty > 0 && oldReturn.status !== 'deleted') {
+                            try {
+                                const prodCheck = await pool.query(
+                                    `SELECT id, global_id, inventariar, inventario, descripcion, precio_venta, bascula, unidad_medida_id
+                                     FROM productos WHERE id = $1 AND tenant_id = $2`,
+                                    [returnProductId, tenant_id]
+                                );
+                                const prod = prodCheck.rows[0];
+                                if (prod && prod.inventariar) {
+                                    const { stockBefore, stockAfter } = await deductBranchStock(
+                                        pool, tenant_id, branch_id,
+                                        prod.global_id, oldQty,
+                                        parseFloat(prod.inventario)
+                                    );
+                                    const kardexGlobalId = require('crypto').randomUUID();
+                                    await pool.query(
+                                        `INSERT INTO kardex_entries (
+                                            tenant_id, branch_id, product_id, product_global_id,
+                                            timestamp, movement_type, employee_id, employee_global_id,
+                                            quantity_before, quantity_change, quantity_after,
+                                            description, global_id, terminal_id, source
+                                        ) VALUES ($1,$2,$3,$4,NOW(),'CancelDevolucionRepartidor',$5,$6,$7,$8,$9,$10,$11,$12,$13)
+                                        ON CONFLICT (global_id) DO NOTHING`,
+                                        [
+                                            tenant_id, branch_id, returnProductId, prod.global_id,
+                                            finalEmployeeId, employee_global_id,
+                                            stockBefore, -oldQty, stockAfter,
+                                            `Cancelación devolución: ${oldReturn.product_name || prod.descripcion} -${oldQty} kg`,
+                                            kardexGlobalId, terminal_id || null, source || 'desktop'
+                                        ]
+                                    );
+                                    console.log(`[RepartidorReturns] 🔄 Inventario revertido (delete): ${prod.descripcion} ${stockBefore} → ${stockAfter} (-${oldQty})`);
+
+                                    if (io) {
+                                        try {
+                                            const branches = await pool.query(
+                                                'SELECT id FROM branches WHERE tenant_id = $1 AND is_active = true', [tenant_id]
+                                            );
+                                            for (const b of branches.rows) {
+                                                const branchInv = await getBranchInventarioForEmit(
+                                                    pool, tenant_id, b.id, prod.global_id, parseFloat(prod.inventario)
+                                                );
+                                                io.to(`branch_${b.id}`).emit('product_updated', {
+                                                    id_producto: String(prod.id), global_id: prod.global_id,
+                                                    descripcion: prod.descripcion, inventario: branchInv,
+                                                    precio_venta: parseFloat(prod.precio_venta || 0), inventariar: prod.inventariar,
+                                                    pesable: prod.bascula, unidad_medida: prod.unidad_medida_id,
+                                                    action: 'updated', updatedAt: new Date().toISOString()
+                                                });
+                                            }
+                                        } catch (emitErr) {
+                                            console.error('[RepartidorReturns] ⚠️ Error emitting socket events on delete:', emitErr.message);
+                                        }
+                                    }
+                                }
+                            } catch (invErr) {
+                                console.error('[RepartidorReturns] ⚠️ Error revirtiendo inventario:', invErr.message);
+                            }
+                        }
+                    }
+
+                    // ═══════════════════════════════════════════════════════════════
+                    // INVENTARIO: Ajustar stock si quantity cambió (UPDATE normal)
+                    // ═══════════════════════════════════════════════════════════════
+                    if (status !== 'deleted' && quantity) {
+                        const oldReturn = existing.rows[0];
+                        const oldQty = parseFloat(oldReturn.quantity);
+                        const newQty = parseFloat(quantity);
+                        const delta = newQty - oldQty;
+                        const returnProductId = oldReturn.product_id || finalProductId;
+
+                        if (returnProductId && Math.abs(delta) > 0.001 && oldReturn.status !== 'deleted') {
+                            try {
+                                const prodCheck = await pool.query(
+                                    `SELECT id, global_id, inventariar, inventario, descripcion, precio_venta, bascula, unidad_medida_id
+                                     FROM productos WHERE id = $1 AND tenant_id = $2`,
+                                    [returnProductId, tenant_id]
+                                );
+                                const prod = prodCheck.rows[0];
+                                if (prod && prod.inventariar) {
+                                    let stockBefore, stockAfter;
+                                    if (delta > 0) {
+                                        ({ stockBefore, stockAfter } = await restoreBranchStock(
+                                            pool, tenant_id, branch_id,
+                                            prod.global_id, delta, parseFloat(prod.inventario)
+                                        ));
+                                    } else {
+                                        ({ stockBefore, stockAfter } = await deductBranchStock(
+                                            pool, tenant_id, branch_id,
+                                            prod.global_id, Math.abs(delta), parseFloat(prod.inventario)
+                                        ));
+                                    }
+                                    const kardexGlobalId = require('crypto').randomUUID();
+                                    await pool.query(
+                                        `INSERT INTO kardex_entries (
+                                            tenant_id, branch_id, product_id, product_global_id,
+                                            timestamp, movement_type, employee_id, employee_global_id,
+                                            quantity_before, quantity_change, quantity_after,
+                                            description, global_id, terminal_id, source
+                                        ) VALUES ($1,$2,$3,$4,NOW(),'AjusteDevolucionRepartidor',$5,$6,$7,$8,$9,$10,$11,$12,$13)
+                                        ON CONFLICT (global_id) DO NOTHING`,
+                                        [
+                                            tenant_id, branch_id, returnProductId, prod.global_id,
+                                            finalEmployeeId, employee_global_id,
+                                            stockBefore, delta, stockAfter,
+                                            `Ajuste devolución: ${prod.descripcion} ${delta > 0 ? '+' : ''}${delta} kg`,
+                                            kardexGlobalId, terminal_id || null, source || 'desktop'
+                                        ]
+                                    );
+                                    console.log(`[RepartidorReturns] 🔄 Inventario ajustado (edit): ${prod.descripcion} ${stockBefore} → ${stockAfter} (${delta > 0 ? '+' : ''}${delta})`);
+
+                                    if (io) {
+                                        try {
+                                            const branches = await pool.query(
+                                                'SELECT id FROM branches WHERE tenant_id = $1 AND is_active = true', [tenant_id]
+                                            );
+                                            for (const b of branches.rows) {
+                                                const branchInv = await getBranchInventarioForEmit(
+                                                    pool, tenant_id, b.id, prod.global_id, parseFloat(prod.inventario)
+                                                );
+                                                io.to(`branch_${b.id}`).emit('product_updated', {
+                                                    id_producto: String(prod.id), global_id: prod.global_id,
+                                                    descripcion: prod.descripcion, inventario: branchInv,
+                                                    precio_venta: parseFloat(prod.precio_venta || 0), inventariar: prod.inventariar,
+                                                    pesable: prod.bascula, unidad_medida: prod.unidad_medida_id,
+                                                    action: 'updated', updatedAt: new Date().toISOString()
+                                                });
+                                            }
+                                        } catch (emitErr) {
+                                            console.error('[RepartidorReturns] ⚠️ Error emitting socket events on edit:', emitErr.message);
+                                        }
+                                    }
+                                }
+                            } catch (invErr) {
+                                console.error('[RepartidorReturns] ⚠️ Error ajustando inventario:', invErr.message);
+                            }
+                        }
+                    }
+
                     return res.json({
                         success: true,
                         data: result.rows[0],
@@ -940,6 +1088,89 @@ module.exports = (pool) => {
             ]);
 
             console.log(`[RepartidorReturns] ✅ Return creado: ${global_id} (status: ${status})`);
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // INVENTARIO: Restaurar stock al registrar devolución (INSERT nuevo)
+            // Solo si el producto existe y es inventariable
+            // ═══════════════════════════════════════════════════════════════════════
+            if (finalProductId && parseFloat(quantity) > 0) {
+                try {
+                    const prodCheck = await pool.query(
+                        `SELECT id, global_id, inventariar, inventario, descripcion, precio_venta, bascula, unidad_medida_id
+                         FROM productos WHERE id = $1 AND tenant_id = $2`,
+                        [finalProductId, tenant_id]
+                    );
+                    const prod = prodCheck.rows[0];
+                    if (prod && prod.inventariar) {
+                        const qty = parseFloat(quantity);
+                        const { stockBefore, stockAfter } = await restoreBranchStock(
+                            pool, tenant_id, branch_id,
+                            prod.global_id, qty,
+                            parseFloat(prod.inventario)
+                        );
+
+                        // Kardex entry
+                        const kardexGlobalId = require('crypto').randomUUID();
+                        await pool.query(
+                            `INSERT INTO kardex_entries (
+                                tenant_id, branch_id, product_id, product_global_id,
+                                timestamp, movement_type, employee_id, employee_global_id,
+                                quantity_before, quantity_change, quantity_after,
+                                description, global_id, terminal_id, source
+                            ) VALUES ($1,$2,$3,$4,NOW(),'DevolucionRepartidor',$5,$6,$7,$8,$9,$10,$11,$12,$13)
+                            ON CONFLICT (global_id) DO NOTHING`,
+                            [
+                                tenant_id, branch_id, finalProductId, prod.global_id,
+                                finalEmployeeId, employee_global_id,
+                                stockBefore, qty, stockAfter,
+                                `Devolución repartidor: ${product_name || prod.descripcion} +${qty} kg`,
+                                kardexGlobalId, terminal_id || null, source || 'desktop'
+                            ]
+                        );
+                        console.log(`[RepartidorReturns] 🔄 Inventario restaurado: ${prod.descripcion} ${stockBefore} → ${stockAfter} (+${qty})`);
+
+                        // Socket.IO: emit product_updated + kardex
+                        if (io) {
+                            try {
+                                const branches = await pool.query(
+                                    'SELECT id FROM branches WHERE tenant_id = $1 AND is_active = true', [tenant_id]
+                                );
+                                const kardexPayload = {
+                                    entries: [{
+                                        global_id: kardexGlobalId, product_global_id: prod.global_id,
+                                        product_id: finalProductId, descripcion: prod.descripcion,
+                                        movement_type: 'DevolucionRepartidor',
+                                        quantity_before: stockBefore, quantity_change: qty, quantity_after: stockAfter,
+                                        description: `Devolución repartidor: ${product_name || prod.descripcion} +${qty} kg`,
+                                        employee_global_id: employee_global_id,
+                                        employee_id: finalEmployeeId,
+                                        timestamp: new Date().toISOString(), terminal_id: terminal_id || null,
+                                        source: source || 'desktop'
+                                    }]
+                                };
+                                for (const b of branches.rows) {
+                                    const branchInv = await getBranchInventarioForEmit(
+                                        pool, tenant_id, b.id, prod.global_id, parseFloat(prod.inventario)
+                                    );
+                                    io.to(`branch_${b.id}`).emit('product_updated', {
+                                        id_producto: String(prod.id), global_id: prod.global_id,
+                                        descripcion: prod.descripcion, inventario: branchInv,
+                                        precio_venta: parseFloat(prod.precio_venta || 0), inventariar: prod.inventariar,
+                                        pesable: prod.bascula, unidad_medida: prod.unidad_medida_id,
+                                        action: 'updated', updatedAt: new Date().toISOString()
+                                    });
+                                    io.to(`branch_${b.id}`).emit('kardex_entries_created', kardexPayload);
+                                }
+                                console.log(`[RepartidorReturns] 📡 product_updated + kardex emitidos para devolución`);
+                            } catch (emitErr) {
+                                console.error('[RepartidorReturns] ⚠️ Error emitting socket events:', emitErr.message);
+                            }
+                        }
+                    }
+                } catch (invErr) {
+                    console.error('[RepartidorReturns] ⚠️ Error restaurando inventario:', invErr.message);
+                }
+            }
 
             res.json({
                 success: true,

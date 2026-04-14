@@ -292,7 +292,7 @@ app.use('/api/suspicious-weighing-logs', suspiciousWeighingLogsRoutes(pool, io))
 app.use('/api/scale-disconnection-logs', scaleDisconnectionLogsRoutes(pool));
 app.use('/api/guardian', guardianRoutes(pool, guardianStatusByBranch));
 app.use('/api/employee-metrics', employeeMetricsRoutes(pool));
-app.use('/api/repartidores', repartidoresRoutes(pool));
+app.use('/api/repartidores', repartidoresRoutes(pool, io));
 app.use('/api/notas-credito', notasCreditoRoutes(pool, io));
 app.use('/api/preparation-mode', preparationModeRoutes(pool, io));
 app.use('/api/production', productionRoutes(pool, io));
