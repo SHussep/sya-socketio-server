@@ -57,7 +57,7 @@ module.exports = (pool, io) => {
             // Esto evita duplicados cuando una venta tiene múltiples asignaciones
             // (asignar, devolver, reasignar). Obtiene la asignación más reciente.
             let query = `
-                SELECT v.id_venta as id, v.ticket_number, v.total as total_amount,
+                SELECT v.id_venta as id, v.global_id, v.ticket_number, v.total as total_amount,
                        v.subtotal, v.total_descuentos,
                        v.tipo_pago_id as payment_method, v.fecha_venta_utc as sale_date,
                        v.venta_tipo_id as sale_type, v.id_empleado as employee_id,
@@ -271,9 +271,14 @@ module.exports = (pool, io) => {
     router.post('/:id/cancel', authenticateToken, async (req, res) => {
         const client = await pool.connect();
         try {
-            const saleId = parseInt(req.params.id);
+            const paramId = req.params.id;
             const tenantId = req.user.tenantId;
             const { employee_name, terminal_id, cancel_reason, cancel_reason_id } = req.body;
+
+            // Soportar tanto ID numérico como GlobalId (UUID)
+            const isGlobalId = paramId.includes('-') || paramId.length > 10;
+            const whereClause = isGlobalId ? 'v.global_id = $1' : 'v.id_venta = $1';
+            const whereParam = isGlobalId ? paramId : parseInt(paramId);
 
             await client.query('BEGIN');
 
@@ -284,8 +289,8 @@ module.exports = (pool, io) => {
                  FROM ventas v
                  LEFT JOIN shifts s ON v.id_turno = s.id
                  LEFT JOIN shifts sr ON v.id_turno_repartidor = sr.id
-                 WHERE v.id_venta = $1 AND v.tenant_id = $2`,
-                [saleId, tenantId]
+                 WHERE ${whereClause} AND v.tenant_id = $2`,
+                [whereParam, tenantId]
             );
 
             if (saleResult.rows.length === 0) {
@@ -294,6 +299,7 @@ module.exports = (pool, io) => {
             }
 
             const sale = saleResult.rows[0];
+            const saleId = sale.id_venta; // PG id resuelto (funciona con GlobalId o int)
 
             if (sale.estado_venta_id === 4 || sale.status === 'cancelled') {
                 await client.query('ROLLBACK');

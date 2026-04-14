@@ -608,8 +608,13 @@ module.exports = (pool, io) => {
     router.post('/:id/cancel', authenticateToken, async (req, res) => {
         const client = await pool.connect();
         try {
-            const purchaseId = parseInt(req.params.id);
+            const paramId = req.params.id;
             const tenantId = req.user.tenantId;
+
+            // Soportar tanto ID numérico como GlobalId (UUID)
+            const isGlobalId = paramId.includes('-') || paramId.length > 10;
+            const whereClause = isGlobalId ? 'p.global_id = $1' : 'p.id = $1';
+            const whereParam = isGlobalId ? paramId : parseInt(paramId);
 
             await client.query('BEGIN');
 
@@ -618,8 +623,8 @@ module.exports = (pool, io) => {
                 `SELECT p.*, s.end_time as shift_end_time
                  FROM purchases p
                  LEFT JOIN shifts s ON p.shift_id = s.id
-                 WHERE p.id = $1 AND p.tenant_id = $2`,
-                [purchaseId, tenantId]
+                 WHERE ${whereClause} AND p.tenant_id = $2`,
+                [whereParam, tenantId]
             );
 
             if (purchaseResult.rows.length === 0) {
@@ -628,6 +633,7 @@ module.exports = (pool, io) => {
             }
 
             const purchase = purchaseResult.rows[0];
+            const purchaseId = purchase.id; // PG id resuelto (funciona con GlobalId o int)
 
             if (purchase.payment_status === 'cancelled') {
                 await client.query('ROLLBACK');
