@@ -464,39 +464,14 @@ async function sendNotificationToEmployee(employeeId, { title, body, data = {} }
 }
 
 /**
- * Envía notificación cuando un usuario inicia sesión
- * A: Administradores y encargados (role_id 1,2) EXCEPTO el que hizo login + el empleado que hizo login
+ * Procesa evento de login de usuario.
+ * NO guarda en historial de notificaciones ni envía FCM.
+ * El evento shift_started ya cubre la notificación relevante (apertura de turno).
+ * El broadcast Socket.IO al room se maneja en handlers.js (real-time UI).
  */
 async function notifyUserLogin(branchId, { employeeId, employeeName, branchName, scaleStatus, isReviewMode }) {
     try {
-        // NO enviar push FCM para user-login.
-        // El evento shift_started ya notifica la accion relevante (apertura de turno).
-        // user-login solo se guarda en historial para auditoria.
-        const employeeResult = await pool.query(
-            `SELECT id FROM employees WHERE global_id = $1 LIMIT 1`,
-            [employeeId]
-        );
-        const employeeIdNumeric = employeeResult.rows[0]?.id;
-
-        // Guardar en historial de notificaciones (campana) - solo auditoria
-        const tenantResult = await pool.query('SELECT tenant_id FROM branches WHERE id = $1', [branchId]);
-        const tenantId = tenantResult.rows[0]?.tenant_id;
-        if (tenantId) {
-            await saveToNotificationHistory({
-                tenant_id: tenantId,
-                branch_id: branchId,
-                employee_id: employeeIdNumeric,
-                category: 'login',
-                event_type: 'user_login',
-                title: 'Inicio de Sesion',
-                body: isReviewMode
-                    ? `${employeeName} inicio sesion en ${branchName} (modo consulta)`
-                    : `${employeeName} inicio sesion en ${branchName}`,
-                data: { employeeName, branchName, scaleStatus, isReviewMode }
-            });
-        }
-
-        console.log(`[NotificationHelper] Login de ${employeeName} registrado en historial (sin push FCM)`);
+        console.log(`[NotificationHelper] Login de ${employeeName} en ${branchName} (solo broadcast, sin historial)`);
         return { self: { sent: 0 }, others: { sent: 0 }, total: 0 };
     } catch (error) {
         console.error('[NotificationHelper] Error en notifyUserLogin:', error.message);
