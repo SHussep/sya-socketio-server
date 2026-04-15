@@ -422,12 +422,17 @@ function createRepartidorAssignmentRoutes(io) {
       let previousStatus = null;
       let previousQuantity = null;
       const prevCheck = await pool.query(
-        'SELECT status, assigned_quantity FROM repartidor_assignments WHERE global_id = $1',
+        'SELECT status, assigned_quantity, product_id FROM repartidor_assignments WHERE global_id = $1',
         [global_id]
       );
       if (prevCheck.rows.length > 0) {
         previousStatus = prevCheck.rows[0].status;
         previousQuantity = parseFloat(prevCheck.rows[0].assigned_quantity);
+        // Fallback: use product_id from existing record if not provided in payload
+        if (!resolvedProductId && prevCheck.rows[0].product_id) {
+          resolvedProductId = prevCheck.rows[0].product_id;
+          console.log(`[RepartidorAssignments] 🔄 product_id from existing record: ${resolvedProductId}`);
+        }
         if (status === 'cancelled') {
           console.log(`[RepartidorAssignments] Cancel idempotency check: previousStatus=${previousStatus}`);
         }
