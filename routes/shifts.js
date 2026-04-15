@@ -1394,7 +1394,7 @@ module.exports = (pool, io) => {
 
             // 4b. All expenses for this shift (regardless of is_active)
             const allExpensesResult = await pool.query(`
-                SELECT id, amount, description, is_active, status, category
+                SELECT id, amount, description, is_active, status, global_category_id
                 FROM expenses WHERE id_turno = $1
             `, [shiftId]);
             results.all_expenses_detail = allExpensesResult.rows;
