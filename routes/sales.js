@@ -980,6 +980,7 @@ module.exports = (pool, io) => {
 
     // GET /api/sales/items - Obtener artículos por venta específica
     // Usa tabla ventas_detalle con JOIN a ventas para obtener tenant_id y branch_id
+    // Para ventas de repartidor: incluye assigned_quantity, returned_quantity y desglose de pago
     router.get('/items', async (req, res) => {
         try {
             const { sale_id, tenant_id, branch_id } = req.query;
@@ -1011,11 +1012,26 @@ module.exports = (pool, io) => {
                     vd.created_at,
                     v.ticket_number,
                     v.total as total_amount,
-                    COALESCE(um.abbreviation, 'kg') as unit_abbreviation
+                    COALESCE(um.abbreviation, 'kg') as unit_abbreviation,
+                    -- Repartidor: cantidades asignadas y devueltas
+                    ra.assigned_quantity,
+                    COALESCE(ret_agg.returned_quantity, 0) as returned_quantity,
+                    -- Info de la venta para desglose
+                    v.venta_tipo_id as sale_type_id,
+                    v.cash_amount as sale_cash_amount,
+                    v.card_amount as sale_card_amount,
+                    v.credit_amount as sale_credit_amount,
+                    v.tipo_pago_id as sale_payment_type_id
                 FROM ventas_detalle vd
                 INNER JOIN ventas v ON vd.id_venta = v.id_venta
                 LEFT JOIN productos p ON vd.id_producto = p.id AND p.tenant_id = v.tenant_id
                 LEFT JOIN units_of_measure um ON p.unidad_medida_id = um.id
+                LEFT JOIN repartidor_assignments ra ON ra.venta_detalle_id = vd.id_venta_detalle AND ra.tenant_id = v.tenant_id
+                LEFT JOIN LATERAL (
+                    SELECT COALESCE(SUM(rr.quantity), 0) as returned_quantity
+                    FROM repartidor_returns rr
+                    WHERE rr.assignment_id = ra.id AND rr.status != 'deleted'
+                ) ret_agg ON true
                 WHERE vd.id_venta = $1 AND v.tenant_id = $2 AND v.branch_id = $3
                 ORDER BY vd.created_at ASC`,
                 [parseInt(sale_id), parseInt(tenant_id), parseInt(branch_id)]
@@ -1033,7 +1049,14 @@ module.exports = (pool, io) => {
                 manual_discount: parseFloat(row.manual_discount),
                 total_discount: parseFloat(row.total_discount),
                 subtotal: parseFloat(row.subtotal),
-                total_amount: row.total_amount ? parseFloat(row.total_amount) : null
+                total_amount: row.total_amount ? parseFloat(row.total_amount) : null,
+                assigned_quantity: row.assigned_quantity ? parseFloat(row.assigned_quantity) : null,
+                returned_quantity: row.returned_quantity ? parseFloat(row.returned_quantity) : 0,
+                sale_type_id: row.sale_type_id,
+                sale_cash_amount: row.sale_cash_amount ? parseFloat(row.sale_cash_amount) : null,
+                sale_card_amount: row.sale_card_amount ? parseFloat(row.sale_card_amount) : null,
+                sale_credit_amount: row.sale_credit_amount ? parseFloat(row.sale_credit_amount) : null,
+                sale_payment_type_id: row.sale_payment_type_id
             }));
 
             res.json({ data: items });
