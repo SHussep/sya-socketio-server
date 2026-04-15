@@ -418,6 +418,8 @@ module.exports = (pool, io) => {
                     ra.batch_global_id,
                     -- Product global_id (para devoluciones con inventario)
                     p.global_id as product_global_id,
+                    -- Venta global_id (para liquidación desde móvil)
+                    v.global_id as venta_global_id,
                     -- Customer info
                     c.nombre as customer_name,
                     v.id_cliente as customer_id,
@@ -596,7 +598,8 @@ module.exports = (pool, io) => {
                         customer_name: row.customer_name || null,
                         customer_id: row.customer_id ? parseInt(row.customer_id) : null,
                         batch_global_id: row.batch_global_id || null,
-                        product_global_id: row.product_global_id || null
+                        product_global_id: row.product_global_id || null,
+                        venta_global_id: row.venta_global_id || null
                     };
                 })
             });

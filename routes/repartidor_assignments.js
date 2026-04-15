@@ -422,7 +422,7 @@ function createRepartidorAssignmentRoutes(io) {
       let previousStatus = null;
       let previousQuantity = null;
       const prevCheck = await pool.query(
-        'SELECT status, assigned_quantity, product_id FROM repartidor_assignments WHERE global_id = $1',
+        'SELECT status, assigned_quantity, product_id, venta_id FROM repartidor_assignments WHERE global_id = $1',
         [global_id]
       );
       if (prevCheck.rows.length > 0) {
@@ -432,6 +432,11 @@ function createRepartidorAssignmentRoutes(io) {
         if (!resolvedProductId && prevCheck.rows[0].product_id) {
           resolvedProductId = prevCheck.rows[0].product_id;
           console.log(`[RepartidorAssignments] 🔄 product_id from existing record: ${resolvedProductId}`);
+        }
+        // Fallback: use venta_id from existing record if not resolved from payload
+        if (!resolvedVentaId && prevCheck.rows[0].venta_id) {
+          resolvedVentaId = prevCheck.rows[0].venta_id;
+          console.log(`[RepartidorAssignments] 🔄 venta_id from existing record (prevCheck): ${resolvedVentaId}`);
         }
         if (status === 'cancelled') {
           console.log(`[RepartidorAssignments] Cancel idempotency check: previousStatus=${previousStatus}`);
@@ -863,6 +868,12 @@ function createRepartidorAssignmentRoutes(io) {
       // Determinar si hay info de pago (payment_method_id O montos de pago)
       const hasPaymentInfo = payment_method_id || cash_amount || card_amount || credit_amount;
 
+      if (status === 'liquidated') {
+        console.log(`[RepartidorAssignments] 🔍 Liquidation check: resolvedVentaId=${resolvedVentaId}, hasPaymentInfo=${!!hasPaymentInfo}`);
+        if (!resolvedVentaId) console.log(`[RepartidorAssignments] ⚠️ No venta_id — venta update will be SKIPPED`);
+        if (!hasPaymentInfo) console.log(`[RepartidorAssignments] ⚠️ No payment info — venta update will be SKIPPED`);
+      }
+
       if (status === 'liquidated' && resolvedVentaId && hasPaymentInfo) {
         try {
           // Recalcular totales de TODAS las asignaciones liquidadas de esta venta
@@ -921,6 +932,7 @@ function createRepartidorAssignmentRoutes(io) {
                  cash_amount = $7,
                  card_amount = $8,
                  credit_amount = $9,
+                 fecha_liquidacion_raw = EXTRACT(EPOCH FROM NOW()) * 1000,
                  updated_at = NOW()
              WHERE id_venta = $3 AND tenant_id = $4
              RETURNING id_venta, tipo_pago_id, monto_pagado, total`,
