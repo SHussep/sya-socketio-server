@@ -415,6 +415,7 @@ module.exports = (pool, io) => {
                     COALESCE(ra.is_credit, false) as is_credit,
                     ra.payment_reference,
                     ra.liquidated_by_employee_id,
+                    ra.batch_global_id,
                     -- Customer info
                     c.nombre as customer_name,
                     v.id_cliente as customer_id,
