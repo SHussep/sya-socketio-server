@@ -923,6 +923,7 @@ module.exports = (pool, io) => {
                         ), 0) as total_credit_sales
                     FROM ventas
                     WHERE id_turno = $1 AND id_turno_repartidor IS NULL
+                      AND status != 'cancelled'
                 `, [shift.id]);
 
                 // 1B. Calcular ventas DE REPARTO que hizo este empleado (repartidor)
@@ -954,6 +955,7 @@ module.exports = (pool, io) => {
                         ), 0) as total_credit_assignments
                     FROM ventas
                     WHERE id_turno_repartidor = $1
+                      AND status != 'cancelled'
                 `, [shift.id]);
 
                 // 1C. Obtener DESGLOSE DETALLADO de ventas de reparto (con cliente, cantidades, tipo pago)
@@ -979,8 +981,18 @@ module.exports = (pool, io) => {
                     FROM ventas v
                     LEFT JOIN customers c ON v.id_cliente = c.id
                     WHERE v.id_turno_repartidor = $1
+                      AND v.status != 'cancelled'
                     ORDER BY v.fecha_venta_utc DESC
                 `, [shift.id]);
+
+                // 1D. Calcular devoluciones confirmadas del repartidor (reducen el efectivo esperado)
+                const returnsResult = await pool.query(`
+                    SELECT COALESCE(SUM(amount), 0) as total_returns
+                    FROM repartidor_returns
+                    WHERE employee_id = $1
+                      AND shift_id = $2
+                      AND status = 'confirmed'
+                `, [shift.employee_id, shift.id]);
 
                 // 2. Calcular gastos + desglose individual
                 const expensesResult = await pool.query(`
@@ -1232,10 +1244,12 @@ module.exports = (pool, io) => {
                     total_cash_sales: parseFloat(salesResult.rows[0]?.total_cash_sales || 0),
                     total_card_sales: parseFloat(salesResult.rows[0]?.total_card_sales || 0),
                     total_credit_sales: parseFloat(salesResult.rows[0]?.total_credit_sales || 0),
-                    // 🆕 Ventas de reparto que hizo el repartidor (id_turno_repartidor = shift.id)
-                    total_cash_assignments: parseFloat(assignmentSalesResult.rows[0]?.total_cash_assignments || 0),
+                    // 🆕 Ventas de reparto que hizo el repartidor (excluyendo canceladas, restando devoluciones)
+                    total_cash_assignments: Math.max(0, parseFloat(assignmentSalesResult.rows[0]?.total_cash_assignments || 0) - parseFloat(returnsResult.rows[0]?.total_returns || 0)),
                     total_card_assignments: parseFloat(assignmentSalesResult.rows[0]?.total_card_assignments || 0),
                     total_credit_assignments: parseFloat(assignmentSalesResult.rows[0]?.total_credit_assignments || 0),
+                    // 📦 Devoluciones confirmadas del repartidor
+                    total_returns: parseFloat(returnsResult.rows[0]?.total_returns || 0),
                     // 🆕 Desglose detallado de ventas de reparto (cliente, cantidades, tipo pago)
                     assignment_sales_detail: assignmentSalesDetailResult.rows.map(sale => ({
                         id: sale.id_venta,
