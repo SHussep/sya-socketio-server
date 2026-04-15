@@ -408,15 +408,17 @@ function createRepartidorAssignmentRoutes(io) {
         }
       }
 
-      // ═══ IDEMPOTENCIA CANCEL: Guardar status previo para no restaurar inventario dos veces ═══
+      // ═══ PRE-UPSERT: Capturar estado previo para inventario (cancel + edit) ═══
       let previousStatus = null;
-      if (status === 'cancelled') {
-        const prev = await pool.query(
-          'SELECT status FROM repartidor_assignments WHERE global_id = $1',
-          [global_id]
-        );
-        if (prev.rows.length > 0) {
-          previousStatus = prev.rows[0].status;
+      let previousQuantity = null;
+      const prevCheck = await pool.query(
+        'SELECT status, assigned_quantity FROM repartidor_assignments WHERE global_id = $1',
+        [global_id]
+      );
+      if (prevCheck.rows.length > 0) {
+        previousStatus = prevCheck.rows[0].status;
+        previousQuantity = parseFloat(prevCheck.rows[0].assigned_quantity);
+        if (status === 'cancelled') {
           console.log(`[RepartidorAssignments] Cancel idempotency check: previousStatus=${previousStatus}`);
         }
       }
@@ -649,6 +651,108 @@ function createRepartidorAssignmentRoutes(io) {
           }
         } catch (invErr) {
           console.error('[RepartidorAssignments] ⚠️ Error descontando inventario:', invErr.message);
+        }
+      }
+
+      // ═══════════════════════════════════════════════════════════════════════════════
+      // INVENTARIO: Ajustar stock al editar cantidad de asignación (delta)
+      // Solo cuando es UPDATE, status sigue pending/in_progress, y la cantidad cambió
+      // delta > 0 → descontar más, delta < 0 → restaurar diferencia
+      // ═══════════════════════════════════════════════════════════════════════════════
+      if (!wasInserted && resolvedProductId && previousQuantity !== null
+          && ['pending', 'in_progress'].includes(assignment.status)
+          && previousStatus !== 'cancelled') {
+        const newQty = parseFloat(assigned_quantity);
+        const delta = newQty - previousQuantity;
+        if (Math.abs(delta) > 0.001) {
+          try {
+            const productCheck = await pool.query(
+              `SELECT id, global_id, inventariar, inventario, descripcion, precio_venta, bascula, unidad_medida_id
+               FROM productos WHERE id = $1 AND tenant_id = $2`,
+              [resolvedProductId, tenant_id]
+            );
+            const prod = productCheck.rows[0];
+            if (prod && prod.inventariar) {
+              let stockBefore, stockAfter;
+              if (delta > 0) {
+                // Cantidad aumentó → descontar más inventario
+                ({ stockBefore, stockAfter } = await deductBranchStock(
+                  pool, tenant_id, branch_id,
+                  prod.global_id, delta,
+                  parseFloat(prod.inventario)
+                ));
+              } else {
+                // Cantidad disminuyó → restaurar inventario
+                ({ stockBefore, stockAfter } = await restoreBranchStock(
+                  pool, tenant_id, branch_id,
+                  prod.global_id, Math.abs(delta),
+                  parseFloat(prod.inventario)
+                ));
+              }
+
+              const kardexGlobalId = require('crypto').randomUUID();
+              const movementType = delta > 0 ? 'EdicionAsignacionRepartidor' : 'EdicionAsignacionRepartidor';
+              await pool.query(
+                `INSERT INTO kardex_entries (
+                    tenant_id, branch_id, product_id, product_global_id,
+                    timestamp, movement_type, employee_id, employee_global_id,
+                    quantity_before, quantity_change, quantity_after,
+                    description, global_id, terminal_id, source
+                ) VALUES ($1, $2, $3, $4, NOW(), $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                ON CONFLICT (global_id) DO NOTHING`,
+                [
+                  tenant_id, branch_id, resolvedProductId, prod.global_id,
+                  movementType,
+                  resolvedCreatedByEmployeeId || null,
+                  last_edited_by_employee_global_id || created_by_employee_global_id,
+                  stockBefore, delta > 0 ? -delta : Math.abs(delta), stockAfter,
+                  `Edición asignación: ${product_name || prod.descripcion} ${previousQuantity} → ${newQty} (${delta > 0 ? '-' : '+'}${Math.abs(delta)})`,
+                  kardexGlobalId, terminal_id || null, source || 'desktop'
+                ]
+              );
+
+              console.log(`[RepartidorAssignments] ✏️ Inventario ajustado (edición): ${prod.descripcion} ${stockBefore} → ${stockAfter} (delta: ${delta > 0 ? '-' : '+'}${Math.abs(delta)})`);
+
+              // Emit product_updated + kardex
+              if (io) {
+                try {
+                  const branches = await pool.query(
+                    'SELECT id FROM branches WHERE tenant_id = $1 AND is_active = true', [tenant_id]
+                  );
+                  for (const b of branches.rows) {
+                    const branchInv = await getBranchInventarioForEmit(
+                      pool, tenant_id, b.id, prod.global_id, parseFloat(prod.inventario)
+                    );
+                    io.to(`branch_${b.id}`).emit('product_updated', {
+                      id_producto: String(prod.id), global_id: prod.global_id,
+                      descripcion: prod.descripcion, inventario: branchInv,
+                      precio_venta: parseFloat(prod.precio_venta || 0), inventariar: prod.inventariar,
+                      pesable: prod.bascula, unidad_medida: prod.unidad_medida_id,
+                      action: 'updated', updatedAt: new Date().toISOString()
+                    });
+                  }
+                  const kardexPayload = {
+                    entries: [{
+                      global_id: kardexGlobalId, product_global_id: prod.global_id,
+                      product_id: resolvedProductId, descripcion: prod.descripcion,
+                      movement_type: movementType,
+                      quantity_before: stockBefore, quantity_change: delta > 0 ? -delta : Math.abs(delta), quantity_after: stockAfter,
+                      description: `Edición asignación: ${product_name || prod.descripcion} ${previousQuantity} → ${newQty}`,
+                      employee_global_id: last_edited_by_employee_global_id || created_by_employee_global_id,
+                      timestamp: new Date().toISOString(), source: source || 'desktop'
+                    }]
+                  };
+                  for (const b of branches.rows) {
+                    io.to(`branch_${b.id}`).emit('kardex_entries_created', kardexPayload);
+                  }
+                } catch (emitErr) {
+                  console.error('[RepartidorAssignments] ⚠️ Error emitting edit inventory socket events:', emitErr.message);
+                }
+              }
+            }
+          } catch (invErr) {
+            console.error('[RepartidorAssignments] ⚠️ Error ajustando inventario (edición):', invErr.message);
+          }
         }
       }
 
