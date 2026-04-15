@@ -416,6 +416,8 @@ module.exports = (pool, io) => {
                     ra.payment_reference,
                     ra.liquidated_by_employee_id,
                     ra.batch_global_id,
+                    -- Product global_id (para devoluciones con inventario)
+                    p.global_id as product_global_id,
                     -- Customer info
                     c.nombre as customer_name,
                     v.id_cliente as customer_id,
@@ -426,6 +428,7 @@ module.exports = (pool, io) => {
                 LEFT JOIN ventas v ON ra.venta_id = v.id_venta
                 LEFT JOIN customers c ON v.id_cliente = c.id
                 LEFT JOIN shifts s ON ra.repartidor_shift_id = s.id
+                LEFT JOIN productos p ON ra.product_id = p.id
                 WHERE ra.tenant_id = $1 AND ra.employee_id = $2
             `;
 
