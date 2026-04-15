@@ -409,7 +409,7 @@ module.exports = (pool, io) => {
         try {
             const { branch_id, start_date, end_date, severity, reviewed, limit = 50, offset = 0 } = req.query;
             let query = `
-                SELECT pa.*, CONCAT(e.first_name, ' ', e.last_name) AS employee_name, re.nombre AS reviewed_by_name
+                SELECT pa.*, CONCAT(e.first_name, ' ', e.last_name) AS employee_name, CONCAT(re.first_name, ' ', re.last_name) AS reviewed_by_name
                 FROM production_alerts pa
                 LEFT JOIN employees e ON pa.employee_id = e.id
                 LEFT JOIN employees re ON pa.reviewed_by_employee_id = re.id
