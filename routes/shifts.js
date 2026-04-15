@@ -575,6 +575,14 @@ module.exports = (pool, io) => {
             // Create CashDrawerSession if cash cut data provided
             if (counted_cash !== undefined) {
                 try {
+                    // Safety check: don't create duplicate cash_cut for same shift
+                    const existingCashCut = await pool.query(
+                        'SELECT id FROM cash_cuts WHERE shift_id = $1 AND tenant_id = $2 LIMIT 1',
+                        [resolvedShiftId, tenantId]
+                    );
+                    if (existingCashCut.rows.length > 0) {
+                        console.log(`[Shifts] ℹ️ Cash cut already exists for shift ${resolvedShiftId} (id=${existingCashCut.rows[0].id}), skipping creation`);
+                    } else {
                     const crypto = require('crypto');
 
                     // Aggregate sales by payment type (same as GET /:id/summary)
@@ -650,6 +658,7 @@ module.exports = (pool, io) => {
                     ]);
 
                     console.log(`[Shifts] 📊 CashDrawerSession created for shift ${shiftId}`);
+                    } // end else (no existing cash_cut)
                 } catch (cashCutErr) {
                     console.error(`[Shifts] ⚠️ Error creating CashDrawerSession: ${cashCutErr.message}`);
                     // Don't fail the close — the shift is already closed

@@ -417,6 +417,20 @@ module.exports = (pool, io) => {
                     const { id: resolvedShiftId, start_time: startTime, end_time: endTime, employee_id: shiftEmployeeId } = shiftResult.rows[0];
                     console.log(`[CashCuts/Sync] ✅ Shift encontrado: id=${resolvedShiftId}, employee_id=${shiftEmployeeId}`);
 
+                    // Safety: check if a cash_cut already exists for this shift (may have been created by /api/shifts/close)
+                    const existingForShift = await client.query(
+                        'SELECT id, global_id FROM cash_cuts WHERE shift_id = $1 AND tenant_id = $2 LIMIT 1',
+                        [resolvedShiftId, effectiveTenantId]
+                    );
+                    if (existingForShift.rows.length > 0 && global_id !== existingForShift.rows[0].global_id) {
+                        // A cash_cut already exists for this shift with a different global_id (created by /api/shifts/close).
+                        // Skip inserting a duplicate. Mark as success so Desktop marks it synced.
+                        await client.query('COMMIT');
+                        console.log(`[CashCuts/Sync] ⏭️ Cash cut already exists for shift ${resolvedShiftId} (id=${existingForShift.rows[0].id}), skipping duplicate`);
+                        results.push({ success: true, data: existingForShift.rows[0], skipped_duplicate: true });
+                        continue;
+                    }
+
                     // ✅ UPSERT cash cut record con global_id para idempotencia
                     const insertResult = await client.query(
                         `INSERT INTO cash_cuts (
