@@ -1195,6 +1195,34 @@ module.exports = (pool, io) => {
                 }
                 // Para repartidores o sin consolidación: liquidaciones y gastos repartidores quedan en 0
 
+                // 8. Para turnos CERRADOS: obtener datos autoritativos del cash_cuts
+                // El cash_cuts tiene los valores correctos calculados por el Desktop al momento del cierre,
+                // incluyendo devoluciones, cancelaciones y gastos del servidor.
+                // Sin esto, total_cash_assignments viene de raw ventas (no resta devoluciones/cancelaciones).
+                let cashCutData = null;
+                if (!shift.is_cash_cut_open) {
+                    try {
+                        const ccResult = await pool.query(`
+                            SELECT expected_cash_in_drawer, counted_cash, difference,
+                                   total_cash_sales, total_card_sales, total_credit_sales,
+                                   total_expenses, total_deposits, total_withdrawals,
+                                   total_cash_payments, total_card_payments,
+                                   initial_amount
+                            FROM cash_cuts
+                            WHERE shift_id = $1 AND is_closed = true
+                            ORDER BY id DESC LIMIT 1
+                        `, [shift.id]);
+                        if (ccResult.rows.length > 0) {
+                            cashCutData = ccResult.rows[0];
+                            console.log(`[Shifts/History] 🔒 TURNO ${shift.id} cash_cuts encontrado: expected=${cashCutData.expected_cash_in_drawer}, counted=${cashCutData.counted_cash}, diff=${cashCutData.difference}`);
+                        } else {
+                            console.log(`[Shifts/History] ⚠️ TURNO ${shift.id} cerrado pero sin cash_cuts record`);
+                        }
+                    } catch (ccErr) {
+                        console.warn(`[Shifts/History] ⚠️ Error leyendo cash_cuts para turno cerrado ${shift.id}: ${ccErr.message}`);
+                    }
+                }
+
                 enrichedShifts.push({
                     ...shift,
                     start_time: shift.start_time ? new Date(shift.start_time).toISOString() : null,
@@ -1240,6 +1268,13 @@ module.exports = (pool, io) => {
                     is_repartidor_shift: isRepartidorShift,
                     // 🎯 Indica si este turno es el consolidador (más antiguo no-repartidor)
                     is_consolidator_shift: isConsolidatorShift,
+                    // 🔒 Datos autoritativos del corte de caja (solo turnos cerrados con cash_cuts)
+                    // El mobile usa estos valores directamente en vez de recalcular desde componentes
+                    cash_cut_expected_cash: cashCutData ? parseFloat(cashCutData.expected_cash_in_drawer || 0) : null,
+                    cash_cut_counted_cash: cashCutData ? parseFloat(cashCutData.counted_cash || 0) : null,
+                    cash_cut_difference: cashCutData ? parseFloat(cashCutData.difference || 0) : null,
+                    // Componentes del cash_cut para UI detallada
+                    cash_cut_total_expenses: cashCutData ? parseFloat(cashCutData.total_expenses || 0) : null,
                 });
 
                 // 🔍 DEBUG: Log valores finales enviados al cliente
