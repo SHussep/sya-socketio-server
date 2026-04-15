@@ -893,7 +893,9 @@ function createRepartidorAssignmentRoutes(io) {
           const oldCredito = parseFloat(prevVentaResult.rows[0]?.old_credito || 0);
           const ventaClienteId = prevVentaResult.rows[0]?.id_cliente;
 
-          // Actualizar la venta con totales recalculados
+          // Actualizar la venta con totales recalculados + desglose de pago
+          const totalCash = parseFloat(totals.total_cash);
+          const totalCard = parseFloat(totals.total_card);
           const updateVentaResult = await pool.query(
             `UPDATE ventas
              SET tipo_pago_id = $1,
@@ -901,16 +903,50 @@ function createRepartidorAssignmentRoutes(io) {
                  total = CASE WHEN $5 > 0 THEN $5 ELSE total END,
                  credito_original = $6,
                  estado_venta_id = 5,
+                 cash_amount = $7,
+                 card_amount = $8,
+                 credit_amount = $9,
                  updated_at = NOW()
              WHERE id_venta = $3 AND tenant_id = $4
              RETURNING id_venta, tipo_pago_id, monto_pagado, total`,
-            [finalTipoPagoId, totalPagado, resolvedVentaId, tenant_id, totalVenta, totalCredito]
+            [finalTipoPagoId, totalPagado, resolvedVentaId, tenant_id, totalVenta, totalCredito, totalCash, totalCard, totalCredito]
           );
 
           if (updateVentaResult.rows.length > 0) {
             const v = updateVentaResult.rows[0];
             console.log(`[RepartidorAssignments] 💰 Venta #${resolvedVentaId} actualizada:`);
             console.log(`   tipo_pago_id=${finalTipoPagoId} | monto_pagado=$${totalPagado.toFixed(2)} | credito=$${totalCredito.toFixed(2)}`);
+            console.log(`   💳 Desglose: cash=$${totalCash.toFixed(2)}, card=$${totalCard.toFixed(2)}, credit=$${totalCredito.toFixed(2)}`);
+
+            // ═══════════════════════════════════════════════════════════════════
+            // 📦 ACTUALIZAR ventas_detalle con cantidades reales vendidas
+            // assigned_quantity - devoluciones = cantidad real vendida
+            // ═══════════════════════════════════════════════════════════════════
+            try {
+              const liquidatedDetails = await pool.query(
+                `SELECT ra.venta_detalle_id, ra.assigned_quantity, ra.product_id,
+                        COALESCE((SELECT SUM(rr.quantity) FROM repartidor_returns rr
+                                  WHERE rr.assignment_id = ra.id AND rr.status != 'deleted'), 0) as returned_qty
+                 FROM repartidor_assignments ra
+                 WHERE ra.venta_id = $1 AND ra.tenant_id = $2 AND ra.status = 'liquidated'
+                   AND ra.venta_detalle_id IS NOT NULL`,
+                [resolvedVentaId, tenant_id]
+              );
+              for (const det of liquidatedDetails.rows) {
+                const soldQty = parseFloat(det.assigned_quantity) - parseFloat(det.returned_qty);
+                await pool.query(
+                  `UPDATE ventas_detalle
+                   SET cantidad = $1, total_linea = $1 * precio_unitario
+                   WHERE id_venta_detalle = $2`,
+                  [soldQty, det.venta_detalle_id]
+                );
+              }
+              if (liquidatedDetails.rows.length > 0) {
+                console.log(`[RepartidorAssignments] 📦 ${liquidatedDetails.rows.length} líneas de ventas_detalle actualizadas con cantidades reales`);
+              }
+            } catch (detalleErr) {
+              console.error(`[RepartidorAssignments] ⚠️ Error actualizando ventas_detalle:`, detalleErr.message);
+            }
 
             // ═══════════════════════════════════════════════════════════════════
             // 💳 ACTUALIZAR SALDO DE CLIENTE cuando liquidación incluye crédito
@@ -2384,19 +2420,47 @@ function createRepartidorAssignmentRoutes(io) {
               finalTipoPagoId = 1; // Efectivo (default)
             }
 
-            // Actualizar la venta con totales recalculados
+            // Actualizar la venta con totales recalculados + desglose de pago
+            const totalCash = parseFloat(totals.total_cash);
+            const totalCard = parseFloat(totals.total_card);
             await client.query(
               `UPDATE ventas
                SET tipo_pago_id = $1,
                    monto_pagado = $2,
                    total = CASE WHEN $5 > 0 THEN $5 ELSE total END,
                    credito_original = $6,
+                   cash_amount = $7,
+                   card_amount = $8,
+                   credit_amount = $9,
                    updated_at = NOW()
                WHERE id_venta = $3 AND tenant_id = $4`,
-              [finalTipoPagoId, totalPagado, assignment.venta_id, tenant_id, totalVenta, totalCredito]
+              [finalTipoPagoId, totalPagado, assignment.venta_id, tenant_id, totalVenta, totalCredito, totalCash, totalCard, totalCredito]
             );
 
             console.log(`[CancelLiquidation] 💰 Venta #${assignment.venta_id} actualizada: tipo_pago_id=${finalTipoPagoId}, monto_pagado=$${totalPagado.toFixed(2)}, credito=$${totalCredito.toFixed(2)}`);
+            console.log(`[CancelLiquidation]    💳 Desglose: cash=$${totalCash.toFixed(2)}, card=$${totalCard.toFixed(2)}, credit=$${totalCredito.toFixed(2)}`);
+
+            // Restaurar ventas_detalle con cantidades originales de asignaciones restantes
+            try {
+              const remainingDetails = await client.query(
+                `SELECT ra.venta_detalle_id, ra.assigned_quantity
+                 FROM repartidor_assignments ra
+                 WHERE ra.venta_id = $1 AND ra.tenant_id = $2 AND ra.status = 'liquidated'
+                   AND ra.venta_detalle_id IS NOT NULL`,
+                [assignment.venta_id, tenant_id]
+              );
+              // Restaurar la línea de la asignación cancelada a su cantidad original
+              if (updatedAssignment.venta_detalle_id) {
+                await client.query(
+                  `UPDATE ventas_detalle
+                   SET cantidad = $1, total_linea = $1 * precio_unitario
+                   WHERE id_venta_detalle = $2`,
+                  [parseFloat(updatedAssignment.assigned_quantity), updatedAssignment.venta_detalle_id]
+                );
+              }
+            } catch (detalleErr) {
+              console.error('[CancelLiquidation] ⚠️ Error restaurando ventas_detalle:', detalleErr.message);
+            }
 
             // Ajustar saldo de cliente si cambió el crédito
             if (ventaClienteId) {
