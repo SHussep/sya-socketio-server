@@ -1320,59 +1320,6 @@ module.exports = (pool, io) => {
         }
     });
 
-    // GET /api/shifts/debug-list/:branchId - TEMPORARY: list recent shifts for a branch
-    router.get('/debug-list/:branchId', async (req, res) => {
-        try {
-            const branchId = parseInt(req.params.branchId);
-            const result = await pool.query(`
-                SELECT s.id, s.employee_id, s.is_cash_cut_open, s.initial_amount, s.final_amount,
-                       s.start_time, s.end_time,
-                       CONCAT(e.first_name, ' ', e.last_name) as employee_name
-                FROM shifts s
-                LEFT JOIN employees e ON s.employee_id = e.id
-                WHERE s.branch_id = $1
-                ORDER BY s.start_time DESC LIMIT 10
-            `, [branchId]);
-            res.json(result.rows);
-        } catch (error) {
-            res.status(500).json({ error: error.message });
-        }
-    });
-
-    // GET /api/shifts/debug/:shiftId - TEMPORARY diagnostic endpoint (NO AUTH)
-    // Returns raw query results for each enrichment step to diagnose data issues
-    router.get('/debug/:shiftId', async (req, res) => {
-        const shiftId = parseInt(req.params.shiftId);
-        const results = { queries: {} };
-
-        async function safeQuery(name, sql, params) {
-            try {
-                const r = await pool.query(sql, params);
-                results.queries[name] = { ok: true, rows: r.rows };
-                return r;
-            } catch (e) {
-                results.queries[name] = { ok: false, error: e.message };
-                return null;
-            }
-        }
-
-        const sr = await safeQuery('shift', 'SELECT id, employee_id, branch_id, tenant_id, initial_amount, final_amount, is_cash_cut_open FROM shifts WHERE id = $1', [shiftId]);
-        if (!sr || sr.rows.length === 0) return res.json({ error: 'Shift not found', queries: results.queries });
-        const shift = sr.rows[0];
-
-        await safeQuery('expenses', 'SELECT COALESCE(SUM(amount), 0) as total, COUNT(*) as cnt FROM expenses WHERE id_turno = $1 AND is_active = true', [shiftId]);
-        await safeQuery('all_expenses', 'SELECT id, amount, is_active, status FROM expenses WHERE id_turno = $1', [shiftId]);
-        await safeQuery('direct_sales', 'SELECT COALESCE(SUM(CASE WHEN tipo_pago_id = 1 THEN total ELSE 0 END), 0) as cash, COUNT(*) as cnt FROM ventas WHERE id_turno = $1 AND id_turno_repartidor IS NULL AND status != \'cancelled\'', [shiftId]);
-        await safeQuery('assign_sales', 'SELECT COALESCE(SUM(CASE WHEN tipo_pago_id = 1 THEN total ELSE 0 END), 0) as cash, COUNT(*) as cnt FROM ventas WHERE id_turno_repartidor = $1 AND status != \'cancelled\'', [shiftId]);
-        await safeQuery('returns', 'SELECT COALESCE(SUM(amount), 0) as total, COUNT(*) as cnt FROM repartidor_returns WHERE employee_id = $1 AND shift_id = $2 AND status = \'confirmed\'', [shift.employee_id, shiftId]);
-        await safeQuery('deposits', 'SELECT COALESCE(SUM(amount), 0) as total FROM deposits WHERE shift_id = $1', [shiftId]);
-        await safeQuery('withdrawals', 'SELECT COALESCE(SUM(amount), 0) as total FROM withdrawals WHERE shift_id = $1', [shiftId]);
-        await safeQuery('payments', 'SELECT COALESCE(SUM(CASE WHEN payment_method = \'cash\' THEN amount ELSE 0 END), 0) as cash FROM credit_payments WHERE shift_id = $1', [shiftId]);
-        await safeQuery('cash_cut', 'SELECT expected_cash_in_drawer, counted_cash, difference, total_expenses, initial_amount FROM cash_cuts WHERE shift_id = $1 ORDER BY id DESC LIMIT 1', [shiftId]);
-
-        res.json(results);
-    });
-
     // GET /api/shifts/summary - Resumen de cortes de caja CERRADOS (para administradores)
     // Solo incluye turnos cerrados (is_cash_cut_open = false) para el resumen de cortes
     router.get('/summary', authenticateToken, async (req, res) => {
