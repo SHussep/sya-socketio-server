@@ -175,49 +175,59 @@ function createRepartidorAssignmentRoutes(io) {
         }
       }
 
-      // Para asignaciones desde venta, venta_id y shift_id son requeridos
-      // Para asignaciones directas (móvil), solo se requiere repartidor_shift
-      if (!isDirectAssignment && (!shift_id && !shift_global_id)) {
-        return res.status(400).json({
-          success: false,
-          message: 'shift_id/shift_global_id son requeridos para asignaciones desde venta'
-        });
-      }
-
-      // Validar que al menos uno de employee_id o employee_global_id esté presente
-      if (!employee_id && !employee_global_id) {
-        return res.status(400).json({
-          success: false,
-          message: 'Se requiere employee_id o employee_global_id'
-        });
-      }
-
-      // Validar que al menos uno de created_by_employee_id o created_by_employee_global_id esté presente
-      if (!created_by_employee_id && !created_by_employee_global_id) {
-        return res.status(400).json({
-          success: false,
-          message: 'Se requiere created_by_employee_id o created_by_employee_global_id'
-        });
-      }
-
-      if (!assigned_quantity || assigned_quantity <= 0) {
-        return res.status(400).json({
-          success: false,
-          message: 'assigned_quantity debe ser mayor que 0'
-        });
-      }
-
-      if (!assigned_amount || assigned_amount <= 0) {
-        return res.status(400).json({
-          success: false,
-          message: 'assigned_amount debe ser mayor que 0'
-        });
-      }
-
       if (!global_id) {
         return res.status(400).json({
           success: false,
           message: 'global_id es requerido para idempotencia'
+        });
+      }
+
+      // Check if this is an UPDATE (record already exists) vs INSERT
+      const existingCheck = await pool.query(
+        'SELECT id FROM repartidor_assignments WHERE global_id = $1 AND tenant_id = $2',
+        [global_id, tenant_id]
+      );
+      const isUpdate = existingCheck.rows.length > 0;
+
+      // Full validations only for new INSERTs; updates (edit/cancel) only need global_id + employee
+      if (!isUpdate) {
+        // Para asignaciones desde venta, venta_id y shift_id son requeridos
+        // Para asignaciones directas (móvil), solo se requiere repartidor_shift
+        if (!isDirectAssignment && (!shift_id && !shift_global_id)) {
+          return res.status(400).json({
+            success: false,
+            message: 'shift_id/shift_global_id son requeridos para asignaciones desde venta'
+          });
+        }
+
+        // Validar que al menos uno de created_by_employee_id o created_by_employee_global_id esté presente
+        if (!created_by_employee_id && !created_by_employee_global_id) {
+          return res.status(400).json({
+            success: false,
+            message: 'Se requiere created_by_employee_id o created_by_employee_global_id'
+          });
+        }
+
+        if (!assigned_quantity || assigned_quantity <= 0) {
+          return res.status(400).json({
+            success: false,
+            message: 'assigned_quantity debe ser mayor que 0'
+          });
+        }
+
+        if (!assigned_amount || assigned_amount <= 0) {
+          return res.status(400).json({
+            success: false,
+            message: 'assigned_amount debe ser mayor que 0'
+          });
+        }
+      }
+
+      // employee_global_id siempre requerido (INSERT y UPDATE)
+      if (!employee_id && !employee_global_id) {
+        return res.status(400).json({
+          success: false,
+          message: 'Se requiere employee_id o employee_global_id'
         });
       }
 
