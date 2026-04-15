@@ -215,6 +215,7 @@ module.exports = (pool, io) => {
                     p.tenant_id,
                     p.descripcion as name,
                     p.categoria as categoria_id,
+                    cp.global_id as categoria_global_id,
                     p.precio_compra as precio_costo,
                     COALESCE(NULLIF(pbp.precio_venta, 0), p.precio_venta) as precio_venta,
                     p.produccion,
@@ -234,6 +235,7 @@ module.exports = (pool, io) => {
                     prov.global_id as proveedor_global_id
                 FROM productos p
                 LEFT JOIN suppliers prov ON p.proveedor_id = prov.id
+                LEFT JOIN categorias_productos cp ON cp.id = p.categoria AND cp.tenant_id = p.tenant_id
             `;
 
             const params = [tenantId];
