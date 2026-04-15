@@ -9,6 +9,7 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const JWT_SECRET = process.env.JWT_SECRET;
 const cloudinaryService = require('../services/cloudinaryService');
+const { getBranchInventarioForEmit } = require('../utils/branchInventory');
 
 // Middleware: Autenticación JWT
 function authenticateToken(req, res, next) {
@@ -511,6 +512,11 @@ module.exports = (pool, io) => {
             console.log(`[Productos/Sync] ✅ Producto ${action}: ${descripcion} (ID: ${producto.id}, ProveedorID: ${resolvedProveedorId})`);
 
             // 📡 Emitir a Desktop/Mobile vía Socket.IO
+            // Usar inventario per-branch (producto_branches) en vez del global (productos.inventario)
+            const branchInventario = branch_id
+                ? await getBranchInventarioForEmit(pool, tenant_id, parseInt(branch_id), producto.global_id, parseFloat(producto.inventario || 0))
+                : parseFloat(producto.inventario || 0);
+
             await emitProductUpdate(tenant_id, {
                 id: producto.id,
                 id_producto: producto.id_producto,
@@ -523,7 +529,7 @@ module.exports = (pool, io) => {
                 inventariar: producto.inventariar,
                 notificar: producto.notificar,
                 minimo: parseFloat(producto.minimo || 0),
-                inventario: parseFloat(producto.inventario || 0),
+                inventario: branchInventario,
                 bascula: producto.bascula,
                 is_pos_shortcut: producto.is_pos_shortcut,
                 image_url: producto.image_url,
