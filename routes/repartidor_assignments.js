@@ -785,7 +785,7 @@ function createRepartidorAssignmentRoutes(io) {
           );
           const prod = productCheck.rows[0];
           if (prod && prod.inventariar) {
-            const qty = parseFloat(assignment.assigned_quantity);
+            const qty = parseFloat(assignment.assigned_quantity) || previousQuantity || 0;
             const { stockBefore, stockAfter } = await restoreBranchStock(
               pool, tenant_id, branch_id,
               prod.global_id, qty,
