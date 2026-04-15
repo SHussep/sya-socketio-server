@@ -1865,7 +1865,12 @@ function createRepartidorAssignmentRoutes(io) {
           COALESCE(vd.precio_lista, ra.unit_price) as precio_lista,
           -- Customer discount config (for description)
           c.tipo_descuento as customer_discount_type,
-          c.porcentaje_descuento as customer_discount_percentage
+          c.porcentaje_descuento as customer_discount_percentage,
+          -- Customer location for route map
+          c.latitude as customer_latitude,
+          c.longitude as customer_longitude,
+          c.direccion as customer_address,
+          c.google_maps_url as customer_google_maps_url
         FROM repartidor_assignments ra
         LEFT JOIN employees e ON e.id = ra.employee_id
         LEFT JOIN employees cb ON cb.id = ra.created_by_employee_id
