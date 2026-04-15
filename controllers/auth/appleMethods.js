@@ -379,30 +379,58 @@ module.exports = {
             const defaultSupplierId = supplierResult.rows[0].id;
             console.log(`[Apple Signup] ✅ Proveedor 'Productos propios' creado (ID: ${defaultSupplierId})`);
 
-            // Seed products (6 productos iniciales con imágenes Cloudinary)
+            // ===== Seed product categories (6 categorías canónicas) =====
+            const seedCategories = [
+                { nombre: 'Derivados de maíz', globalId: `SEED_CAT_${tenant.id}_1` },
+                { nombre: 'Materias Primas', globalId: `SEED_CAT_${tenant.id}_2` },
+                { nombre: 'Complementarios', globalId: `SEED_CAT_${tenant.id}_3` },
+                { nombre: 'Bebidas', globalId: `SEED_CAT_${tenant.id}_4` },
+                { nombre: 'Antojitos', globalId: `SEED_CAT_${tenant.id}_5` },
+                { nombre: 'Salsas', globalId: `SEED_CAT_${tenant.id}_6` },
+            ];
+            const categoryIdMap = {};
+            const categoryGlobalIdMap = {};
+            for (const cat of seedCategories) {
+                const catResult = await client.query(`
+                    INSERT INTO categorias_productos (tenant_id, nombre, is_available, is_system_category, global_id, created_at, updated_at)
+                    VALUES ($1, $2, true, true, $3, NOW(), NOW())
+                    RETURNING id
+                `, [tenant.id, cat.nombre, cat.globalId]);
+                categoryIdMap[cat.nombre] = catResult.rows[0].id;
+                categoryGlobalIdMap[cat.nombre] = cat.globalId;
+            }
+            console.log(`[Apple Signup] ✅ 6 categorías seed creadas para tenant ${tenant.id}`);
+
+            // ===== Seed products (9 productos iniciales con imágenes Cloudinary) =====
             const seedProducts = [
-                { id: 9001, desc: 'Tortilla de Maíz', precio: 26.00, bascula: true, unidad: 1, img: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1774822301/TortillaMaiz_scug2v.webp' },
-                { id: 9002, desc: 'Masa', precio: 20.00, bascula: true, unidad: 1, img: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1774822303/Masa_nzre1m.png' },
-                { id: 9003, desc: 'Totopos', precio: 40.00, bascula: false, unidad: 3, img: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1774822303/Totopos_d5zxd1.png' },
-                { id: 9004, desc: 'Salsa Roja', precio: 30.00, bascula: false, unidad: 3, img: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1774822303/SalsaRoja_fximvw.png' },
-                { id: 9005, desc: 'Salsa Verde', precio: 30.00, bascula: false, unidad: 3, img: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1774822303/SalsaVerde_yg4zwm.png' },
-                { id: 9006, desc: 'Tortilla de Harina', precio: 35.00, bascula: true, unidad: 1, img: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1774822304/TortillaHarina_k8tvt5.png' },
+                { id: 9001, desc: 'Tortilla de Maíz', precio: 26.00, bascula: true, produccion: true, unidad: 1, cat: 'Derivados de maíz', img: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1774822301/TortillaMaiz_scug2v.webp' },
+                { id: 9002, desc: 'Masa', precio: 20.00, bascula: true, produccion: true, unidad: 1, cat: 'Derivados de maíz', img: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1774822303/Masa_nzre1m.png' },
+                { id: 9003, desc: 'Totopos', precio: 40.00, bascula: false, produccion: true, unidad: 3, cat: 'Derivados de maíz', img: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1774822303/Totopos_d5zxd1.png' },
+                { id: 9004, desc: 'Salsa Roja', precio: 30.00, bascula: false, produccion: true, unidad: 3, cat: 'Salsas', img: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1774822303/SalsaRoja_fximvw.png' },
+                { id: 9005, desc: 'Salsa Verde', precio: 30.00, bascula: false, produccion: true, unidad: 3, cat: 'Salsas', img: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1774822303/SalsaVerde_yg4zwm.png' },
+                { id: 9006, desc: 'Tortilla de Harina', precio: 35.00, bascula: true, produccion: true, unidad: 1, cat: 'Derivados de maíz', img: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1774822304/TortillaHarina_k8tvt5.png' },
+                { id: 9007, desc: 'Bolsa', precio: 1.00, bascula: false, produccion: false, unidad: 3, cat: 'Complementarios', img: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1775878976/Bolsa_npe9gn.png' },
+                { id: 9008, desc: 'Costal', precio: 5.00, bascula: false, produccion: false, unidad: 3, cat: 'Complementarios', img: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1775878976/Costal_crv5l7.png' },
+                { id: 9009, desc: 'Papel', precio: 1.00, bascula: false, produccion: false, unidad: 3, cat: 'Complementarios', img: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1775878975/PapelCebolla_pvnfen.png' },
             ];
             for (const p of seedProducts) {
                 await client.query(`
                     INSERT INTO productos (
                         tenant_id, id_producto, descripcion,
-                        precio_venta, bascula, is_pos_shortcut,
-                        unidad_medida_id, proveedor_id, global_id, terminal_id, image_url
-                    ) VALUES ($1, $2, $3, $4, $5, true, $6, $7, $8, $9, $10)
+                        precio_venta, bascula, is_pos_shortcut, produccion,
+                        unidad_medida_id, proveedor_id, categoria, categoria_global_id,
+                        global_id, terminal_id, image_url
+                    ) VALUES ($1, $2, $3, $4, $5, true, $6, $7, $8, $9, $10, $11, $12, $13)
                 `, [
                     tenant.id, p.id, p.desc,
-                    p.precio, p.bascula,
-                    p.unidad, defaultSupplierId, `SEED_PRODUCT_${tenant.id}_${p.id}`, `mobile-signup-${Date.now()}`,
+                    p.precio, p.bascula, p.produccion,
+                    p.unidad, defaultSupplierId,
+                    categoryIdMap[p.cat], categoryGlobalIdMap[p.cat],
+                    `SEED_PRODUCT_${tenant.id}_${p.id}`, `mobile-signup-${Date.now()}`,
                     p.img
                 ]);
             }
-            console.log(`[Apple Signup] ✅ 6 productos seed creados para tenant ${tenant.id}`);
+            console.log(`[Apple Signup] ✅ 9 productos seed creados para tenant ${tenant.id}`);
 
             await client.query('COMMIT');
 
