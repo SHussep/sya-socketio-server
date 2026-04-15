@@ -50,7 +50,7 @@ module.exports = (pool, io) => {
                        cc.consolidated_repartidor_names,
                        cc.expected_cash_in_drawer, cc.counted_cash, cc.difference,
                        cc.unregistered_weight_events, cc.scale_connection_events, cc.cancelled_sales,
-                       cc.notes, cc.is_closed, cc.created_at, cc.updated_at,
+                       cc.notes, cc.is_closed, cc.created_at,
                        CONCAT(emp.first_name, ' ', emp.last_name) as employee_name, b.name as branch_name
                 FROM cash_cuts cc
                 LEFT JOIN employees emp ON cc.employee_id = emp.id
@@ -108,8 +108,7 @@ module.exports = (pool, io) => {
                 difference: parseFloat(row.difference),
                 start_time: row.start_time ? new Date(row.start_time).toISOString() : null,
                 end_time: row.end_time ? new Date(row.end_time).toISOString() : null,
-                created_at: row.created_at ? new Date(row.created_at).toISOString() : null,
-                updated_at: row.updated_at ? new Date(row.updated_at).toISOString() : null
+                created_at: row.created_at ? new Date(row.created_at).toISOString() : null
             }));
 
             res.json({
