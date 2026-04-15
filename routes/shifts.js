@@ -1320,6 +1320,25 @@ module.exports = (pool, io) => {
         }
     });
 
+    // GET /api/shifts/debug-list/:branchId - TEMPORARY: list recent shifts for a branch
+    router.get('/debug-list/:branchId', async (req, res) => {
+        try {
+            const branchId = parseInt(req.params.branchId);
+            const result = await pool.query(`
+                SELECT s.id, s.employee_id, s.is_cash_cut_open, s.initial_amount, s.final_amount,
+                       s.start_time, s.end_time,
+                       CONCAT(e.first_name, ' ', e.last_name) as employee_name
+                FROM shifts s
+                LEFT JOIN employees e ON s.employee_id = e.id
+                WHERE s.branch_id = $1
+                ORDER BY s.start_time DESC LIMIT 10
+            `, [branchId]);
+            res.json(result.rows);
+        } catch (error) {
+            res.status(500).json({ error: error.message });
+        }
+    });
+
     // GET /api/shifts/debug/:shiftId - TEMPORARY diagnostic endpoint (NO AUTH)
     // Returns raw query results for each enrichment step to diagnose data issues
     router.get('/debug/:shiftId', async (req, res) => {
