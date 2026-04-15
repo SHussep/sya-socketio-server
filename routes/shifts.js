@@ -1293,7 +1293,7 @@ module.exports = (pool, io) => {
 
                 // 🔍 DEBUG: Log valores finales enviados al cliente
                 const lastShift = enrichedShifts[enrichedShifts.length - 1];
-                console.log(`[Shifts/History] 🔍 TURNO ${shift.id} RESPONSE: cash_sales=${lastShift.total_cash_sales}, cash_assignments=${lastShift.total_cash_assignments}, liq_efectivo=${lastShift.total_liquidaciones_efectivo}, rep_expenses=${lastShift.total_repartidor_expenses}, isConsolidator=${lastShift.is_consolidator_shift}, isRepartidor=${lastShift.is_repartidor_shift}`);
+                console.log(`[Shifts/History] 🔍 TURNO ${shift.id} RESPONSE: cash_assignments=${lastShift.total_cash_assignments}, returns=${lastShift.total_returns}, expenses=${lastShift.total_expenses}, cc_expected=${lastShift.cash_cut_expected_cash}, final_amount=${shift.final_amount}, isRep=${lastShift.is_repartidor_shift}`);
             }
 
             res.json({
