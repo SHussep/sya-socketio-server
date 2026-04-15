@@ -123,7 +123,8 @@ module.exports = (pool, io) => {
                     p.created_at,
                     p.updated_at,
                     um.abbreviation AS unidad_abrev,
-                    um.name AS unidad_nombre
+                    um.name AS unidad_nombre,
+                    cp.nombre AS categoria_nombre
                 FROM productos p
                 LEFT JOIN productos_branch_precios pbp
                     ON pbp.producto_id = p.id
@@ -135,6 +136,9 @@ module.exports = (pool, io) => {
                     AND pb.tenant_id = $1
                 LEFT JOIN units_of_measure um
                     ON um.id = p.unidad_medida_id
+                LEFT JOIN categorias_productos cp
+                    ON cp.id = p.categoria
+                    AND cp.tenant_id = p.tenant_id
                 WHERE p.tenant_id = $1
             `;
 
@@ -453,7 +457,7 @@ module.exports = (pool, io) => {
                     tenant_id,
                     id_producto || null,
                     descripcion,
-                    categoria || null,
+                    resolvedCategoriaId || categoria || null,  // ✅ Usar ID resuelto desde global_id, fallback a local
                     categoria_global_id || null,  // $5 - GlobalId de la categoría
                     precio_compra || 0,
                     precio_venta || 0,
@@ -602,6 +606,18 @@ module.exports = (pool, io) => {
                             }
                         }
 
+                        // ✅ Resolver categoria_id desde categoria_global_id
+                        let resolvedCategoriaId = null;
+                        if (prod.categoria_global_id) {
+                            const catResult = await client.query(
+                                'SELECT id FROM categorias_productos WHERE global_id = $1 AND tenant_id = $2',
+                                [prod.categoria_global_id, tenant_id]
+                            );
+                            if (catResult.rows.length > 0) {
+                                resolvedCategoriaId = catResult.rows[0].id;
+                            }
+                        }
+
                         // ✅ Fallback: asignar "Productos propios" si no hay proveedor
                         if (!resolvedProveedorId) {
                             const defaultGlobalId = `SEED_SUPPLIER_PRODUCTOS_PROPIOS_${tenant_id}`;
@@ -670,7 +686,7 @@ module.exports = (pool, io) => {
                                 tenant_id,
                                 prod.id_producto || null,
                                 prod.descripcion,
-                                prod.categoria || null,
+                                resolvedCategoriaId || prod.categoria || null,  // ✅ Usar ID resuelto desde global_id
                                 prod.categoria_global_id || null,  // $5
                                 prod.precio_compra || 0,
                                 prod.precio_venta || 0,
@@ -1379,6 +1395,18 @@ module.exports = (pool, io) => {
                 if (!localProd.global_id) continue;
 
                 try {
+                    // ✅ Resolver categoria_id desde categoria_global_id
+                    let resolvedCategoriaId = null;
+                    if (localProd.categoria_global_id) {
+                        const catResult = await client.query(
+                            'SELECT id FROM categorias_productos WHERE global_id = $1 AND tenant_id = $2',
+                            [localProd.categoria_global_id, tenantId]
+                        );
+                        if (catResult.rows.length > 0) {
+                            resolvedCategoriaId = catResult.rows[0].id;
+                        }
+                    }
+
                     const result = await client.query(
                         `INSERT INTO productos (
                             tenant_id, id_producto, descripcion, categoria, categoria_global_id,
@@ -1427,7 +1455,7 @@ module.exports = (pool, io) => {
                             tenantId,
                             localProd.id_producto || null,
                             localProd.descripcion,
-                            localProd.categoria || null,
+                            resolvedCategoriaId || localProd.categoria || null,  // ✅ Usar ID resuelto
                             localProd.categoria_global_id || null,  // $5
                             localProd.precio_compra || 0,
                             localProd.precio_venta || 0,
