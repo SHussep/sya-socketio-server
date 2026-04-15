@@ -1342,120 +1342,35 @@ module.exports = (pool, io) => {
     // GET /api/shifts/debug/:shiftId - TEMPORARY diagnostic endpoint (NO AUTH)
     // Returns raw query results for each enrichment step to diagnose data issues
     router.get('/debug/:shiftId', async (req, res) => {
-        try {
-            const shiftId = parseInt(req.params.shiftId);
-            const results = {};
+        const shiftId = parseInt(req.params.shiftId);
+        const results = { queries: {} };
 
-            // 0. Shift info
-            const shiftResult = await pool.query(
-                `SELECT id, employee_id, branch_id, tenant_id, initial_amount, final_amount, is_cash_cut_open,
-                        start_time, end_time
-                 FROM shifts WHERE id = $1`, [shiftId]);
-            if (shiftResult.rows.length === 0) {
-                return res.json({ error: 'Shift not found' });
+        async function safeQuery(name, sql, params) {
+            try {
+                const r = await pool.query(sql, params);
+                results.queries[name] = { ok: true, rows: r.rows };
+                return r;
+            } catch (e) {
+                results.queries[name] = { ok: false, error: e.message };
+                return null;
             }
-            results.shift = shiftResult.rows[0];
-            const shift = shiftResult.rows[0];
-
-            // 1. Direct sales
-            const salesResult = await pool.query(`
-                SELECT COALESCE(SUM(CASE WHEN tipo_pago_id IN (1) THEN total WHEN tipo_pago_id = 4 THEN cash_amount ELSE 0 END), 0) as cash,
-                       COALESCE(SUM(CASE WHEN tipo_pago_id IN (2) THEN total WHEN tipo_pago_id = 4 THEN card_amount ELSE 0 END), 0) as card,
-                       COALESCE(SUM(CASE WHEN tipo_pago_id IN (3) THEN total WHEN tipo_pago_id = 4 THEN credit_amount ELSE 0 END), 0) as credit,
-                       COUNT(*) as count
-                FROM ventas WHERE id_turno = $1 AND id_turno_repartidor IS NULL AND status != 'cancelled'
-            `, [shiftId]);
-            results.direct_sales = salesResult.rows[0];
-
-            // 2. Assignment sales (repartidor)
-            const assignResult = await pool.query(`
-                SELECT COALESCE(SUM(CASE WHEN tipo_pago_id IN (1) THEN total WHEN tipo_pago_id = 4 THEN cash_amount ELSE 0 END), 0) as cash,
-                       COALESCE(SUM(CASE WHEN tipo_pago_id IN (2) THEN total WHEN tipo_pago_id = 4 THEN card_amount ELSE 0 END), 0) as card,
-                       COALESCE(SUM(CASE WHEN tipo_pago_id IN (3) THEN total WHEN tipo_pago_id = 4 THEN credit_amount ELSE 0 END), 0) as credit,
-                       COUNT(*) as count
-                FROM ventas WHERE id_turno_repartidor = $1 AND status != 'cancelled'
-            `, [shiftId]);
-            results.assignment_sales = assignResult.rows[0];
-
-            // 3. Returns
-            const returnsResult = await pool.query(`
-                SELECT COALESCE(SUM(amount), 0) as total_returns, COUNT(*) as count
-                FROM repartidor_returns
-                WHERE employee_id = $1 AND shift_id = $2 AND status = 'confirmed'
-            `, [shift.employee_id, shiftId]);
-            results.returns = returnsResult.rows[0];
-
-            // 4. Expenses
-            const expensesResult = await pool.query(`
-                SELECT COALESCE(SUM(amount), 0) as total_expenses, COUNT(*) as count
-                FROM expenses WHERE id_turno = $1 AND is_active = true
-            `, [shiftId]);
-            results.expenses = expensesResult.rows[0];
-
-            // 4b. All expenses for this shift (regardless of is_active)
-            const allExpensesResult = await pool.query(`
-                SELECT id, amount, description, is_active, status, global_category_id
-                FROM expenses WHERE id_turno = $1
-            `, [shiftId]);
-            results.all_expenses_detail = allExpensesResult.rows;
-
-            // 5. Deposits
-            const depositsResult = await pool.query(`
-                SELECT COALESCE(SUM(amount), 0) as total_deposits, COUNT(*) as count
-                FROM deposits WHERE shift_id = $1
-            `, [shiftId]);
-            results.deposits = depositsResult.rows[0];
-
-            // 6. Withdrawals
-            const withdrawalsResult = await pool.query(`
-                SELECT COALESCE(SUM(amount), 0) as total_withdrawals, COUNT(*) as count
-                FROM withdrawals WHERE shift_id = $1
-            `, [shiftId]);
-            results.withdrawals = withdrawalsResult.rows[0];
-
-            // 7. Payments
-            const paymentsResult = await pool.query(`
-                SELECT COALESCE(SUM(CASE WHEN payment_method = 'cash' THEN amount ELSE 0 END), 0) as cash,
-                       COALESCE(SUM(CASE WHEN payment_method = 'card' THEN amount ELSE 0 END), 0) as card,
-                       COUNT(*) as count
-                FROM credit_payments WHERE shift_id = $1
-            `, [shiftId]);
-            results.payments = paymentsResult.rows[0];
-
-            // 8. Cash cut record
-            const cashCutResult = await pool.query(`
-                SELECT id, expected_cash_in_drawer, counted_cash, difference,
-                       total_cash_sales, total_card_sales, total_credit_sales,
-                       total_expenses, total_deposits, total_withdrawals,
-                       total_cash_payments, total_card_payments, initial_amount, is_closed
-                FROM cash_cuts WHERE shift_id = $1
-                ORDER BY id DESC LIMIT 1
-            `, [shiftId]);
-            results.cash_cut = cashCutResult.rows[0] || null;
-
-            // 9. Calculate expected (like Flutter does)
-            const initial = parseFloat(shift.initial_amount || 0);
-            const cashSales = parseFloat(results.direct_sales.cash);
-            const cashAssign = Math.max(0, parseFloat(results.assignment_sales.cash) - parseFloat(results.returns.total_returns));
-            const expenses = parseFloat(results.expenses.total_expenses);
-            const deposits = parseFloat(results.deposits.total_deposits);
-            const withdrawals = parseFloat(results.withdrawals.total_withdrawals);
-            const cashPayments = parseFloat(results.payments.cash);
-            results.calculated = {
-                initial,
-                cashSales,
-                cashAssignments_minus_returns: cashAssign,
-                expenses,
-                deposits,
-                withdrawals,
-                cashPayments,
-                expectedCash: initial + cashSales + cashAssign + cashPayments + deposits - expenses - withdrawals
-            };
-
-            res.json(results);
-        } catch (error) {
-            res.status(500).json({ error: error.message, stack: error.stack });
         }
+
+        const sr = await safeQuery('shift', 'SELECT id, employee_id, branch_id, tenant_id, initial_amount, final_amount, is_cash_cut_open FROM shifts WHERE id = $1', [shiftId]);
+        if (!sr || sr.rows.length === 0) return res.json({ error: 'Shift not found', queries: results.queries });
+        const shift = sr.rows[0];
+
+        await safeQuery('expenses', 'SELECT COALESCE(SUM(amount), 0) as total, COUNT(*) as cnt FROM expenses WHERE id_turno = $1 AND is_active = true', [shiftId]);
+        await safeQuery('all_expenses', 'SELECT id, amount, is_active, status FROM expenses WHERE id_turno = $1', [shiftId]);
+        await safeQuery('direct_sales', 'SELECT COALESCE(SUM(CASE WHEN tipo_pago_id = 1 THEN total ELSE 0 END), 0) as cash, COUNT(*) as cnt FROM ventas WHERE id_turno = $1 AND id_turno_repartidor IS NULL AND status != \'cancelled\'', [shiftId]);
+        await safeQuery('assign_sales', 'SELECT COALESCE(SUM(CASE WHEN tipo_pago_id = 1 THEN total ELSE 0 END), 0) as cash, COUNT(*) as cnt FROM ventas WHERE id_turno_repartidor = $1 AND status != \'cancelled\'', [shiftId]);
+        await safeQuery('returns', 'SELECT COALESCE(SUM(amount), 0) as total, COUNT(*) as cnt FROM repartidor_returns WHERE employee_id = $1 AND shift_id = $2 AND status = \'confirmed\'', [shift.employee_id, shiftId]);
+        await safeQuery('deposits', 'SELECT COALESCE(SUM(amount), 0) as total FROM deposits WHERE shift_id = $1', [shiftId]);
+        await safeQuery('withdrawals', 'SELECT COALESCE(SUM(amount), 0) as total FROM withdrawals WHERE shift_id = $1', [shiftId]);
+        await safeQuery('payments', 'SELECT COALESCE(SUM(CASE WHEN payment_method = \'cash\' THEN amount ELSE 0 END), 0) as cash FROM credit_payments WHERE shift_id = $1', [shiftId]);
+        await safeQuery('cash_cut', 'SELECT expected_cash_in_drawer, counted_cash, difference, total_expenses, initial_amount FROM cash_cuts WHERE shift_id = $1 ORDER BY id DESC LIMIT 1', [shiftId]);
+
+        res.json(results);
     });
 
     // GET /api/shifts/summary - Resumen de cortes de caja CERRADOS (para administradores)
