@@ -44,7 +44,16 @@ module.exports = function setupSocketAuth(io) {
             console.log(`[Socket.IO Auth] ✅ Authenticated: tenant=${user.tenantId}, employee=${socket.user.employeeId}, branch=${user.branchId}`);
             next();
         } catch (err) {
-            console.warn(`[Socket.IO Auth] ❌ Connection rejected: invalid token from ${socket.id}`);
+            // Decode token payload without verification to identify the device
+            let deviceInfo = '';
+            try {
+                const decoded = jwt.decode(token);
+                if (decoded) {
+                    const platform = socket.handshake.auth?.platform || socket.handshake.headers?.['user-agent'] || 'unknown';
+                    deviceInfo = ` | tenant=${decoded.tenantId}, employee=${decoded.employeeId || decoded.id}, branch=${decoded.branchId}, platform=${platform}`;
+                }
+            } catch (_) { /* token completely malformed */ }
+            console.warn(`[Socket.IO Auth] ❌ Connection rejected: ${err.message} from ${socket.id}${deviceInfo}`);
             return next(new Error('Token inválido o expirado'));
         }
     });
