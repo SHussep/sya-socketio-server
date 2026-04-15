@@ -594,7 +594,9 @@ module.exports = (pool, io) => {
                         payment_reference: row.payment_reference,
                         liquidated_by_employee_id: row.liquidated_by_employee_id ? parseInt(row.liquidated_by_employee_id) : null,
                         customer_name: row.customer_name || null,
-                        customer_id: row.customer_id ? parseInt(row.customer_id) : null
+                        customer_id: row.customer_id ? parseInt(row.customer_id) : null,
+                        batch_global_id: row.batch_global_id || null,
+                        product_global_id: row.product_global_id || null
                     };
                 })
             });
