@@ -986,13 +986,18 @@ module.exports = (pool, io) => {
                 `, [shift.id]);
 
                 // 1D. Calcular devoluciones confirmadas del repartidor (reducen el efectivo esperado)
-                const returnsResult = await pool.query(`
-                    SELECT COALESCE(SUM(amount), 0) as total_returns
-                    FROM repartidor_returns
-                    WHERE employee_id = $1
-                      AND shift_id = $2
-                      AND status = 'confirmed'
-                `, [shift.employee_id, shift.id]);
+                let returnsResult = { rows: [{ total_returns: 0 }] };
+                try {
+                    returnsResult = await pool.query(`
+                        SELECT COALESCE(SUM(amount), 0) as total_returns
+                        FROM repartidor_returns
+                        WHERE employee_id = $1
+                          AND shift_id = $2
+                          AND status = 'confirmed'
+                    `, [shift.employee_id, shift.id]);
+                } catch (retErr) {
+                    console.warn(`[Shifts/History] ⚠️ Error consultando devoluciones turno ${shift.id}: ${retErr.message}`);
+                }
 
                 // 2. Calcular gastos + desglose individual
                 const expensesResult = await pool.query(`
@@ -1206,6 +1211,14 @@ module.exports = (pool, io) => {
                     }
                 }
                 // Para repartidores o sin consolidación: liquidaciones y gastos repartidores quedan en 0
+
+                // 🔍 DEBUG: Log raw query results ANTES de armar respuesta
+                console.log(`[Shifts/History] 🔍 TURNO ${shift.id} RAW: ` +
+                    `cashAssign=${assignmentSalesResult.rows[0]?.total_cash_assignments}, ` +
+                    `returns=${returnsResult.rows[0]?.total_returns}, ` +
+                    `expenses=${expensesResult.rows[0]?.total_expenses}, ` +
+                    `deposits=${depositsResult.rows[0]?.total_deposits}, ` +
+                    `withdrawals=${withdrawalsResult.rows[0]?.total_withdrawals}`);
 
                 // 8. Para turnos CERRADOS: obtener datos autoritativos del cash_cuts
                 // El cash_cuts tiene los valores correctos calculados por el Desktop al momento del cierre,
