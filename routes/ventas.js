@@ -107,6 +107,29 @@ module.exports = function(pool, io) {
     });
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // GET /api/ventas/debug/:globalId - TEMPORAL: Diagnóstico de estado de venta
+    // ═══════════════════════════════════════════════════════════════════════════
+    router.get('/debug/:globalId', async (req, res) => {
+        try {
+            const { globalId } = req.params;
+            const result = await pool.query(
+                `SELECT id_venta, global_id, estado_venta_id, venta_tipo_id, tipo_pago_id,
+                        total, monto_pagado, cash_amount, card_amount, credit_amount,
+                        id_turno, id_empleado, id_cliente, branch_id,
+                        fecha_venta_utc, fecha_liquidacion_utc, fecha_liquidacion_raw
+                 FROM ventas WHERE global_id = $1`,
+                [globalId]
+            );
+            if (result.rows.length === 0) {
+                return res.json({ found: false, globalId });
+            }
+            res.json({ found: true, venta: result.rows[0] });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // GET /api/ventas/pull - Descargar ventas para sincronización bidireccional
     // ═══════════════════════════════════════════════════════════════════════════
     // IMPORTANTE: Esta ruta debe estar ANTES de /:id para que Express la matchee
