@@ -179,7 +179,9 @@ module.exports = (pool, io) => {
             query += ` ORDER BY pe.created_local_utc DESC LIMIT $${paramIdx} OFFSET $${paramIdx + 1}`;
             params.push(parseInt(limit), parseInt(offset));
 
+            console.log(`[Production] GET /entries: branch_id=${branch_id}, start_date=${start_date}, end_date=${end_date}, params=${JSON.stringify(params)}`);
             const result = await pool.query(query, params);
+            console.log(`[Production] GET /entries: ${result.rows.length} rows returned`);
             res.json({ success: true, data: result.rows });
         } catch (err) {
             console.error('[Production] Error fetching entries:', err);
@@ -442,7 +444,14 @@ module.exports = (pool, io) => {
             query += ` ORDER BY pa.created_local_utc DESC LIMIT $${paramIdx} OFFSET $${paramIdx + 1}`;
             params.push(parseInt(limit), parseInt(offset));
 
+            console.log(`[Production] GET /alerts: branch_id=${branch_id}, start_date=${start_date}, end_date=${end_date}, params=${JSON.stringify(params)}`);
             const result = await pool.query(query, params);
+            console.log(`[Production] GET /alerts: ${result.rows.length} rows returned`);
+            if (result.rows.length === 0) {
+                // Debug: check total alerts for this branch without date filter
+                const totalCheck = await pool.query('SELECT COUNT(*) as cnt, MIN(created_local_utc) as min_date, MAX(created_local_utc) as max_date FROM production_alerts WHERE branch_id = $1 AND is_deleted = false', [branch_id]);
+                console.log(`[Production] DEBUG total alerts branch ${branch_id}: ${totalCheck.rows[0].cnt}, date range: ${totalCheck.rows[0].min_date} to ${totalCheck.rows[0].max_date}`);
+            }
             res.json({ success: true, data: result.rows });
         } catch (err) {
             console.error('[Production] Error fetching alerts:', err);
