@@ -586,5 +586,184 @@ module.exports = (pool, io) => {
         }
     });
 
+    // GET /api/cash-cuts/:shiftId/transactions - Get reconstructed transactions timeline for a shift
+    // Reconstructs CashTransaction-like records from ventas, expenses, deposits, withdrawals, credit_payments
+    router.get('/:shiftId/transactions', authenticateToken, async (req, res) => {
+        try {
+            const { tenantId } = req.user;
+            const shiftId = parseInt(req.params.shiftId);
+
+            if (isNaN(shiftId)) {
+                return res.status(400).json({ success: false, message: 'shiftId inválido' });
+            }
+
+            // Verify shift belongs to tenant and get time bounds
+            const shiftResult = await pool.query(
+                'SELECT id, start_time, end_time, employee_id, branch_id FROM shifts WHERE id = $1 AND tenant_id = $2',
+                [shiftId, tenantId]
+            );
+            if (shiftResult.rows.length === 0) {
+                return res.status(404).json({ success: false, message: 'Turno no encontrado' });
+            }
+            const shift = shiftResult.rows[0];
+
+            // Determine if this employee is a repartidor
+            const roleResult = await pool.query(
+                `SELECT r.name as role_name FROM employees e
+                 INNER JOIN roles r ON e.role_id = r.id
+                 WHERE e.id = $1`,
+                [shift.employee_id]
+            );
+            const isRepartidor = roleResult.rows[0]?.role_name?.toLowerCase() === 'repartidor';
+
+            // Build the WHERE clause for sales based on role
+            const salesWhereClause = isRepartidor
+                ? 'v.id_turno_repartidor = $1'
+                : 'v.id_turno = $1 AND v.id_turno_repartidor IS NULL';
+
+            // Fetch all transaction sources in parallel
+            const [ventasDetail, expensesDetail, depositsDetail, withdrawalsDetail, creditPaymentsDetail] = await Promise.all([
+                pool.query(`
+                    SELECT v.id_venta, v.ticket_number, v.total, v.tipo_pago_id,
+                           v.estado_venta_id, v.fecha_venta_utc,
+                           v.cash_amount, v.card_amount, v.credit_amount,
+                           COALESCE(c.nombre, '') as customer_name,
+                           CONCAT(e.first_name, ' ', e.last_name) as employee_name,
+                           v.employee_id
+                    FROM ventas v
+                    LEFT JOIN customers c ON v.id_cliente = c.id
+                    LEFT JOIN employees e ON v.employee_id = e.id
+                    WHERE ${salesWhereClause}
+                      AND v.tenant_id = $2
+                    ORDER BY v.fecha_venta_utc DESC
+                `, [shiftId, tenantId]),
+                pool.query(`
+                    SELECT ex.id, ex.description, ex.amount, ex.expense_date, ex.is_active,
+                           CONCAT(e.first_name, ' ', e.last_name) as employee_name,
+                           ex.employee_id
+                    FROM expenses ex
+                    LEFT JOIN employees e ON ex.employee_id = e.id
+                    WHERE ex.id_turno = $1 AND ex.tenant_id = $2
+                    ORDER BY ex.expense_date DESC
+                `, [shiftId, tenantId]),
+                pool.query(`
+                    SELECT d.id, d.description, d.amount, d.deposit_date,
+                           CONCAT(e.first_name, ' ', e.last_name) as employee_name,
+                           d.employee_id
+                    FROM deposits d
+                    LEFT JOIN employees e ON d.employee_id = e.id
+                    WHERE d.shift_id = $1
+                    ORDER BY d.deposit_date DESC
+                `, [shiftId]),
+                pool.query(`
+                    SELECT w.id, w.description, w.amount, w.withdrawal_date,
+                           CONCAT(e.first_name, ' ', e.last_name) as employee_name,
+                           w.employee_id
+                    FROM withdrawals w
+                    LEFT JOIN employees e ON w.employee_id = e.id
+                    WHERE w.shift_id = $1
+                    ORDER BY w.withdrawal_date DESC
+                `, [shiftId]),
+                pool.query(`
+                    SELECT cp.id, cp.amount, cp.payment_method, cp.payment_date,
+                           COALESCE(c.nombre, '') as customer_name,
+                           cp.customer_id
+                    FROM credit_payments cp
+                    LEFT JOIN customers c ON cp.customer_id = c.id
+                    WHERE cp.shift_id = $1
+                    ORDER BY cp.payment_date DESC
+                `, [shiftId])
+            ]);
+
+            // Build transactions array matching the desktop CashTransaction model
+            // TransactionType enum: 1=VentaEfectivo, 2=VentaTarjeta, 3=Gasto, 4=Ingreso(Depósito),
+            // 5=Retiro, 6=PagoClienteEfectivo, 7=PagoClienteTarjeta, 8=VentaCredito, 9=VentaMixta
+            const transactions = [];
+
+            for (const v of ventasDetail.rows) {
+                let txType;
+                switch (parseInt(v.tipo_pago_id)) {
+                    case 2: txType = 2; break;  // VentaTarjeta
+                    case 3: txType = 8; break;  // VentaCredito
+                    case 4: txType = 9; break;  // VentaMixta
+                    default: txType = 1; break; // VentaEfectivo
+                }
+                const isCancelled = parseInt(v.estado_venta_id) === 4;
+                const desc = v.ticket_number
+                    ? `Ticket ${v.ticket_number}${v.customer_name ? ' - ' + v.customer_name : ''}`
+                    : (v.customer_name || 'Venta');
+                transactions.push({
+                    type: txType,
+                    amount: parseFloat(v.total),
+                    description: desc,
+                    timestamp: v.fecha_venta_utc ? new Date(v.fecha_venta_utc).toISOString() : null,
+                    sale_id: v.id_venta,
+                    is_voided: isCancelled,
+                    employee_id: v.employee_id,
+                    employee_name: v.employee_name || ''
+                });
+            }
+
+            for (const e of expensesDetail.rows) {
+                transactions.push({
+                    type: 3, // Gasto
+                    amount: parseFloat(e.amount),
+                    description: e.description || 'Gasto',
+                    timestamp: e.expense_date ? new Date(e.expense_date).toISOString() : null,
+                    expense_id: e.id,
+                    is_voided: !e.is_active,
+                    employee_id: e.employee_id,
+                    employee_name: e.employee_name || ''
+                });
+            }
+
+            for (const d of depositsDetail.rows) {
+                transactions.push({
+                    type: 4, // Ingreso/Depósito
+                    amount: parseFloat(d.amount),
+                    description: d.description ? `Depósito: ${d.description}` : 'Depósito',
+                    timestamp: d.deposit_date ? new Date(d.deposit_date).toISOString() : null,
+                    employee_id: d.employee_id,
+                    employee_name: d.employee_name || ''
+                });
+            }
+
+            for (const w of withdrawalsDetail.rows) {
+                transactions.push({
+                    type: 5, // Retiro
+                    amount: parseFloat(w.amount),
+                    description: w.description ? `Retiro: ${w.description}` : 'Retiro',
+                    timestamp: w.withdrawal_date ? new Date(w.withdrawal_date).toISOString() : null,
+                    employee_id: w.employee_id,
+                    employee_name: w.employee_name || ''
+                });
+            }
+
+            for (const cp of creditPaymentsDetail.rows) {
+                transactions.push({
+                    type: cp.payment_method === 'card' ? 7 : 6, // PagoClienteTarjeta or PagoClienteEfectivo
+                    amount: parseFloat(cp.amount),
+                    description: cp.customer_name ? `Pago de ${cp.customer_name}` : 'Abono de cliente',
+                    timestamp: cp.payment_date ? new Date(cp.payment_date).toISOString() : null,
+                    customer_id: cp.customer_id
+                });
+            }
+
+            // Sort by timestamp descending (most recent first)
+            transactions.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+            console.log(`[CashCuts] Transactions for shift ${shiftId}: ${transactions.length} items`);
+
+            res.json({
+                success: true,
+                data: transactions,
+                count: transactions.length
+            });
+        } catch (error) {
+            console.error('[CashCuts] Error getting shift transactions:', error.message);
+            res.status(500).json({ success: false, message: 'Error al obtener transacciones del turno' });
+        }
+    });
+
     return router;
 };
