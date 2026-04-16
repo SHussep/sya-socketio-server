@@ -8,6 +8,7 @@ const express = require('express');
 const router = express.Router();
 const { createTenantValidationMiddleware } = require('../middleware/deviceAuth');
 const { authenticateToken } = require('../middleware/auth');
+const superAdminAuth = require('../middleware/superAdminAuth');
 const Ajv = require('ajv');
 
 // ═══════════════════════════════════════════════════════════════
@@ -833,6 +834,47 @@ module.exports = (pool) => {
         } catch (err) {
             console.error('[SyncDiagnostics/verify] ❌', err.message);
             return res.status(500).json({ success: false, message: 'Error verifying entity' });
+        }
+    });
+
+    // =========================================================================
+    // GET /api/sync-diagnostics/admin/census   (Task 12 — Fase 2)
+    // Super-admin endpoint. Returns recent census reports for a tenant,
+    // optionally filtered by deviceId. Protected by superAdminAuth (RS256 JWT).
+    // =========================================================================
+    router.get('/admin/census', superAdminAuth, async (req, res) => {
+        const tenantId = Number(req.query.tenantId);
+        if (!Number.isInteger(tenantId) || tenantId <= 0) {
+            return res.status(400).json({ error: 'invalid_tenant_id' });
+        }
+
+        // Tenant authorization check (defense-in-depth on top of middleware).
+        const authorized = req.superAdmin?.authorizedTenants;
+        const tenantAllowed = Array.isArray(authorized) &&
+            (authorized.includes('*') || authorized.includes(tenantId));
+        if (!tenantAllowed) {
+            return res.status(403).json({ error: 'tenant_not_authorized' });
+        }
+
+        const deviceId = typeof req.query.deviceId === 'string' ? req.query.deviceId : null;
+        const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
+
+        const params = [tenantId];
+        let sql = `SELECT id, tenant_id, branch_id, device_id, device_name, app_version,
+                          taken_at, summary, by_entity_type, suspicious_records, handler_stats, received_at
+                   FROM sync_census_reports WHERE tenant_id = $1`;
+        if (deviceId) {
+            params.push(deviceId);
+            sql += ` AND device_id = $${params.length}`;
+        }
+        sql += ` ORDER BY taken_at DESC LIMIT ${limit}`;
+
+        try {
+            const r = await pool.query(sql, params);
+            res.json({ rows: r.rows, count: r.rowCount, limit });
+        } catch (e) {
+            console.error('[admin/census]', e);
+            res.status(500).json({ error: 'query_failed' });
         }
     });
 
