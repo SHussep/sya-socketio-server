@@ -117,13 +117,13 @@ function createRepartidorAssignmentRoutes(io) {
       console.log('[RepartidorAssignments] 📦 POST /api/repartidor-assignments/sync');
       console.log(`  GlobalId: ${global_id}, Repartidor: ${employee_id || employee_global_id}`);
       console.log(`  Mode: ${isDirectAssignment ? 'DIRECT (sin venta)' : 'FROM_SALE'}, VentaGlobalId: ${venta_global_id || venta_id || 'N/A'}`);
-      console.log(`  Product: ${product_name || 'N/A'}, Quantity: ${assigned_quantity} ${unit_abbreviation || 'kg'}, Status: ${status}`);
+      console.log(`  Product: ${product_name || 'N/A'}, Qty: ${assigned_quantity} ${unit_abbreviation || 'kg'}, Amount: $${assigned_amount || 0}, UnitPrice: $${unit_price || 0}, Status: ${status}`);
       console.log(`  RepartidorShiftGlobalId: ${repartidor_shift_global_id || 'N/A'}, RepartidorShiftId: ${repartidor_shift_id || 'N/A'}`);
       console.log(`  BatchGlobalId: ${batch_global_id || 'N/A'}`);
       console.log(`  Tenant: ${tenant_id} (from: ${body_tenant_id ? 'body' : 'jwt'}), Branch: ${branch_id} (from: ${body_branch_id ? 'body' : 'jwt'})`);
       // 🆕 Log payment info when liquidating
       if (payment_method_id || cash_amount || card_amount || credit_amount) {
-        console.log(`  💰 Payment: method=${payment_method_id}, cash=$${cash_amount || 0}, card=$${card_amount || 0}, credit=$${credit_amount || 0}`);
+        console.log(`  💰 Payment: method=${payment_method_id}, cash=$${cash_amount || 0}, card=$${card_amount || 0}, credit=$${credit_amount || 0}, amount_received=$${amount_received || 0}`);
       }
 
       // Validar campos requeridos
@@ -997,9 +997,21 @@ function createRepartidorAssignmentRoutes(io) {
 
       if (status === 'liquidated' && resolvedVentaId && hasPaymentInfo) {
         try {
+          // 📊 Log: venta state ANTES de actualizar
+          const ventaBefore = await pool.query(
+            `SELECT total, estado_venta_id, tipo_pago_id, monto_pagado, credito_original
+             FROM ventas WHERE id_venta = $1 AND tenant_id = $2`,
+            [resolvedVentaId, tenant_id]
+          );
+          if (ventaBefore.rows[0]) {
+            const vb = ventaBefore.rows[0];
+            console.log(`[RepartidorAssignments] 📊 Venta #${resolvedVentaId} ANTES: total=$${vb.total}, estado=${vb.estado_venta_id}, tipo_pago=${vb.tipo_pago_id}, pagado=$${vb.monto_pagado}, credito=$${vb.credito_original}`);
+          }
+
           // Recalcular totales de TODAS las asignaciones liquidadas de esta venta
           const assignmentTotals = await pool.query(
             `SELECT
+               COUNT(*) as liquidated_count,
                COALESCE(SUM(cash_amount), 0) as total_cash,
                COALESCE(SUM(card_amount), 0) as total_card,
                COALESCE(SUM(credit_amount), 0) as total_credit,
@@ -1013,6 +1025,7 @@ function createRepartidorAssignmentRoutes(io) {
           const totalPagado = parseFloat(totals.total_cash) + parseFloat(totals.total_card);
           const totalCredito = parseFloat(totals.total_credit);
           const totalVenta = parseFloat(totals.total_amount);
+          console.log(`[RepartidorAssignments] 📊 Liquidated assignments on venta #${resolvedVentaId}: ${totals.liquidated_count}, SUM(amount_received)=$${totalVenta.toFixed(2)}`);
 
           // Redeterminar tipo_pago_id basado en totales de TODAS las asignaciones
           const ventaHasCash = parseFloat(totals.total_cash) > 0;
@@ -1062,8 +1075,7 @@ function createRepartidorAssignmentRoutes(io) {
 
           if (updateVentaResult.rows.length > 0) {
             const v = updateVentaResult.rows[0];
-            console.log(`[RepartidorAssignments] 💰 Venta #${resolvedVentaId} actualizada:`);
-            console.log(`   tipo_pago_id=${finalTipoPagoId} | monto_pagado=$${totalPagado.toFixed(2)} | credito=$${totalCredito.toFixed(2)}`);
+            console.log(`[RepartidorAssignments] 💰 Venta #${resolvedVentaId} DESPUÉS: total=$${v.total}, tipo_pago=${finalTipoPagoId}, pagado=$${totalPagado.toFixed(2)}, credito=$${totalCredito.toFixed(2)}`);
             console.log(`   💳 Desglose: cash=$${totalCash.toFixed(2)}, card=$${totalCard.toFixed(2)}, credit=$${totalCredito.toFixed(2)}`);
 
             // ═══════════════════════════════════════════════════════════════════
@@ -1072,7 +1084,7 @@ function createRepartidorAssignmentRoutes(io) {
             // ═══════════════════════════════════════════════════════════════════
             try {
               const liquidatedDetails = await pool.query(
-                `SELECT ra.venta_detalle_id, ra.assigned_quantity, ra.product_id,
+                `SELECT ra.venta_detalle_id, ra.assigned_quantity, ra.product_id, ra.product_name, ra.unit_price, ra.amount_received,
                         COALESCE((SELECT SUM(rr.quantity) FROM repartidor_returns rr
                                   WHERE rr.assignment_id = ra.id AND rr.status != 'deleted'), 0) as returned_qty
                  FROM repartidor_assignments ra
@@ -1082,6 +1094,7 @@ function createRepartidorAssignmentRoutes(io) {
               );
               for (const det of liquidatedDetails.rows) {
                 const soldQty = parseFloat(det.assigned_quantity) - parseFloat(det.returned_qty);
+                console.log(`[RepartidorAssignments]    📦 Detalle: ${det.product_name || det.product_id} — assigned=${det.assigned_quantity}, returned=${det.returned_qty}, sold=${soldQty}, amount_received=$${det.amount_received}, unit_price=$${det.unit_price}`);
                 await pool.query(
                   `UPDATE ventas_detalle
                    SET cantidad = $1, total_linea = $1 * precio_unitario
@@ -1133,6 +1146,26 @@ function createRepartidorAssignmentRoutes(io) {
         } catch (ventaUpdateError) {
           // No fallar la liquidación si la actualización de venta falla
           console.error(`[RepartidorAssignments] ⚠️ Error actualizando venta ${resolvedVentaId}:`, ventaUpdateError.message);
+        }
+      }
+
+      // 📊 RUNNING TOTAL: Verificación rápida del total actual de ventas para esta sucursal
+      // Esto permite comparar con el QA paso a paso
+      if ((status === 'liquidated' || status === 'cancelled') && !wasInserted) {
+        try {
+          const runningTotal = await pool.query(
+            `SELECT COALESCE(SUM(total), 0) as ventas_total,
+                    COUNT(*) as ventas_count
+             FROM ventas
+             WHERE tenant_id = $1 AND branch_id = $2
+               AND estado_venta_id IN (3, 5)
+               AND DATE(COALESCE(fecha_liquidacion_utc, fecha_venta_utc) AT TIME ZONE 'America/Monterrey') = DATE(NOW() AT TIME ZONE 'America/Monterrey')`,
+            [tenant_id, branch_id]
+          );
+          const rt = runningTotal.rows[0];
+          console.log(`[RepartidorAssignments] 📊 RUNNING TOTAL (branch ${branch_id}): $${parseFloat(rt.ventas_total).toFixed(2)} (${rt.ventas_count} ventas activas hoy)`);
+        } catch (rtErr) {
+          // Non-critical, don't fail
         }
       }
 
