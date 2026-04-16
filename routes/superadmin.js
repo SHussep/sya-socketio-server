@@ -948,6 +948,13 @@ module.exports = function(pool, io) {
             await safeDel('DELETE FROM venta_cancelaciones WHERE tenant_id = $1', [id]);
             await safeDel('DELETE FROM purchase_details WHERE purchase_id IN (SELECT id FROM purchases WHERE tenant_id = $1)', [id]);
             await safeDel('DELETE FROM kardex_entries WHERE tenant_id = $1', [id]);
+            await safeDel('DELETE FROM notas_credito_detalle WHERE nota_credito_id IN (SELECT id FROM notas_credito WHERE tenant_id = $1)', [id]);
+            await safeDel('DELETE FROM inventory_transfer_items WHERE transfer_id IN (SELECT id FROM inventory_transfers WHERE tenant_id = $1)', [id]);
+
+            // ── Phase 1b: Production module ──
+            await safeDel('DELETE FROM production_alerts WHERE tenant_id = $1', [id]);
+            await safeDel('DELETE FROM production_entries WHERE tenant_id = $1', [id]);
+            await safeDel('DELETE FROM production_yield_configs WHERE tenant_id = $1', [id]);
 
             // ── Phase 2: Financial / operational ──
             await safeDel('DELETE FROM ventas WHERE tenant_id = $1', [id]);
@@ -968,6 +975,7 @@ module.exports = function(pool, io) {
             await safeDel('DELETE FROM data_resets WHERE tenant_id = $1', [id]);
 
             // ── Phase 4: Shifts ──
+            await safeDel('DELETE FROM shift_requests WHERE tenant_id = $1', [id]);
             await safeDel('DELETE FROM shifts WHERE tenant_id = $1', [id]);
 
             // ── Phase 5: Products and pricing ──
