@@ -957,14 +957,14 @@ module.exports = function(pool, io) {
             await safeDel('DELETE FROM production_yield_configs WHERE tenant_id = $1', [id]);
 
             // ── Phase 2: Financial / operational ──
-            await safeDel('DELETE FROM ventas WHERE tenant_id = $1', [id]);
+            await safeDel('DELETE FROM notas_credito WHERE tenant_id = $1', [id]);
             await safeDel('DELETE FROM credit_payments WHERE tenant_id = $1', [id]);
+            await safeDel('DELETE FROM ventas WHERE tenant_id = $1', [id]);
             await safeDel('DELETE FROM cash_cuts WHERE tenant_id = $1', [id]);
             await safeDel('DELETE FROM deposits WHERE tenant_id = $1', [id]);
             await safeDel('DELETE FROM withdrawals WHERE tenant_id = $1', [id]);
             await safeDel('DELETE FROM expenses WHERE tenant_id = $1', [id]);
             await safeDel('DELETE FROM purchases WHERE tenant_id = $1', [id]);
-            await safeDel('DELETE FROM notas_credito WHERE tenant_id = $1', [id]);
 
             // ── Phase 3: Guardian / logs / sync ──
             await safeDel('DELETE FROM suspicious_weighing_logs WHERE tenant_id = $1', [id]);
