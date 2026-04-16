@@ -274,9 +274,11 @@ module.exports = (pool, io) => {
         try {
             const alerts = Array.isArray(req.body) ? req.body : [req.body];
             const results = { inserted: 0, updated: 0, errors: [] };
+            console.log(`[Production] POST /alerts/sync: ${alerts.length} alert(s), branch_id=${alerts[0]?.branch_id}, tenant_id=${alerts[0]?.tenant_id}`);
 
             for (const alert of alerts) {
                 try {
+                    console.log(`[Production] Syncing alert: global_id=${alert.global_id}, type=${alert.alert_type}, branch=${alert.branch_id}, employee_global_id=${alert.employee_global_id}, shift_global_id=${alert.shift_global_id}`);
                     let shiftId = alert.shift_id || null;
                     if (!shiftId && alert.shift_global_id) {
                         const shiftRes = await pool.query(
@@ -347,6 +349,7 @@ module.exports = (pool, io) => {
                     ]);
 
                     const row = result.rows[0];
+                    console.log(`[Production] Alert UPSERT result: id=${row.id}, inserted=${row.inserted}, global_id=${alert.global_id}`);
                     if (row.inserted) {
                         results.inserted++;
                         // Only emit if not already broadcast via direct socket event
@@ -365,6 +368,7 @@ module.exports = (pool, io) => {
                         results.updated++;
                     }
                 } catch (alertErr) {
+                    console.error(`[Production] Alert sync ERROR: global_id=${alert.global_id}, error=${alertErr.message}`);
                     results.errors.push({ global_id: alert.global_id, error: alertErr.message });
                 }
             }
@@ -451,6 +455,9 @@ module.exports = (pool, io) => {
                 // Debug: check total alerts for this branch without date filter
                 const totalCheck = await pool.query('SELECT COUNT(*) as cnt, MIN(created_local_utc) as min_date, MAX(created_local_utc) as max_date FROM production_alerts WHERE branch_id = $1 AND is_deleted = false', [branch_id]);
                 console.log(`[Production] DEBUG total alerts branch ${branch_id}: ${totalCheck.rows[0].cnt}, date range: ${totalCheck.rows[0].min_date} to ${totalCheck.rows[0].max_date}`);
+                // Check ALL branches
+                const globalCheck = await pool.query('SELECT branch_id, COUNT(*) as cnt FROM production_alerts WHERE is_deleted = false GROUP BY branch_id');
+                console.log(`[Production] DEBUG all branches: ${JSON.stringify(globalCheck.rows)}`);
             }
             res.json({ success: true, data: result.rows });
         } catch (err) {
