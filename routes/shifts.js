@@ -2489,6 +2489,98 @@ module.exports = (pool, io) => {
                     const withdrawals = withdrawalsQuery.rows[0];
                     const payments = paymentsQuery.rows[0];
 
+                    // 5b. Obtener transacciones individuales para la lista de movimientos
+                    const [ventasDetail, expensesDetail, depositsDetail, withdrawalsDetail, creditPaymentsDetail] = await Promise.all([
+                        pool.query(`
+                            SELECT v.id_venta, v.ticket_number, v.total, v.tipo_pago_id,
+                                   v.estado_venta_id, v.fecha_venta_utc,
+                                   v.cash_amount, v.card_amount, v.credit_amount,
+                                   COALESCE(c.nombre, '') as customer_name
+                            FROM ventas v
+                            LEFT JOIN customers c ON v.id_cliente = c.id
+                            WHERE ${salesWhereClause}
+                              AND v.tenant_id = $2
+                            ORDER BY v.fecha_venta_utc DESC
+                        `, [shift.id, shift.tenant_id]),
+                        pool.query(`
+                            SELECT id, description, amount, expense_date, is_active
+                            FROM expenses
+                            WHERE id_turno = $1 AND tenant_id = $2
+                            ORDER BY expense_date DESC
+                        `, [shift.id, shift.tenant_id]),
+                        pool.query(`
+                            SELECT id, description, amount, deposit_date
+                            FROM deposits
+                            WHERE shift_id = $1
+                            ORDER BY deposit_date DESC
+                        `, [shift.id]),
+                        pool.query(`
+                            SELECT id, description, amount, withdrawal_date
+                            FROM withdrawals
+                            WHERE shift_id = $1
+                            ORDER BY withdrawal_date DESC
+                        `, [shift.id]),
+                        pool.query(`
+                            SELECT cp.id, cp.amount, cp.payment_method, cp.payment_date,
+                                   COALESCE(c.nombre, '') as customer_name
+                            FROM credit_payments cp
+                            LEFT JOIN customers c ON cp.customer_id = c.id
+                            WHERE cp.shift_id = $1
+                            ORDER BY cp.payment_date DESC
+                        `, [shift.id])
+                    ]);
+
+                    // Construir array de transacciones
+                    // TransactionType enum: 1=VentaEfectivo, 2=VentaTarjeta, 3=Gasto, 4=Ingreso,
+                    // 5=Retiro, 6=PagoClienteEfectivo, 7=PagoClienteTarjeta, 8=VentaCredito, 9=VentaMixta
+                    const transactionsList = [];
+                    for (const v of ventasDetail.rows) {
+                        let txType;
+                        switch (parseInt(v.tipo_pago_id)) {
+                            case 2: txType = 2; break;
+                            case 3: txType = 8; break;
+                            case 4: txType = 9; break;
+                            default: txType = 1; break;
+                        }
+                        const isCancelled = parseInt(v.estado_venta_id) === 4;
+                        const desc = v.ticket_number
+                            ? `Ticket ${v.ticket_number}${v.customer_name ? ' - ' + v.customer_name : ''}`
+                            : (v.customer_name || 'Venta');
+                        transactionsList.push({
+                            type: txType, amount: parseFloat(v.total), description: desc,
+                            timestamp: v.fecha_venta_utc, sale_id: v.id_venta, is_cancelled: isCancelled
+                        });
+                    }
+                    for (const e of expensesDetail.rows) {
+                        transactionsList.push({
+                            type: 3, amount: parseFloat(e.amount), description: e.description || 'Gasto',
+                            timestamp: e.expense_date, expense_id: e.id, is_cancelled: !e.is_active
+                        });
+                    }
+                    for (const d of depositsDetail.rows) {
+                        transactionsList.push({
+                            type: 4, amount: parseFloat(d.amount),
+                            description: d.description ? `Depósito: ${d.description}` : 'Depósito',
+                            timestamp: d.deposit_date
+                        });
+                    }
+                    for (const w of withdrawalsDetail.rows) {
+                        transactionsList.push({
+                            type: 5, amount: parseFloat(w.amount),
+                            description: w.description ? `Retiro: ${w.description}` : 'Retiro',
+                            timestamp: w.withdrawal_date
+                        });
+                    }
+                    for (const cp of creditPaymentsDetail.rows) {
+                        transactionsList.push({
+                            type: cp.payment_method === 'card' ? 7 : 6,
+                            amount: parseFloat(cp.amount),
+                            description: cp.customer_name ? `Pago de ${cp.customer_name}` : 'Abono de cliente',
+                            timestamp: cp.payment_date
+                        });
+                    }
+                    transactionsList.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
                     const initialAmount = parseFloat(shift.initial_amount || 0);
                     const cashSales = parseFloat(sales.cash_sales || 0);
                     const cardSales = parseFloat(sales.card_sales || 0);
@@ -2643,6 +2735,9 @@ module.exports = (pool, io) => {
                         liquidated_assignment_count: 0,
                         return_count: 0,
                         last_updated_at: new Date().toISOString(),
+
+                        // Transacciones individuales para lista de movimientos
+                        transactions: transactionsList,
                     };
 
                     // Si es repartidor, calcular asignaciones y devoluciones
