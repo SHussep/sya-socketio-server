@@ -2415,43 +2415,49 @@ module.exports = (pool, io) => {
                     const isRepartidor = shift.employee_role.toLowerCase() === 'repartidor';
 
                     // 1. Calcular ventas por método de pago
-                    // IMPORTANTE: Excluir ventas asignadas a repartidores (id_turno_repartidor != null)
-                    // porque ese dinero NO está en la caja del empleado de mostrador
+                    // Para cajeros: excluir ventas asignadas a repartidores (id_turno_repartidor != null)
+                    // Para repartidores: buscar por id_turno_repartidor (sus propias ventas)
                     // tipo_pago_id: 1=Efectivo, 2=Tarjeta, 3=Crédito, 4=Mixto
+                    // estado_venta_id: 3=Completada, 5=Liquidada (excluir canceladas=4)
+                    const salesWhereClause = isRepartidor
+                        ? 'id_turno_repartidor = $1'
+                        : 'id_turno = $1 AND id_turno_repartidor IS NULL';
                     const salesQuery = await pool.query(`
                         SELECT
                             COALESCE(SUM(
                                 CASE
-                                    WHEN tipo_pago_id = 4 THEN cash_amount
+                                    WHEN tipo_pago_id = 4 THEN COALESCE(cash_amount, 0)
                                     WHEN tipo_pago_id = 1 THEN total
                                     ELSE 0
                                 END
                             ), 0) as cash_sales,
                             COALESCE(SUM(
                                 CASE
-                                    WHEN tipo_pago_id = 4 THEN card_amount
+                                    WHEN tipo_pago_id = 4 THEN COALESCE(card_amount, 0)
                                     WHEN tipo_pago_id = 2 THEN total
                                     ELSE 0
                                 END
                             ), 0) as card_sales,
                             COALESCE(SUM(
                                 CASE
-                                    WHEN tipo_pago_id = 4 THEN credit_amount
+                                    WHEN tipo_pago_id = 4 THEN COALESCE(credit_amount, 0)
                                     WHEN tipo_pago_id = 3 THEN total
                                     ELSE 0
                                 END
-                            ), 0) as credit_sales
+                            ), 0) as credit_sales,
+                            COUNT(*) as sale_count
                         FROM ventas
-                        WHERE id_turno = $1
-                          AND id_turno_repartidor IS NULL
-                    `, [shift.id]);
+                        WHERE ${salesWhereClause}
+                          AND tenant_id = $2
+                          AND estado_venta_id IN (3, 5)
+                    `, [shift.id, shift.tenant_id]);
 
-                    // 2. Calcular gastos (usa id_turno)
+                    // 2. Calcular gastos (usa id_turno, solo activos)
                     const expensesQuery = await pool.query(`
                         SELECT COALESCE(SUM(amount), 0) as total_expenses, COUNT(*) as expense_count
                         FROM expenses
-                        WHERE id_turno = $1
-                    `, [shift.id]);
+                        WHERE id_turno = $1 AND tenant_id = $2 AND is_active = true
+                    `, [shift.id, shift.tenant_id]);
 
                     // 3. Calcular depósitos (usa shift_id)
                     const depositsQuery = await pool.query(`
@@ -2487,6 +2493,7 @@ module.exports = (pool, io) => {
                     const cashSales = parseFloat(sales.cash_sales || 0);
                     const cardSales = parseFloat(sales.card_sales || 0);
                     const creditSales = parseFloat(sales.credit_sales || 0);
+                    const saleCount = parseInt(sales.sale_count || 0);
                     const totalExpenses = parseFloat(expenses.total_expenses || 0);
                     const totalDeposits = parseFloat(deposits.total_deposits || 0);
                     const totalWithdrawals = parseFloat(withdrawals.total_withdrawals || 0);
@@ -2609,6 +2616,8 @@ module.exports = (pool, io) => {
                         deposits: totalDeposits,
                         withdrawals: totalWithdrawals,
                         liquidaciones_efectivo: liquidacionesEfectivo,
+                        liquidaciones_tarjeta: liquidacionesTarjeta,
+                        liquidaciones_credito: liquidacionesCredito,
                         total_repartidor_expenses: totalRepartidorExpenses,
                         has_consolidated_liquidaciones: hasConsolidatedLiquidaciones,
                         consolidated_repartidor_names: consolidatedRepartidorNames,
@@ -2616,6 +2625,7 @@ module.exports = (pool, io) => {
                         expected_cash: expectedCash,
 
                         // Contadores básicos
+                        sale_count: saleCount,
                         expense_count: parseInt(expenses.expense_count || 0),
                         deposit_count: parseInt(deposits.deposit_count || 0),
                         withdrawal_count: parseInt(withdrawals.withdrawal_count || 0),
