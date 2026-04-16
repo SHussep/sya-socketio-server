@@ -178,9 +178,7 @@ module.exports = (pool, io) => {
             query += ` ORDER BY pe.created_local_utc DESC LIMIT $${paramIdx} OFFSET $${paramIdx + 1}`;
             params.push(parseInt(limit), parseInt(offset));
 
-            console.log(`[Production] GET /entries: branch_id=${branch_id}, start_date=${start_date}, end_date=${end_date}, params=${JSON.stringify(params)}`);
             const result = await pool.query(query, params);
-            console.log(`[Production] GET /entries: ${result.rows.length} rows returned`);
             res.json({ success: true, data: result.rows });
         } catch (err) {
             console.error('[Production] Error fetching entries:', err);
@@ -273,11 +271,8 @@ module.exports = (pool, io) => {
         try {
             const alerts = Array.isArray(req.body) ? req.body : [req.body];
             const results = { inserted: 0, updated: 0, errors: [] };
-            console.log(`[Production] POST /alerts/sync: ${alerts.length} alert(s), branch_id=${alerts[0]?.branch_id}, tenant_id=${alerts[0]?.tenant_id}`);
-
             for (const alert of alerts) {
                 try {
-                    console.log(`[Production] Syncing alert: global_id=${alert.global_id}, type=${alert.alert_type}, branch=${alert.branch_id}, employee_global_id=${alert.employee_global_id}, shift_global_id=${alert.shift_global_id}`);
                     // Resolve shift FK from global_id ONLY (never use local IDs)
                     let shiftId = null;
                     if (alert.shift_global_id) {
@@ -350,7 +345,6 @@ module.exports = (pool, io) => {
                     ]);
 
                     const row = result.rows[0];
-                    console.log(`[Production] Alert UPSERT result: id=${row.id}, inserted=${row.inserted}, global_id=${alert.global_id}`);
                     if (row.inserted) {
                         results.inserted++;
                         // Only emit if not already broadcast via direct socket event
@@ -449,17 +443,7 @@ module.exports = (pool, io) => {
             query += ` ORDER BY pa.created_local_utc DESC LIMIT $${paramIdx} OFFSET $${paramIdx + 1}`;
             params.push(parseInt(limit), parseInt(offset));
 
-            console.log(`[Production] GET /alerts: branch_id=${branch_id}, start_date=${start_date}, end_date=${end_date}, params=${JSON.stringify(params)}`);
             const result = await pool.query(query, params);
-            console.log(`[Production] GET /alerts: ${result.rows.length} rows returned`);
-            if (result.rows.length === 0) {
-                // Debug: check total alerts for this branch without date filter
-                const totalCheck = await pool.query('SELECT COUNT(*) as cnt, MIN(created_local_utc) as min_date, MAX(created_local_utc) as max_date FROM production_alerts WHERE branch_id = $1 AND is_deleted = false', [branch_id]);
-                console.log(`[Production] DEBUG total alerts branch ${branch_id}: ${totalCheck.rows[0].cnt}, date range: ${totalCheck.rows[0].min_date} to ${totalCheck.rows[0].max_date}`);
-                // Check ALL branches
-                const globalCheck = await pool.query('SELECT branch_id, COUNT(*) as cnt FROM production_alerts WHERE is_deleted = false GROUP BY branch_id');
-                console.log(`[Production] DEBUG all branches: ${JSON.stringify(globalCheck.rows)}`);
-            }
             res.json({ success: true, data: result.rows });
         } catch (err) {
             console.error('[Production] Error fetching alerts:', err);
