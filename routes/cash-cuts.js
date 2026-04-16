@@ -629,10 +629,10 @@ module.exports = (pool, io) => {
                            v.cash_amount, v.card_amount, v.credit_amount,
                            COALESCE(c.nombre, '') as customer_name,
                            CONCAT(e.first_name, ' ', e.last_name) as employee_name,
-                           v.employee_id
+                           v.id_empleado as employee_id
                     FROM ventas v
                     LEFT JOIN customers c ON v.id_cliente = c.id
-                    LEFT JOIN employees e ON v.employee_id = e.id
+                    LEFT JOIN employees e ON v.id_empleado = e.id
                     WHERE ${salesWhereClause}
                       AND v.tenant_id = $2
                     ORDER BY v.fecha_venta_utc DESC
