@@ -439,7 +439,7 @@ function createRepartidorAssignmentRoutes(io) {
           console.log(`[RepartidorAssignments] 🔄 venta_id from existing record (prevCheck): ${resolvedVentaId}`);
         }
         if (status === 'cancelled') {
-          console.log(`[RepartidorAssignments] Cancel idempotency check: previousStatus=${previousStatus}`);
+          console.log(`[RepartidorAssignments] Cancel: previousStatus=${previousStatus}, resolvedVentaId=${resolvedVentaId}, productId=${resolvedProductId}`);
         }
       }
 
@@ -858,6 +858,118 @@ function createRepartidorAssignmentRoutes(io) {
           }
         } catch (invErr) {
           console.error('[RepartidorAssignments] ⚠️ Error restaurando inventario (cancelación):', invErr.message);
+        }
+      }
+
+      // ═══════════════════════════════════════════════════════════════════════════════
+      // CANCELAR/RECALCULAR VENTA: Cuando asignación pasa de liquidated → cancelled
+      // Si no quedan asignaciones liquidadas → cancelar venta (estado_venta_id=4)
+      // Si quedan algunas → recalcular totales de la venta
+      // También reversar crédito del cliente si aplica
+      // ═══════════════════════════════════════════════════════════════════════════════
+      if (!wasInserted && status === 'cancelled' && previousStatus === 'liquidated' && resolvedVentaId) {
+        try {
+          // Verificar asignaciones liquidadas restantes en esta venta
+          const remainingResult = await pool.query(
+            `SELECT
+               COUNT(*) as remaining_count,
+               COALESCE(SUM(cash_amount), 0) as total_cash,
+               COALESCE(SUM(card_amount), 0) as total_card,
+               COALESCE(SUM(credit_amount), 0) as total_credit,
+               COALESCE(SUM(amount_received), 0) as total_amount
+             FROM repartidor_assignments
+             WHERE venta_id = $1 AND tenant_id = $2 AND status = 'liquidated'`,
+            [resolvedVentaId, tenant_id]
+          );
+
+          const remaining = remainingResult.rows[0];
+          const remainingCount = parseInt(remaining.remaining_count);
+
+          // Leer crédito previo de la venta para calcular delta
+          const prevVentaResult = await pool.query(
+            `SELECT id_cliente, COALESCE(credito_original, 0) as old_credito
+             FROM ventas WHERE id_venta = $1 AND tenant_id = $2`,
+            [resolvedVentaId, tenant_id]
+          );
+          const oldCredito = parseFloat(prevVentaResult.rows[0]?.old_credito || 0);
+          const ventaClienteId = prevVentaResult.rows[0]?.id_cliente;
+
+          if (remainingCount === 0) {
+            // No quedan asignaciones liquidadas → cancelar la venta
+            await pool.query(
+              `UPDATE ventas
+               SET estado_venta_id = 4,
+                   monto_pagado = 0,
+                   credito_original = 0,
+                   cash_amount = 0,
+                   card_amount = 0,
+                   credit_amount = 0,
+                   updated_at = NOW()
+               WHERE id_venta = $1 AND tenant_id = $2`,
+              [resolvedVentaId, tenant_id]
+            );
+            console.log(`[RepartidorAssignments] ❌ Venta #${resolvedVentaId} cancelada (0 asignaciones liquidadas restantes)`);
+          } else {
+            // Recalcular venta con asignaciones liquidadas restantes
+            const totalPagado = parseFloat(remaining.total_cash) + parseFloat(remaining.total_card);
+            const totalCredito = parseFloat(remaining.total_credit);
+            const totalVenta = parseFloat(remaining.total_amount);
+
+            // Redeterminar tipo_pago_id
+            const hasCash = parseFloat(remaining.total_cash) > 0;
+            const hasCard = parseFloat(remaining.total_card) > 0;
+            const hasCredit = totalCredito > 0;
+            const paymentTypes = [hasCash, hasCard, hasCredit].filter(Boolean).length;
+
+            let finalTipoPagoId;
+            if (paymentTypes > 1) finalTipoPagoId = 4;
+            else if (hasCredit && !hasCash && !hasCard) finalTipoPagoId = 3;
+            else if (hasCard && !hasCash && !hasCredit) finalTipoPagoId = 2;
+            else finalTipoPagoId = 1;
+
+            await pool.query(
+              `UPDATE ventas
+               SET tipo_pago_id = $1,
+                   monto_pagado = $2,
+                   total = $3,
+                   credito_original = $4,
+                   cash_amount = $5,
+                   card_amount = $6,
+                   credit_amount = $7,
+                   updated_at = NOW()
+               WHERE id_venta = $8 AND tenant_id = $9`,
+              [finalTipoPagoId, totalPagado, totalVenta, totalCredito,
+               parseFloat(remaining.total_cash), parseFloat(remaining.total_card), totalCredito,
+               resolvedVentaId, tenant_id]
+            );
+            console.log(`[RepartidorAssignments] 🔄 Venta #${resolvedVentaId} recalculada: ${remainingCount} asignaciones restantes, total=$${totalVenta.toFixed(2)}`);
+          }
+
+          // Reversar crédito del cliente si aplica
+          if (oldCredito > 0 && ventaClienteId) {
+            const newCredito = remainingCount === 0 ? 0 : parseFloat(remaining.total_credit);
+            const creditDelta = newCredito - oldCredito; // Negativo = reducir deuda
+            if (creditDelta !== 0) {
+              await pool.query(
+                `UPDATE customers
+                 SET saldo_deudor = GREATEST(saldo_deudor + $1, 0), updated_at = NOW()
+                 WHERE id = $2 AND tenant_id = $3`,
+                [creditDelta, ventaClienteId, tenant_id]
+              );
+              console.log(`[RepartidorAssignments] 💳 Cliente #${ventaClienteId} saldo ajustado: ${creditDelta > 0 ? '+' : ''}$${creditDelta.toFixed(2)} (prev=$${oldCredito.toFixed(2)}, new=$${newCredito.toFixed(2)})`);
+            }
+          }
+
+          // Emitir evento para que Dashboard/Ventas se actualicen
+          if (io) {
+            io.to(`branch_${branch_id}`).emit('sale_updated', {
+              id_venta: resolvedVentaId,
+              action: remainingCount === 0 ? 'cancelled' : 'recalculated',
+              updatedAt: new Date().toISOString()
+            });
+          }
+        } catch (cancelVentaErr) {
+          console.error(`[RepartidorAssignments] ⚠️ Error cancelando/recalculando venta al cancelar asignación:`, cancelVentaErr.message);
         }
       }
 
