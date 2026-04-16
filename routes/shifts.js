@@ -2693,10 +2693,9 @@ module.exports = (pool, io) => {
                         snapshotData.liquidated_assignment_count = parseInt(assignments.liquidated_assignments || 0);
                         snapshotData.return_count = parseInt(returns.total_returns || 0);
 
-                        // Ventas en efectivo para repartidores = asignaciones liquidadas - devoluciones
-                        // (sobreescribir el cálculo anterior)
-                        snapshotData.cash_sales = netAmountToDeliver;
-                        snapshotData.expected_cash = initialAmount + netAmountToDeliver + cashPayments + totalDeposits - totalExpenses - totalWithdrawals;
+                        // Usar el desglose por tipo de pago de ventas (calculado arriba por tipo_pago_id)
+                        // NO sobreescribir cash_sales con netAmountToDeliver — eso mete tarjeta/crédito como efectivo
+                        snapshotData.expected_cash = initialAmount + cashSales + cashPayments + totalDeposits - totalExpenses - totalWithdrawals;
 
                         // TODO: Obtener actual_cash_delivered si ya liquidó
                         // Por ahora dejamos en 0, se actualizará cuando liquide
