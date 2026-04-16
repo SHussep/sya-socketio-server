@@ -31,7 +31,7 @@ module.exports = (pool, io) => {
 
             for (const entry of entries) {
                 try {
-                    // Resolve shift FK from global_id (prefer global_id over local id)
+                    // Resolve shift FK from global_id ONLY (never use local IDs)
                     let shiftId = null;
                     if (entry.shift_global_id) {
                         const shiftRes = await pool.query(
@@ -39,20 +39,14 @@ module.exports = (pool, io) => {
                         );
                         shiftId = shiftRes.rows[0]?.id || null;
                     }
-                    if (!shiftId && entry.shift_id) {
-                        shiftId = entry.shift_id;
-                    }
 
-                    // Resolve employee FK from global_id (prefer global_id over local id)
+                    // Resolve employee FK from global_id ONLY (never use local IDs)
                     let employeeId = null;
                     if (entry.employee_global_id) {
                         const empRes = await pool.query(
                             'SELECT id FROM employees WHERE global_id = $1', [entry.employee_global_id]
                         );
                         employeeId = empRes.rows[0]?.id || null;
-                    }
-                    if (!employeeId && entry.employee_id && entry.employee_id !== 0) {
-                        employeeId = entry.employee_id;
                     }
 
                     const result = await pool.query(`
@@ -284,6 +278,7 @@ module.exports = (pool, io) => {
             for (const alert of alerts) {
                 try {
                     console.log(`[Production] Syncing alert: global_id=${alert.global_id}, type=${alert.alert_type}, branch=${alert.branch_id}, employee_global_id=${alert.employee_global_id}, shift_global_id=${alert.shift_global_id}`);
+                    // Resolve shift FK from global_id ONLY (never use local IDs)
                     let shiftId = null;
                     if (alert.shift_global_id) {
                         const shiftRes = await pool.query(
@@ -291,10 +286,8 @@ module.exports = (pool, io) => {
                         );
                         shiftId = shiftRes.rows[0]?.id || null;
                     }
-                    if (!shiftId && alert.shift_id) {
-                        shiftId = alert.shift_id;
-                    }
 
+                    // Resolve employee FK from global_id ONLY (never use local IDs)
                     let employeeId = null;
                     if (alert.employee_global_id) {
                         const empRes = await pool.query(
@@ -302,12 +295,9 @@ module.exports = (pool, io) => {
                         );
                         employeeId = empRes.rows[0]?.id || null;
                     }
-                    if (!employeeId && alert.employee_id) {
-                        employeeId = alert.employee_id;
-                    }
 
-                    let reviewedById = alert.reviewed_by_employee_id || null;
-                    if (!reviewedById && alert.reviewed_by_global_id) {
+                    let reviewedById = null;
+                    if (alert.reviewed_by_global_id) {
                         const revRes = await pool.query(
                             'SELECT id FROM employees WHERE global_id = $1', [alert.reviewed_by_global_id]
                         );
@@ -545,7 +535,13 @@ module.exports = (pool, io) => {
 
             for (const config of configs) {
                 try {
-                    const createdById = config.created_by_employee_id === 0 ? null : config.created_by_employee_id;
+                    let createdById = null;
+                    if (config.created_by_employee_global_id) {
+                        const empRes = await pool.query(
+                            'SELECT id FROM employees WHERE global_id = $1', [config.created_by_employee_global_id]
+                        );
+                        createdById = empRes.rows[0]?.id || null;
+                    }
 
                     const result = await pool.query(`
                         INSERT INTO production_yield_configs (
