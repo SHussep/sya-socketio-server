@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS sync_quarantine_reports (
     verify_result JSONB,
     admin_decision TEXT CHECK (admin_decision IN ('release','discard','force_synced') OR admin_decision IS NULL),
     admin_decided_at TIMESTAMPTZ,
-    admin_decided_by INTEGER REFERENCES users(id),
+    admin_decided_by INTEGER REFERENCES employees(id),
     admin_notes TEXT,
     received_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS sync_backup_requests (
     tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
     device_id TEXT NOT NULL,
-    requested_by INTEGER NOT NULL REFERENCES users(id),
+    requested_by INTEGER NOT NULL REFERENCES employees(id),
     requested_at TIMESTAMPTZ DEFAULT NOW(),
     upload_token_hash TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','uploaded','expired','failed')),
@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS sync_admin_command_log (
     command_id UUID PRIMARY KEY,
     tenant_id INTEGER NOT NULL REFERENCES tenants(id),
     device_id TEXT NOT NULL,
-    admin_user_id INTEGER NOT NULL REFERENCES users(id),
+    admin_user_id INTEGER NOT NULL REFERENCES employees(id),
     command_type TEXT NOT NULL,
     payload JSONB,
     issued_at TIMESTAMPTZ DEFAULT NOW(),
@@ -85,13 +85,14 @@ CREATE TABLE IF NOT EXISTS super_admin_jwt_revocations (
     reason TEXT
 );
 
--- Columna para PIN del super-admin (bcrypt hash) usada por Task 4
-ALTER TABLE users ADD COLUMN IF NOT EXISTS super_admin_pin TEXT;
+-- Columna para PIN del super-admin (bcrypt hash) usada por Task 4.
+-- Nota: el backend usa `employees` como tabla de identidad (no `users`).
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS super_admin_pin TEXT;
 
 -- Log de pushes FCM (Task 30) — throttle por admin+device
 CREATE TABLE IF NOT EXISTS fcm_push_log (
     id BIGSERIAL PRIMARY KEY,
-    admin_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    admin_user_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
     device_id TEXT NOT NULL,
     push_type TEXT NOT NULL DEFAULT 'quarantine_new',
     sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
