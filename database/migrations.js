@@ -3426,6 +3426,24 @@ async function runMigrations() {
                 console.log('[Schema] ⚠️ Migration 052:', m052err.message);
             }
 
+            // ── Migration 053 (2026-04-16): Sync diagnostics + super-admin revocations ──
+            // Loads external SQL file database/migrations/20260416_sync_diagnostics.sql
+            // Creates: sync_census_reports, sync_quarantine_reports, sync_backup_requests,
+            //          sync_admin_command_log, super_admin_jwt_revocations, fcm_push_log
+            // Adds:    users.super_admin_pin column
+            try {
+                const syncDiagPath = path.join(__dirname, 'migrations', '20260416_sync_diagnostics.sql');
+                if (fs.existsSync(syncDiagPath)) {
+                    const syncDiagSql = fs.readFileSync(syncDiagPath, 'utf8');
+                    await client.query(syncDiagSql);
+                    console.log('[Schema] ✅ Migration 053 (2026-04-16): sync diagnostics + super-admin revocation tables ready');
+                } else {
+                    console.error('[Schema] ⚠️ Migration 053: SQL file not found at', syncDiagPath);
+                }
+            } catch (m053err) {
+                console.log('[Schema] ⚠️ Migration 053 (sync diagnostics):', m053err.message);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {
