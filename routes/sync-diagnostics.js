@@ -7,6 +7,119 @@
 const express = require('express');
 const router = express.Router();
 const { createTenantValidationMiddleware } = require('../middleware/deviceAuth');
+const { authenticateToken } = require('../middleware/auth');
+const Ajv = require('ajv');
+
+// ═══════════════════════════════════════════════════════════════
+// Task 8: /census and /verify endpoints (Fase 2 - Census reporting)
+// ═══════════════════════════════════════════════════════════════
+
+// AJV instance with strict mode (rejects unknown / extra properties).
+const ajv = new Ajv({ allErrors: true, strict: true });
+
+// Census payload schema — posted ~daily by desktop.
+// `additionalProperties: false` at the root ensures ajv rejects unknown keys
+// (required by the "rejects extra properties" test).
+const censusSchema = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['tenantId', 'branchId', 'deviceId', 'takenAt', 'summary', 'byEntityType'],
+    properties: {
+        tenantId: { type: 'integer' },
+        branchId: { type: 'integer' },
+        deviceId: { type: 'string', minLength: 1, maxLength: 200 },
+        deviceName: { type: 'string', maxLength: 200 },
+        appVersion: { type: 'string', maxLength: 50 },
+        takenAt: { type: 'string', minLength: 1, maxLength: 40 },
+        summary: { type: 'object' },
+        byEntityType: { type: 'array' },
+        suspiciousRecords: { type: 'array' },
+        handlerStats: { type: 'array' }
+    }
+};
+
+// Verify payload schema.
+const verifySchema = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['entityType', 'globalId'],
+    properties: {
+        entityType: { type: 'string', minLength: 1, maxLength: 80 },
+        globalId: { type: 'string', minLength: 1, maxLength: 80 }
+    }
+};
+
+// We accept any non-empty string for takenAt to avoid requiring ajv-formats
+// (kept schema minimal; the PG column is TIMESTAMPTZ and will parse ISO strings).
+const validateCensus = ajv.compile(censusSchema);
+const validateVerify = ajv.compile(verifySchema);
+
+// Whitelist of entity types → (table, globalId column).
+// Built from existing entityConfig in verify-global-ids and real PG schema
+// (verified against schema.sql + migrations on 2026-04-16).
+// NOTE: desktop entity type names (PascalCase C#) mapped to backend tables.
+const ALLOWED_ENTITY_TYPES = {
+    Venta:                   { table: 'ventas', col: 'global_id' },
+    Expense:                 { table: 'expenses', col: 'global_id' },
+    Shift:                   { table: 'shifts', col: 'global_id' },
+    CashDrawerSession:       { table: 'cash_cuts', col: 'global_id' },
+    Deposit:                 { table: 'deposits', col: 'global_id' },
+    Withdrawal:              { table: 'withdrawals', col: 'global_id' },
+    Employee:                { table: 'employees', col: 'global_id' },
+    Customer:                { table: 'customers', col: 'global_id' },
+    Product:                 { table: 'productos', col: 'global_id' },
+    CreditPayment:           { table: 'credit_payments', col: 'global_id' },
+    RepartidorAssignment:    { table: 'repartidor_assignments', col: 'global_id' },
+    RepartidorReturn:        { table: 'repartidor_returns', col: 'global_id' },
+    SuspiciousWeighingLog:   { table: 'suspicious_weighing_logs', col: 'global_id' },
+    ScaleDisconnectionLog:   { table: 'scale_disconnection_logs', col: 'global_id' },
+    Purchase:                { table: 'purchases', col: 'global_id' },
+    NotaCredito:             { table: 'notas_credito', col: 'global_id' },
+    PreparationModeLog:      { table: 'preparation_mode_logs', col: 'global_id' },
+    InventoryTransfer:       { table: 'inventory_transfers', col: 'global_id' },
+    CustomerProductPrice:    { table: 'customer_product_prices', col: 'global_id' },
+    KardexEntry:             { table: 'kardex_entries', col: 'global_id' },
+    ProductoBranchPrecio:    { table: 'productos_branch_precios', col: 'global_id' }
+};
+
+// In-memory 1-per-hour rate limiter per deviceId for /census.
+// Matches existing rateLimiter.js pattern (Map + setInterval cleanup) and
+// avoids pulling in express-rate-limit as a new dependency.
+const CENSUS_WINDOW_MS = 60 * 60 * 1000;
+const censusLastSeenByDevice = new Map();
+setInterval(() => {
+    const now = Date.now();
+    for (const [key, ts] of censusLastSeenByDevice.entries()) {
+        if (now - ts > CENSUS_WINDOW_MS * 2) censusLastSeenByDevice.delete(key);
+    }
+}, 10 * 60 * 1000).unref?.();
+
+function censusRateLimit(req, res, next) {
+    const deviceId = req.body?.deviceId;
+    if (!deviceId || typeof deviceId !== 'string') return next(); // schema check handles this
+    const key = `${req.user?.tenantId || 'x'}:${deviceId}`;
+    const now = Date.now();
+    const last = censusLastSeenByDevice.get(key);
+    if (last && (now - last) < CENSUS_WINDOW_MS) {
+        return res.status(429).json({
+            success: false,
+            message: 'Census already received from this device within the last hour',
+            retryAfterSeconds: Math.ceil((CENSUS_WINDOW_MS - (now - last)) / 1000)
+        });
+    }
+    // We record on successful INSERT below; expose helper on req.
+    req._censusMarkAccepted = () => censusLastSeenByDevice.set(key, Date.now());
+    next();
+}
+
+function ensureSameTenant(req, res, next) {
+    const jwtTenantId = Number(req.user?.tenantId);
+    const bodyTenantId = Number(req.body?.tenantId);
+    if (!jwtTenantId || !bodyTenantId || jwtTenantId !== bodyTenantId) {
+        return res.status(403).json({ success: false, message: 'tenantId mismatch' });
+    }
+    next();
+}
 
 module.exports = (pool) => {
 
@@ -635,6 +748,91 @@ module.exports = (pool) => {
         } catch (error) {
             console.error('[SyncEvents] ❌ Error generating summary:', error.message);
             res.status(500).json({ success: false, message: 'Error generando resumen' });
+        }
+    });
+
+    // =========================================================================
+    // POST /api/sync-diagnostics/census   (Task 8 — Fase 2)
+    // Desktop posts a daily census of local record counts + suspicious rows.
+    // Persists to sync_census_reports (JSONB). Rate-limited 1/hour per device.
+    // =========================================================================
+    router.post('/census', authenticateToken, (req, res, next) => {
+        // AJV strict validation BEFORE tenant check so malformed bodies 400.
+        if (!validateCensus(req.body)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid census payload',
+                errors: validateCensus.errors
+            });
+        }
+        next();
+    }, ensureSameTenant, censusRateLimit, async (req, res) => {
+        const {
+            tenantId, branchId, deviceId, deviceName, appVersion, takenAt,
+            summary, byEntityType, suspiciousRecords, handlerStats
+        } = req.body;
+
+        try {
+            const result = await pool.query(
+                `INSERT INTO sync_census_reports (
+                    tenant_id, branch_id, device_id, device_name, app_version,
+                    taken_at, summary, by_entity_type, suspicious_records, handler_stats
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+                 RETURNING id, received_at`,
+                [
+                    tenantId, branchId, deviceId,
+                    deviceName || null, appVersion || null,
+                    takenAt,
+                    summary, byEntityType,
+                    suspiciousRecords || null,
+                    handlerStats || null
+                ]
+            );
+            if (req._censusMarkAccepted) req._censusMarkAccepted();
+            return res.status(200).json({
+                success: true,
+                id: String(result.rows[0].id),
+                receivedAt: result.rows[0].received_at
+            });
+        } catch (err) {
+            console.error('[SyncDiagnostics/census] ❌', err.message);
+            return res.status(500).json({ success: false, message: 'Error storing census' });
+        }
+    });
+
+    // =========================================================================
+    // POST /api/sync-diagnostics/verify   (Task 8 — Fase 2)
+    // Desktop asks: does this (entityType, globalId) exist on PG?
+    // Used to detect local broken-FK / quarantine decisions.
+    // =========================================================================
+    router.post('/verify', authenticateToken, async (req, res) => {
+        if (!validateVerify(req.body)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid verify payload',
+                errors: validateVerify.errors
+            });
+        }
+        const { entityType, globalId } = req.body;
+        const def = ALLOWED_ENTITY_TYPES[entityType];
+        if (!def) {
+            return res.status(400).json({
+                success: false,
+                message: `Unsupported entityType: ${entityType}`
+            });
+        }
+        try {
+            // Scope to tenant from JWT to prevent cross-tenant probing.
+            const tenantId = Number(req.user?.tenantId);
+            // Cast the column to text so it works for both TEXT and UUID PG types.
+            const sql = `SELECT 1 FROM ${def.table}
+                          WHERE tenant_id = $1 AND ${def.col}::text = $2
+                          LIMIT 1`;
+            const r = await pool.query(sql, [tenantId, String(globalId)]);
+            return res.status(200).json({ exists: r.rowCount > 0 });
+        } catch (err) {
+            console.error('[SyncDiagnostics/verify] ❌', err.message);
+            return res.status(500).json({ success: false, message: 'Error verifying entity' });
         }
     });
 

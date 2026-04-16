@@ -516,7 +516,10 @@ async function startServer() {
     }
 }
 
-startServer();
+// Only auto-start when executed directly (not when imported by tests)
+if (require.main === module) {
+    startServer();
+}
 
 // Manejo de errores
 process.on('uncaughtException', (err) => {
@@ -526,3 +529,5 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (reason, promise) => {
     console.error('[ERROR] Unhandled Rejection:', reason);
 });
+
+module.exports = { app, server, io, pool };
