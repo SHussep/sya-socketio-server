@@ -479,19 +479,23 @@ function createRepartidorAssignmentRoutes(io) {
             -- ✅ EDICIÓN: Permitir cambio de cantidad/monto si:
             --    1. NO está liquidado, O
             --    2. was_edited = true (edición explícita desde UI, incluso post-liquidación)
+            -- ❗ NUNCA sobreescribir con NaN al cancelar (Flutter cancel no envía estos campos)
             assigned_quantity = CASE
+              WHEN EXCLUDED.status = 'cancelled' THEN repartidor_assignments.assigned_quantity
               WHEN repartidor_assignments.status != 'liquidated'
                    OR EXCLUDED.was_edited = true
               THEN EXCLUDED.assigned_quantity
               ELSE repartidor_assignments.assigned_quantity
             END,
             assigned_amount = CASE
+              WHEN EXCLUDED.status = 'cancelled' THEN repartidor_assignments.assigned_amount
               WHEN repartidor_assignments.status != 'liquidated'
                    OR EXCLUDED.was_edited = true
               THEN EXCLUDED.assigned_amount
               ELSE repartidor_assignments.assigned_amount
             END,
             unit_price = CASE
+              WHEN EXCLUDED.status = 'cancelled' THEN repartidor_assignments.unit_price
               WHEN repartidor_assignments.status != 'liquidated'
                    OR EXCLUDED.was_edited = true
               THEN EXCLUDED.unit_price
@@ -577,6 +581,11 @@ function createRepartidorAssignmentRoutes(io) {
 
       const assignment = result.rows[0];
       const wasInserted = assignment.inserted; // true = nueva asignación, false = actualización
+
+      // Log para diagnosticar: verificar que assigned_quantity no se corrompió con NaN
+      if (status === 'cancelled' && !wasInserted) {
+        console.log(`[RepartidorAssignments] ✅ Cancel UPSERT OK: assigned_quantity=${assignment.assigned_quantity}, assigned_amount=${assignment.assigned_amount}, venta_id=${assignment.venta_id || 'NULL'}`);
+      }
 
       // Si resolvedVentaId era null (móvil no lo envió), tomarlo del registro existente
       if (!resolvedVentaId && assignment.venta_id) {
