@@ -161,6 +161,7 @@ CREATE TABLE IF NOT EXISTS device_tokens (
     id SERIAL PRIMARY KEY,
     employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
     branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+    tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
     device_token TEXT NOT NULL UNIQUE,
     platform VARCHAR(50) NOT NULL, -- 'android' or 'ios'
     device_name VARCHAR(255),

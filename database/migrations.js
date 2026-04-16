@@ -2279,6 +2279,7 @@ async function runMigrations() {
                 await client.query(`ALTER TABLE device_tokens ADD COLUMN IF NOT EXISTS email VARCHAR(255)`);
                 await client.query(`ALTER TABLE device_tokens ADD COLUMN IF NOT EXISTS device_id VARCHAR(255)`);
                 await client.query(`ALTER TABLE device_tokens ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`);
+                await client.query(`ALTER TABLE device_tokens ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE`);
                 // Índices
                 await client.query(`CREATE INDEX IF NOT EXISTS idx_device_tokens_employee_id ON device_tokens(employee_id)`);
                 await client.query(`CREATE INDEX IF NOT EXISTS idx_device_tokens_branch_id ON device_tokens(branch_id)`);
