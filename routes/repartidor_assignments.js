@@ -871,40 +871,46 @@ function createRepartidorAssignmentRoutes(io) {
       }
 
       // ═══════════════════════════════════════════════════════════════════════════════
-      // CANCELAR/RECALCULAR VENTA: Cuando asignación pasa de liquidated → cancelled
-      // Si no quedan asignaciones liquidadas → cancelar venta (estado_venta_id=4)
-      // Si quedan algunas → recalcular totales de la venta
-      // También reversar crédito del cliente si aplica
+      // CANCELAR/RECALCULAR VENTA: Cuando asignación se cancela y tiene venta asociada
+      // Caso 1: liquidated → cancelled: recalcular o cancelar venta + reversar crédito
+      // Caso 2: pending → cancelled: si no quedan asignaciones activas → cancelar venta
+      //         (previene ventas fantasma estado=3 que inflan Dashboard)
       // ═══════════════════════════════════════════════════════════════════════════════
-      if (!wasInserted && status === 'cancelled' && previousStatus === 'liquidated' && resolvedVentaId) {
+      if (!wasInserted && status === 'cancelled' && previousStatus !== 'cancelled' && resolvedVentaId) {
         try {
-          // Verificar asignaciones liquidadas restantes en esta venta
+          // Verificar asignaciones restantes (activas + liquidadas) en esta venta
           const remainingResult = await pool.query(
             `SELECT
-               COUNT(*) as remaining_count,
-               COALESCE(SUM(cash_amount), 0) as total_cash,
-               COALESCE(SUM(card_amount), 0) as total_card,
-               COALESCE(SUM(credit_amount), 0) as total_credit,
-               COALESCE(SUM(amount_received), 0) as total_amount
+               COUNT(*) FILTER (WHERE status IN ('pending', 'in_progress')) as active_count,
+               COUNT(*) FILTER (WHERE status = 'liquidated') as liquidated_count,
+               COALESCE(SUM(cash_amount) FILTER (WHERE status = 'liquidated'), 0) as total_cash,
+               COALESCE(SUM(card_amount) FILTER (WHERE status = 'liquidated'), 0) as total_card,
+               COALESCE(SUM(credit_amount) FILTER (WHERE status = 'liquidated'), 0) as total_credit,
+               COALESCE(SUM(amount_received) FILTER (WHERE status = 'liquidated'), 0) as total_amount
              FROM repartidor_assignments
-             WHERE venta_id = $1 AND tenant_id = $2 AND status = 'liquidated'`,
+             WHERE venta_id = $1 AND tenant_id = $2 AND status != 'cancelled'`,
             [resolvedVentaId, tenant_id]
           );
 
           const remaining = remainingResult.rows[0];
-          const remainingCount = parseInt(remaining.remaining_count);
+          const activeCount = parseInt(remaining.active_count);
+          const liquidatedCount = parseInt(remaining.liquidated_count);
+          const totalAlive = activeCount + liquidatedCount;
+
+          console.log(`[RepartidorAssignments] 🔍 Venta #${resolvedVentaId} post-cancel: ${activeCount} activas, ${liquidatedCount} liquidadas, prev=${previousStatus}`);
 
           // Leer crédito previo de la venta para calcular delta
           const prevVentaResult = await pool.query(
-            `SELECT id_cliente, COALESCE(credito_original, 0) as old_credito
+            `SELECT id_cliente, COALESCE(credito_original, 0) as old_credito, estado_venta_id
              FROM ventas WHERE id_venta = $1 AND tenant_id = $2`,
             [resolvedVentaId, tenant_id]
           );
           const oldCredito = parseFloat(prevVentaResult.rows[0]?.old_credito || 0);
           const ventaClienteId = prevVentaResult.rows[0]?.id_cliente;
+          const currentEstado = prevVentaResult.rows[0]?.estado_venta_id;
 
-          if (remainingCount === 0) {
-            // No quedan asignaciones liquidadas → cancelar la venta
+          if (totalAlive === 0) {
+            // No quedan asignaciones activas ni liquidadas → cancelar la venta
             await pool.query(
               `UPDATE ventas
                SET estado_venta_id = 4,
@@ -917,8 +923,26 @@ function createRepartidorAssignmentRoutes(io) {
                WHERE id_venta = $1 AND tenant_id = $2`,
               [resolvedVentaId, tenant_id]
             );
-            console.log(`[RepartidorAssignments] ❌ Venta #${resolvedVentaId} cancelada (0 asignaciones liquidadas restantes)`);
-          } else {
+            console.log(`[RepartidorAssignments] ❌ Venta #${resolvedVentaId} cancelada (0 asignaciones restantes, prev estado=${currentEstado})`);
+          } else if (activeCount > 0 && liquidatedCount === 0) {
+            // Solo quedan asignaciones pendientes — asegurar estado=2 (Asignada)
+            // para que NO aparezca en Dashboard antes de liquidar
+            if (currentEstado === 3 || currentEstado === 5) {
+              await pool.query(
+                `UPDATE ventas
+                 SET estado_venta_id = 2,
+                     monto_pagado = 0,
+                     credito_original = 0,
+                     cash_amount = 0,
+                     card_amount = 0,
+                     credit_amount = 0,
+                     updated_at = NOW()
+                 WHERE id_venta = $1 AND tenant_id = $2`,
+                [resolvedVentaId, tenant_id]
+              );
+              console.log(`[RepartidorAssignments] 🔄 Venta #${resolvedVentaId} revertida a estado=2 (${activeCount} asignaciones pendientes)`);
+            }
+          } else if (liquidatedCount > 0) {
             // Recalcular venta con asignaciones liquidadas restantes
             const totalPagado = parseFloat(remaining.total_cash) + parseFloat(remaining.total_card);
             const totalCredito = parseFloat(remaining.total_credit);
@@ -951,12 +975,12 @@ function createRepartidorAssignmentRoutes(io) {
                parseFloat(remaining.total_cash), parseFloat(remaining.total_card), totalCredito,
                resolvedVentaId, tenant_id]
             );
-            console.log(`[RepartidorAssignments] 🔄 Venta #${resolvedVentaId} recalculada: ${remainingCount} asignaciones restantes, total=$${totalVenta.toFixed(2)}`);
+            console.log(`[RepartidorAssignments] 🔄 Venta #${resolvedVentaId} recalculada: ${liquidatedCount} liquidadas + ${activeCount} activas, total=$${totalVenta.toFixed(2)}`);
           }
 
-          // Reversar crédito del cliente si aplica
-          if (oldCredito > 0 && ventaClienteId) {
-            const newCredito = remainingCount === 0 ? 0 : parseFloat(remaining.total_credit);
+          // Reversar crédito del cliente si aplica (solo cuando venía de liquidated)
+          if (previousStatus === 'liquidated' && oldCredito > 0 && ventaClienteId) {
+            const newCredito = liquidatedCount === 0 ? 0 : parseFloat(remaining.total_credit);
             const creditDelta = newCredito - oldCredito; // Negativo = reducir deuda
             if (creditDelta !== 0) {
               await pool.query(
@@ -973,7 +997,7 @@ function createRepartidorAssignmentRoutes(io) {
           if (io) {
             io.to(`branch_${branch_id}`).emit('sale_updated', {
               id_venta: resolvedVentaId,
-              action: remainingCount === 0 ? 'cancelled' : 'recalculated',
+              action: totalAlive === 0 ? 'cancelled' : 'recalculated',
               updatedAt: new Date().toISOString()
             });
           }
