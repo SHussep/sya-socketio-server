@@ -806,6 +806,20 @@ module.exports = (pool, io) => {
 
                 for (const detalle of detalles) {
                     try {
+                        // Resolve product_id via global_id (never use local SQLite IDs)
+                        let resolvedProductId = null;
+                        if (detalle.producto_global_id) {
+                            const prodRes = await pool.query(
+                                'SELECT id FROM productos WHERE global_id = $1',
+                                [detalle.producto_global_id]
+                            );
+                            resolvedProductId = prodRes.rows[0]?.id || null;
+                        }
+                        // Legacy fallback: only if producto_global_id not provided (mobile with PG IDs)
+                        if (!resolvedProductId && detalle.id_producto) {
+                            resolvedProductId = detalle.id_producto;
+                        }
+
                         // INSERT con ON CONFLICT para idempotencia por global_id
                         await pool.query(
                             `INSERT INTO ventas_detalle (
@@ -834,7 +848,7 @@ module.exports = (pool, io) => {
                                 monto_manual_descuento = EXCLUDED.monto_manual_descuento`,
                             [
                                 insertedVenta.id_venta,
-                                detalle.id_producto,
+                                resolvedProductId,
                                 detalle.descripcion_producto || '',
                                 parseFloat(detalle.cantidad) || 0,
                                 parseFloat(detalle.precio_lista) || 0,
