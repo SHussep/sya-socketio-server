@@ -555,11 +555,11 @@ function createRepartidorAssignmentRoutes(io) {
         product_name || null,           // ✅ Nombre del producto (denormalizado)
         venta_detalle_id || null,       // ✅ ID del detalle de venta
         // 🆕 Payment tracking fields
-        payment_method_id || null,
-        cash_amount ? parseFloat(cash_amount) : null,
-        card_amount ? parseFloat(card_amount) : null,
-        credit_amount ? parseFloat(credit_amount) : null,
-        amount_received ? parseFloat(amount_received) : null,
+        payment_method_id != null ? payment_method_id : null,
+        cash_amount != null ? parseFloat(cash_amount) : null,
+        card_amount != null ? parseFloat(card_amount) : null,
+        credit_amount != null ? parseFloat(credit_amount) : null,
+        amount_received != null ? parseFloat(amount_received) : null,
         is_credit || false,
         payment_reference || null,
         resolvedLiquidatedByEmployeeId,  // ✅ ID del empleado que liquidó resuelto desde global_id
@@ -1011,7 +1011,8 @@ function createRepartidorAssignmentRoutes(io) {
       // Esto es CRÍTICO para que el corte de caja calcule correctamente efectivo/tarjeta/crédito
       // ═══════════════════════════════════════════════════════════════════════════════
       // Determinar si hay info de pago (payment_method_id O montos de pago)
-      const hasPaymentInfo = payment_method_id || cash_amount || card_amount || credit_amount;
+      // NOTA: Usar != null en vez de || porque 0 es falsy en JS pero es un valor válido
+      const hasPaymentInfo = payment_method_id != null || cash_amount != null || card_amount != null || credit_amount != null;
 
       if (status === 'liquidated') {
         console.log(`[RepartidorAssignments] 🔍 Liquidation check: resolvedVentaId=${resolvedVentaId}, hasPaymentInfo=${!!hasPaymentInfo}`);
