@@ -974,7 +974,9 @@ module.exports = function(pool, io) {
             await safeDel('DELETE FROM sync_error_reports WHERE tenant_id = $1', [id]);
             await safeDel('DELETE FROM data_resets WHERE tenant_id = $1', [id]);
 
-            // ── Phase 4: Shifts ──
+            // ── Phase 4: Employee debts, then shifts ──
+            await safeDel('DELETE FROM employee_debt_payments WHERE tenant_id = $1', [id]);
+            await safeDel('DELETE FROM employee_debts WHERE tenant_id = $1', [id]);
             await safeDel('DELETE FROM shift_requests WHERE tenant_id = $1', [id]);
             await safeDel('DELETE FROM shifts WHERE tenant_id = $1', [id]);
 
@@ -1018,11 +1020,10 @@ module.exports = function(pool, io) {
             await safeDel('DELETE FROM geofence_events WHERE tenant_id = $1', [id]);
             await safeDel('DELETE FROM gps_consent_log WHERE tenant_id = $1', [id]);
 
-            // ── Phase 11: Employee debts ──
-            await safeDel('DELETE FROM employee_debts WHERE tenant_id = $1', [id]);
-            await safeDel('DELETE FROM employee_debt_payments WHERE tenant_id = $1', [id]);
-
             // ── Phase 12: Employees and relations ──
+            // Safety: null out FK refs from shifts to employees in case shifts weren't fully deleted
+            await safeDel('UPDATE shifts SET closed_by_employee_id = NULL WHERE tenant_id = $1', [id]);
+            await safeDel('DELETE FROM shifts WHERE tenant_id = $1', [id]);
             await client.query('DELETE FROM employee_branches WHERE tenant_id = $1', [id]);
             await client.query('DELETE FROM employees WHERE tenant_id = $1', [id]);
 
