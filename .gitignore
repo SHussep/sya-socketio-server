@@ -44,3 +44,8 @@ Thumbs.db
 .git
 migrations_old/
 *.backup
+
+# Super-admin RS256 keys - NUNCA COMMITEAR
+keys/*.pem
+!keys/.gitkeep
+!keys/README.md

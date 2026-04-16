@@ -165,6 +165,7 @@ app.use('/api/restore', restoreRoutes);
 app.use('/api/backup', backupRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/auth', masterAuthRoutes(pool));
+app.use('/api/auth/super-admin', require('./routes/super-admin-auth'));
 app.use('/api/password-reset', passwordResetRoutes);
 app.use('/api/devices', devicesRoutes(pool));
 app.use('/api/notifications', notificationRoutes);
