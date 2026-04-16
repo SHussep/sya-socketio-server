@@ -585,23 +585,35 @@ module.exports = (pool, io) => {
                     } else {
                     const crypto = require('crypto');
 
-                    // Aggregate sales by payment type (same as GET /:id/summary)
+                    // Aggregate sales by payment type — includes BOTH direct and repartidor sales
+                    // Direct sales: id_turno = shift.id (counter sales)
+                    // Repartidor sales: id_turno_repartidor = shift.id (delivery sales)
                     const salesResult = await pool.query(`
-                        SELECT tipo_pago_id, COALESCE(SUM(total), 0) as total
+                        SELECT
+                            COALESCE(SUM(CASE
+                                WHEN tipo_pago_id = 4 THEN COALESCE(cash_amount, 0)
+                                WHEN tipo_pago_id = 1 THEN total
+                                ELSE 0
+                            END), 0) as total_cash,
+                            COALESCE(SUM(CASE
+                                WHEN tipo_pago_id = 4 THEN COALESCE(card_amount, 0)
+                                WHEN tipo_pago_id = 2 THEN total
+                                ELSE 0
+                            END), 0) as total_card,
+                            COALESCE(SUM(CASE
+                                WHEN tipo_pago_id = 4 THEN COALESCE(credit_amount, 0)
+                                WHEN tipo_pago_id = 3 THEN total
+                                ELSE 0
+                            END), 0) as total_credit
                         FROM ventas
-                        WHERE id_turno = $1 AND tenant_id = $2 AND estado_venta_id IN (3, 5)
-                        GROUP BY tipo_pago_id
+                        WHERE (id_turno = $1 OR id_turno_repartidor = $1)
+                          AND tenant_id = $2
+                          AND estado_venta_id IN (3, 5)
                     `, [resolvedShiftId, tenantId]);
 
-                    let totalCashSales = 0, totalCardSales = 0, totalCreditSales = 0;
-                    for (const row of salesResult.rows) {
-                        switch (parseInt(row.tipo_pago_id)) {
-                            case 1: totalCashSales = parseFloat(row.total); break;
-                            case 2: totalCardSales += parseFloat(row.total); break;
-                            case 3: totalCreditSales = parseFloat(row.total); break;
-                            case 4: totalCardSales += parseFloat(row.total); break; // transfer → card
-                        }
-                    }
+                    const totalCashSales = parseFloat(salesResult.rows[0]?.total_cash || 0);
+                    const totalCardSales = parseFloat(salesResult.rows[0]?.total_card || 0);
+                    const totalCreditSales = parseFloat(salesResult.rows[0]?.total_credit || 0);
 
                     // Expenses (column is id_turno)
                     const expResult = await pool.query(
@@ -932,13 +944,15 @@ module.exports = (pool, io) => {
                         ), 0) as total_credit_sales
                     FROM ventas
                     WHERE id_turno = $1 AND id_turno_repartidor IS NULL
-                      AND status != 'cancelled'
+                      AND estado_venta_id != 4
                 `, [shift.id]);
 
                 // 1B. Calcular ventas DE REPARTO que hizo este empleado (repartidor)
                 // Estas son las ventas donde id_turno_repartidor = shift.id
                 // IMPORTANTE: Usar tipo_pago_id para pagos puros, y cash_amount/card_amount para mixtos
                 // tipo_pago_id: 1=Efectivo, 2=Tarjeta, 3=Crédito, 4=Mixto
+                // NOTA: Usar estado_venta_id != 4 en vez de status != 'cancelled'
+                //       porque status (TEXT) puede ser NULL y NULL != 'cancelled' → excluye filas válidas
                 const assignmentSalesResult = await pool.query(`
                     SELECT
                         COALESCE(SUM(
@@ -964,7 +978,7 @@ module.exports = (pool, io) => {
                         ), 0) as total_credit_assignments
                     FROM ventas
                     WHERE id_turno_repartidor = $1
-                      AND status != 'cancelled'
+                      AND estado_venta_id != 4
                 `, [shift.id]);
 
                 // 1C. Obtener DESGLOSE DETALLADO de ventas de reparto (con cliente, cantidades, tipo pago)
@@ -990,7 +1004,7 @@ module.exports = (pool, io) => {
                     FROM ventas v
                     LEFT JOIN customers c ON v.id_cliente = c.id
                     WHERE v.id_turno_repartidor = $1
-                      AND v.status != 'cancelled'
+                      AND v.estado_venta_id != 4
                     ORDER BY v.fecha_venta_utc DESC
                 `, [shift.id]);
 
@@ -1241,7 +1255,11 @@ module.exports = (pool, io) => {
                                    total_cash_sales, total_card_sales, total_credit_sales,
                                    total_expenses, total_deposits, total_withdrawals,
                                    total_cash_payments, total_card_payments,
-                                   initial_amount
+                                   initial_amount,
+                                   COALESCE(total_liquidaciones_efectivo, 0) as total_liquidaciones_efectivo,
+                                   COALESCE(total_liquidaciones_tarjeta, 0) as total_liquidaciones_tarjeta,
+                                   COALESCE(total_liquidaciones_credito, 0) as total_liquidaciones_credito,
+                                   COALESCE(total_repartidor_expenses, 0) as total_repartidor_expenses
                             FROM cash_cuts
                             WHERE shift_id = $1 AND is_closed = true
                             ORDER BY id DESC LIMIT 1
@@ -1266,13 +1284,13 @@ module.exports = (pool, io) => {
                     total_cash_sales: parseFloat(salesResult.rows[0]?.total_cash_sales || 0),
                     total_card_sales: parseFloat(salesResult.rows[0]?.total_card_sales || 0),
                     total_credit_sales: parseFloat(salesResult.rows[0]?.total_credit_sales || 0),
-                    // 🆕 Ventas de reparto que hizo el repartidor (excluyendo canceladas, restando devoluciones)
+                    // Ventas de reparto (excluyendo canceladas, restando devoluciones)
                     total_cash_assignments: Math.max(0, parseFloat(assignmentSalesResult.rows[0]?.total_cash_assignments || 0) - parseFloat(returnsResult.rows[0]?.total_returns || 0)),
                     total_card_assignments: parseFloat(assignmentSalesResult.rows[0]?.total_card_assignments || 0),
                     total_credit_assignments: parseFloat(assignmentSalesResult.rows[0]?.total_credit_assignments || 0),
-                    // 📦 Devoluciones confirmadas del repartidor
+                    // Devoluciones confirmadas del repartidor
                     total_returns: parseFloat(returnsResult.rows[0]?.total_returns || 0),
-                    // 🆕 Desglose detallado de ventas de reparto (cliente, cantidades, tipo pago)
+                    // Desglose detallado de ventas de reparto (cliente, cantidades, tipo pago)
                     assignment_sales_detail: assignmentSalesDetailResult.rows.map(sale => ({
                         id: sale.id_venta,
                         ticket_number: sale.ticket_number,
@@ -1284,32 +1302,30 @@ module.exports = (pool, io) => {
                         total_quantity: parseFloat(sale.total_quantity || 0),
                     })),
                     total_expenses: parseFloat(expensesResult.rows[0]?.total_expenses || 0),
-                    expenses_detail: expensesResult.rows[0]?.expenses_detail || [],  // 🆕 Desglose de gastos
+                    expenses_detail: expensesResult.rows[0]?.expenses_detail || [],
                     total_deposits: parseFloat(depositsResult.rows[0]?.total_deposits || 0),
                     total_withdrawals: parseFloat(withdrawalsResult.rows[0]?.total_withdrawals || 0),
                     total_cash_payments: parseFloat(paymentsResult.rows[0]?.total_cash_payments || 0),
                     total_card_payments: parseFloat(paymentsResult.rows[0]?.total_card_payments || 0),
-                    // 🚚 Asignaciones de repartidor (DOS contadores diferentes)
+                    // Asignaciones de repartidor (DOS contadores diferentes)
                     created_assignments: parseInt(createdAssignmentsResult.rows[0]?.created_assignments || 0),
                     received_assignments: parseInt(receivedAssignmentsResult.rows[0]?.received_assignments || 0),
-                    // 💰 Liquidaciones consolidadas (calculadas desde ventas para turnos abiertos, desde cash_cuts para cerrados)
+                    // Liquidaciones consolidadas
                     total_liquidaciones_efectivo: totalLiquidacionesEfectivo,
                     total_liquidaciones_tarjeta: totalLiquidacionesTarjeta,
                     total_liquidaciones_credito: totalLiquidacionesCredito,
-                    // 💸 Gastos de repartidores (separados de gastos del cajero)
+                    // Gastos de repartidores
                     total_repartidor_expenses: totalRepartidorExpenses,
-                    // ⚙️ Setting de consolidación para que mobile sepa el modo activo
+                    // Setting de consolidación
                     cajero_consolida_liquidaciones: cajeroConsolida,
-                    // 🚚 Indica si este turno actuó como repartidor (por datos, no por rol)
+                    // Indica si este turno actuó como repartidor
                     is_repartidor_shift: isRepartidorShift,
-                    // 🎯 Indica si este turno es el consolidador (más antiguo no-repartidor)
+                    // Indica si este turno es el consolidador
                     is_consolidator_shift: isConsolidatorShift,
-                    // 🔒 Datos autoritativos del corte de caja (solo turnos cerrados con cash_cuts)
-                    // El mobile usa estos valores directamente en vez de recalcular desde componentes
+                    // Datos autoritativos del corte de caja (solo expected/counted/difference)
                     cash_cut_expected_cash: cashCutData ? parseFloat(cashCutData.expected_cash_in_drawer || 0) : null,
                     cash_cut_counted_cash: cashCutData ? parseFloat(cashCutData.counted_cash || 0) : null,
                     cash_cut_difference: cashCutData ? parseFloat(cashCutData.difference || 0) : null,
-                    // Componentes del cash_cut para UI detallada
                     cash_cut_total_expenses: cashCutData ? parseFloat(cashCutData.total_expenses || 0) : null,
                 });
 
