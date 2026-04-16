@@ -423,6 +423,10 @@ module.exports = (pool, io) => {
                     -- Customer info
                     c.nombre as customer_name,
                     v.id_cliente as customer_id,
+                    c.latitude as customer_latitude,
+                    c.longitude as customer_longitude,
+                    c.direccion as customer_address,
+                    c.google_maps_url as customer_google_maps_url,
                     v.status as venta_status
                 FROM repartidor_assignments ra
                 LEFT JOIN employees e_created ON ra.created_by_employee_id = e_created.id
@@ -597,6 +601,10 @@ module.exports = (pool, io) => {
                         liquidated_by_employee_id: row.liquidated_by_employee_id ? parseInt(row.liquidated_by_employee_id) : null,
                         customer_name: row.customer_name || null,
                         customer_id: row.customer_id ? parseInt(row.customer_id) : null,
+                        customer_latitude: row.customer_latitude ? parseFloat(row.customer_latitude) : null,
+                        customer_longitude: row.customer_longitude ? parseFloat(row.customer_longitude) : null,
+                        customer_address: row.customer_address || null,
+                        customer_google_maps_url: row.customer_google_maps_url || null,
                         batch_global_id: row.batch_global_id || null,
                         product_global_id: row.product_global_id || null,
                         venta_global_id: row.venta_global_id || null
