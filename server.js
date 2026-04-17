@@ -301,7 +301,7 @@ app.use('/api/practice-mode', practiceModeRoutes(pool, io));
 app.use('/api/beta-enrollment', betaEnrollmentRoutes(pool));
 app.use('/api/deposits', depositsRoutes(pool, io));
 app.use('/api/withdrawals', withdrawalsRoutes(pool, io));
-app.use('/api/sync-diagnostics', syncDiagnosticsRoutes(pool));
+app.use('/api/sync-diagnostics', syncDiagnosticsRoutes(pool, io));
 app.use('/api/transfers', transfersRoutes(pool, io));
 app.use('/api/gps', gpsTrackingRoutes(pool, io));
 app.use('/api/geofence-zones', geofenceZonesRoutes(pool, io));
@@ -335,7 +335,8 @@ app.get('/api/desktop-online', authenticateToken, (req, res) => {
             const s = io.sockets.sockets.get(socketId);
             if (s) {
                 clientTypes.push(s.clientType || 'unknown');
-                if (s.clientType !== 'mobile') {
+                // Fix B: requerir clientType='desktop' explícito (antes: !== 'mobile' contaba 'unknown' como online)
+                if (s.clientType === 'desktop') {
                     desktopOnline = true;
                 }
             }

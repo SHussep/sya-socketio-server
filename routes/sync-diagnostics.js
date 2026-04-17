@@ -5,11 +5,46 @@
  */
 
 const express = require('express');
+const fs = require('fs');
+const crypto = require('crypto');
+const jwt = require('jsonwebtoken');
 const router = express.Router();
 const { createTenantValidationMiddleware } = require('../middleware/deviceAuth');
 const { authenticateToken } = require('../middleware/auth');
 const superAdminAuth = require('../middleware/superAdminAuth');
 const Ajv = require('ajv');
+
+// RSA private key for signing short-lived admin command JWTs (Task 18).
+// Same private key as /api/auth/super-admin/login — lazy load + cache.
+let ADMIN_CMD_PRIVATE_KEY = null;
+function loadAdminCommandPrivateKey() {
+    if (ADMIN_CMD_PRIVATE_KEY) return ADMIN_CMD_PRIVATE_KEY;
+    const p = process.env.SUPER_ADMIN_PRIVATE_KEY_PATH;
+    if (!p) throw new Error('SUPER_ADMIN_PRIVATE_KEY_PATH not set');
+    ADMIN_CMD_PRIVATE_KEY = fs.readFileSync(p, 'utf8');
+    return ADMIN_CMD_PRIVATE_KEY;
+}
+
+// Short-lived (<=5 min) admin command JWT — RS256, audience-bound.
+// Used to authorize desktop Task 22 listener when receiving admin:release /
+// admin:discard_quarantined / admin:force_mark_synced events.
+function buildAdminCommandJwt(tenantId, userId, ttlMinutes = 5) {
+    const ttl = Math.max(1, Math.min(5, Number(ttlMinutes) || 5));
+    return jwt.sign(
+        {
+            sub: String(userId),
+            role: 'super_admin',
+            authorizedTenants: [tenantId],
+            jti: crypto.randomUUID()
+        },
+        loadAdminCommandPrivateKey(),
+        {
+            algorithm: 'RS256',
+            expiresIn: `${ttl}m`,
+            audience: 'sync-diagnostics-admin'
+        }
+    );
+}
 
 // ═══════════════════════════════════════════════════════════════
 // Task 8: /census and /verify endpoints (Fase 2 - Census reporting)
@@ -199,7 +234,7 @@ function ensureSameTenant(req, res, next) {
     next();
 }
 
-module.exports = (pool) => {
+module.exports = (pool, io) => {
 
     const validateTenant = createTenantValidationMiddleware(pool);
 
@@ -1016,6 +1051,176 @@ module.exports = (pool) => {
             } catch (e) {
                 console.error('[SyncDiagnostics/quarantine] ❌', e.message);
                 return res.status(500).json({ success: false, message: 'insert_failed' });
+            }
+        }
+    );
+
+    // ═══════════════════════════════════════════════════════════════
+    // Task 18: Admin endpoints to list and decide quarantine reports
+    //   GET  /admin/quarantine?tenantId&status=pending|resolved|all
+    //   POST /admin/quarantine/:id/decide  { action, notes }
+    // Both require super-admin JWT (RS256) via superAdminAuth middleware.
+    // ═══════════════════════════════════════════════════════════════
+
+    router.get('/admin/quarantine', superAdminAuth, async (req, res) => {
+        const tenantId = Number(req.query.tenantId);
+        if (!Number.isInteger(tenantId) || tenantId <= 0) {
+            return res.status(400).json({ error: 'invalid_tenantId' });
+        }
+        const authorized = req.superAdmin?.authorizedTenants;
+        const tenantAllowed = Array.isArray(authorized) &&
+            (authorized.includes('*') || authorized.includes(tenantId));
+        if (!tenantAllowed) {
+            return res.status(403).json({ error: 'tenant_not_authorized' });
+        }
+
+        const status = String(req.query.status || 'pending').toLowerCase();
+        const deviceId = typeof req.query.deviceId === 'string' ? req.query.deviceId : null;
+        const limit = Math.min(Math.max(Number(req.query.limit) || 200, 1), 500);
+
+        const params = [tenantId];
+        let sql = `SELECT id, tenant_id, branch_id, device_id, device_name, app_version,
+                          quarantined_at, entity_type, entity_global_id, entity_local_id,
+                          entity_payload, entity_description, failure, dependencies, verify_result,
+                          admin_decision, admin_decided_at, admin_decided_by, admin_notes, received_at
+                   FROM sync_quarantine_reports WHERE tenant_id = $1`;
+        if (status === 'pending') sql += ` AND admin_decision IS NULL`;
+        else if (status === 'resolved') sql += ` AND admin_decision IS NOT NULL`;
+        // status === 'all' → no extra filter
+        if (deviceId) {
+            params.push(deviceId);
+            sql += ` AND device_id = $${params.length}`;
+        }
+        sql += ` ORDER BY quarantined_at DESC LIMIT ${limit}`;
+
+        try {
+            const r = await pool.query(sql, params);
+            res.json({ rows: r.rows, count: r.rowCount, limit });
+        } catch (e) {
+            console.error('[admin/quarantine]', e);
+            res.status(500).json({ error: 'query_failed' });
+        }
+    });
+
+    router.post('/admin/quarantine/:id/decide',
+        superAdminAuth,
+        express.json({ limit: '100kb' }),
+        async (req, res) => {
+            const id = Number(req.params.id);
+            if (!Number.isInteger(id) || id <= 0) {
+                return res.status(400).json({ error: 'invalid_id' });
+            }
+            const { action, notes } = req.body || {};
+            if (!['release', 'discard', 'force_synced'].includes(action)) {
+                return res.status(400).json({ error: 'invalid_action' });
+            }
+
+            const client = await pool.connect();
+            try {
+                await client.query('BEGIN');
+                const sel = await client.query(
+                    'SELECT * FROM sync_quarantine_reports WHERE id = $1 FOR UPDATE',
+                    [id]
+                );
+                const row = sel.rows[0];
+                if (!row) {
+                    await client.query('ROLLBACK');
+                    return res.status(404).json({ error: 'not_found' });
+                }
+                const authorized = req.superAdmin?.authorizedTenants;
+                const tenantAllowed = Array.isArray(authorized) &&
+                    (authorized.includes('*') || authorized.includes(row.tenant_id));
+                if (!tenantAllowed) {
+                    await client.query('ROLLBACK');
+                    return res.status(403).json({ error: 'tenant_not_authorized' });
+                }
+                if (row.admin_decision !== null) {
+                    await client.query('ROLLBACK');
+                    return res.status(409).json({ error: 'already_decided', currentDecision: row.admin_decision });
+                }
+
+                await client.query(
+                    `UPDATE sync_quarantine_reports
+                     SET admin_decision = $1,
+                         admin_decided_at = NOW(),
+                         admin_decided_by = $2,
+                         admin_notes = $3
+                     WHERE id = $4`,
+                    [action, req.superAdmin.userId, notes || null, id]
+                );
+
+                const commandId = crypto.randomUUID();
+                const eventName = action === 'release' ? 'admin:release_from_quarantine'
+                                : action === 'discard' ? 'admin:discard_quarantined'
+                                : 'admin:force_mark_synced';
+                const payloadForLog = {
+                    entityType: row.entity_type,
+                    globalId: row.entity_global_id,
+                    localId: row.entity_local_id,
+                    notes: notes || null
+                };
+
+                await client.query(
+                    `INSERT INTO sync_admin_command_log
+                        (command_id, tenant_id, device_id, admin_user_id, command_type, payload, status)
+                     VALUES ($1,$2,$3,$4,$5,$6,'issued')`,
+                    [
+                        commandId, row.tenant_id, row.device_id, req.superAdmin.userId,
+                        eventName,
+                        // JSONB: stringify to avoid node-pg array-literal bug
+                        JSON.stringify(payloadForLog)
+                    ]
+                );
+
+                await client.query('COMMIT');
+
+                // Emit Socket.IO only to the target desktop (best effort).
+                // If no desktop connected right now → mark command as 'queued';
+                // Task 24 will re-emit on reconnect.
+                let delivered = 0;
+                try {
+                    if (io && typeof io.in === 'function') {
+                        const sockets = await io.in(`branch_${row.branch_id}`).fetchSockets();
+                        const adminJwt = buildAdminCommandJwt(row.tenant_id, req.superAdmin.userId, 5);
+                        const emitPayload = {
+                            adminJwt,
+                            commandId,
+                            entityType: row.entity_type,
+                            globalId: row.entity_global_id,
+                            localId: row.entity_local_id,
+                            notes: notes || null
+                        };
+                        for (const s of sockets) {
+                            const clientType = s.clientType || s.data?.clientType;
+                            if (clientType !== 'desktop') continue;
+                            const deviceIdOnSocket =
+                                s.deviceInfo?.deviceId ||
+                                s.data?.deviceId ||
+                                s.handshake?.auth?.deviceId;
+                            if (!deviceIdOnSocket || deviceIdOnSocket === row.device_id) {
+                                s.emit(eventName, emitPayload);
+                                delivered += 1;
+                            }
+                        }
+                    }
+                } catch (emitErr) {
+                    console.error('[admin/decide] socket emit failed:', emitErr.message);
+                }
+
+                if (delivered === 0) {
+                    await pool.query(
+                        `UPDATE sync_admin_command_log SET status = 'queued' WHERE command_id = $1`,
+                        [commandId]
+                    );
+                }
+
+                return res.json({ ok: true, commandId, delivered, eventName });
+            } catch (e) {
+                try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
+                console.error('[admin/decide]', e);
+                return res.status(500).json({ error: 'decide_failed' });
+            } finally {
+                client.release();
             }
         }
     );
