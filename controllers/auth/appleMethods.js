@@ -164,10 +164,30 @@ module.exports = {
             `, [tenant.id]);
             const licenseInfo = licensesResult.rows[0];
 
+            // Determinar branchId: main_branch_id si existe, si no, única sucursal
+            const branches = branchesResult.rows;
+            let resolvedBranchId = null;
+            if (employee) {
+                resolvedBranchId = employee.main_branch_id || null;
+                if (!resolvedBranchId && branches.length === 1) {
+                    resolvedBranchId = branches[0].id;
+                    try {
+                        await this.pool.query(
+                            'UPDATE employees SET main_branch_id = $1 WHERE id = $2',
+                            [resolvedBranchId, employee.id]
+                        );
+                        console.log(`[Apple Login] 🔧 Auto-asignó main_branch_id=${resolvedBranchId} a empleado ${employee.email}`);
+                    } catch (err) {
+                        console.log(`[Apple Login] ⚠️ No se pudo persistir main_branch_id: ${err.message}`);
+                    }
+                }
+            }
+
             // Generar tokens
             const tokenPayload = employee ? {
                 employeeId: employee.id,
                 tenantId: tenant.id,
+                ...(resolvedBranchId ? { branchId: resolvedBranchId } : {}),
                 roleId: employee.role_id,
                 email: employee.email,
                 is_owner: employee.is_owner === true
@@ -178,6 +198,7 @@ module.exports = {
             };
 
             const accessToken = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: '15m' });
+            console.log(`[Apple Login] 🔑 Token firmado con branchId=${resolvedBranchId ?? 'null (multi-branch)'}`);
             const refreshToken = jwt.sign(
                 employee ? { employeeId: employee.id, tenantId: tenant.id, is_owner: employee.is_owner === true }
                          : { tenantId: tenant.id, is_owner: false },

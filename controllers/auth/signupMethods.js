@@ -618,10 +618,31 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
             `, [tenant.id]);
             const licenseInfo = licensesResult.rows[0];
 
+            // Determinar branchId: main_branch_id si existe, si no, única sucursal,
+            // si no, null (multi-branch requerirá selección posterior)
+            let resolvedBranchId = null;
+            if (employee) {
+                resolvedBranchId = employee.main_branch_id || null;
+                if (!resolvedBranchId && branches.length === 1) {
+                    resolvedBranchId = branches[0].id;
+                    // Persistir auto-asignación para que refresh-token futuro lo use
+                    try {
+                        await this.pool.query(
+                            'UPDATE employees SET main_branch_id = $1 WHERE id = $2',
+                            [resolvedBranchId, employee.id]
+                        );
+                        console.log(`[Google Login] 🔧 Auto-asignó main_branch_id=${resolvedBranchId} a empleado ${employee.email}`);
+                    } catch (err) {
+                        console.log(`[Google Login] ⚠️ No se pudo persistir main_branch_id: ${err.message}`);
+                    }
+                }
+            }
+
             // Generar tokens usando el employee si existe, o datos mínimos del tenant
             const tokenPayload = employee ? {
                 employeeId: employee.id,
                 tenantId: tenant.id,
+                ...(resolvedBranchId ? { branchId: resolvedBranchId } : {}),
                 roleId: employee.role_id,
                 email: email,
                 is_owner: employee.is_owner === true
@@ -632,6 +653,7 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
             };
 
             const accessToken = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: '15m' });
+            console.log(`[Google Login] 🔑 Token firmado con branchId=${resolvedBranchId ?? 'null (multi-branch)'}`);
 
             const refreshPayload = employee ? {
                 employeeId: employee.id,
