@@ -12,6 +12,7 @@ const router = express.Router();
 const { createTenantValidationMiddleware } = require('../middleware/deviceAuth');
 const { authenticateToken } = require('../middleware/auth');
 const superAdminAuth = require('../middleware/superAdminAuth');
+const superAdminAuthOrPIN = require('../middleware/superAdminAuthOrPIN');
 const Ajv = require('ajv');
 const { notifyAdminsOfNewQuarantine } = require('../services/adminFcmNotifier');
 
@@ -956,9 +957,9 @@ module.exports = (pool, io) => {
     // =========================================================================
     // GET /api/sync-diagnostics/admin/census   (Task 12 — Fase 2)
     // Super-admin endpoint. Returns recent census reports for a tenant,
-    // optionally filtered by deviceId. Protected by superAdminAuth (RS256 JWT).
+    // optionally filtered by deviceId. Protected by superAdminAuthOrPIN (JWT or PIN).
     // =========================================================================
-    router.get('/admin/census', superAdminAuth, async (req, res) => {
+    router.get('/admin/census', superAdminAuthOrPIN, async (req, res) => {
         const tenantId = Number(req.query.tenantId);
         if (!Number.isInteger(tenantId) || tenantId <= 0) {
             return res.status(400).json({ error: 'invalid_tenant_id' });
@@ -1063,10 +1064,10 @@ module.exports = (pool, io) => {
     // Task 18: Admin endpoints to list and decide quarantine reports
     //   GET  /admin/quarantine?tenantId&status=pending|resolved|all
     //   POST /admin/quarantine/:id/decide  { action, notes }
-    // Both require super-admin JWT (RS256) via superAdminAuth middleware.
+    // Both require super-admin auth (JWT RS256 or PIN) via superAdminAuthOrPIN.
     // ═══════════════════════════════════════════════════════════════
 
-    router.get('/admin/quarantine', superAdminAuth, async (req, res) => {
+    router.get('/admin/quarantine', superAdminAuthOrPIN, async (req, res) => {
         const tenantId = Number(req.query.tenantId);
         if (!Number.isInteger(tenantId) || tenantId <= 0) {
             return res.status(400).json({ error: 'invalid_tenantId' });
@@ -1107,7 +1108,7 @@ module.exports = (pool, io) => {
     });
 
     router.post('/admin/quarantine/:id/decide',
-        superAdminAuth,
+        superAdminAuthOrPIN,
         express.json({ limit: '100kb' }),
         async (req, res) => {
             const id = Number(req.params.id);
@@ -1245,7 +1246,7 @@ module.exports = (pool, io) => {
     const backupStorage = require('../services/backupStorage');
 
     router.post('/admin/request-backup',
-        superAdminAuth,
+        superAdminAuthOrPIN,
         express.json({ limit: '10kb' }),
         async (req, res) => {
             try {
@@ -1434,7 +1435,7 @@ module.exports = (pool, io) => {
     );
 
     // Super-admin retrieves signed URL for an uploaded backup.
-    router.get('/admin/backup/:reqId', superAdminAuth, async (req, res) => {
+    router.get('/admin/backup/:reqId', superAdminAuthOrPIN, async (req, res) => {
         try {
             const r = await pool.query(
                 `SELECT * FROM sync_backup_requests WHERE id = $1`,
