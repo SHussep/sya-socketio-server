@@ -356,6 +356,87 @@ module.exports = (pool, io) => {
             );
             counts.cancelaciones = parseInt(cancelacionesResult.rows[0].count);
 
+            // Productos (todo el tenant)
+            try {
+                const productosResult = await pool.query(
+                    'SELECT COUNT(*) as count FROM productos WHERE tenant_id = $1',
+                    [parsedTenantId]
+                );
+                counts.productos = parseInt(productosResult.rows[0].count);
+            } catch { counts.productos = -1; }
+
+            // Categorías de producto (todo el tenant)
+            try {
+                const categoriasResult = await pool.query(
+                    'SELECT COUNT(*) as count FROM categorias_productos WHERE tenant_id = $1',
+                    [parsedTenantId]
+                );
+                counts.categorias = parseInt(categoriasResult.rows[0].count);
+            } catch { counts.categorias = -1; }
+
+            // Proveedores (todo el tenant)
+            try {
+                const suppliersResult = await pool.query(
+                    'SELECT COUNT(*) as count FROM suppliers WHERE tenant_id = $1',
+                    [parsedTenantId]
+                );
+                counts.suppliers = parseInt(suppliersResult.rows[0].count);
+            } catch { counts.suppliers = -1; }
+
+            // Notas de crédito (solo de esta sucursal)
+            try {
+                const notasCreditoResult = await pool.query(
+                    'SELECT COUNT(*) as count FROM notas_credito WHERE tenant_id = $1 AND branch_id = $2',
+                    [parsedTenantId, parsedBranchId]
+                );
+                counts.notasCredito = parseInt(notasCreditoResult.rows[0].count);
+            } catch { counts.notasCredito = -1; }
+
+            // Compras (solo de esta sucursal)
+            try {
+                const purchasesResult = await pool.query(
+                    'SELECT COUNT(*) as count FROM purchases WHERE tenant_id = $1 AND branch_id = $2',
+                    [parsedTenantId, parsedBranchId]
+                );
+                counts.purchases = parseInt(purchasesResult.rows[0].count);
+            } catch { counts.purchases = -1; }
+
+            // Deudas de empleados (solo de esta sucursal)
+            try {
+                const debtsResult = await pool.query(
+                    'SELECT COUNT(*) as count FROM employee_debts WHERE tenant_id = $1 AND branch_id = $2',
+                    [parsedTenantId, parsedBranchId]
+                );
+                counts.employeeDebts = parseInt(debtsResult.rows[0].count);
+            } catch { counts.employeeDebts = -1; }
+
+            // Liquidaciones de repartidor (solo de esta sucursal)
+            try {
+                const liquidationsResult = await pool.query(
+                    'SELECT COUNT(*) as count FROM repartidor_liquidations WHERE tenant_id = $1 AND branch_id = $2',
+                    [parsedTenantId, parsedBranchId]
+                );
+                counts.repartidorLiquidations = parseInt(liquidationsResult.rows[0].count);
+            } catch { counts.repartidorLiquidations = -1; }
+
+            // Logs de modo preparación (solo de esta sucursal)
+            try {
+                const prepLogsResult = await pool.query(
+                    'SELECT COUNT(*) as count FROM preparation_mode_logs WHERE tenant_id = $1 AND branch_id = $2',
+                    [parsedTenantId, parsedBranchId]
+                );
+                counts.preparationModeLogs = parseInt(prepLogsResult.rows[0].count);
+            } catch { counts.preparationModeLogs = -1; }
+
+            // Kardex (solo de esta sucursal)
+            try {
+                const kardexResult = await pool.query(
+                    'SELECT COUNT(*) as count FROM kardex_entries WHERE tenant_id = $1 AND branch_id = $2',
+                    [parsedTenantId, parsedBranchId]
+                );
+                counts.kardexEntries = parseInt(kardexResult.rows[0].count);
+            } catch { counts.kardexEntries = -1; }
+
             console.log(`[SyncDiagnostics] ✅ Conteos obtenidos:`, counts);
 
             res.json({
