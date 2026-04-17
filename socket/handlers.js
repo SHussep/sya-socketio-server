@@ -276,6 +276,69 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
                     timestamp: new Date().toISOString()
                 });
                 console.log(`[IDENTIFY] 📡 desktop_status_changed → branch_${socket.branchId} online=true`);
+
+                // ═══════════════════════════════════════════════════════════════
+                // Task 24 — Re-emit queued admin commands on desktop reconnect
+                //
+                // Cuando un desktop se identifica (incluye reconexión post-offline),
+                // drenamos la cola de comandos admin encolados para este (tenant,
+                // deviceId) y se los re-emitimos uno por uno. Cada comando se
+                // firma con un JWT RS256 fresco de 5 min conservando el
+                // admin_user_id original (auditoría + authorizedTenants
+                // consistentes con el momento de la decisión).
+                // ═══════════════════════════════════════════════════════════════
+                try {
+                    const tenantId = socket.user?.tenantId;
+                    const deviceId = data.deviceInfo?.deviceId
+                                   || socket.deviceInfo?.deviceId
+                                   || socket.handshake?.auth?.deviceId;
+
+                    if (tenantId && deviceId) {
+                        const { buildAdminCommandJwt } = require('../utils/adminCommandJwt');
+                        const queued = await pool.query(
+                            `SELECT command_id, command_type, payload, admin_user_id
+                               FROM sync_admin_command_log
+                              WHERE tenant_id = $1
+                                AND device_id = $2
+                                AND status = 'queued'
+                              ORDER BY issued_at ASC
+                              LIMIT 50`,
+                            [tenantId, deviceId]
+                        );
+
+                        if (queued.rows.length > 0) {
+                            console.log(`[ADMIN-REEMIT] 📤 Desktop ${deviceId} (tenant ${tenantId}) reconectado — ${queued.rows.length} comandos encolados`);
+                        }
+
+                        for (const cmd of queued.rows) {
+                            try {
+                                const adminJwt = buildAdminCommandJwt(tenantId, cmd.admin_user_id, 5);
+                                // payload es JSONB; node-pg ya lo parsea a objeto.
+                                const payload = cmd.payload || {};
+                                socket.emit(cmd.command_type, {
+                                    adminJwt,
+                                    commandId: cmd.command_id,
+                                    ...payload
+                                });
+                                await pool.query(
+                                    `UPDATE sync_admin_command_log
+                                        SET status = 'issued', issued_at = NOW()
+                                      WHERE command_id = $1`,
+                                    [cmd.command_id]
+                                );
+                                console.log(`[ADMIN-REEMIT] ✅ ${cmd.command_type} (${cmd.command_id}) → desktop ${deviceId}`);
+                            } catch (sendErr) {
+                                // Si no se pudo firmar (p.ej. llave no configurada) o emitir,
+                                // dejamos el registro como 'queued' para reintentar en la
+                                // próxima reconexión. No marcamos 'expired' aquí — eso lo
+                                // hace el cron de Task 29 según edad.
+                                console.error(`[ADMIN-REEMIT] ❌ Falló re-emit ${cmd.command_id}: ${sendErr.message}`);
+                            }
+                        }
+                    }
+                } catch (reemitErr) {
+                    console.error('[ADMIN-REEMIT] ❌ Error drenando cola admin:', reemitErr.message);
+                }
             }
 
             // When a new mobile client joins, send current desktop status immediately
