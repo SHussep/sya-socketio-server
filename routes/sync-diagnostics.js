@@ -1013,6 +1013,62 @@ module.exports = (pool, io) => {
     });
 
     // =========================================================================
+    // GET /api/sync-diagnostics/admin/sync-logs?tenantId=X&status=failed&hours=24
+    // Admin endpoint: detailed sync event logs for a tenant.
+    // Shows exactly WHICH records failed and WHY.
+    // =========================================================================
+    router.get('/admin/sync-logs', superAdminAuthOrPIN, async (req, res) => {
+        const tenantId = Number(req.query.tenantId);
+        if (!Number.isInteger(tenantId) || tenantId <= 0) {
+            return res.status(400).json({ error: 'invalid_tenantId' });
+        }
+        const authorized = req.superAdmin?.authorizedTenants;
+        const tenantAllowed = Array.isArray(authorized) &&
+            (authorized.includes('*') || authorized.includes(tenantId));
+        if (!tenantAllowed) {
+            return res.status(403).json({ error: 'tenant_not_authorized' });
+        }
+
+        const status = req.query.status || 'failed';
+        const hours = Math.min(parseInt(req.query.hours) || 72, 720);
+        const limit = Math.min(parseInt(req.query.limit) || 100, 500);
+
+        try {
+            const params = [tenantId];
+            let sql = `
+                SELECT se.entity_type, se.entity_global_id, se.entity_description,
+                       se.status, se.error_category, se.error_message, se.error_detail,
+                       se.endpoint, se.http_status_code, se.retry_count,
+                       se.device_name, se.device_type, se.employee_name,
+                       se.dependency_info, se.created_at, se.resolved_at,
+                       b.name AS branch_name
+                FROM sync_events se
+                LEFT JOIN branches b ON se.branch_id = b.id
+                WHERE se.tenant_id = $1
+            `;
+            let idx = 2;
+
+            if (status !== 'all') {
+                sql += ` AND se.status = $${idx++}`;
+                params.push(status);
+            }
+
+            if (hours > 0) {
+                sql += ` AND se.created_at > NOW() - INTERVAL '${hours} hours'`;
+            }
+
+            sql += ` ORDER BY se.created_at DESC LIMIT $${idx}`;
+            params.push(limit);
+
+            const r = await pool.query(sql, params);
+            res.json({ rows: r.rows, count: r.rowCount });
+        } catch (e) {
+            console.error('[admin/sync-logs]', e);
+            res.status(500).json({ error: 'query_failed' });
+        }
+    });
+
+    // =========================================================================
     // GET /api/sync-diagnostics/admin/census   (Task 12 — Fase 2)
     // Super-admin endpoint. Returns recent census reports for a tenant,
     // optionally filtered by deviceId. Protected by superAdminAuthOrPIN (JWT or PIN).
