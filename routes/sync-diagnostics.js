@@ -1225,5 +1225,281 @@ module.exports = (pool, io) => {
         }
     );
 
+    // ═══════════════════════════════════════════════════════════════
+    // Task 25 — Full backup on-demand (Fase 5)
+    //
+    // Flow:
+    //   1. Super-admin POST /admin/request-backup → issues uploadToken
+    //      (HS256, 15 min, scope='backup_upload'), crea fila pending,
+    //      emite/encola admin:request_full_backup al desktop.
+    //   2. Desktop ejecuta backup encriptado (Task 26) y POST /backup-upload
+    //      con el uploadToken → storage adapter persiste blob → status='uploaded'.
+    //   3. Super-admin GET /admin/backup/:reqId → signed URL (15 min).
+    //   4. Driver 'fs' expone GET /backup-download que valida JWT HS256 y
+    //      sirve el blob encriptado.
+    // ═══════════════════════════════════════════════════════════════
+    const backupStorage = require('../services/backupStorage');
+
+    router.post('/admin/request-backup',
+        superAdminAuth,
+        express.json({ limit: '10kb' }),
+        async (req, res) => {
+            try {
+                const { tenantId, deviceId, branchId: providedBranchId } = req.body || {};
+                if (!tenantId || !deviceId) {
+                    return res.status(400).json({ error: 'missing_fields' });
+                }
+                const tenantIdNum = Number(tenantId);
+                const authorized = req.superAdmin?.authorizedTenants || [];
+                const tenantAllowed = Array.isArray(authorized) &&
+                    (authorized.includes('*') || authorized.includes(tenantIdNum));
+                if (!tenantAllowed) {
+                    return res.status(403).json({ error: 'tenant_not_authorized' });
+                }
+
+                // Resolver branchId: body > último census reportado por este device
+                let branchId = Number(providedBranchId);
+                if (!branchId) {
+                    const bq = await pool.query(
+                        `SELECT branch_id FROM sync_census_reports
+                          WHERE tenant_id = $1 AND device_id = $2
+                          ORDER BY received_at DESC LIMIT 1`,
+                        [tenantIdNum, deviceId]
+                    );
+                    if (bq.rowCount === 0) {
+                        return res.status(400).json({
+                            error: 'branch_unknown_no_census',
+                            hint: 'pass branchId explicitly'
+                        });
+                    }
+                    branchId = bq.rows[0].branch_id;
+                }
+
+                if (!process.env.BACKUP_UPLOAD_SECRET) {
+                    return res.status(500).json({ error: 'backup_upload_secret_not_configured' });
+                }
+
+                const reqId = crypto.randomUUID();
+                const uploadToken = jwt.sign(
+                    { reqId, deviceId, scope: 'backup_upload' },
+                    process.env.BACKUP_UPLOAD_SECRET,
+                    { expiresIn: '15m', algorithm: 'HS256' }
+                );
+                const tokenHash = crypto.createHash('sha256').update(uploadToken).digest('hex');
+                // Fila `pending` vive hasta 48h; pasado ese TTL el cron de Task 29
+                // la mueve a 'expired'. El uploadToken JWT expira en 15min.
+                const expiresAt = new Date(Date.now() + 48 * 3600 * 1000);
+
+                await pool.query(
+                    `INSERT INTO sync_backup_requests
+                        (id, tenant_id, branch_id, device_id, requested_by,
+                         upload_token_hash, status, expires_at)
+                     VALUES ($1,$2,$3,$4,$5,$6,'pending',$7)`,
+                    [reqId, tenantIdNum, branchId, deviceId,
+                     req.superAdmin.userId, tokenHash, expiresAt]
+                );
+
+                // Emit o encolar admin:request_full_backup al desktop target.
+                const { buildAdminCommandJwt } = require('../utils/adminCommandJwt');
+                const commandId = crypto.randomUUID();
+                const payloadForLog = {
+                    reqId,
+                    uploadToken,
+                    expiresAt: expiresAt.toISOString()
+                };
+                let delivered = 0;
+
+                try {
+                    if (io && typeof io.in === 'function') {
+                        const sockets = await io.in(`branch_${branchId}`).fetchSockets();
+                        const adminJwt = buildAdminCommandJwt(tenantIdNum, req.superAdmin.userId, 5);
+                        const emitPayload = {
+                            adminJwt,
+                            commandId,
+                            reqId,
+                            uploadToken,
+                            expiresAt: expiresAt.toISOString()
+                        };
+                        for (const s of sockets) {
+                            const clientType = s.clientType || s.data?.clientType;
+                            if (clientType !== 'desktop') continue;
+                            const deviceIdOnSocket =
+                                s.deviceInfo?.deviceId ||
+                                s.data?.deviceId ||
+                                s.handshake?.auth?.deviceId;
+                            if (!deviceIdOnSocket || deviceIdOnSocket === deviceId) {
+                                s.emit('admin:request_full_backup', emitPayload);
+                                delivered += 1;
+                            }
+                        }
+                    }
+                } catch (emitErr) {
+                    console.error('[admin/request-backup] socket emit failed:', emitErr.message);
+                }
+
+                const logStatus = delivered > 0 ? 'issued' : 'queued';
+                await pool.query(
+                    `INSERT INTO sync_admin_command_log
+                        (command_id, tenant_id, device_id, admin_user_id,
+                         command_type, payload, status)
+                     VALUES ($1,$2,$3,$4,'admin:request_full_backup',$5,$6)`,
+                    [commandId, tenantIdNum, deviceId, req.superAdmin.userId,
+                     JSON.stringify(payloadForLog), logStatus]
+                );
+
+                return res.json({
+                    reqId,
+                    commandId,
+                    delivered,
+                    expiresAt: expiresAt.toISOString()
+                });
+            } catch (e) {
+                console.error('[admin/request-backup]', e);
+                return res.status(500).json({ error: 'request_backup_failed' });
+            }
+        }
+    );
+
+    // Upload del blob encriptado. El desktop autentica con uploadToken
+    // (Bearer HS256) — NO super-admin JWT. One-shot: status 'pending' → 'uploaded'.
+    router.post('/backup-upload',
+        express.raw({ limit: '500mb', type: '*/*' }),
+        async (req, res) => {
+            const header = req.headers.authorization || '';
+            const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+            if (!token) return res.status(401).json({ error: 'missing_token' });
+            if (!process.env.BACKUP_UPLOAD_SECRET) {
+                return res.status(500).json({ error: 'backup_upload_secret_not_configured' });
+            }
+
+            let decoded;
+            try {
+                decoded = jwt.verify(token, process.env.BACKUP_UPLOAD_SECRET, {
+                    algorithms: ['HS256']
+                });
+            } catch (e) {
+                return res.status(401).json({ error: 'invalid_token' });
+            }
+            if (decoded.scope !== 'backup_upload') {
+                return res.status(401).json({ error: 'bad_scope' });
+            }
+
+            const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+            const client = await pool.connect();
+            try {
+                await client.query('BEGIN');
+                const r = await client.query(
+                    `SELECT * FROM sync_backup_requests
+                      WHERE id = $1 AND upload_token_hash = $2 FOR UPDATE`,
+                    [decoded.reqId, tokenHash]
+                );
+                if (r.rowCount === 0) {
+                    await client.query('ROLLBACK');
+                    return res.status(404).json({ error: 'not_found' });
+                }
+                const row = r.rows[0];
+                if (row.status !== 'pending') {
+                    await client.query('ROLLBACK');
+                    return res.status(409).json({ error: 'token_consumed_or_stale' });
+                }
+                if (new Date(row.expires_at) < new Date()) {
+                    await client.query('ROLLBACK');
+                    return res.status(410).json({ error: 'expired' });
+                }
+
+                const key = `backups/${row.tenant_id}/${row.device_id}/${decoded.reqId}.enc`;
+                const { sizeBytes } = await backupStorage.putObjectEncrypted(key, req.body);
+
+                await client.query(
+                    `UPDATE sync_backup_requests
+                        SET status='uploaded', uploaded_at=NOW(),
+                            storage_key=$1, size_bytes=$2
+                      WHERE id=$3`,
+                    [key, sizeBytes, decoded.reqId]
+                );
+                await client.query('COMMIT');
+                return res.json({ ok: true, sizeBytes });
+            } catch (e) {
+                try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
+                console.error('[backup-upload]', e);
+                return res.status(500).json({ error: 'upload_failed' });
+            } finally {
+                client.release();
+            }
+        }
+    );
+
+    // Super-admin retrieves signed URL for an uploaded backup.
+    router.get('/admin/backup/:reqId', superAdminAuth, async (req, res) => {
+        try {
+            const r = await pool.query(
+                `SELECT * FROM sync_backup_requests WHERE id = $1`,
+                [req.params.reqId]
+            );
+            if (r.rowCount === 0) return res.status(404).json({ error: 'not_found' });
+            const row = r.rows[0];
+            const authorized = req.superAdmin?.authorizedTenants || [];
+            const tenantAllowed = Array.isArray(authorized) &&
+                (authorized.includes('*') || authorized.includes(row.tenant_id));
+            if (!tenantAllowed) {
+                return res.status(403).json({ error: 'tenant_not_authorized' });
+            }
+            if (row.status !== 'uploaded') {
+                return res.status(409).json({ error: 'not_uploaded', status: row.status });
+            }
+            const url = await backupStorage.getSignedUrl(row.storage_key, 15 * 60);
+            return res.json({
+                url,
+                sizeBytes: row.size_bytes,
+                storageKey: row.storage_key,
+                uploadedAt: row.uploaded_at
+            });
+        } catch (e) {
+            console.error('[admin/backup/:reqId]', e);
+            return res.status(500).json({ error: 'signed_url_failed' });
+        }
+    });
+
+    // FS-driver only: serves the encrypted blob to super-admin after validating
+    // the short-lived HS256 download token issued by backupStorage.getSignedUrl.
+    // S3-driver would return a presigned S3 URL directly, making this endpoint
+    // irrelevant — se mantiene registrado pero responde 404 cuando no aplica.
+    router.get('/backup-download', async (req, res) => {
+        try {
+            if (backupStorage.driver !== 'fs') {
+                return res.status(404).json({ error: 'not_applicable_for_driver' });
+            }
+            const token = req.query?.token;
+            if (!token || typeof token !== 'string') {
+                return res.status(401).json({ error: 'missing_token' });
+            }
+            if (!process.env.BACKUP_DOWNLOAD_SECRET) {
+                return res.status(500).json({ error: 'backup_download_secret_not_configured' });
+            }
+            let decoded;
+            try {
+                decoded = jwt.verify(token, process.env.BACKUP_DOWNLOAD_SECRET, {
+                    algorithms: ['HS256']
+                });
+            } catch (e) {
+                return res.status(401).json({ error: 'invalid_token' });
+            }
+            if (decoded.scope !== 'backup_download' || !decoded.key) {
+                return res.status(401).json({ error: 'bad_scope' });
+            }
+            const full = backupStorage._resolveKeyForDownload(decoded.key);
+            if (!fs.existsSync(full)) {
+                return res.status(404).json({ error: 'not_found' });
+            }
+            res.setHeader('Content-Type', 'application/octet-stream');
+            res.setHeader('Content-Disposition',
+                `attachment; filename="${decoded.key.split('/').pop()}"`);
+            fs.createReadStream(full).pipe(res);
+        } catch (e) {
+            console.error('[backup-download]', e);
+            if (!res.headersSent) res.status(500).json({ error: 'download_failed' });
+        }
+    });
+
     return router;
 };
