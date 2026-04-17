@@ -144,6 +144,8 @@ const branchSetupRoutes = require('./routes/branch_setup')(pool);
 const { processGuardianDigests, initializeDigestSchedules } = require('./jobs/guardianEmailDigest');
 const { processLicenseExpiryNotifications } = require('./jobs/licenseExpiryNotifier');
 const { purgeExpiredResets } = require('./jobs/dataResetPurge');
+const { cleanupSyncDiagnostics } = require('./jobs/cleanupSyncDiagnostics');
+const { expireBackupRequests } = require('./jobs/expireBackupRequests');
 
 // Nuevas rutas extraídas de server.js
 const createBranchesRoutes = require('./routes/branches');
@@ -510,6 +512,20 @@ async function startServer() {
                     console.error('[DataResetPurge] Startup check error:', err.message)
                 );
             }, 60000);
+
+            // Sync diagnostics cleanup — every 24 hours (Task 28)
+            setInterval(() => {
+                cleanupSyncDiagnostics().catch(err =>
+                    console.error('[SyncDiagCleanup] Interval error:', err.message)
+                );
+            }, 24 * 60 * 60 * 1000); // 24 hours
+
+            // Expire backup requests — every hour (Task 29)
+            setInterval(() => {
+                expireBackupRequests().catch(err =>
+                    console.error('[ExpireBackup] Interval error:', err.message)
+                );
+            }, 60 * 60 * 1000); // 1 hour
         });
     } catch (error) {
         console.error('❌ Error starting server:', error);

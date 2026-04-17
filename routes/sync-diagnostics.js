@@ -13,6 +13,7 @@ const { createTenantValidationMiddleware } = require('../middleware/deviceAuth')
 const { authenticateToken } = require('../middleware/auth');
 const superAdminAuth = require('../middleware/superAdminAuth');
 const Ajv = require('ajv');
+const { notifyAdminsOfNewQuarantine } = require('../services/adminFcmNotifier');
 
 // RSA private key for signing short-lived admin command JWTs (Task 18).
 // Same private key as /api/auth/super-admin/login — lazy load + cache.
@@ -1046,7 +1047,10 @@ module.exports = (pool, io) => {
                     ]
                 );
                 console.log(`[SyncDiagnostics/quarantine] ✅ tenant=${b.tenantId} device=${b.deviceId} ${b.entity.type}/${b.entity.globalId}`);
-                // TODO Task 30: enqueueAdminFcm({ type: 'quarantine_new', ...b })
+                // Task 30: FCM push a admins/owners del tenant (fire-and-forget, no bloquea response)
+                notifyAdminsOfNewQuarantine(b).catch(e =>
+                    console.error('[SyncDiagnostics/quarantine] FCM notify error:', e.message)
+                );
                 return res.status(200).json({ success: true });
             } catch (e) {
                 console.error('[SyncDiagnostics/quarantine] ❌', e.message);
