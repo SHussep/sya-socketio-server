@@ -784,9 +784,12 @@ module.exports = (pool) => {
                     tenantId, branchId, deviceId,
                     deviceName || null, appVersion || null,
                     takenAt,
-                    summary, byEntityType,
-                    suspiciousRecords || null,
-                    handlerStats || null
+                    // JSONB columns: must stringify arrays explicitly
+                    // (node-pg otherwise encodes JS arrays as Postgres array literals)
+                    JSON.stringify(summary),
+                    JSON.stringify(byEntityType),
+                    suspiciousRecords ? JSON.stringify(suspiciousRecords) : null,
+                    handlerStats ? JSON.stringify(handlerStats) : null
                 ]
             );
             if (req._censusMarkAccepted) req._censusMarkAccepted();
