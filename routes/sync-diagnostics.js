@@ -39,6 +39,82 @@ const censusSchema = {
     }
 };
 
+// ═══════════════════════════════════════════════════════════════
+// Task 17: POST /quarantine — desktop reports a quarantined entity
+// ═══════════════════════════════════════════════════════════════
+
+const quarantineSchema = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['tenantId', 'branchId', 'deviceId', 'quarantinedAt', 'entity', 'failure'],
+    properties: {
+        tenantId: { type: 'integer' },
+        branchId: { type: 'integer' },
+        deviceId: { type: 'string', minLength: 1, maxLength: 200 },
+        deviceName: { type: 'string', maxLength: 200 },
+        appVersion: { type: 'string', maxLength: 50 },
+        quarantinedAt: { type: 'string', minLength: 1, maxLength: 40 },
+        entity: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['type', 'globalId', 'payload'],
+            properties: {
+                type: { type: 'string', minLength: 1, maxLength: 80 },
+                globalId: { type: 'string', minLength: 1, maxLength: 80 },
+                localId: { type: 'integer' },
+                payload: { type: 'object' },
+                description: { type: 'string', maxLength: 500 }
+            }
+        },
+        failure: {
+            type: 'object',
+            additionalProperties: true,
+            required: ['category', 'technicalMessage'],
+            properties: {
+                category: { type: 'string', minLength: 1, maxLength: 60 },
+                technicalMessage: { type: 'string' }
+            }
+        },
+        dependencies: { type: 'array' },
+        verifyResult: { type: 'object' }
+    }
+};
+
+// Quarantine rate limiter — 30 per hour per device (mirror /census Map pattern,
+// no express-rate-limit dep; uses Map + setInterval cleanup with .unref()).
+const QUARANTINE_WINDOW_MS = 60 * 60 * 1000;
+const QUARANTINE_MAX_PER_WINDOW = 30;
+const quarantineHitsByDevice = new Map();
+setInterval(() => {
+    const now = Date.now();
+    for (const [key, entry] of quarantineHitsByDevice.entries()) {
+        if (now - entry.windowStart > QUARANTINE_WINDOW_MS * 2) {
+            quarantineHitsByDevice.delete(key);
+        }
+    }
+}, 10 * 60 * 1000).unref?.();
+
+function quarantineRateLimit(req, res, next) {
+    const deviceId = req.body?.deviceId;
+    if (!deviceId || typeof deviceId !== 'string') return next(); // schema check handles this
+    const key = `${req.user?.tenantId || 'x'}:${deviceId}`;
+    const now = Date.now();
+    const entry = quarantineHitsByDevice.get(key);
+    if (!entry || (now - entry.windowStart) > QUARANTINE_WINDOW_MS) {
+        quarantineHitsByDevice.set(key, { windowStart: now, count: 1 });
+        return next();
+    }
+    if (entry.count >= QUARANTINE_MAX_PER_WINDOW) {
+        return res.status(429).json({
+            success: false,
+            message: 'Quarantine rate limit exceeded (30/hour/device)',
+            retryAfterSeconds: Math.ceil((QUARANTINE_WINDOW_MS - (now - entry.windowStart)) / 1000)
+        });
+    }
+    entry.count += 1;
+    next();
+}
+
 // Verify payload schema.
 const verifySchema = {
     type: 'object',
@@ -54,6 +130,7 @@ const verifySchema = {
 // (kept schema minimal; the PG column is TIMESTAMPTZ and will parse ISO strings).
 const validateCensus = ajv.compile(censusSchema);
 const validateVerify = ajv.compile(verifySchema);
+const validateQuarantine = ajv.compile(quarantineSchema);
 
 // Whitelist of entity types → (table, globalId column).
 // Built from existing entityConfig in verify-global-ids and real PG schema
@@ -880,6 +957,68 @@ module.exports = (pool) => {
             res.status(500).json({ error: 'query_failed' });
         }
     });
+
+    // ═══════════════════════════════════════════════════════════════
+    // Task 17: POST /quarantine — ingest quarantine report from desktop
+    // Upserts on (tenant_id, device_id, entity_type, entity_global_id)
+    // WHERE admin_decision IS NULL (idempotent while undecided).
+    // ═══════════════════════════════════════════════════════════════
+    router.post('/quarantine',
+        express.json({ limit: '5mb' }),
+        authenticateToken,
+        ensureSameTenant,
+        quarantineRateLimit,
+        async (req, res) => {
+            if (!validateQuarantine(req.body)) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Invalid quarantine payload',
+                    errors: validateQuarantine.errors
+                });
+            }
+            const b = req.body;
+            try {
+                await pool.query(
+                    `INSERT INTO sync_quarantine_reports
+                        (tenant_id, branch_id, device_id, device_name, app_version, quarantined_at,
+                         entity_type, entity_global_id, entity_local_id, entity_payload, entity_description,
+                         failure, dependencies, verify_result)
+                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+                     ON CONFLICT (tenant_id, device_id, entity_type, entity_global_id)
+                       WHERE admin_decision IS NULL
+                     DO UPDATE SET
+                        failure = EXCLUDED.failure,
+                        dependencies = EXCLUDED.dependencies,
+                        verify_result = EXCLUDED.verify_result,
+                        quarantined_at = EXCLUDED.quarantined_at,
+                        entity_payload = EXCLUDED.entity_payload,
+                        entity_description = EXCLUDED.entity_description,
+                        device_name = EXCLUDED.device_name,
+                        app_version = EXCLUDED.app_version,
+                        received_at = NOW()`,
+                    [
+                        b.tenantId, b.branchId, b.deviceId,
+                        b.deviceName || null, b.appVersion || null,
+                        b.quarantinedAt,
+                        b.entity.type, b.entity.globalId, b.entity.localId || null,
+                        // JSONB columns: stringify explicitly. node-pg otherwise encodes
+                        // JS arrays as Postgres ARRAY literals (breaks JSONB insert).
+                        JSON.stringify(b.entity.payload),
+                        b.entity.description || null,
+                        JSON.stringify(b.failure),
+                        JSON.stringify(b.dependencies || []),
+                        JSON.stringify(b.verifyResult || {})
+                    ]
+                );
+                console.log(`[SyncDiagnostics/quarantine] ✅ tenant=${b.tenantId} device=${b.deviceId} ${b.entity.type}/${b.entity.globalId}`);
+                // TODO Task 30: enqueueAdminFcm({ type: 'quarantine_new', ...b })
+                return res.status(200).json({ success: true });
+            } catch (e) {
+                console.error('[SyncDiagnostics/quarantine] ❌', e.message);
+                return res.status(500).json({ success: false, message: 'insert_failed' });
+            }
+        }
+    );
 
     return router;
 };
