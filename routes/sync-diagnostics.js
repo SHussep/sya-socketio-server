@@ -955,6 +955,64 @@ module.exports = (pool, io) => {
     });
 
     // =========================================================================
+    // GET /api/sync-diagnostics/admin/overview
+    // Super-admin overview: latest census per device across ALL tenants,
+    // plus quarantine counts. No tenantId required.
+    // =========================================================================
+    router.get('/admin/overview', superAdminAuthOrPIN, async (req, res) => {
+        try {
+            // Latest census per device (one row per device, most recent)
+            const censusResult = await pool.query(`
+                SELECT DISTINCT ON (device_id)
+                    cr.id, cr.tenant_id, cr.branch_id, cr.device_id,
+                    cr.device_name, cr.app_version, cr.taken_at, cr.summary,
+                    cr.received_at,
+                    t.business_name AS tenant_name
+                FROM sync_census_reports cr
+                LEFT JOIN tenants t ON t.id = cr.tenant_id
+                ORDER BY device_id, taken_at DESC
+            `);
+
+            // Pending quarantine counts per tenant
+            const quarantineResult = await pool.query(`
+                SELECT tenant_id, COUNT(*) AS pending_count
+                FROM sync_quarantine_reports
+                WHERE admin_decision IS NULL
+                GROUP BY tenant_id
+            `);
+
+            // Recent sync event failures (last 24h) per tenant
+            const eventsResult = await pool.query(`
+                SELECT tenant_id, COUNT(*) AS failed_count,
+                       MAX(created_at) AS last_failure
+                FROM sync_events
+                WHERE status = 'failed'
+                  AND created_at > NOW() - INTERVAL '24 hours'
+                GROUP BY tenant_id
+            `);
+
+            // Telemetry errors (last 24h) per tenant
+            const telemetryResult = await pool.query(`
+                SELECT tenant_id, COUNT(*) AS error_count,
+                       MAX(event_timestamp) AS last_error
+                FROM telemetry_errors
+                WHERE event_timestamp > NOW() - INTERVAL '24 hours'
+                GROUP BY tenant_id
+            `);
+
+            res.json({
+                devices: censusResult.rows,
+                quarantine: quarantineResult.rows,
+                syncFailures: eventsResult.rows,
+                telemetryErrors: telemetryResult.rows
+            });
+        } catch (e) {
+            console.error('[admin/overview]', e);
+            res.status(500).json({ error: 'query_failed', detail: e.message });
+        }
+    });
+
+    // =========================================================================
     // GET /api/sync-diagnostics/admin/census   (Task 12 — Fase 2)
     // Super-admin endpoint. Returns recent census reports for a tenant,
     // optionally filtered by deviceId. Protected by superAdminAuthOrPIN (JWT or PIN).
