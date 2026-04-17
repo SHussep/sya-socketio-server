@@ -995,8 +995,9 @@ module.exports = (pool, io) => {
             const telemetryResult = await pool.query(`
                 SELECT tenant_id, COUNT(*) AS error_count,
                        MAX(event_timestamp) AS last_error
-                FROM telemetry_errors
-                WHERE event_timestamp > NOW() - INTERVAL '24 hours'
+                FROM telemetry_events
+                WHERE event_type = 'socket_error'
+                  AND event_timestamp > NOW() - INTERVAL '24 hours'
                 GROUP BY tenant_id
             `);
 
