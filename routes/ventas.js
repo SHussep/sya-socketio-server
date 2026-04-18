@@ -11,6 +11,7 @@ const router = express.Router();
 module.exports = function(pool, io) {
 
     const { deductBranchStock, getBranchInventarioForEmit } = require('../utils/branchInventory');
+    const { PRODUCT_UPDATED_COLUMNS, buildProductUpdatedPayload } = require('../utils/productUpdatedPayload');
 
     // ─────────────────────────────────────────────────────────
     // GET /api/ventas - Listar ventas de una sucursal
@@ -740,32 +741,23 @@ module.exports = function(pool, io) {
                         );
                         // Fetch updated products to emit accurate inventory values
                         const updatedProducts = await pool.query(
-                            `SELECT p.id, p.global_id, p.descripcion, p.inventario AS global_inventario,
-                                    p.precio_venta, p.inventariar, p.bascula, p.unidad_medida_id
-                             FROM ventas_detalle vd
-                             JOIN productos p ON vd.id_producto = p.id AND p.tenant_id = $2
-                             WHERE vd.id_venta = $1 AND p.inventariar = true`,
+                            `SELECT ${PRODUCT_UPDATED_COLUMNS}
+                             FROM productos
+                             WHERE tenant_id = $2
+                               AND inventariar = true
+                               AND id IN (SELECT id_producto FROM ventas_detalle WHERE id_venta = $1)`,
                             [newVenta.id_venta, tenant_id]
                         );
                         for (const prod of updatedProducts.rows) {
                             for (const b of branches.rows) {
                                 const branchInv = await getBranchInventarioForEmit(
                                     pool, tenant_id, b.id,
-                                    prod.global_id, parseFloat(prod.global_inventario)
+                                    prod.global_id, parseFloat(prod.inventario)
                                 );
-                                const payload = {
-                                    id_producto: String(prod.id),
-                                    global_id: prod.global_id,
-                                    descripcion: prod.descripcion,
-                                    inventario: branchInv,
-                                    precio_venta: parseFloat(prod.precio_venta),
-                                    inventariar: prod.inventariar,
-                                    pesable: prod.bascula,
-                                    unidad_medida: prod.unidad_medida_id,
-                                    action: 'updated',
-                                    updatedAt: new Date().toISOString()
-                                };
-                                io.to(`branch_${b.id}`).emit('product_updated', payload);
+                                io.to(`branch_${b.id}`).emit(
+                                    'product_updated',
+                                    buildProductUpdatedPayload(prod, branchInv, 'updated')
+                                );
                             }
                         }
                         if (updatedProducts.rows.length > 0) {

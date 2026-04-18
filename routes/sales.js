@@ -27,6 +27,7 @@ function authenticateToken(req, res, next) {
 
 module.exports = (pool, io) => {
     const { restoreBranchStock, getBranchInventarioForEmit } = require('../utils/branchInventory');
+    const { PRODUCT_UPDATED_COLUMNS, buildProductUpdatedPayload } = require('../utils/productUpdatedPayload');
     const activeDeviceSessions = require('../socket/activeDeviceSessions');
     const router = express.Router();
 
@@ -486,7 +487,7 @@ module.exports = (pool, io) => {
                         // Get fresh product data for each cancelled assignment
                         for (const ca of cancelledAssignments) {
                             const prodResult = await pool.query(
-                                `SELECT id, global_id, descripcion, inventario, precio_venta, inventariar, bascula, unidad_medida_id
+                                `SELECT ${PRODUCT_UPDATED_COLUMNS}
                                  FROM productos WHERE global_id = (
                                     SELECT product_global_id FROM repartidor_assignments WHERE global_id = $1
                                  ) AND tenant_id = $2`,
@@ -498,13 +499,10 @@ module.exports = (pool, io) => {
                                     const branchInv = await getBranchInventarioForEmit(
                                         pool, tenantId, b.id, p.global_id, parseFloat(p.inventario)
                                     );
-                                    io.to(`branch_${b.id}`).emit('product_updated', {
-                                        id_producto: String(p.id), global_id: p.global_id,
-                                        descripcion: p.descripcion, inventario: branchInv,
-                                        precio_venta: parseFloat(p.precio_venta || 0), inventariar: p.inventariar,
-                                        pesable: p.bascula, unidad_medida: p.unidad_medida_id,
-                                        action: 'updated', updatedAt: new Date().toISOString()
-                                    });
+                                    io.to(`branch_${b.id}`).emit(
+                                        'product_updated',
+                                        buildProductUpdatedPayload(p, branchInv, 'updated')
+                                    );
                                 }
                             }
                         }

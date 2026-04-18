@@ -14,6 +14,7 @@ const express = require('express');
 const { pool } = require('../database');
 const { notifyAssignmentCreated } = require('../utils/notificationHelper');
 const { deductBranchStock, restoreBranchStock, getBranchInventarioForEmit } = require('../utils/branchInventory');
+const { PRODUCT_UPDATED_COLUMNS, buildProductUpdatedPayload } = require('../utils/productUpdatedPayload');
 const jwt = require('jsonwebtoken');
 
 // ⚠️ SEGURIDAD: JWT_SECRET debe estar configurado en el entorno
@@ -163,7 +164,8 @@ function createRepartidorAssignmentRoutes(io) {
             const s = io.sockets.sockets.get(socketId);
             if (s) {
               clientTypes.push(s.clientType || 'unknown');
-              if (s.clientType !== 'mobile') desktopFound = true;
+              // Fix B: requerir clientType='desktop' explícito, alineado con demás endpoints
+              if (s.clientType === 'desktop') desktopFound = true;
             }
           }
         }
@@ -602,7 +604,7 @@ function createRepartidorAssignmentRoutes(io) {
       if (wasInserted && resolvedProductId && ['pending', 'in_progress'].includes(assignment.status)) {
         try {
           const productCheck = await pool.query(
-            `SELECT id, global_id, inventariar, inventario, descripcion, precio_venta, bascula, unidad_medida_id
+            `SELECT ${PRODUCT_UPDATED_COLUMNS}
              FROM productos WHERE id = $1 AND tenant_id = $2`,
             [resolvedProductId, tenant_id]
           );
@@ -647,14 +649,10 @@ function createRepartidorAssignmentRoutes(io) {
                   const branchInv = await getBranchInventarioForEmit(
                     pool, tenant_id, b.id, p.global_id, parseFloat(p.inventario)
                   );
-                  const productPayload = {
-                    id_producto: String(p.id), global_id: p.global_id,
-                    descripcion: p.descripcion, inventario: branchInv,
-                    precio_venta: parseFloat(p.precio_venta || 0), inventariar: p.inventariar,
-                    pesable: p.bascula, unidad_medida: p.unidad_medida_id,
-                    action: 'updated', updatedAt: new Date().toISOString()
-                  };
-                  io.to(`branch_${b.id}`).emit('product_updated', productPayload);
+                  io.to(`branch_${b.id}`).emit(
+                    'product_updated',
+                    buildProductUpdatedPayload(p, branchInv, 'updated')
+                  );
                 }
                 const kardexPayload = {
                   entries: [{
@@ -696,7 +694,7 @@ function createRepartidorAssignmentRoutes(io) {
         if (Math.abs(delta) > 0.001) {
           try {
             const productCheck = await pool.query(
-              `SELECT id, global_id, inventariar, inventario, descripcion, precio_venta, bascula, unidad_medida_id
+              `SELECT ${PRODUCT_UPDATED_COLUMNS}
                FROM productos WHERE id = $1 AND tenant_id = $2`,
               [resolvedProductId, tenant_id]
             );
@@ -752,13 +750,10 @@ function createRepartidorAssignmentRoutes(io) {
                     const branchInv = await getBranchInventarioForEmit(
                       pool, tenant_id, b.id, prod.global_id, parseFloat(prod.inventario)
                     );
-                    io.to(`branch_${b.id}`).emit('product_updated', {
-                      id_producto: String(prod.id), global_id: prod.global_id,
-                      descripcion: prod.descripcion, inventario: branchInv,
-                      precio_venta: parseFloat(prod.precio_venta || 0), inventariar: prod.inventariar,
-                      pesable: prod.bascula, unidad_medida: prod.unidad_medida_id,
-                      action: 'updated', updatedAt: new Date().toISOString()
-                    });
+                    io.to(`branch_${b.id}`).emit(
+                      'product_updated',
+                      buildProductUpdatedPayload(prod, branchInv, 'updated')
+                    );
                   }
                   const kardexPayload = {
                     entries: [{
@@ -793,7 +788,7 @@ function createRepartidorAssignmentRoutes(io) {
       if (!wasInserted && assignment.status === 'cancelled' && resolvedProductId && previousStatus !== 'cancelled') {
         try {
           const productCheck = await pool.query(
-            `SELECT id, global_id, inventariar, inventario, descripcion, precio_venta, bascula, unidad_medida_id
+            `SELECT ${PRODUCT_UPDATED_COLUMNS}
              FROM productos WHERE id = $1 AND tenant_id = $2`,
             [resolvedProductId, tenant_id]
           );
@@ -837,14 +832,10 @@ function createRepartidorAssignmentRoutes(io) {
                   const branchInv = await getBranchInventarioForEmit(
                     pool, tenant_id, b.id, p.global_id, parseFloat(p.inventario)
                   );
-                  const productPayload = {
-                    id_producto: String(p.id), global_id: p.global_id,
-                    descripcion: p.descripcion, inventario: branchInv,
-                    precio_venta: parseFloat(p.precio_venta || 0), inventariar: p.inventariar,
-                    pesable: p.bascula, unidad_medida: p.unidad_medida_id,
-                    action: 'updated', updatedAt: new Date().toISOString()
-                  };
-                  io.to(`branch_${b.id}`).emit('product_updated', productPayload);
+                  io.to(`branch_${b.id}`).emit(
+                    'product_updated',
+                    buildProductUpdatedPayload(p, branchInv, 'updated')
+                  );
                 }
                 const kardexPayload = {
                   entries: [{
@@ -1562,7 +1553,7 @@ function createRepartidorAssignmentRoutes(io) {
             'SELECT id FROM branches WHERE tenant_id = $1 AND is_active = true', [tenant_id]
           );
           const prodForEmit = await pool.query(
-            `SELECT id, global_id, descripcion, inventario, precio_venta, inventariar, bascula, unidad_medida_id
+            `SELECT ${PRODUCT_UPDATED_COLUMNS}
              FROM productos WHERE id = $1`, [assignment.product_id]
           );
           if (prodForEmit.rows.length > 0) {
@@ -1571,14 +1562,10 @@ function createRepartidorAssignmentRoutes(io) {
               const branchInv = await getBranchInventarioForEmit(
                 pool, tenant_id, b.id, p.global_id, parseFloat(p.inventario)
               );
-              const productPayload = {
-                id_producto: String(p.id), global_id: p.global_id,
-                descripcion: p.descripcion, inventario: branchInv,
-                precio_venta: parseFloat(p.precio_venta), inventariar: p.inventariar,
-                pesable: p.bascula, unidad_medida: p.unidad_medida_id,
-                action: 'updated', updatedAt: new Date().toISOString()
-              };
-              io.to(`branch_${b.id}`).emit('product_updated', productPayload);
+              io.to(`branch_${b.id}`).emit(
+                'product_updated',
+                buildProductUpdatedPayload(p, branchInv, 'updated')
+              );
             }
             console.log(`[RepartidorAssignments] 📡 product_updated emitido (devolución)`);
           }

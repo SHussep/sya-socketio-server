@@ -12,6 +12,7 @@ const { pool } = require('../database');
 
 function createRepartidorReturnRoutes(io) {
   const { restoreBranchStock, getBranchInventarioForEmit } = require('../utils/branchInventory');
+  const { PRODUCT_UPDATED_COLUMNS, buildProductUpdatedPayload } = require('../utils/productUpdatedPayload');
   const router = express.Router();
 
   // ═══════════════════════════════════════════════════════════════
@@ -235,7 +236,7 @@ function createRepartidorReturnRoutes(io) {
       if (wasInserted && assignment.product_id) {
         try {
           const productCheck = await pool.query(
-            `SELECT id, global_id, inventariar, inventario, descripcion, precio_venta, bascula, unidad_medida_id FROM productos WHERE id = $1 AND tenant_id = $2`,
+            `SELECT ${PRODUCT_UPDATED_COLUMNS} FROM productos WHERE id = $1 AND tenant_id = $2`,
             [assignment.product_id, tenant_id]
           );
           const prod = productCheck.rows[0];
@@ -292,14 +293,10 @@ function createRepartidorReturnRoutes(io) {
                   const branchInv = await getBranchInventarioForEmit(
                     pool, tenant_id, b.id, p.global_id, parseFloat(p.inventario)
                   );
-                  const productPayload = {
-                    id_producto: String(p.id), global_id: p.global_id,
-                    descripcion: p.descripcion, inventario: branchInv,
-                    precio_venta: parseFloat(p.precio_venta || 0), inventariar: p.inventariar,
-                    pesable: p.bascula, unidad_medida: p.unidad_medida_id,
-                    action: 'updated', updatedAt: new Date().toISOString()
-                  };
-                  io.to(`branch_${b.id}`).emit('product_updated', productPayload);
+                  io.to(`branch_${b.id}`).emit(
+                    'product_updated',
+                    buildProductUpdatedPayload(p, branchInv, 'updated')
+                  );
                   io.to(`branch_${b.id}`).emit('kardex_entries_created', kardexPayload);
                 }
                 console.log(`[RepartidorReturns] 📡 product_updated + kardex emitidos para devolución`);

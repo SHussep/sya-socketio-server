@@ -33,6 +33,7 @@ function authenticateToken(req, res, next) {
 
 module.exports = (pool, io) => {
     const { restoreBranchStock, deductBranchStock, getBranchInventarioForEmit } = require('../utils/branchInventory');
+    const { PRODUCT_UPDATED_COLUMNS, buildProductUpdatedPayload } = require('../utils/productUpdatedPayload');
     // GET /api/repartidores/summary - Resumen de todos los repartidores con asignaciones
     router.get('/summary', authenticateToken, async (req, res) => {
         try {
@@ -907,7 +908,7 @@ module.exports = (pool, io) => {
                         if (returnProductId && oldQty > 0 && oldReturn.status !== 'deleted') {
                             try {
                                 const prodCheck = await pool.query(
-                                    `SELECT id, global_id, inventariar, inventario, descripcion, precio_venta, bascula, unidad_medida_id
+                                    `SELECT ${PRODUCT_UPDATED_COLUMNS}
                                      FROM productos WHERE id = $1 AND tenant_id = $2`,
                                     [returnProductId, tenant_id]
                                 );
@@ -946,13 +947,10 @@ module.exports = (pool, io) => {
                                                 const branchInv = await getBranchInventarioForEmit(
                                                     pool, tenant_id, b.id, prod.global_id, parseFloat(prod.inventario)
                                                 );
-                                                io.to(`branch_${b.id}`).emit('product_updated', {
-                                                    id_producto: String(prod.id), global_id: prod.global_id,
-                                                    descripcion: prod.descripcion, inventario: branchInv,
-                                                    precio_venta: parseFloat(prod.precio_venta || 0), inventariar: prod.inventariar,
-                                                    pesable: prod.bascula, unidad_medida: prod.unidad_medida_id,
-                                                    action: 'updated', updatedAt: new Date().toISOString()
-                                                });
+                                                io.to(`branch_${b.id}`).emit(
+                                                    'product_updated',
+                                                    buildProductUpdatedPayload(prod, branchInv, 'updated')
+                                                );
                                             }
                                         } catch (emitErr) {
                                             console.error('[RepartidorReturns] ⚠️ Error emitting socket events on delete:', emitErr.message);
@@ -978,7 +976,7 @@ module.exports = (pool, io) => {
                         if (returnProductId && Math.abs(delta) > 0.001 && oldReturn.status !== 'deleted') {
                             try {
                                 const prodCheck = await pool.query(
-                                    `SELECT id, global_id, inventariar, inventario, descripcion, precio_venta, bascula, unidad_medida_id
+                                    `SELECT ${PRODUCT_UPDATED_COLUMNS}
                                      FROM productos WHERE id = $1 AND tenant_id = $2`,
                                     [returnProductId, tenant_id]
                                 );
@@ -1024,13 +1022,10 @@ module.exports = (pool, io) => {
                                                 const branchInv = await getBranchInventarioForEmit(
                                                     pool, tenant_id, b.id, prod.global_id, parseFloat(prod.inventario)
                                                 );
-                                                io.to(`branch_${b.id}`).emit('product_updated', {
-                                                    id_producto: String(prod.id), global_id: prod.global_id,
-                                                    descripcion: prod.descripcion, inventario: branchInv,
-                                                    precio_venta: parseFloat(prod.precio_venta || 0), inventariar: prod.inventariar,
-                                                    pesable: prod.bascula, unidad_medida: prod.unidad_medida_id,
-                                                    action: 'updated', updatedAt: new Date().toISOString()
-                                                });
+                                                io.to(`branch_${b.id}`).emit(
+                                                    'product_updated',
+                                                    buildProductUpdatedPayload(prod, branchInv, 'updated')
+                                                );
                                             }
                                         } catch (emitErr) {
                                             console.error('[RepartidorReturns] ⚠️ Error emitting socket events on edit:', emitErr.message);
@@ -1113,7 +1108,7 @@ module.exports = (pool, io) => {
             if (finalProductId && parseFloat(quantity) > 0) {
                 try {
                     const prodCheck = await pool.query(
-                        `SELECT id, global_id, inventariar, inventario, descripcion, precio_venta, bascula, unidad_medida_id
+                        `SELECT ${PRODUCT_UPDATED_COLUMNS}
                          FROM productos WHERE id = $1 AND tenant_id = $2`,
                         [finalProductId, tenant_id]
                     );
@@ -1169,13 +1164,10 @@ module.exports = (pool, io) => {
                                     const branchInv = await getBranchInventarioForEmit(
                                         pool, tenant_id, b.id, prod.global_id, parseFloat(prod.inventario)
                                     );
-                                    io.to(`branch_${b.id}`).emit('product_updated', {
-                                        id_producto: String(prod.id), global_id: prod.global_id,
-                                        descripcion: prod.descripcion, inventario: branchInv,
-                                        precio_venta: parseFloat(prod.precio_venta || 0), inventariar: prod.inventariar,
-                                        pesable: prod.bascula, unidad_medida: prod.unidad_medida_id,
-                                        action: 'updated', updatedAt: new Date().toISOString()
-                                    });
+                                    io.to(`branch_${b.id}`).emit(
+                                        'product_updated',
+                                        buildProductUpdatedPayload(prod, branchInv, 'updated')
+                                    );
                                     io.to(`branch_${b.id}`).emit('kardex_entries_created', kardexPayload);
                                 }
                                 console.log(`[RepartidorReturns] 📡 product_updated + kardex emitidos para devolución`);
