@@ -132,9 +132,31 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
             const roomName = `branch_${parsedBranchId}`;
             socket.join(roomName);
             socket.branchId = parsedBranchId;
-            socket.clientType = 'unknown';
-            console.log(`[JOIN] Cliente ${socket.id} (tenant:${socket.user?.tenantId}) → ${roomName}`);
+
+            // Fix B: si el handshake nos dio platform='desktop', marcar clientType ya
+            // (evita que quede 'unknown' si identify_client falla o tarda).
+            if (socket.platform === 'desktop') {
+                socket.clientType = 'desktop';
+            } else if (socket.platform === 'mobile' || socket.platform === 'android' || socket.platform === 'ios') {
+                socket.clientType = 'mobile';
+            } else {
+                socket.clientType = socket.clientType || 'unknown';
+            }
+
+            console.log(`[JOIN] Cliente ${socket.id} (tenant:${socket.user?.tenantId}, type:${socket.clientType}) → ${roomName}`);
             socket.emit('joined_branch', { branchId: parsedBranchId, message: `Conectado a sucursal ${parsedBranchId}` });
+
+            // Fix B: broadcast de online=true también aquí (no solo en identify_client).
+            // Si identify_client llega después, re-emitirá (idempotente en el cliente).
+            if (socket.clientType === 'desktop') {
+                io.to(roomName).emit('desktop_status_changed', {
+                    branchId: parsedBranchId,
+                    online: true,
+                    socketId: socket.id,
+                    timestamp: new Date().toISOString()
+                });
+                console.log(`[JOIN] 📡 desktop_status_changed → branch_${parsedBranchId} online=true (via join_branch)`);
+            }
         });
 
         // Join tenant room (for cross-branch events like producto_branch sync)
@@ -1305,14 +1327,41 @@ module.exports = function setupSocketHandlers(io, { pool, stats, notificationHel
             });
         });
 
-        // EVENT: Mobile requests backup from Desktop POS
+        // EVENT: Mobile/SYAAdmin requests backup from Desktop POS
         socket.on('backup:request', (data) => {
-            console.log(`[BACKUP] 📱 Mobile solicitó respaldo - Branch: ${data.branchId}, Tenant: ${data.tenantId}`);
+            const reqTenantId = Number(data?.tenantId);
+            const reqBranchId = Number(data?.branchId);
+            const user = socket.user || {};
+            const isSuperAdmin = user.role === 'super_admin';
+            const isTenantMatch = Number(user.tenantId) === reqTenantId;
 
-            const branchRoom = `branch_${data.branchId}`;
+            if (!reqTenantId || !reqBranchId) {
+                console.warn(`[BACKUP] ❌ Rechazo (campos faltantes) socket=${socket.id}`);
+                return socket.emit('backup:error', {
+                    message: 'tenantId y branchId son requeridos'
+                });
+            }
+
+            if (!isSuperAdmin && !isTenantMatch) {
+                console.warn(
+                    `[BACKUP] ❌ Rechazo cross-tenant socket=${socket.id} ` +
+                    `userTenant=${user.tenantId} requestedTenant=${reqTenantId}`
+                );
+                return socket.emit('backup:error', {
+                    message: 'No autorizado para este tenant'
+                });
+            }
+
+            console.log(
+                `[BACKUP] ${isSuperAdmin ? '🛡️' : '📱'} Solicitud de respaldo - ` +
+                `Branch: ${reqBranchId}, Tenant: ${reqTenantId}, ` +
+                `emitter=${isSuperAdmin ? 'super_admin' : 'tenant_user'} socket=${socket.id}`
+            );
+
+            const branchRoom = `branch_${reqBranchId}`;
             io.to(branchRoom).emit('backup:request', {
-                tenantId: data.tenantId,
-                branchId: data.branchId,
+                tenantId: reqTenantId,
+                branchId: reqBranchId,
                 mobileSocketId: socket.id,
                 requestedAt: new Date().toISOString()
             });

@@ -5,6 +5,7 @@
 
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 const { superadminRateLimiter } = require('../middleware/rateLimiter');
 const { sendEmail, sendFollowupEmail, sanitizeEmailHeader } = require('../utils/emailService');
 const { fetchInboxMessages, fetchSentMessages, fetchInboxEmail, fetchSentEmail } = require('../utils/imapService');
@@ -65,6 +66,47 @@ module.exports = function(pool, io) {
 
     // Aplicar autenticación a todas las rutas
     router.use(authenticateSuperAdmin);
+
+    // ─────────────────────────────────────────────────────────
+    // POST /api/superadmin/socket-token
+    // Entrega un JWT HS256 de corta vida (1h) para que SYAAdmin
+    // pueda autenticar contra Socket.IO. Nunca se persiste.
+    // ─────────────────────────────────────────────────────────
+    router.post('/socket-token', (req, res) => {
+        if (!process.env.JWT_SECRET) {
+            return res.status(503).json({
+                success: false,
+                message: 'JWT_SECRET no configurado'
+            });
+        }
+
+        try {
+            const jti = crypto.randomUUID();
+            const token = jwt.sign(
+                {
+                    role: 'super_admin',
+                    scope: 'admin-socket',
+                    userId: 'pin-auth',
+                    jti,
+                },
+                process.env.JWT_SECRET,
+                { algorithm: 'HS256', expiresIn: '1h' }
+            );
+            const ip = req.ip || req.connection?.remoteAddress || 'unknown';
+            console.log(`[Superadmin] 🔑 socket-token emitido jti=${jti} ip=${ip}`);
+            return res.json({
+                success: true,
+                token,
+                expiresIn: 3600,
+            });
+        } catch (e) {
+            console.error('[Superadmin] socket-token error:', e);
+            return res.status(500).json({
+                success: false,
+                message: 'No se pudo emitir token'
+            });
+        }
+    });
 
     // ─────────────────────────────────────────────────────────
     // GET /api/superadmin/dashboard
