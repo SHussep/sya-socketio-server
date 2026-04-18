@@ -12,6 +12,7 @@ const { safeTimezone, safeDateString } = require('../utils/sanitize');
 module.exports = (pool, io) => {
     const router = express.Router();
     const authenticateToken = createAuthMiddleware(pool);
+    const requireDesktopOnline = require('../middleware/requireDesktopOnline');
 
     // GET /api/expenses/debug-columns - Verifica que las columnas de la migración existen
     router.get('/debug-columns', async (req, res) => {
@@ -862,7 +863,21 @@ module.exports = (pool, io) => {
     */
 
     // PATCH /api/expenses/:global_id/deactivate - Soft delete (marcar como eliminado)
-    router.patch('/:global_id/deactivate', async (req, res) => {
+    router.patch('/:global_id/deactivate',
+        requireDesktopOnline({
+            action: 'eliminar un gasto',
+            resolveBranchId: async (req) => {
+                if (req.body?.branch_id) return parseInt(req.body.branch_id);
+                const gid = req.params?.global_id;
+                const tid = req.body?.tenant_id;
+                if (!gid || !tid) return null;
+                try {
+                    const r = await pool.query('SELECT branch_id FROM expenses WHERE global_id = $1 AND tenant_id = $2', [gid, tid]);
+                    return r.rows[0]?.branch_id ?? null;
+                } catch (e) { return null; }
+            },
+        }),
+        async (req, res) => {
         try {
             const { global_id } = req.params;
             const { tenant_id, last_modified_local_utc, reason, rejected_by_employee_global_id } = req.body;
@@ -2049,7 +2064,7 @@ module.exports = (pool, io) => {
 
     // DELETE /api/expenses/:global_id - Eliminar gasto (usuario movil o rechazado)
     // SEGURIDAD: Requiere JWT - tenant_id viene del token, no del query
-    router.delete('/:global_id', authenticateToken, async (req, res) => {
+    router.delete('/:global_id', authenticateToken, requireDesktopOnline({ action: 'eliminar un gasto' }), async (req, res) => {
         try {
             const { global_id } = req.params;
             const tenantId = req.user.tenantId; // SEGURO: Del JWT, no del query
@@ -2166,7 +2181,19 @@ module.exports = (pool, io) => {
     // PUT /api/expenses/:global_id - Actualizar gasto existente
     // Sin JWT - usa tenant_id del body (igual que POST)
     // ═══════════════════════════════════════════════════════════════
-    router.put('/:global_id', async (req, res) => {
+    const resolveExpenseBranchId = async (req) => {
+        if (req.body?.branch_id) return parseInt(req.body.branch_id);
+        const gid = req.params?.global_id;
+        const tid = req.body?.tenant_id;
+        if (!gid || !tid) return null;
+        try {
+            const r = await pool.query('SELECT branch_id FROM expenses WHERE global_id = $1 AND tenant_id = $2', [gid, tid]);
+            return r.rows[0]?.branch_id ?? null;
+        } catch (e) { return null; }
+    };
+    router.put('/:global_id',
+        requireDesktopOnline({ action: 'editar un gasto', resolveBranchId: resolveExpenseBranchId }),
+        async (req, res) => {
         try {
             const { global_id } = req.params;
             const {

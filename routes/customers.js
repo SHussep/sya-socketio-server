@@ -47,6 +47,7 @@ function optionalAuthenticateToken(req, res, next) {
 
 module.exports = (pool, io) => {
     const router = express.Router();
+    const requireDesktopOnline = require('../middleware/requireDesktopOnline');
 
     // ═══════════════════════════════════════════════════════════════
     // HELPER: Emitir customer_updated a todas las branches del tenant
@@ -382,7 +383,7 @@ module.exports = (pool, io) => {
 
     // PUT /api/customers/:id - Actualizar cliente existente desde Desktop
     // :id puede ser el ID numérico O el GlobalId (UUID)
-    router.put('/:id', authenticateToken, async (req, res) => {
+    router.put('/:id', authenticateToken, requireDesktopOnline({ action: 'editar un cliente' }), async (req, res) => {
         try {
             const { id } = req.params;
             const {
@@ -546,7 +547,7 @@ module.exports = (pool, io) => {
 
     // PATCH /api/customers/:id/balance - Actualizar saldo del cliente (desde Desktop offline-first)
     // :id puede ser el ID numérico O el GlobalId (UUID)
-    router.patch('/:id/balance', authenticateToken, async (req, res) => {
+    router.patch('/:id/balance', authenticateToken, requireDesktopOnline({ action: 'actualizar saldo de cliente' }), async (req, res) => {
         try {
             const { id } = req.params;
             const { tenant_id, current_balance, last_balance_update_utc } = req.body;
@@ -643,7 +644,7 @@ module.exports = (pool, io) => {
 
     // PATCH /api/customers/:id/deactivate - Soft delete (desactivar cliente)
     // :id puede ser el ID numérico O el GlobalId (UUID)
-    router.patch('/:id/deactivate', authenticateToken, async (req, res) => {
+    router.patch('/:id/deactivate', authenticateToken, requireDesktopOnline({ action: 'desactivar un cliente' }), async (req, res) => {
         try {
             const { id } = req.params;
             const { tenant_id, last_modified_local_utc } = req.body;
