@@ -21,6 +21,14 @@ module.exports = function setupSocketAuth(io) {
             socket.user = user;
             socket.authenticated = true;
 
+            // Fix B: capturar platform desde el handshake auth. Permite al backend
+            // reconocer desktop antes de que llegue 'identify_client' (útil si ese evento
+            // se pierde por timing/network glitch). Puede ser 'desktop', 'mobile', 'ipad', etc.
+            const platformRaw = socket.handshake.auth?.platform;
+            if (typeof platformRaw === 'string' && platformRaw.length > 0) {
+                socket.platform = platformRaw.toLowerCase();
+            }
+
             // Resolve employeeGlobalId → correct PG employeeId (Desktop JWT may have stale ID)
             const employeeGlobalId = socket.handshake.auth?.employeeGlobalId;
             if (employeeGlobalId && user.tenantId) {

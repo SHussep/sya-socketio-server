@@ -53,8 +53,10 @@ module.exports = (pool, io, scaleStatusByBranch) => {
         if (roomSockets) {
             for (const socketId of roomSockets) {
                 const s = io.sockets.sockets.get(socketId);
-                // 'desktop' = identificado, 'unknown' = Desktop sin actualizar aún
-                if (s && s.clientType !== 'mobile') {
+                // Fix B: requerir clientType='desktop' explícito, alineado con lo que se
+                // broadcastea via 'desktop_status_changed'. Antes 'unknown' contaba como online,
+                // desalineando REST vs socket.
+                if (s && s.clientType === 'desktop') {
                     desktopOnline = true;
                     break;
                 }
@@ -149,9 +151,12 @@ module.exports = (pool, io, scaleStatusByBranch) => {
 
         try {
             const result = await pool.query(`
-                SELECT cajero_consolida_liquidaciones, max_breaks_per_shift, multi_caja_enabled
-                FROM branches
-                WHERE id = $1 AND tenant_id = $2
+                SELECT b.cajero_consolida_liquidaciones, b.max_breaks_per_shift, b.multi_caja_enabled,
+                       COALESCE((s.features->>'multi_caja')::boolean, false) AS plan_allows_multi_caja
+                FROM branches b
+                JOIN tenants t ON t.id = b.tenant_id
+                LEFT JOIN subscriptions s ON s.id = t.subscription_id AND s.is_active = true
+                WHERE b.id = $1 AND b.tenant_id = $2
             `, [id, tenantId]);
 
             if (result.rows.length === 0) {
@@ -165,6 +170,7 @@ module.exports = (pool, io, scaleStatusByBranch) => {
                     cajero_consolida_liquidaciones: row.cajero_consolida_liquidaciones ?? false,
                     max_breaks_per_shift: row.max_breaks_per_shift ?? 1,
                     multi_caja_enabled: row.multi_caja_enabled ?? false,
+                    plan_allows_multi_caja: row.plan_allows_multi_caja ?? false,
                 }
             });
         } catch (error) {

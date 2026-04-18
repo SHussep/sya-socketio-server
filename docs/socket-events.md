@@ -1,8 +1,9 @@
 # Socket.IO Events Reference (Backend - Source of Truth)
 
-> **Last updated:** 2026-03-13
+> **Last updated:** 2026-04-16
 > **Clients:** WinUI Desktop, Flutter Mobile (SYAAdmin)
 > **Room pattern:** `branch_${branchId}`
+> **Desktop connection deep-dive:** `C:\Users\saul_\source\repos\SyaTortilleriasWinUi\Docs\socket-connection.md`
 
 ## Quick Reference: Event Flow
 
@@ -139,6 +140,53 @@ Desktop (WinUI) <──on──── Backend (Node.js) <──emit────�
 | `joined_branch` | Backend→Client | confirmation | - | ON |
 | `auth_error` | Backend→Client | `{ message }` | - | ON (diag) |
 | `ping_check`/`pong_check` | Desktop↔Backend | `{ ts }` | EMIT+ON | - |
+| `desktop_status_changed` | Backend→Mobile | `{ branchId, online: true\|false }` | - | ON |
+| `auth:token_rotated` | Backend→Desktop | `{ accessToken, refreshToken }` | ON | - |
+| `auth:invalidated` | Backend→Desktop | `{ reason }` | ON | - |
+
+---
+
+## DESKTOP CLIENT IDENTIFICATION (Fix B)
+
+El backend distingue clientes Desktop vs Mobile para proteger endpoints sensibles y proveer estado de presencia.
+
+### Flujo
+1. Cliente conecta con JWT → backend guarda `socket.data.userId`, `socket.data.tenantId`.
+2. Cliente emite `identify_client { type: 'desktop' }` → backend guarda `socket.data.clientType = 'desktop'`.
+3. Cliente emite `join_branch branchId` → backend:
+   - Une el socket a la sala `branch_${branchId}`
+   - Si `clientType === 'desktop'`: emite `desktop_status_changed { branchId, online: true }` a móviles de esa sucursal
+4. Al desconectar un socket desktop con `branchId` ya unido: backend emite `desktop_status_changed { branchId, online: false }`.
+
+### Enforcement en REST
+Middleware `requireDesktopClient` (o checks inline) en endpoints críticos:
+```javascript
+if (req.socketClientType !== 'desktop') {
+    return res.status(403).json({ error: 'desktop_only' });
+}
+```
+Aplica a operaciones de caja, cierre de turno, corte, etc. Móviles que intenten llamar reciben `403 desktop_only`.
+
+### Archivo principal
+`socket/handlers.js` — manejadores de `identify_client`, `join_branch`, `disconnect`.
+
+---
+
+## AUTH INVALIDATION & TOKEN ROTATION (Fix A)
+
+### Rotación de refresh token (30 días)
+- Cada reconexión exitosa con refresh token válido → backend emite `auth:token_rotated { accessToken, refreshToken }`.
+- Cliente guarda ambos tokens; el token viejo queda invalidado en la tabla de familia.
+- Permite al backend revocar una cadena completa si detecta robo.
+
+### Invalidación de sesión
+- Cuando backend detecta refresh token revocado/expirado/inválido:
+  - Emite `auth:invalidated { reason }` (reason: `'expired'`, `'revoked'`, `'family_compromised'`, etc.)
+  - Cierra la conexión con `socket.disconnect()`
+- Cliente cuenta 5 fallos de auth consecutivos antes de mostrar UI al usuario (evita falsos positivos por red).
+
+### Archivo principal
+`socket/auth.js` — handshake, verificación JWT, rotación.
 
 ---
 
