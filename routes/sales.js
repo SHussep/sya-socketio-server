@@ -389,35 +389,55 @@ module.exports = (pool, io) => {
                         [assignment.id, tenantId, cancel_reason || 'Venta cancelada desde Dashboard']
                     );
 
-                    // Restaurar inventario desde la asignación
+                    // Restaurar inventario desde la asignación.
+                    // IMPORTANTE: restaurar SOLO la cantidad vendida (asignada - devuelta),
+                    // porque las devoluciones ya sumaron su parte al inventario (draft/confirm).
+                    // Sin este descuento, se duplica el stock restaurado y queda inflado.
                     if (assignment.inventariar && assignment.product_global_id) {
-                        const qty = parseFloat(assignment.assigned_quantity);
-                        const { stockBefore, stockAfter } = await restoreBranchStock(
-                            client, tenantId, sale.branch_id,
-                            assignment.product_global_id, qty,
-                            parseFloat(assignment.global_inventario)
-                        );
+                        const assignedQty = parseFloat(assignment.assigned_quantity);
 
-                        // Kardex entry
-                        const kardexGlobalId = require('crypto').randomUUID();
-                        await client.query(
-                            `INSERT INTO kardex_entries (
-                                tenant_id, branch_id, product_id, product_global_id,
-                                timestamp, movement_type, employee_id,
-                                quantity_before, quantity_change, quantity_after,
-                                description, global_id, terminal_id, source
-                            ) VALUES ($1, $2, $3, $4, NOW(), 'CancelacionAsignacion', $5, $6, $7, $8, $9, $10, $11, $12)
-                            ON CONFLICT (global_id) DO NOTHING`,
-                            [
-                                tenantId, sale.branch_id, assignment.product_id, assignment.product_global_id,
-                                sale.id_empleado,
-                                stockBefore, qty, stockAfter,
-                                `Cancelación asignación (venta cancelada): ${assignment.descripcion} +${qty}`,
-                                kardexGlobalId, terminal_id || sale.terminal_id, 'server'
-                            ]
+                        const returnsResult = await client.query(
+                            `SELECT COALESCE(SUM(quantity), 0) AS total_returned
+                             FROM repartidor_returns
+                             WHERE assignment_id = $1
+                               AND tenant_id = $2
+                               AND status = 'confirmed'
+                               AND (marked_for_deletion IS NULL OR marked_for_deletion = false)`,
+                            [assignment.id, tenantId]
                         );
+                        const returnedQty = parseFloat(returnsResult.rows[0]?.total_returned || 0);
+                        const qty = Math.max(0, assignedQty - returnedQty);
 
-                        console.log(`[Sales/Cancel] 🔄 Inventario restaurado: ${assignment.descripcion} ${stockBefore} → ${stockAfter} (+${qty})`);
+                        if (qty > 0.001) {
+                            const { stockBefore, stockAfter } = await restoreBranchStock(
+                                client, tenantId, sale.branch_id,
+                                assignment.product_global_id, qty,
+                                parseFloat(assignment.global_inventario)
+                            );
+
+                            // Kardex entry
+                            const kardexGlobalId = require('crypto').randomUUID();
+                            await client.query(
+                                `INSERT INTO kardex_entries (
+                                    tenant_id, branch_id, product_id, product_global_id,
+                                    timestamp, movement_type, employee_id,
+                                    quantity_before, quantity_change, quantity_after,
+                                    description, global_id, terminal_id, source
+                                ) VALUES ($1, $2, $3, $4, NOW(), 'CancelacionAsignacion', $5, $6, $7, $8, $9, $10, $11, $12)
+                                ON CONFLICT (global_id) DO NOTHING`,
+                                [
+                                    tenantId, sale.branch_id, assignment.product_id, assignment.product_global_id,
+                                    sale.id_empleado,
+                                    stockBefore, qty, stockAfter,
+                                    `Cancelación asignación (venta cancelada): ${assignment.descripcion} +${qty} (asignado ${assignedQty} - devuelto ${returnedQty})`,
+                                    kardexGlobalId, terminal_id || sale.terminal_id, 'server'
+                                ]
+                            );
+
+                            console.log(`[Sales/Cancel] 🔄 Inventario restaurado: ${assignment.descripcion} ${stockBefore} → ${stockAfter} (+${qty}, asignado=${assignedQty}, devuelto=${returnedQty})`);
+                        } else {
+                            console.log(`[Sales/Cancel] ℹ️ Sin inventario que restaurar para ${assignment.descripcion} (asignado=${assignedQty}, devuelto=${returnedQty})`);
+                        }
                     }
 
                     cancelledAssignments.push({
