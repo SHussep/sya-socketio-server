@@ -16,8 +16,39 @@ const { notifySuperadmins } = require('../utils/superadminNotifier');
 // Días en los que se envía notificación (negativos = ya venció)
 const NOTIFY_AT_DAYS = [14, 7, 3, 1, 0, -3];
 
-// Dedup: solo un resumen push al SuperAdmin por día (UTC)
-let lastSuperadminSummaryDate = null;
+const SUMMARY_STATE_KEY = 'license_expiry_last_summary_date';
+
+let systemStateTableReady = false;
+
+async function ensureSystemStateTable() {
+    if (systemStateTableReady) return;
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS system_state (
+            key TEXT PRIMARY KEY,
+            value TEXT,
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    `);
+    systemStateTableReady = true;
+}
+
+async function readSystemState(key) {
+    await ensureSystemStateTable();
+    const { rows } = await pool.query(
+        'SELECT value FROM system_state WHERE key = $1',
+        [key]
+    );
+    return rows.length > 0 ? rows[0].value : null;
+}
+
+async function writeSystemState(key, value) {
+    await ensureSystemStateTable();
+    await pool.query(`
+        INSERT INTO system_state (key, value, updated_at)
+        VALUES ($1, $2, NOW())
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+    `, [key, value]);
+}
 
 /**
  * Procesa todos los tenants activos y envía avisos de vencimiento si corresponde.
@@ -62,7 +93,10 @@ async function processLicenseExpiryNotifications() {
  */
 async function sendSuperadminSummary(now) {
     const todayKey = now.toISOString().slice(0, 10); // YYYY-MM-DD UTC
-    if (lastSuperadminSummaryDate === todayKey) return;
+
+    // Dedup: sobrevive a restarts (in-memory + DB)
+    const lastSentDate = await readSystemState(SUMMARY_STATE_KEY).catch(() => null);
+    if (lastSentDate === todayKey) return;
 
     const { rows } = await pool.query(`
         SELECT
@@ -80,7 +114,7 @@ async function sendSuperadminSummary(now) {
     const expiring14 = Number(rows[0].expiring_14d) || 0;
 
     if (expired === 0 && expiring7 === 0 && expiring14 === 0) {
-        lastSuperadminSummaryDate = todayKey;
+        await writeSystemState(SUMMARY_STATE_KEY, todayKey).catch(() => {});
         return;
     }
 
@@ -100,7 +134,7 @@ async function sendSuperadminSummary(now) {
         }
     );
 
-    lastSuperadminSummaryDate = todayKey;
+    await writeSystemState(SUMMARY_STATE_KEY, todayKey).catch(() => {});
 }
 
 async function checkAndNotifyTenant(tenant, now) {
