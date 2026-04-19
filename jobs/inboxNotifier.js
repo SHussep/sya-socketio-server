@@ -11,8 +11,8 @@ let lastSeenUid = null; // Estado en memoria (se inicializa en primer run)
 
 function getImapConfig() {
     return {
-        host: process.env.EMAIL_INFO_HOST || 'imap.gmail.com',
-        port: parseInt(process.env.EMAIL_INFO_PORT || '993'),
+        host: process.env.IMAP_HOST || 'imap.hostinger.com',
+        port: parseInt(process.env.IMAP_PORT || '993'),
         secure: true,
         auth: {
             user: process.env.EMAIL_INFO_USER,
