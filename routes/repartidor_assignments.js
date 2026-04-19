@@ -794,7 +794,27 @@ function createRepartidorAssignmentRoutes(io) {
           );
           const prod = productCheck.rows[0];
           if (prod && prod.inventariar) {
-            const qty = parseFloat(assignment.assigned_quantity) || previousQuantity || 0;
+            // ═══════════════════════════════════════════════════════════════
+            // FIX: Descontar devoluciones ya aplicadas al inventario.
+            // Cada return (draft o confirmed, excepto deleted) ya sumó su
+            // cantidad al stock cuando se creó. Al cancelar, solo debemos
+            // restaurar la diferencia: assigned_quantity - Σ(returns).
+            // Sin este descuento, el inventario terminaría con +devoluciones
+            // extra (doble conteo).
+            // ═══════════════════════════════════════════════════════════════
+            const returnsResult = await pool.query(
+              `SELECT COALESCE(SUM(quantity), 0) as total_returned
+               FROM repartidor_returns
+               WHERE assignment_id = $1 AND tenant_id = $2 AND (status IS NULL OR status != 'deleted')`,
+              [assignment.id, tenant_id]
+            );
+            const alreadyReturned = parseFloat(returnsResult.rows[0].total_returned);
+            const assignedQty = parseFloat(assignment.assigned_quantity) || previousQuantity || 0;
+            const qty = Math.max(0, assignedQty - alreadyReturned);
+
+            if (qty <= 0.001) {
+              console.log(`[RepartidorAssignments] ℹ️ Cancelación sin restauración: asignado=${assignedQty}, ya devuelto=${alreadyReturned} → nada que restaurar`);
+            } else {
             const { stockBefore, stockAfter } = await restoreBranchStock(
               pool, tenant_id, branch_id,
               prod.global_id, qty,
@@ -815,12 +835,12 @@ function createRepartidorAssignmentRoutes(io) {
                 resolvedCancelledByEmployeeId || resolvedCreatedByEmployeeId,
                 cancelled_by_employee_global_id || created_by_employee_global_id,
                 stockBefore, qty, stockAfter,
-                `Cancelación asignación: ${product_name || prod.descripcion} +${qty}`,
+                `Cancelación asignación: ${product_name || prod.descripcion} +${qty} (asignado=${assignedQty}, devuelto=${alreadyReturned})`,
                 kardexGlobalId, terminal_id || null, source || 'desktop'
               ]
             );
 
-            console.log(`[RepartidorAssignments] 🔄 Inventario restaurado (cancelación): ${prod.descripcion} ${stockBefore} → ${stockAfter} (+${qty})`);
+            console.log(`[RepartidorAssignments] 🔄 Inventario restaurado (cancelación): ${prod.descripcion} ${stockBefore} → ${stockAfter} (+${qty}, asignado=${assignedQty}, ya devuelto=${alreadyReturned})`);
 
             if (io) {
               try {
@@ -855,6 +875,7 @@ function createRepartidorAssignmentRoutes(io) {
                 console.error('[RepartidorAssignments] ⚠️ Error emitting cancel socket events:', emitErr.message);
               }
             }
+            }  // end else (qty > 0)
           }
         } catch (invErr) {
           console.error('[RepartidorAssignments] ⚠️ Error restaurando inventario (cancelación):', invErr.message);
