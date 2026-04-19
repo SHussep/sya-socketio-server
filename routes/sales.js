@@ -1518,11 +1518,23 @@ module.exports = (pool, io) => {
             });
 
         } catch (error) {
-            console.error('[Sync/Sales/Update] ❌ Error:', error);
+            // Dump detallado al log del server (Render) + expone el mensaje real al cliente
+            // para que el desktop pueda diagnosticar sin requerir acceso a Render.
+            console.error('[Sync/Sales/Update] ❌ Error sincronizando venta:', {
+                message: error.message,
+                code: error.code,
+                detail: error.detail,
+                table: error.table,
+                constraint: error.constraint,
+                column: error.column
+            });
             res.status(500).json({
                 success: false,
                 message: 'Error al actualizar venta',
-                error: undefined
+                errorMessage: error.message,
+                errorCode: error.code,
+                errorDetail: error.detail,
+                errorConstraint: error.constraint
             });
         }
     });
