@@ -2194,6 +2194,26 @@ module.exports = function(pool, io) {
     });
 
     // ─────────────────────────────────────────────────────────
+    // POST /api/superadmin/test-notification
+    // Envía una notificación de prueba a todos los SuperAdmin devices
+    // ─────────────────────────────────────────────────────────
+    router.post('/test-notification', async (req, res) => {
+        try {
+            const { notifySuperadmins } = require('../utils/superadminNotifier');
+            const result = await notifySuperadmins(
+                '🔔 Test SYA Admin',
+                'Si ves esto, las notificaciones FCM funcionan correctamente!',
+                { type: 'test' }
+            );
+            console.log('[Superadmin] Test notification result:', result);
+            res.json({ success: true, ...result });
+        } catch (err) {
+            console.error('[Superadmin] test-notification error:', err.message);
+            res.status(500).json({ success: false, message: err.message });
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
     // POST /api/superadmin/extend-trial/:tenantId
     // Extender trial de un tenant (shortcut útil)
     // ─────────────────────────────────────────────────────────
