@@ -3466,6 +3466,38 @@ async function runMigrations() {
                 console.log('[Schema] ⚠️ Migration 043 (superadmin_devices):', m043err.message);
             }
 
+            // ── Migration 054 (2026-04-19): Fix trigger update_customer_balance — clamp saldo_deudor >= 0 ──
+            // Problema: al cancelar una venta a crédito cuyo cliente ya pagó (total o parcialmente),
+            // el trigger restaba NEW.total de saldo_deudor sin considerar el saldo actual, llegando
+            // a valores negativos y violando CHECK chk_customers_saldo_deudor (saldo_deudor >= 0).
+            // Síntoma: HTTP 500 "new row for relation customers violates check constraint
+            // chk_customers_saldo_deudor" al hacer PUT /api/sync/sales/:globalId con estado cancelado.
+            // Fix: usar GREATEST(saldo_deudor - NEW.total, 0) para clamp a 0. Si el trigger
+            // intenta restar más de lo que hay, deja el saldo en 0 (no crea crédito negativo).
+            try {
+                await client.query(`
+                    CREATE OR REPLACE FUNCTION update_customer_balance()
+                    RETURNS TRIGGER AS $$
+                    BEGIN
+                        IF TG_OP = 'INSERT' AND NEW.tipo_pago_id = 3 AND (NEW.status IS NULL OR NEW.status != 'cancelled') THEN
+                            UPDATE customers
+                            SET saldo_deudor = saldo_deudor + NEW.total, updated_at = NOW()
+                            WHERE id = NEW.id_cliente;
+                        ELSIF TG_OP = 'UPDATE' AND (OLD.status IS NULL OR OLD.status != 'cancelled') AND NEW.status = 'cancelled' AND NEW.tipo_pago_id = 3 THEN
+                            -- Clamp a 0: si el cliente ya pagó (total/parcial), no ir a negativo.
+                            UPDATE customers
+                            SET saldo_deudor = GREATEST(saldo_deudor - NEW.total, 0), updated_at = NOW()
+                            WHERE id = NEW.id_cliente;
+                        END IF;
+                        RETURN NEW;
+                    END;
+                    $$ LANGUAGE plpgsql;
+                `);
+                console.log('[Schema] ✅ Migration 054 (2026-04-19): update_customer_balance clamps saldo_deudor >= 0');
+            } catch (m054err) {
+                console.log('[Schema] ⚠️ Migration 054 (trigger clamp fix):', m054err.message);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {
