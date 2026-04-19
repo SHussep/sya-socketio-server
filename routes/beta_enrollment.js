@@ -3,6 +3,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 const express = require('express');
+const { notifySuperadmins } = require('../utils/superadminNotifier');
 
 module.exports = (pool) => {
     const router = express.Router();
@@ -21,6 +22,13 @@ module.exports = (pool) => {
 
             console.log(`[BetaEnrollment] 📱 Nuevo registro: ${email} (tenant: ${tenant_id}, negocio: ${business_name}, platform: ${platform || 'both'})`);
 
+            // Detectar si es nueva inscripción o re-inscripción para variar el mensaje
+            const existing = await pool.query(
+                'SELECT id FROM beta_enrollments WHERE tenant_id = $1',
+                [tenant_id]
+            );
+            const isNew = existing.rows.length === 0;
+
             const result = await pool.query(
                 `INSERT INTO beta_enrollments (tenant_id, employee_id, email, business_name, platform)
                  VALUES ($1, $2, $3, $4, $5)
@@ -35,6 +43,22 @@ module.exports = (pool) => {
             );
 
             console.log(`[BetaEnrollment] ✅ Registrado: ${email}`);
+
+            // Push al SuperAdmin (no bloquear la respuesta)
+            if (isNew) {
+                notifySuperadmins(
+                    '🧪 Nueva solicitud Beta',
+                    `${business_name || email} pidió enrolarse (${platform || 'both'})`,
+                    {
+                        type: 'beta_enrollment',
+                        tenant_id,
+                        email: email || '',
+                        platform: platform || 'both',
+                    }
+                ).catch(err =>
+                    console.error('[BetaEnrollment] Error notif SuperAdmin:', err.message)
+                );
+            }
 
             res.json({
                 success: true,

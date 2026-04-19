@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
 const { BCRYPT_ROUNDS } = require('../../config/security');
+const { notifySuperadmins } = require('../../utils/superadminNotifier');
 const JWT_SECRET = process.env.JWT_SECRET;
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
@@ -426,6 +427,21 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
             );
 
             console.log(`[Google Signup] ✅ Registro completado exitosamente para: ${email}`);
+
+            // Notificación push al SuperAdmin (no bloquea la respuesta)
+            notifySuperadmins(
+                '🆕 Nuevo cliente registrado',
+                `${businessName} (${email})`,
+                {
+                    type: 'tenant_signup',
+                    tenant_id: tenant.id,
+                    tenant_code: tenant.tenant_code,
+                    business_name: businessName,
+                    email,
+                }
+            ).catch(err =>
+                console.error('[Google Signup] Error notif SuperAdmin:', err.message)
+            );
 
             res.status(201).json({
                 success: true,

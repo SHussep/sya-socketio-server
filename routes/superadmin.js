@@ -2097,6 +2097,103 @@ module.exports = function(pool, io) {
     });
 
     // ─────────────────────────────────────────────────────────
+    // POST /api/superadmin/register-device
+    // Registra un device token FCM del SuperAdmin (SYAAdmin app)
+    // Body: { deviceToken, platform, deviceId?, deviceName? }
+    // ─────────────────────────────────────────────────────────
+    router.post('/register-device', async (req, res) => {
+        const { deviceToken, platform, deviceId, deviceName } = req.body || {};
+
+        if (!deviceToken || !platform) {
+            return res.status(400).json({
+                success: false,
+                message: 'Missing required fields: deviceToken, platform'
+            });
+        }
+        if (!['ios', 'android'].includes(platform)) {
+            return res.status(400).json({
+                success: false,
+                message: 'platform must be "ios" or "android"'
+            });
+        }
+
+        try {
+            // Si llega un deviceId, desactivar tokens previos del mismo
+            // dispositivo físico (caso reinstall / token refresh).
+            if (deviceId) {
+                await pool.query(
+                    `UPDATE superadmin_devices
+                     SET is_active = FALSE, updated_at = NOW()
+                     WHERE device_id = $1 AND device_token <> $2 AND is_active = TRUE`,
+                    [deviceId, deviceToken]
+                );
+            }
+
+            const result = await pool.query(
+                `INSERT INTO superadmin_devices
+                    (device_token, platform, device_id, device_name, is_active, last_used_at)
+                 VALUES ($1, $2, $3, $4, TRUE, NOW())
+                 ON CONFLICT (device_token) DO UPDATE SET
+                    platform     = EXCLUDED.platform,
+                    device_id    = EXCLUDED.device_id,
+                    device_name  = EXCLUDED.device_name,
+                    is_active    = TRUE,
+                    last_used_at = NOW(),
+                    updated_at   = NOW()
+                 RETURNING id`,
+                [deviceToken, platform, deviceId || null, deviceName || null]
+            );
+
+            console.log(
+                `[Superadmin] ✅ Device registrado id=${result.rows[0].id} platform=${platform}`
+            );
+
+            return res.json({
+                success: true,
+                message: 'Device registered',
+                deviceId: result.rows[0].id,
+            });
+        } catch (err) {
+            console.error('[Superadmin] register-device error:', err.message);
+            return res.status(500).json({
+                success: false,
+                message: 'Error registrando device'
+            });
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
+    // POST /api/superadmin/unregister-device
+    // Desactiva el token (logout)
+    // Body: { deviceToken }
+    // ─────────────────────────────────────────────────────────
+    router.post('/unregister-device', async (req, res) => {
+        const { deviceToken } = req.body || {};
+        if (!deviceToken) {
+            return res.status(400).json({
+                success: false,
+                message: 'deviceToken is required'
+            });
+        }
+
+        try {
+            await pool.query(
+                `UPDATE superadmin_devices
+                 SET is_active = FALSE, updated_at = NOW()
+                 WHERE device_token = $1`,
+                [deviceToken]
+            );
+            return res.json({ success: true, message: 'Device unregistered' });
+        } catch (err) {
+            console.error('[Superadmin] unregister-device error:', err.message);
+            return res.status(500).json({
+                success: false,
+                message: 'Error desregistrando device'
+            });
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
     // POST /api/superadmin/extend-trial/:tenantId
     // Extender trial de un tenant (shortcut útil)
     // ─────────────────────────────────────────────────────────

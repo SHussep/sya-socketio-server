@@ -11,9 +11,13 @@
 
 const { rawPool: pool } = require('../database/pool');
 const { sendLicenseExpiryEmail } = require('../utils/licenseExpiryEmail');
+const { notifySuperadmins } = require('../utils/superadminNotifier');
 
 // Días en los que se envía notificación (negativos = ya venció)
 const NOTIFY_AT_DAYS = [14, 7, 3, 1, 0, -3];
+
+// Dedup: solo un resumen push al SuperAdmin por día (UTC)
+let lastSuperadminSummaryDate = null;
 
 /**
  * Procesa todos los tenants activos y envía avisos de vencimiento si corresponde.
@@ -41,9 +45,62 @@ async function processLicenseExpiryNotifications() {
                 console.error(`[LicenseExpiry] Error procesando tenant ${tenant.id}:`, err.message);
             }
         }
+
+        // Resumen diario al SuperAdmin (push FCM)
+        await sendSuperadminSummary(now).catch(err =>
+            console.error('[LicenseExpiry] Error en resumen SuperAdmin:', err.message)
+        );
     } catch (err) {
         console.error('[LicenseExpiry] Error general:', err.message);
     }
+}
+
+/**
+ * Envía un push diario al SuperAdmin con el conteo de licencias en
+ * estado crítico. Dedup por día UTC para evitar duplicados (el job
+ * corre cada 12h).
+ */
+async function sendSuperadminSummary(now) {
+    const todayKey = now.toISOString().slice(0, 10); // YYYY-MM-DD UTC
+    if (lastSuperadminSummaryDate === todayKey) return;
+
+    const { rows } = await pool.query(`
+        SELECT
+            COUNT(*) FILTER (WHERE trial_ends_at < NOW()) AS expired,
+            COUNT(*) FILTER (WHERE trial_ends_at >= NOW()
+                              AND trial_ends_at <  NOW() + INTERVAL '7 days') AS expiring_7d,
+            COUNT(*) FILTER (WHERE trial_ends_at >= NOW() + INTERVAL '7 days'
+                              AND trial_ends_at <  NOW() + INTERVAL '14 days') AS expiring_14d
+        FROM tenants
+        WHERE is_active = TRUE AND trial_ends_at IS NOT NULL
+    `);
+
+    const expired    = Number(rows[0].expired)      || 0;
+    const expiring7  = Number(rows[0].expiring_7d)  || 0;
+    const expiring14 = Number(rows[0].expiring_14d) || 0;
+
+    if (expired === 0 && expiring7 === 0 && expiring14 === 0) {
+        lastSuperadminSummaryDate = todayKey;
+        return;
+    }
+
+    const parts = [];
+    if (expired   > 0) parts.push(`${expired} vencida${expired === 1 ? '' : 's'}`);
+    if (expiring7 > 0) parts.push(`${expiring7} esta semana`);
+    if (expiring14 > 0) parts.push(`${expiring14} en 8-14 días`);
+
+    await notifySuperadmins(
+        '⏰ Licencias por expirar',
+        parts.join(' · '),
+        {
+            type: 'license_expiry_summary',
+            expired,
+            expiring_7d: expiring7,
+            expiring_14d: expiring14,
+        }
+    );
+
+    lastSuperadminSummaryDate = todayKey;
 }
 
 async function checkAndNotifyTenant(tenant, now) {

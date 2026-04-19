@@ -143,6 +143,7 @@ const pinRoutes = require('./routes/pin');
 const branchSetupRoutes = require('./routes/branch_setup')(pool);
 const { processGuardianDigests, initializeDigestSchedules } = require('./jobs/guardianEmailDigest');
 const { processLicenseExpiryNotifications } = require('./jobs/licenseExpiryNotifier');
+const { checkInboxAndNotify } = require('./jobs/inboxNotifier');
 const { purgeExpiredResets } = require('./jobs/dataResetPurge');
 const { cleanupSyncDiagnostics } = require('./jobs/cleanupSyncDiagnostics');
 const { expireBackupRequests } = require('./jobs/expireBackupRequests');
@@ -498,6 +499,20 @@ async function startServer() {
                     console.error('[LicenseExpiry] Startup check error:', err.message)
                 );
             }, 30000);
+
+            // Inbox poller — polea cada 2 minutos para detectar correos nuevos
+            setInterval(() => {
+                checkInboxAndNotify().catch(err =>
+                    console.error('[InboxNotifier] Interval error:', err.message)
+                );
+            }, 2 * 60 * 1000); // 2 min
+
+            // Inicializa el lastSeenUid en startup (no notifica)
+            setTimeout(() => {
+                checkInboxAndNotify().catch(err =>
+                    console.error('[InboxNotifier] Startup init error:', err.message)
+                );
+            }, 45000);
 
             // Data reset purge — check every 24 hours for expired resets to purge
             setInterval(() => {
