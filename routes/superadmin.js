@@ -2277,6 +2277,44 @@ module.exports = function(pool, io) {
     });
 
     // ─────────────────────────────────────────────────────────
+    // POST /api/superadmin/test-email
+    // Envía un correo de prueba desde no-reply (ejercita sendEmail +
+    // copia a Sent folder del no-reply).
+    // Body: { to: string }
+    // ─────────────────────────────────────────────────────────
+    router.post('/test-email', async (req, res) => {
+        try {
+            const { to } = req.body || {};
+            if (!to || typeof to !== 'string') {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Body.to es requerido'
+                });
+            }
+
+            const html = `
+                <p>Hola,</p>
+                <p>Esto es un correo de prueba enviado desde <b>no-reply@syatortillerias.com</b>
+                   a las ${new Date().toISOString()}.</p>
+                <p>Si lo recibes, el envío SMTP funciona. Debería aparecer también en la
+                   pestaña <b>Sistema</b> de la app SYA Admin.</p>
+                <p>—<br/>SYA Tortillerías</p>
+            `;
+
+            const ok = await sendEmail({
+                to,
+                subject: '🧪 Prueba de correo SYA Admin',
+                html,
+            });
+
+            return res.json({ success: ok, to });
+        } catch (err) {
+            console.error('[Superadmin] test-email error:', err.message);
+            res.status(500).json({ success: false, message: err.message });
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
     // POST /api/superadmin/extend-trial/:tenantId
     // Extender trial de un tenant (shortcut útil)
     // ─────────────────────────────────────────────────────────
