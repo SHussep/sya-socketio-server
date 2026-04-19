@@ -3444,6 +3444,21 @@ async function runMigrations() {
                 console.log('[Schema] ⚠️ Migration 053 (sync diagnostics):', m053err.message);
             }
 
+            // ── Migration 043 (FCM): SuperAdmin devices for SYAAdmin push ──
+            // Creates: superadmin_devices table (no employee/tenant scope)
+            try {
+                const sadPath = path.join(__dirname, '..', 'migrations', '043_superadmin_devices.sql');
+                if (fs.existsSync(sadPath)) {
+                    const sadSql = fs.readFileSync(sadPath, 'utf8');
+                    await client.query(sadSql);
+                    console.log('[Schema] ✅ Migration 043: superadmin_devices table ready');
+                } else {
+                    console.error('[Schema] ⚠️ Migration 043: SQL file not found at', sadPath);
+                }
+            } catch (m043err) {
+                console.log('[Schema] ⚠️ Migration 043 (superadmin_devices):', m043err.message);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {
