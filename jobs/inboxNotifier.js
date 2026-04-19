@@ -79,7 +79,7 @@ async function checkInboxAndNotify() {
                 await notifySuperadmins('📬 Nuevo correo', `${fromName}: ${subject}`, {
                     type: 'inbox_new',
                     uid: m.uid,
-                    from: fromName,
+                    sender: fromName,
                     subject,
                 });
             } else {
