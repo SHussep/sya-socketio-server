@@ -262,49 +262,16 @@ module.exports = (pool) => {
             console.log(`[Devices] ✅ Dispositivo ${result.rows[0].is_new ? 'registrado' : 'actualizado'}: ${device_id.substring(0, 10)}... name=${result.rows[0].device_name}`);
 
             // ═══════════════════════════════════════════════════════════════
-            // AUTO-ENABLE MULTI-CAJA: Si hay 2+ dispositivos activos
-            // y multi_caja_enabled está desactivado, activarlo automáticamente
+            // AUTO-ENABLE MULTI-CAJA — DESHABILITADO 2026-04-18
+            // Antes: si había 2+ dispositivos activos, el server activaba
+            // multi_caja_enabled=TRUE automáticamente y emitía socket. Eso
+            // reactivaba la feature en clientes que la habían desactivado.
+            //
+            // Política actual: multi-caja se activa SOLO manualmente desde el
+            // toggle en Settings. No hay auto-enable. Reactivar este bloque
+            // cuando el feature esté listo para despliegue controlado por plan.
             // ═══════════════════════════════════════════════════════════════
             let multiCajaAutoEnabled = false;
-            try {
-                const activeDeviceCount = await pool.query(
-                    `SELECT COUNT(*) as cnt FROM branch_devices
-                     WHERE branch_id = $1 AND tenant_id = $2 AND COALESCE(is_active, TRUE) = TRUE`,
-                    [branch_id, tenantId]
-                );
-                const count = parseInt(activeDeviceCount.rows[0].cnt);
-
-                if (count >= 2) {
-                    const branchCheck = await pool.query(
-                        `SELECT multi_caja_enabled FROM branches WHERE id = $1 AND tenant_id = $2`,
-                        [branch_id, tenantId]
-                    );
-
-                    if (branchCheck.rows.length > 0 && !branchCheck.rows[0].multi_caja_enabled) {
-                        await pool.query(
-                            `UPDATE branches SET multi_caja_enabled = TRUE, updated_at = NOW()
-                             WHERE id = $1 AND tenant_id = $2`,
-                            [branch_id, tenantId]
-                        );
-
-                        console.log(`[Devices] 🔄 Multi-caja auto-habilitado para branch ${branch_id} (${count} dispositivos activos)`);
-                        multiCajaAutoEnabled = true;
-
-                        const io = req.app.get('io');
-                        if (io) {
-                            io.to(`branch_${branch_id}`).emit('branch_settings_changed', {
-                                branchId: parseInt(branch_id),
-                                multi_caja_enabled: true,
-                                auto_enabled: true,
-                                active_device_count: count,
-                                receivedAt: new Date().toISOString()
-                            });
-                        }
-                    }
-                }
-            } catch (mcErr) {
-                console.error('[Devices] ⚠️ Error verificando multi-caja:', mcErr.message);
-            }
 
             res.json({
                 success: true,
