@@ -28,38 +28,61 @@ module.exports = (pool) => {
     }
 
     // POST /api/cliente-branches - Sync customer branch assignment from Desktop
+    // Prefiere customerGlobalId (offline-first). Cae a customerId numérico por compat legacy.
     router.post('/', async (req, res) => {
         const client = await pool.connect();
         try {
             const {
                 tenantId,
-                customerId,
+                customerId: customerIdLegacy,
+                customerGlobalId,
                 branchId,
                 isActive = true
             } = req.body;
 
-            console.log(`[ClienteBranches/Sync] 🔄 Sincronizando: Cliente ${customerId} → Sucursal ${branchId} (Tenant: ${tenantId})`);
+            const idShown = customerGlobalId || customerIdLegacy;
+            console.log(`[ClienteBranches/Sync] 🔄 Sincronizando: Cliente ${idShown} → Sucursal ${branchId} (Tenant: ${tenantId})`);
 
-            if (!tenantId || !customerId || !branchId) {
+            if (!tenantId || (!customerGlobalId && !customerIdLegacy) || !branchId) {
                 console.log(`[ClienteBranches/Sync] ❌ Datos incompletos`);
                 return res.status(400).json({
                     success: false,
-                    message: 'Faltan campos requeridos: tenantId, customerId, branchId'
+                    message: 'Faltan campos requeridos: tenantId, customerGlobalId (o customerId), branchId'
                 });
             }
 
-            // Verify customer exists
-            const custCheck = await client.query(
-                `SELECT id FROM customers WHERE id = $1 AND tenant_id = $2`,
-                [customerId, tenantId]
-            );
-
-            if (custCheck.rows.length === 0) {
-                console.log(`[ClienteBranches/Sync] ❌ Cliente no encontrado: ${customerId}`);
-                return res.status(404).json({
-                    success: false,
-                    message: 'El cliente no existe'
-                });
+            // Resolver customer_id: preferir globalId (offline-first).
+            let customerId;
+            if (customerGlobalId) {
+                const byGlobal = await client.query(
+                    `SELECT id FROM customers WHERE global_id = $1 AND tenant_id = $2`,
+                    [customerGlobalId, tenantId]
+                );
+                if (byGlobal.rows.length === 0) {
+                    // El cliente aún no existe en PG — error resoluble: el desktop reintentará
+                    // en el próximo ciclo cuando el Cliente se haya sincronizado primero.
+                    console.log(`[ClienteBranches/Sync] ⏳ Cliente con globalId ${customerGlobalId} aún no existe en PG (resoluble)`);
+                    return res.status(404).json({
+                        success: false,
+                        code: 'CUSTOMER_NOT_SYNCED',
+                        message: 'El cliente aún no se sincronizó a PG — se reintentará en el próximo ciclo'
+                    });
+                }
+                customerId = byGlobal.rows[0].id;
+            } else {
+                // Legacy: customerId numérico. Verificar que existe.
+                const custCheck = await client.query(
+                    `SELECT id FROM customers WHERE id = $1 AND tenant_id = $2`,
+                    [customerIdLegacy, tenantId]
+                );
+                if (custCheck.rows.length === 0) {
+                    console.log(`[ClienteBranches/Sync] ❌ Cliente no encontrado: ${customerIdLegacy}`);
+                    return res.status(404).json({
+                        success: false,
+                        message: 'El cliente no existe'
+                    });
+                }
+                customerId = customerIdLegacy;
             }
 
             // Verify branch exists

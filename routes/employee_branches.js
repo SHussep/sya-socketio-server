@@ -29,39 +29,59 @@ module.exports = (pool) => {
 
     // POST /api/employee-branches - Sync employee branch assignment from Desktop
     // Creates or updates the relationship between an employee and a branch
+    // Prefiere employeeGlobalId (offline-first). Cae a employeeId numérico por compat legacy.
     router.post('/', async (req, res) => {
         const client = await pool.connect();
         try {
             const {
                 tenantId,
-                employeeId,
+                employeeId: employeeIdLegacy,
+                employeeGlobalId,
                 branchId,
                 isActive = true
             } = req.body;
 
-            console.log(`[EmployeeBranches/Sync] 🔄 Sincronizando: Empleado ${employeeId} → Sucursal ${branchId} (Tenant: ${tenantId})`);
+            const idShown = employeeGlobalId || employeeIdLegacy;
+            console.log(`[EmployeeBranches/Sync] 🔄 Sincronizando: Empleado ${idShown} → Sucursal ${branchId} (Tenant: ${tenantId})`);
 
             // Validate required fields
-            if (!tenantId || !employeeId || !branchId) {
+            if (!tenantId || (!employeeGlobalId && !employeeIdLegacy) || !branchId) {
                 console.log(`[EmployeeBranches/Sync] ❌ Datos incompletos`);
                 return res.status(400).json({
                     success: false,
-                    message: 'Faltan campos requeridos: tenantId, employeeId, branchId'
+                    message: 'Faltan campos requeridos: tenantId, employeeGlobalId (o employeeId), branchId'
                 });
             }
 
-            // Verify employee exists
-            const empCheck = await client.query(
-                `SELECT id FROM employees WHERE id = $1 AND tenant_id = $2`,
-                [employeeId, tenantId]
-            );
-
-            if (empCheck.rows.length === 0) {
-                console.log(`[EmployeeBranches/Sync] ❌ Empleado no encontrado: ${employeeId}`);
-                return res.status(404).json({
-                    success: false,
-                    message: 'El empleado no existe'
-                });
+            // Resolver employee_id: preferir globalId (offline-first).
+            let employeeId;
+            if (employeeGlobalId) {
+                const byGlobal = await client.query(
+                    `SELECT id FROM employees WHERE global_id = $1 AND tenant_id = $2`,
+                    [employeeGlobalId, tenantId]
+                );
+                if (byGlobal.rows.length === 0) {
+                    console.log(`[EmployeeBranches/Sync] ⏳ Empleado con globalId ${employeeGlobalId} aún no existe en PG (resoluble)`);
+                    return res.status(404).json({
+                        success: false,
+                        code: 'EMPLOYEE_NOT_SYNCED',
+                        message: 'El empleado aún no se sincronizó a PG — se reintentará en el próximo ciclo'
+                    });
+                }
+                employeeId = byGlobal.rows[0].id;
+            } else {
+                const empCheck = await client.query(
+                    `SELECT id FROM employees WHERE id = $1 AND tenant_id = $2`,
+                    [employeeIdLegacy, tenantId]
+                );
+                if (empCheck.rows.length === 0) {
+                    console.log(`[EmployeeBranches/Sync] ❌ Empleado no encontrado: ${employeeIdLegacy}`);
+                    return res.status(404).json({
+                        success: false,
+                        message: 'El empleado no existe'
+                    });
+                }
+                employeeId = employeeIdLegacy;
             }
 
             // Verify branch exists
