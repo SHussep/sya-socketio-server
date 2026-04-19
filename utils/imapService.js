@@ -1,37 +1,49 @@
 // ═══════════════════════════════════════════════════════════
-// SERVICIO IMAP - Lectura de bandeja info@
-// Usa ImapFlow para conectar al buzón de EMAIL_INFO_USER
+// SERVICIO IMAP - Lectura de bandejas info@ y no-reply@
+// Usa ImapFlow para conectar a las cuentas configuradas.
+// Soporta credenciales genéricas para reutilizar con distintas cuentas.
 // ═══════════════════════════════════════════════════════════
 
 const { ImapFlow } = require('imapflow');
 const { simpleParser } = require('mailparser');
 
-function getImapConfig() {
+const INFO_CREDS = {
+    userVar: 'EMAIL_INFO_USER',
+    passVar: 'EMAIL_INFO_PASSWORD',
+    label: 'info',
+};
+
+const NOREPLY_CREDS = {
+    userVar: 'EMAIL_USER',
+    passVar: 'EMAIL_PASSWORD',
+    label: 'no-reply',
+};
+
+function getImapConfig(creds = INFO_CREDS) {
     return {
         host: process.env.IMAP_HOST || 'imap.hostinger.com',
         port: parseInt(process.env.IMAP_PORT || '993'),
         secure: true,
         auth: {
-            user: process.env.EMAIL_INFO_USER,
-            pass: process.env.EMAIL_INFO_PASSWORD,
+            user: process.env[creds.userVar],
+            pass: process.env[creds.passVar],
         },
         logger: false,
     };
 }
 
+function assertCreds(creds) {
+    if (!process.env[creds.userVar] || !process.env[creds.passVar]) {
+        throw new Error(`${creds.userVar} / ${creds.passVar} no configurados`);
+    }
+}
+
 /**
  * Fetch recent messages from a mailbox folder.
- * @param {string} folder  IMAP folder name (e.g. 'INBOX', 'Sent', 'INBOX.Sent')
- * @param {number} limit   Max messages to return (default 30)
- * @param {number} page    1-based page number
- * @returns {Promise<{messages: Array, total: number}>}
  */
-async function fetchMessages(folder = 'INBOX', limit = 30, page = 1) {
-    if (!process.env.EMAIL_INFO_USER || !process.env.EMAIL_INFO_PASSWORD) {
-        throw new Error('EMAIL_INFO_USER / EMAIL_INFO_PASSWORD no configurados');
-    }
-
-    const client = new ImapFlow(getImapConfig());
+async function fetchMessages(folder = 'INBOX', limit = 30, page = 1, creds = INFO_CREDS) {
+    assertCreds(creds);
+    const client = new ImapFlow(getImapConfig(creds));
 
     try {
         await client.connect();
@@ -45,7 +57,6 @@ async function fetchMessages(folder = 'INBOX', limit = 30, page = 1) {
                 return { messages: [], total: 0 };
             }
 
-            // Calculate range (newest first)
             const end = total - (page - 1) * limit;
             const start = Math.max(1, end - limit + 1);
 
@@ -79,7 +90,6 @@ async function fetchMessages(folder = 'INBOX', limit = 30, page = 1) {
                 });
             }
 
-            // Sort newest first
             messages.sort((a, b) => new Date(b.date) - new Date(a.date));
 
             return { messages, total };
@@ -93,16 +103,10 @@ async function fetchMessages(folder = 'INBOX', limit = 30, page = 1) {
 
 /**
  * Fetch a single email by UID with full body.
- * @param {number} uid     The IMAP UID
- * @param {string} folder  IMAP folder (default 'INBOX')
- * @returns {Promise<Object>}
  */
-async function fetchEmailByUid(uid, folder = 'INBOX') {
-    if (!process.env.EMAIL_INFO_USER || !process.env.EMAIL_INFO_PASSWORD) {
-        throw new Error('EMAIL_INFO_USER / EMAIL_INFO_PASSWORD no configurados');
-    }
-
-    const client = new ImapFlow(getImapConfig());
+async function fetchEmailByUid(uid, folder = 'INBOX', creds = INFO_CREDS) {
+    assertCreds(creds);
+    const client = new ImapFlow(getImapConfig(creds));
 
     try {
         await client.connect();
@@ -147,27 +151,26 @@ async function fetchEmailByUid(uid, folder = 'INBOX') {
 
 /**
  * Append a sent message to the Sent folder so it shows in IMAP.
- * @param {string} rawMessage  The full RFC822 message source
+ * Uses the specified credentials' Sent folder (default: info@).
  */
-async function appendToSent(rawMessage) {
-    if (!process.env.EMAIL_INFO_USER || !process.env.EMAIL_INFO_PASSWORD) {
-        console.error('[IMAP] Cannot append to Sent: EMAIL_INFO credentials not configured');
+async function appendToSent(rawMessage, creds = INFO_CREDS) {
+    if (!process.env[creds.userVar] || !process.env[creds.passVar]) {
+        console.error(`[IMAP] Cannot append to Sent (${creds.label}): credentials not configured`);
         return;
     }
 
-    const client = new ImapFlow(getImapConfig());
+    const client = new ImapFlow(getImapConfig(creds));
 
     try {
         await client.connect();
 
-        // Try common Sent folder names (Hostinger uses "Sent")
         const folders = ['Sent', 'INBOX.Sent', 'Sent Messages', 'Sent Items'];
         let appended = false;
 
         for (const folder of folders) {
             try {
                 await client.append(folder, rawMessage, ['\\Seen'], new Date());
-                console.log(`[IMAP] Message appended to ${folder}`);
+                console.log(`[IMAP] Message appended to ${creds.label}/${folder}`);
                 appended = true;
                 break;
             } catch (e) {
@@ -176,20 +179,26 @@ async function appendToSent(rawMessage) {
         }
 
         if (!appended) {
-            console.error('[IMAP] Could not find Sent folder to append message');
+            console.error(`[IMAP] Could not find Sent folder for ${creds.label}`);
         }
     } catch (err) {
-        console.error('[IMAP] Error appending to Sent:', err.message);
+        console.error(`[IMAP] Error appending to Sent (${creds.label}):`, err.message);
     } finally {
         await client.logout();
     }
 }
 
-// Convenience wrappers
-const fetchInboxMessages = (limit, page) => fetchMessages('INBOX', limit, page);
-const fetchSentMessages = (limit, page) => fetchMessages('Sent', limit, page);
-const fetchInboxEmail = (uid) => fetchEmailByUid(uid, 'INBOX');
-const fetchSentEmail = (uid) => fetchEmailByUid(uid, 'Sent');
+// Convenience wrappers — info@ (default)
+const fetchInboxMessages = (limit, page) => fetchMessages('INBOX', limit, page, INFO_CREDS);
+const fetchSentMessages = (limit, page) => fetchMessages('Sent', limit, page, INFO_CREDS);
+const fetchInboxEmail = (uid) => fetchEmailByUid(uid, 'INBOX', INFO_CREDS);
+const fetchSentEmail = (uid) => fetchEmailByUid(uid, 'Sent', INFO_CREDS);
+
+// Convenience wrappers — no-reply@
+const fetchNoReplySentMessages = (limit, page) =>
+    fetchMessages('Sent', limit, page, NOREPLY_CREDS);
+const fetchNoReplySentEmail = (uid) =>
+    fetchEmailByUid(uid, 'Sent', NOREPLY_CREDS);
 
 module.exports = {
     fetchMessages,
@@ -198,5 +207,9 @@ module.exports = {
     fetchSentMessages,
     fetchInboxEmail,
     fetchSentEmail,
+    fetchNoReplySentMessages,
+    fetchNoReplySentEmail,
     appendToSent,
+    INFO_CREDS,
+    NOREPLY_CREDS,
 };

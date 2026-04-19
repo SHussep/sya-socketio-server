@@ -42,16 +42,29 @@ async function sendEmail({ to, subject, html, text = null }) {
         }
 
         const transporter = createTransporter();
-
-        const info = await transporter.sendMail({
+        const mailOptions = {
             from: process.env.EMAIL_FROM || '"SYA Tortillerías" <noreply@syatortillerias.com>',
             to,
             subject,
             text,
             html
-        });
+        };
+
+        const info = await transporter.sendMail(mailOptions);
 
         console.log(`✅ Email enviado a ${to}: messageId=${info.messageId}`);
+
+        // Guardar copia en Sent folder del no-reply (best-effort)
+        try {
+            const { appendToSent, NOREPLY_CREDS } = require('./imapService');
+            const MailComposer = require('nodemailer/lib/mail-composer');
+            const mail = new MailComposer(mailOptions);
+            const rawMessage = await mail.compile().build();
+            await appendToSent(rawMessage, NOREPLY_CREDS);
+        } catch (appendErr) {
+            console.error('[sendEmail] Could not save to Sent folder:', appendErr.message);
+        }
+
         return true;
     } catch (err) {
         console.error(`❌ Error enviando email a ${to}:`, err.message);
