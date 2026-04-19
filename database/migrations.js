@@ -3445,16 +3445,23 @@ async function runMigrations() {
             }
 
             // ── Migration 043 (FCM): SuperAdmin devices for SYAAdmin push ──
-            // Creates: superadmin_devices table (no employee/tenant scope)
             try {
-                const sadPath = path.join(__dirname, '..', 'migrations', '043_superadmin_devices.sql');
-                if (fs.existsSync(sadPath)) {
-                    const sadSql = fs.readFileSync(sadPath, 'utf8');
-                    await client.query(sadSql);
-                    console.log('[Schema] ✅ Migration 043: superadmin_devices table ready');
-                } else {
-                    console.error('[Schema] ⚠️ Migration 043: SQL file not found at', sadPath);
-                }
+                await client.query(`
+                    CREATE TABLE IF NOT EXISTS superadmin_devices (
+                        id           SERIAL PRIMARY KEY,
+                        device_token TEXT UNIQUE NOT NULL,
+                        platform     VARCHAR(10) NOT NULL CHECK (platform IN ('ios', 'android')),
+                        device_id    TEXT,
+                        device_name  TEXT,
+                        is_active    BOOLEAN     DEFAULT TRUE,
+                        last_used_at TIMESTAMP   DEFAULT CURRENT_TIMESTAMP,
+                        created_at   TIMESTAMP   DEFAULT CURRENT_TIMESTAMP,
+                        updated_at   TIMESTAMP   DEFAULT CURRENT_TIMESTAMP
+                    )
+                `);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_superadmin_devices_active ON superadmin_devices (is_active) WHERE is_active = TRUE`);
+                await client.query(`CREATE INDEX IF NOT EXISTS idx_superadmin_devices_device_id ON superadmin_devices (device_id) WHERE device_id IS NOT NULL`);
+                console.log('[Schema] ✅ Migration 043: superadmin_devices table ready');
             } catch (m043err) {
                 console.log('[Schema] ⚠️ Migration 043 (superadmin_devices):', m043err.message);
             }
