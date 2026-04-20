@@ -45,7 +45,7 @@ module.exports = (pool) => {
             }
 
             // Validar eventType
-            const validEventTypes = ['app_open', 'scale_configured', 'theme_changed', 'socket_error'];
+            const validEventTypes = ['app_open', 'scale_configured', 'theme_changed', 'socket_error', 'login_success', 'pin_created', 'login_mode_switched'];
             if (!validEventTypes.includes(eventType)) {
                 return res.status(400).json({
                     success: false,
