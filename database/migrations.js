@@ -3498,6 +3498,42 @@ async function runMigrations() {
                 console.log('[Schema] ⚠️ Migration 054 (trigger clamp fix):', m054err.message);
             }
 
+            // ── Migration 055 (2026-04-20): PIN login per-employee lockout tracker ──
+            // Separate from IP rate limiter so a shared POS terminal doesn't cross-lock
+            // employees when one of them fat-fingers their PIN.
+            try {
+                await client.query(`
+                    CREATE TABLE IF NOT EXISTS employee_pin_lockouts (
+                        id BIGSERIAL PRIMARY KEY,
+                        tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                        employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+                        failed_attempts INTEGER NOT NULL DEFAULT 0,
+                        locked_until TIMESTAMPTZ,
+                        last_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        UNIQUE(tenant_id, employee_id)
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_employee_pin_lockouts_tenant_emp
+                        ON employee_pin_lockouts(tenant_id, employee_id);
+                `);
+                console.log('[Schema] ✅ Migration 055 (2026-04-20): employee_pin_lockouts table created');
+            } catch (m055err) {
+                console.log('[Schema] ⚠️ Migration 055 (pin_lockouts):', m055err.message);
+            }
+
+            // ── Migration 056 (2026-04-20): branches.use_pin_login flag ──
+            // Controls visibility of the "Inicio rápido" (bubble + PIN) entry point
+            // on Desktop LoginPage. Per-branch, toggled by the owner in Settings.
+            try {
+                await client.query(`
+                    ALTER TABLE branches
+                    ADD COLUMN IF NOT EXISTS use_pin_login BOOLEAN NOT NULL DEFAULT false;
+                `);
+                console.log('[Schema] ✅ Migration 056 (2026-04-20): branches.use_pin_login column added');
+            } catch (m056err) {
+                console.log('[Schema] ⚠️ Migration 056 (use_pin_login):', m056err.message);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {

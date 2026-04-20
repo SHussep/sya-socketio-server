@@ -152,6 +152,7 @@ module.exports = (pool, io, scaleStatusByBranch) => {
         try {
             const result = await pool.query(`
                 SELECT b.cajero_consolida_liquidaciones, b.max_breaks_per_shift, b.multi_caja_enabled,
+                       b.use_pin_login,
                        COALESCE((s.features->>'multi_caja')::boolean, false) AS plan_allows_multi_caja
                 FROM branches b
                 JOIN tenants t ON t.id = b.tenant_id
@@ -170,6 +171,7 @@ module.exports = (pool, io, scaleStatusByBranch) => {
                     cajero_consolida_liquidaciones: row.cajero_consolida_liquidaciones ?? false,
                     max_breaks_per_shift: row.max_breaks_per_shift ?? 1,
                     multi_caja_enabled: row.multi_caja_enabled ?? false,
+                    use_pin_login: row.use_pin_login ?? false,
                     plan_allows_multi_caja: row.plan_allows_multi_caja ?? false,
                 }
             });
@@ -183,7 +185,7 @@ module.exports = (pool, io, scaleStatusByBranch) => {
     router.put('/:id/settings', authenticateToken, async (req, res) => {
         const { id } = req.params;
         const tenantId = req.user.tenantId;
-        const { cajero_consolida_liquidaciones, max_breaks_per_shift, multi_caja_enabled } = req.body;
+        const { cajero_consolida_liquidaciones, max_breaks_per_shift, multi_caja_enabled, use_pin_login } = req.body;
 
         console.log(`[Branch Settings] PUT /branches/${id}/settings - tenant=${tenantId}, body=${JSON.stringify(req.body)}`);
 
@@ -212,17 +214,18 @@ module.exports = (pool, io, scaleStatusByBranch) => {
                 SET cajero_consolida_liquidaciones = COALESCE($1, cajero_consolida_liquidaciones),
                     max_breaks_per_shift = COALESCE($2, max_breaks_per_shift),
                     multi_caja_enabled = COALESCE($3, multi_caja_enabled),
+                    use_pin_login = COALESCE($4, use_pin_login),
                     updated_at = CURRENT_TIMESTAMP
-                WHERE id = $4 AND tenant_id = $5
-                RETURNING id, cajero_consolida_liquidaciones, max_breaks_per_shift, multi_caja_enabled
-            `, [cajero_consolida_liquidaciones, max_breaks_per_shift, multi_caja_enabled, id, tenantId]);
+                WHERE id = $5 AND tenant_id = $6
+                RETURNING id, cajero_consolida_liquidaciones, max_breaks_per_shift, multi_caja_enabled, use_pin_login
+            `, [cajero_consolida_liquidaciones, max_breaks_per_shift, multi_caja_enabled, use_pin_login, id, tenantId]);
 
             if (result.rows.length === 0) {
                 return res.status(404).json({ success: false, message: 'Sucursal no encontrada' });
             }
 
             const row = result.rows[0];
-            console.log(`[Branch Settings] ✅ cajero_consolida=${row.cajero_consolida_liquidaciones}, max_breaks=${row.max_breaks_per_shift}, multi_caja=${row.multi_caja_enabled} para branch ${id}`);
+            console.log(`[Branch Settings] ✅ cajero_consolida=${row.cajero_consolida_liquidaciones}, max_breaks=${row.max_breaks_per_shift}, multi_caja=${row.multi_caja_enabled}, pin_login=${row.use_pin_login} para branch ${id}`);
 
             // Notificar via socket a todos los dispositivos de esta sucursal
             const roomName = `branch_${id}`;
@@ -231,6 +234,7 @@ module.exports = (pool, io, scaleStatusByBranch) => {
                 cajero_consolida_liquidaciones: row.cajero_consolida_liquidaciones,
                 max_breaks_per_shift: row.max_breaks_per_shift,
                 multi_caja_enabled: row.multi_caja_enabled,
+                use_pin_login: row.use_pin_login,
                 receivedAt: new Date().toISOString()
             });
 
