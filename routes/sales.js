@@ -29,7 +29,7 @@ module.exports = (pool, io) => {
     const { restoreBranchStock, getBranchInventarioForEmit } = require('../utils/branchInventory');
     const { PRODUCT_UPDATED_COLUMNS, buildProductUpdatedPayload } = require('../utils/productUpdatedPayload');
     const activeDeviceSessions = require('../socket/activeDeviceSessions');
-    const requireDesktopOnline = require('../middleware/requireDesktopOnline');
+    // requireDesktopOnline removido — la regla está en el cliente (DesktopRequiredGuard en Flutter)
     const router = express.Router();
 
     // GET /api/sales - Lista de ventas (con soporte de timezone)
@@ -270,7 +270,7 @@ module.exports = (pool, io) => {
     // Maneja: status→cancelled, reversión de crédito (mixto), inventario, bitácora
     // Nota: Para tipo_pago_id=3 (crédito puro), el trigger de PostgreSQL revierte saldo_deudor automáticamente
     // ============================================================================
-    router.post('/:id/cancel', authenticateToken, requireDesktopOnline({ action: 'cancelar esta venta' }), async (req, res) => {
+    router.post('/:id/cancel', authenticateToken, async (req, res) => {
         const client = await pool.connect();
         try {
             const paramId = req.params.id;

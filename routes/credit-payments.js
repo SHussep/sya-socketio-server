@@ -25,7 +25,7 @@ function authenticateToken(req, res, next) {
 }
 
 module.exports = (pool, io) => {
-    const requireDesktopOnline = require('../middleware/requireDesktopOnline');
+    // requireDesktopOnline removido — la regla está en el cliente (DesktopRequiredGuard en Flutter)
     const router = express.Router();
 
     // GET /api/credit-payments - Lista de pagos de crédito
@@ -95,7 +95,7 @@ module.exports = (pool, io) => {
     });
 
     // POST /api/credit-payments — Direct server-first creation
-    router.post('/', authenticateToken, requireDesktopOnline({ action: 'registrar un pago de cliente' }), async (req, res) => {
+    router.post('/', authenticateToken, async (req, res) => {
         try {
             const tenantId = req.user.tenantId;
             const { branchId, customerId, customer_global_id, shiftId, shift_global_id,
