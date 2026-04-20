@@ -586,6 +586,222 @@ module.exports = {
                 message: 'Error del servidor'
             });
         }
+    },
+
+    // ═══════════════════════════════════════════════════════════════
+    // PIN LOGIN — kiosk-style auth for bubble profile picker
+    // Mirrors desktopLogin's response envelope exactly (DRY follow-up tracked).
+    // Per-employee lockout: 5 failed attempts → 5-minute lock.
+    // ═══════════════════════════════════════════════════════════════
+    async pinLogin(req, res) {
+        const MAX_ATTEMPTS = 5;
+        const LOCK_MINUTES = 5;
+
+        const { tenantCode, branchId, employeeId, pin } = req.body || {};
+
+        if (!pin || typeof pin !== 'string' || pin.length < 4 || pin.length > 6 || !/^\d+$/.test(pin)) {
+            return res.status(400).json({ success: false, code: 'INVALID_PIN_FORMAT', message: 'PIN debe ser 4-6 dígitos numéricos' });
+        }
+        if (!tenantCode || !branchId || !employeeId) {
+            return res.status(400).json({ success: false, code: 'MISSING_FIELDS', message: 'tenantCode, branchId y employeeId son requeridos' });
+        }
+
+        try {
+            // Resolve tenant
+            const tenantLookup = await this.pool.query(
+                'SELECT id FROM tenants WHERE tenant_code = $1 AND is_active = true',
+                [tenantCode]
+            );
+            if (tenantLookup.rows.length === 0) {
+                return res.status(404).json({ success: false, code: 'TENANT_NOT_FOUND', message: 'Tenant no encontrado' });
+            }
+            const tenantId = tenantLookup.rows[0].id;
+
+            // Resolve employee
+            const empResult = await this.pool.query(
+                `SELECT * FROM employees WHERE id = $1 AND tenant_id = $2 AND is_active = true`,
+                [employeeId, tenantId]
+            );
+            if (empResult.rows.length === 0 || !empResult.rows[0].pin_hash) {
+                return res.status(404).json({ success: false, code: 'PIN_NOT_SET', message: 'Este empleado no tiene PIN configurado' });
+            }
+            const employee = empResult.rows[0];
+
+            // Lockout pre-check
+            const lockRes = await this.pool.query(
+                `SELECT failed_attempts, locked_until FROM employee_pin_lockouts
+                 WHERE tenant_id = $1 AND employee_id = $2`,
+                [tenantId, employeeId]
+            );
+            if (lockRes.rows.length && lockRes.rows[0].locked_until && new Date(lockRes.rows[0].locked_until).getTime() > Date.now()) {
+                const retryAfterSeconds = Math.ceil((new Date(lockRes.rows[0].locked_until).getTime() - Date.now()) / 1000);
+                console.log(`[PIN Login] 🔒 Empleado ${employeeId} bloqueado por ${retryAfterSeconds}s`);
+                return res.status(423).json({ success: false, code: 'PIN_LOCKED', retryAfterSeconds, message: 'Demasiados intentos fallidos. Espera antes de reintentar.' });
+            }
+
+            // Verify PIN
+            let validPin = false;
+            try {
+                validPin = await bcrypt.compare(pin, employee.pin_hash);
+            } catch (bcryptError) {
+                console.error('[PIN Login] Error en verificación de PIN:', bcryptError.message);
+                return res.status(500).json({ success: false, message: 'Error en el servidor' });
+            }
+
+            if (!validPin) {
+                // Atomic increment — prevents lost-update race on concurrent bad PINs.
+                const incRes = await this.pool.query(
+                    `INSERT INTO employee_pin_lockouts (tenant_id, employee_id, failed_attempts, locked_until, last_attempt_at, updated_at)
+                     VALUES ($1, $2, 1, NULL, NOW(), NOW())
+                     ON CONFLICT (tenant_id, employee_id)
+                     DO UPDATE SET failed_attempts = employee_pin_lockouts.failed_attempts + 1,
+                                   last_attempt_at = NOW(),
+                                   updated_at = NOW()
+                     RETURNING failed_attempts`,
+                    [tenantId, employeeId]
+                );
+                const newAttempts = incRes.rows[0].failed_attempts;
+                if (newAttempts >= MAX_ATTEMPTS) {
+                    await this.pool.query(
+                        `UPDATE employee_pin_lockouts
+                         SET locked_until = $3, updated_at = NOW()
+                         WHERE tenant_id = $1 AND employee_id = $2`,
+                        [tenantId, employeeId, new Date(Date.now() + LOCK_MINUTES * 60_000)]
+                    );
+                    console.log(`[PIN Login] 🔒 Empleado ${employeeId} bloqueado tras ${newAttempts} intentos`);
+                    return res.status(423).json({ success: false, code: 'PIN_LOCKED', retryAfterSeconds: LOCK_MINUTES * 60, message: 'Demasiados intentos fallidos.' });
+                }
+                console.log(`[PIN Login] ❌ PIN incorrecto para empleado ${employeeId} (intentos=${newAttempts})`);
+                return res.status(401).json({ success: false, code: 'INVALID_PIN', remainingAttempts: MAX_ATTEMPTS - newAttempts, message: 'PIN incorrecto' });
+            }
+
+            // Success → reset lockout
+            await this.pool.query(
+                `INSERT INTO employee_pin_lockouts (tenant_id, employee_id, failed_attempts, locked_until, last_attempt_at, updated_at)
+                 VALUES ($1, $2, 0, NULL, NOW(), NOW())
+                 ON CONFLICT (tenant_id, employee_id)
+                 DO UPDATE SET failed_attempts = 0, locked_until = NULL, last_attempt_at = NOW(), updated_at = NOW()`,
+                [tenantId, employeeId]
+            );
+
+            // Tenant + license (mirror desktopLogin)
+            const tenantResult = await this.pool.query(
+                `SELECT t.*, s.name as subscription_name
+                 FROM tenants t
+                 JOIN subscriptions s ON t.subscription_id = s.id
+                 WHERE t.id = $1 AND t.is_active = true`,
+                [employee.tenant_id]
+            );
+            if (tenantResult.rows.length === 0) {
+                return res.status(403).json({ success: false, message: 'Tenant inactivo o no encontrado' });
+            }
+            const tenant = tenantResult.rows[0];
+            const now = new Date();
+            const trialEndsAt = tenant.trial_ends_at ? new Date(tenant.trial_ends_at) : null;
+            if (trialEndsAt && trialEndsAt < now) {
+                const daysExpired = Math.ceil((now - trialEndsAt) / (1000 * 60 * 60 * 24));
+                return res.status(403).json({
+                    success: false,
+                    message: 'Su licencia ha caducado.',
+                    error: 'LICENSE_EXPIRED',
+                    licenseInfo: { expiresAt: trialEndsAt.toISOString(), daysExpired, businessName: tenant.business_name }
+                });
+            }
+            const daysRemaining = trialEndsAt ? Math.ceil((trialEndsAt - now) / (1000 * 60 * 60 * 24)) : null;
+
+            // Available branches
+            const branchesResult = await this.pool.query(`
+                SELECT b.*
+                FROM branches b
+                JOIN employee_branches eb ON b.id = eb.branch_id
+                WHERE eb.employee_id = $1 AND b.is_active = true
+                ORDER BY b.name
+            `, [employee.id]);
+            const branches = branchesResult.rows;
+            if (branches.length === 0) {
+                return res.status(403).json({ success: false, message: 'No tienes acceso a ninguna sucursal' });
+            }
+            const selectedBranch = branches.find(b => b.id === parseInt(branchId)) || branches[0];
+
+            // Mint JWT (branchId MUST be present; downstream middleware reads it)
+            const token = jwt.sign(
+                {
+                    employeeId: employee.id,
+                    tenantId: employee.tenant_id,
+                    branchId: selectedBranch.id,
+                    roleId: employee.role_id,
+                    email: employee.email,
+                    is_owner: employee.is_owner === true
+                },
+                JWT_SECRET,
+                { expiresIn: '15m' }
+            );
+            const refreshToken = jwt.sign(
+                { employeeId: employee.id, tenantId: employee.tenant_id, is_owner: employee.is_owner === true },
+                JWT_SECRET,
+                { expiresIn: '30d' }
+            );
+
+            console.log(`[PIN Login] ✅ Login exitoso por PIN: empleado ${employee.id} → ${selectedBranch.name}`);
+
+            res.json({
+                success: true,
+                message: 'Login por PIN exitoso',
+                data: {
+                    token,
+                    refreshToken,
+                    employee: {
+                        id: employee.id,
+                        email: employee.email,
+                        username: employee.username,
+                        fullName: `${employee.first_name || ''} ${employee.last_name || ''}`.trim(),
+                        firstName: employee.first_name,
+                        lastName: employee.last_name,
+                        roleId: employee.role_id,
+                        isOwner: employee.is_owner === true,
+                        mainBranchId: employee.main_branch_id,
+                        canUseMobileApp: employee.can_use_mobile_app,
+                        globalId: employee.global_id,
+                        terminalId: employee.terminal_id,
+                        localOpSeq: employee.local_op_seq,
+                        createdLocalUtc: employee.created_local_utc,
+                        deviceEventRaw: employee.device_event_raw
+                    },
+                    tenant: {
+                        id: tenant.id,
+                        businessName: tenant.business_name,
+                        tenantCode: tenant.tenant_code,
+                        rfc: tenant.rfc,
+                        subscription: tenant.subscription_name,
+                        license: {
+                            expiresAt: trialEndsAt ? trialEndsAt.toISOString() : null,
+                            daysRemaining,
+                            status: daysRemaining === null ? 'unlimited' : (daysRemaining <= 7 ? 'expiring_soon' : 'active')
+                        }
+                    },
+                    branch: {
+                        id: selectedBranch.id,
+                        code: selectedBranch.branch_code,
+                        name: selectedBranch.name,
+                        permissions: {
+                            canLogin: selectedBranch.can_login ?? true,
+                            canSell: selectedBranch.can_sell ?? true,
+                            canManageInventory: selectedBranch.can_manage_inventory ?? false,
+                            canCloseShift: selectedBranch.can_close_shift ?? false
+                        }
+                    },
+                    availableBranches: branches.map(b => ({ id: b.id, code: b.branch_code, name: b.name }))
+                }
+            });
+
+        } catch (error) {
+            console.error('[PIN Login] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error en el servidor',
+                ...(process.env.NODE_ENV !== 'production' && { error: error.message })
+            });
+        }
     }
 
 };
