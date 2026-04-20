@@ -325,7 +325,7 @@ module.exports = {
                 { id: 9004, desc: 'Salsa Roja', precio: 30.00, bascula: false, produccion: true, unidad: 3, cat: 'Salsas', img: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1774822303/SalsaRoja_fximvw.png' },
                 { id: 9005, desc: 'Salsa Verde', precio: 30.00, bascula: false, produccion: true, unidad: 3, cat: 'Salsas', img: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1774822303/SalsaVerde_yg4zwm.png' },
                 { id: 9006, desc: 'Tortilla de Harina', precio: 35.00, bascula: true, produccion: true, unidad: 1, cat: 'Derivados de maíz', img: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1774822304/TortillaHarina_k8tvt5.png' },
-                { id: 9007, desc: 'Bolsa', precio: 1.00, bascula: false, produccion: false, unidad: 3, cat: 'Complementarios', img: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1775878976/Bolsa_npe9gn.png' },
+                { id: 9007, desc: 'Bolsa', precio: 1.00, bascula: false, produccion: false, unidad: 3, cat: 'Complementarios', img: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1776658909/Bolsa_tfprmp.png' },
                 { id: 9008, desc: 'Costal', precio: 5.00, bascula: false, produccion: false, unidad: 3, cat: 'Complementarios', img: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1775878976/Costal_crv5l7.png' },
                 { id: 9009, desc: 'Papel', precio: 1.00, bascula: false, produccion: false, unidad: 3, cat: 'Complementarios', img: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1775878975/PapelCebolla_pvnfen.png' },
             ];
