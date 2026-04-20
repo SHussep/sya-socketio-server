@@ -2,6 +2,7 @@
 
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const archiver = require('archiver');
 const { OAuth2Client } = require('google-auth-library');
 const { BCRYPT_ROUNDS } = require('../../config/security');
 const { notifySuperadmins } = require('../../utils/superadminNotifier');
