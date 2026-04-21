@@ -18,16 +18,17 @@ module.exports = (pool) => {
             const {
                 tenantId,
                 branchId,
-                eventType,        // 'app_open' | 'scale_configured' | 'theme_changed' | 'socket_error'
+                eventType,        // 'app_open' | 'scale_configured' | 'theme_changed' | 'socket_error' | 'login_success' | 'pin_created' | 'login_mode_switched'
                 deviceId,
                 deviceName,
                 appVersion,
                 scaleModel,       // Solo para scale_configured
                 scalePort,        // Solo para scale_configured
                 themeName,        // Solo para theme_changed
-                errorReason,      // Solo para socket_error
+                errorReason,      // Solo para socket_error (también usado como freeform metadata por login_*)
                 errorDetails,     // Solo para socket_error
                 consecutiveFailures, // Solo para socket_error
+                loginMode,        // 'classic' | 'bubble' | 'pin' — pantalla de login usada (login_success/pin_created/login_mode_switched)
                 global_id,
                 terminal_id,
                 local_op_seq,
@@ -50,6 +51,15 @@ module.exports = (pool) => {
                 return res.status(400).json({
                     success: false,
                     message: `eventType inválido. Valores permitidos: ${validEventTypes.join(', ')}`
+                });
+            }
+
+            // Validar loginMode si vino en el body (es opcional pero acotado).
+            const validLoginModes = ['classic', 'bubble', 'pin'];
+            if (loginMode != null && !validLoginModes.includes(loginMode)) {
+                return res.status(400).json({
+                    success: false,
+                    message: `loginMode inválido. Valores permitidos: ${validLoginModes.join(', ')}`
                 });
             }
 
@@ -83,9 +93,10 @@ module.exports = (pool) => {
                     device_id, device_name, app_version,
                     scale_model, scale_port, theme_name,
                     error_reason, error_details, consecutive_failures,
+                    login_mode,
                     global_id, terminal_id, local_op_seq, device_event_raw, created_local_utc,
                     event_timestamp
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, COALESCE($18, NOW()))
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, COALESCE($19, NOW()))
                 ON CONFLICT (global_id) DO NOTHING
                 RETURNING id
             `, [
@@ -101,6 +112,7 @@ module.exports = (pool) => {
                 errorReason || null,
                 errorDetails || null,
                 consecutiveFailures != null ? parseInt(consecutiveFailures) : null,
+                loginMode || null,
                 global_id,
                 terminal_id || null,
                 local_op_seq || null,
@@ -112,7 +124,7 @@ module.exports = (pool) => {
             const wasInserted = result.rows.length > 0;
             const eventId = wasInserted ? result.rows[0].id : null;
 
-            console.log(`[Telemetry] ${wasInserted ? '✅ NUEVO' : '⏭️ DUPLICADO'} ${eventType} - Tenant: ${tenantId}, Branch: ${branchId}${scaleModel ? `, Scale: ${scaleModel}` : ''}${themeName ? `, Theme: ${themeName}` : ''}${errorReason ? `, Reason: ${errorReason}, Failures: ${consecutiveFailures}` : ''}`);
+            console.log(`[Telemetry] ${wasInserted ? '✅ NUEVO' : '⏭️ DUPLICADO'} ${eventType} - Tenant: ${tenantId}, Branch: ${branchId}${scaleModel ? `, Scale: ${scaleModel}` : ''}${themeName ? `, Theme: ${themeName}` : ''}${loginMode ? `, LoginMode: ${loginMode}` : ''}${errorReason ? `, Reason: ${errorReason}` : ''}${consecutiveFailures != null ? `, Failures: ${consecutiveFailures}` : ''}`);
 
             res.status(wasInserted ? 201 : 200).json({
                 success: true,
@@ -317,6 +329,111 @@ module.exports = (pool) => {
         } catch (error) {
             console.error('[User Activity] Error:', error);
             res.status(500).json({ success: false, message: 'Error al obtener actividad de usuarios' });
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
+    // GET /api/telemetry/login-modes
+    // Distribución de pantallas de login (classic / bubble / pin) usadas por
+    // los usuarios. Filtros opcionales: tenantId, branchId, from, to, eventType.
+    // Solo admin (requiere credenciales superadmin).
+    // ─────────────────────────────────────────────────────────
+    router.get('/login-modes', requireAdminCredentials, async (req, res) => {
+        try {
+            const { tenantId, branchId, from, to, eventType } = req.query;
+
+            const allowedEventTypes = ['login_success', 'pin_created', 'login_mode_switched'];
+            const eventFilter = eventType
+                ? (allowedEventTypes.includes(eventType) ? [eventType] : null)
+                : allowedEventTypes;
+
+            if (!eventFilter) {
+                return res.status(400).json({
+                    success: false,
+                    message: `eventType inválido. Valores permitidos: ${allowedEventTypes.join(', ')}`
+                });
+            }
+
+            const params = [];
+            const conditions = [`event_type = ANY($${params.push(eventFilter)}::text[])`];
+            conditions.push(`login_mode IS NOT NULL`);
+
+            if (tenantId) {
+                conditions.push(`tenant_id = $${params.push(parseInt(tenantId))}`);
+            }
+            if (branchId) {
+                conditions.push(`branch_id = $${params.push(parseInt(branchId))}`);
+            }
+            if (from) {
+                conditions.push(`event_timestamp >= $${params.push(from)}`);
+            }
+            if (to) {
+                conditions.push(`event_timestamp <= $${params.push(to)}`);
+            }
+
+            const where = conditions.join(' AND ');
+
+            // 1) Distribución global por modo
+            const overallQuery = `
+                SELECT login_mode, COUNT(*)::int AS count
+                FROM telemetry_events
+                WHERE ${where}
+                GROUP BY login_mode
+                ORDER BY count DESC
+            `;
+            const overall = await pool.query(overallQuery, params);
+
+            // 2) Distribución por tenant (top 50)
+            const byTenantQuery = `
+                SELECT te.tenant_id, t.business_name, te.login_mode, COUNT(*)::int AS count
+                FROM telemetry_events te
+                LEFT JOIN tenants t ON t.id = te.tenant_id
+                WHERE ${where}
+                GROUP BY te.tenant_id, t.business_name, te.login_mode
+                ORDER BY te.tenant_id, count DESC
+                LIMIT 200
+            `;
+            const byTenant = await pool.query(byTenantQuery, params);
+
+            // 3) Tendencia diaria
+            const dailyQuery = `
+                SELECT DATE(event_timestamp) AS date, login_mode, COUNT(*)::int AS count
+                FROM telemetry_events
+                WHERE ${where}
+                GROUP BY DATE(event_timestamp), login_mode
+                ORDER BY date DESC, login_mode
+                LIMIT 365
+            `;
+            const daily = await pool.query(dailyQuery, params);
+
+            const totalCount = overall.rows.reduce((sum, r) => sum + r.count, 0);
+
+            res.json({
+                success: true,
+                data: {
+                    filters: {
+                        tenantId: tenantId ? parseInt(tenantId) : null,
+                        branchId: branchId ? parseInt(branchId) : null,
+                        from: from || null,
+                        to: to || null,
+                        eventTypes: eventFilter
+                    },
+                    totalCount,
+                    overall: overall.rows.map(r => ({
+                        loginMode: r.login_mode,
+                        count: r.count,
+                        pct: totalCount > 0 ? +(r.count / totalCount * 100).toFixed(2) : 0
+                    })),
+                    byTenant: byTenant.rows,
+                    daily: daily.rows
+                }
+            });
+        } catch (error) {
+            console.error('[Telemetry LoginModes] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al obtener distribución de login modes'
+            });
         }
     });
 
