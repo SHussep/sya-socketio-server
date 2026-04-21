@@ -1190,10 +1190,15 @@ module.exports = (pool, io) => {
     router.get('/seed-images', (req, res) => {
         const seedImages = {};
 
-        for (const productId of [9001, 9002, 9003, 9004, 9005, 9006]) {
-            seedImages[productId] = cloudinaryService.getSeedProductImageUrl(productId);
+        // Iterar sobre todos los IDs registrados (no hardcodeado)
+        for (const productId of Object.keys(cloudinaryService.SEED_PRODUCT_IMAGES)) {
+            const id = parseInt(productId);
+            seedImages[id] = cloudinaryService.getSeedProductImageUrl(id);
         }
 
+        // Cache 24h en CDN/cliente: las URLs cambian raras veces y el cliente
+        // tiene su propio cache local de fallback offline.
+        res.set('Cache-Control', 'public, max-age=86400');
         res.json({
             success: true,
             data: seedImages

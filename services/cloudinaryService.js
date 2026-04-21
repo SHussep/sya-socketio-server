@@ -150,30 +150,39 @@ function isConfigured() {
 /**
  * URLs fijas para imágenes de productos semilla.
  * Estas imágenes son compartidas entre todos los tenants para ahorrar espacio.
- * Estructura: sya-seed-products/{nombre_imagen}
+ * Cada entry puede ser:
+ *   - { publicId: 'sya-seed-products/...' } → genera URL transformada (400x400)
+ *   - { url: 'https://res.cloudinary.com/...' } → URL fija ya subida
  */
 const SEED_PRODUCT_IMAGES = {
-  9001: 'sya-seed-products/tortilla_maiz',      // Tortilla de Maíz
-  9002: 'sya-seed-products/masa',               // Masa
-  9003: 'sya-seed-products/totopos',            // Totopos
-  9004: 'sya-seed-products/salsa_roja',         // Salsa Roja
-  9005: 'sya-seed-products/salsa_verde',        // Salsa Verde
-  9006: 'sya-seed-products/tortilla_harina',    // Tortilla de Harina
+  9001: { publicId: 'sya-seed-products/tortilla_maiz' },     // Tortilla de Maíz
+  9002: { publicId: 'sya-seed-products/masa' },              // Masa
+  9003: { publicId: 'sya-seed-products/totopos' },           // Totopos
+  9004: { publicId: 'sya-seed-products/salsa_roja' },        // Salsa Roja
+  9005: { publicId: 'sya-seed-products/salsa_verde' },       // Salsa Verde
+  9006: { publicId: 'sya-seed-products/tortilla_harina' },   // Tortilla de Harina
+  9007: { url: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1776658909/Bolsa_tfprmp.png' },         // Bolsa
+  9008: { url: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1775878976/Costal_crv5l7.png' },        // Costal
+  9009: { url: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1775878975/PapelCebolla_pvnfen.png' },  // Papel
 };
 
 /**
  * Obtiene la URL de Cloudinary para una imagen de producto semilla
- * @param {number} productId - ID del producto semilla (9001-9006)
+ * @param {number} productId - ID del producto semilla
  * @returns {string|null} URL de Cloudinary o null si no es producto semilla
  */
 function getSeedProductImageUrl(productId) {
-  const publicId = SEED_PRODUCT_IMAGES[productId];
-  if (!publicId) {
+  const entry = SEED_PRODUCT_IMAGES[productId];
+  if (!entry) {
     return null;
   }
 
+  if (entry.url) {
+    return entry.url;
+  }
+
   // Generar URL optimizada
-  return cloudinary.url(publicId, {
+  return cloudinary.url(entry.publicId, {
     secure: true,
     transformation: [
       { width: 400, height: 400, crop: 'limit' },
@@ -189,7 +198,7 @@ function getSeedProductImageUrl(productId) {
  * @returns {boolean}
  */
 function isSeedProduct(productId) {
-  return productId >= 9001 && productId <= 9006;
+  return SEED_PRODUCT_IMAGES.hasOwnProperty(productId);
 }
 
 /**
