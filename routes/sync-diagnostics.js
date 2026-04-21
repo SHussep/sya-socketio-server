@@ -1056,30 +1056,45 @@ module.exports = (pool, io) => {
 
             // Pending quarantine counts per tenant
             const quarantineResult = await pool.query(`
-                SELECT tenant_id, COUNT(*) AS pending_count
-                FROM sync_quarantine_reports
-                WHERE admin_decision IS NULL
-                GROUP BY tenant_id
+                SELECT q.tenant_id, COUNT(*) AS pending_count,
+                       t.business_name AS tenant_name
+                FROM sync_quarantine_reports q
+                LEFT JOIN tenants t ON t.id = q.tenant_id
+                WHERE q.admin_decision IS NULL
+                GROUP BY q.tenant_id, t.business_name
             `);
 
-            // Recent sync event failures (last 24h) per tenant
+            // Recent sync event failures (last 24h) per tenant.
+            // Excluir fallos cuya entidad ya sincronizó después exitosamente
+            // (ruido: errores antiguos que ya se resolvieron por el reintento).
             const eventsResult = await pool.query(`
-                SELECT tenant_id, COUNT(*) AS failed_count,
-                       MAX(created_at) AS last_failure
-                FROM sync_events
-                WHERE status = 'failed'
-                  AND created_at > NOW() - INTERVAL '24 hours'
-                GROUP BY tenant_id
+                SELECT se.tenant_id, COUNT(*) AS failed_count,
+                       MAX(se.created_at) AS last_failure,
+                       t.business_name AS tenant_name
+                FROM sync_events se
+                LEFT JOIN tenants t ON t.id = se.tenant_id
+                WHERE se.status = 'failed'
+                  AND se.created_at > NOW() - INTERVAL '24 hours'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM sync_events se2
+                    WHERE se2.tenant_id = se.tenant_id
+                      AND se2.entity_global_id = se.entity_global_id
+                      AND se2.status = 'success'
+                      AND se2.created_at > se.created_at
+                  )
+                GROUP BY se.tenant_id, t.business_name
             `);
 
             // Telemetry errors (last 24h) per tenant
             const telemetryResult = await pool.query(`
-                SELECT tenant_id, COUNT(*) AS error_count,
-                       MAX(event_timestamp) AS last_error
-                FROM telemetry_events
-                WHERE event_type = 'socket_error'
-                  AND event_timestamp > NOW() - INTERVAL '24 hours'
-                GROUP BY tenant_id
+                SELECT te.tenant_id, COUNT(*) AS error_count,
+                       MAX(te.event_timestamp) AS last_error,
+                       t.business_name AS tenant_name
+                FROM telemetry_events te
+                LEFT JOIN tenants t ON t.id = te.tenant_id
+                WHERE te.event_type = 'socket_error'
+                  AND te.event_timestamp > NOW() - INTERVAL '24 hours'
+                GROUP BY te.tenant_id, t.business_name
             `);
 
             res.json({
@@ -1115,6 +1130,11 @@ module.exports = (pool, io) => {
         const hours = Math.min(parseInt(req.query.hours) || 72, 720);
         const limit = Math.min(parseInt(req.query.limit) || 100, 500);
 
+        // Query param `includeResolved`: por defecto `false` — oculta fallos cuya
+        // entidad ya sincronizó exitosamente después (ruido histórico irrelevante).
+        // Pasar `includeResolved=true` para auditoría completa.
+        const includeResolved = req.query.includeResolved === 'true';
+
         try {
             const params = [tenantId];
             let sql = `
@@ -1137,6 +1157,21 @@ module.exports = (pool, io) => {
 
             if (hours > 0) {
                 sql += ` AND se.created_at > NOW() - INTERVAL '${hours} hours'`;
+            }
+
+            // Filtrar eventos cuya entidad ya sincronizó después (fallos ya resueltos).
+            // Solo aplica cuando buscamos fallos; para status=all o status=success no filtra.
+            if (!includeResolved && (status === 'failed' || status === 'pending' || status === 'retry')) {
+                sql += `
+                  AND NOT EXISTS (
+                    SELECT 1 FROM sync_events se2
+                    WHERE se2.tenant_id = se.tenant_id
+                      AND se2.entity_global_id = se.entity_global_id
+                      AND se2.status = 'success'
+                      AND se2.created_at > se.created_at
+                  )
+                  AND se.resolved_at IS NULL
+                `;
             }
 
             sql += ` ORDER BY se.created_at DESC LIMIT $${idx}`;
