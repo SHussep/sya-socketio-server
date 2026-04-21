@@ -155,12 +155,14 @@ function isConfigured() {
  *   - { url: 'https://res.cloudinary.com/...' } → URL fija ya subida
  */
 const SEED_PRODUCT_IMAGES = {
-  9001: { publicId: 'sya-seed-products/tortilla_maiz' },     // Tortilla de Maíz
-  9002: { publicId: 'sya-seed-products/masa' },              // Masa
-  9003: { publicId: 'sya-seed-products/totopos' },           // Totopos
-  9004: { publicId: 'sya-seed-products/salsa_roja' },        // Salsa Roja
-  9005: { publicId: 'sya-seed-products/salsa_verde' },       // Salsa Verde
-  9006: { publicId: 'sya-seed-products/tortilla_harina' },   // Tortilla de Harina
+  // Todas son URLs directas a assets ya subidos en Cloudinary.
+  // Si en el futuro se reorganizan a sya-seed-products/{nombre}, cambiar a { publicId: ... }.
+  9001: { url: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1774822301/TortillaMaiz_scug2v.webp' }, // Tortilla de Maíz
+  9002: { url: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1774822303/Masa_nzre1m.png' },          // Masa
+  9003: { url: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1774822303/Totopos_d5zxd1.png' },       // Totopos
+  9004: { url: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1774822303/SalsaRoja_fximvw.png' },     // Salsa Roja
+  9005: { url: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1774822303/SalsaVerde_yg4zwm.png' },    // Salsa Verde
+  9006: { url: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1774822304/TortillaHarina_k8tvt5.png' },// Tortilla de Harina
   9007: { url: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1776658909/Bolsa_tfprmp.png' },         // Bolsa
   9008: { url: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1775878976/Costal_crv5l7.png' },        // Costal
   9009: { url: 'https://res.cloudinary.com/dhm7qyyl1/image/upload/v1775878975/PapelCebolla_pvnfen.png' },  // Papel
