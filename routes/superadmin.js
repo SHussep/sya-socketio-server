@@ -1107,6 +1107,221 @@ module.exports = function(pool, io) {
     });
 
     // ─────────────────────────────────────────────────────────
+    // DELETE /api/superadmin/branches/:branchId
+    // Borrar una sucursal individual (NUNCA la Matriz).
+    // Body: { confirmName: string, force?: boolean, revokeLicense?: boolean }
+    // Matriz = branch con MIN(id) del tenant (≡ branch_code formato B<tid>M).
+    // ─────────────────────────────────────────────────────────
+    router.delete('/branches/:branchId', async (req, res) => {
+        const client = await pool.connect();
+        try {
+            const branchId = parseInt(req.params.branchId, 10);
+            if (!Number.isFinite(branchId) || branchId <= 0) {
+                return res.status(400).json({ success: false, message: 'branchId inválido' });
+            }
+
+            const {
+                confirmName,
+                force = false,
+                revokeLicense = true
+            } = (req.body || {});
+
+            // 1) Cargar branch
+            const branchResult = await client.query(
+                'SELECT id, tenant_id, name, branch_code, is_active FROM branches WHERE id = $1',
+                [branchId]
+            );
+            if (branchResult.rows.length === 0) {
+                return res.status(404).json({ success: false, message: 'Sucursal no encontrada' });
+            }
+            const branch = branchResult.rows[0];
+
+            // 2) Confirmación por nombre (anti-typo)
+            if (typeof confirmName !== 'string' || confirmName.trim() !== branch.name.trim()) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'confirmName no coincide con el nombre de la sucursal'
+                });
+            }
+
+            // 3) BLOQUEO MATRIZ (doble validación)
+            const matrizCodeRegex = /^B\d+M$/i;
+            if (matrizCodeRegex.test(branch.branch_code || '')) {
+                return res.status(403).json({
+                    success: false,
+                    code: 'MATRIZ_PROTECTED',
+                    message: `La sucursal "${branch.name}" es la Matriz del tenant y no puede eliminarse.`
+                });
+            }
+            const minResult = await client.query(
+                'SELECT MIN(id) AS min_id FROM branches WHERE tenant_id = $1',
+                [branch.tenant_id]
+            );
+            const matrizId = minResult.rows[0].min_id;
+            if (branchId === matrizId) {
+                return res.status(403).json({
+                    success: false,
+                    code: 'MATRIZ_PROTECTED',
+                    message: `La sucursal "${branch.name}" es la principal del tenant (registrada al inicio) y no puede eliminarse.`
+                });
+            }
+
+            // 4) Defensa extra: nunca dejar al tenant sin sucursales
+            const countResult = await client.query(
+                'SELECT COUNT(*)::int AS n FROM branches WHERE tenant_id = $1',
+                [branch.tenant_id]
+            );
+            if (countResult.rows[0].n <= 1) {
+                return res.status(409).json({
+                    success: false,
+                    code: 'LAST_BRANCH',
+                    message: 'No se puede borrar la única sucursal del tenant.'
+                });
+            }
+
+            // 5) Validar datos transaccionales (saltable con force)
+            const dataCheck = await client.query(`
+                SELECT
+                  (SELECT COUNT(*)::int FROM ventas WHERE branch_id = $1) AS ventas,
+                  (SELECT COUNT(*)::int FROM shifts WHERE branch_id = $1) AS shifts,
+                  (SELECT COUNT(*)::int FROM shifts WHERE branch_id = $1 AND end_time IS NULL) AS shifts_open,
+                  (SELECT COUNT(*)::int FROM cash_cuts WHERE branch_id = $1) AS cash_cuts,
+                  (SELECT COUNT(*)::int FROM purchases WHERE branch_id = $1) AS purchases,
+                  (SELECT COUNT(*)::int FROM kardex_entries WHERE branch_id = $1) AS kardex,
+                  (SELECT COUNT(*)::int FROM notas_credito WHERE branch_id = $1) AS notas_credito,
+                  (SELECT COUNT(*)::int FROM employee_branches WHERE branch_id = $1) AS empleados,
+                  (SELECT COUNT(*)::int FROM branch_devices WHERE branch_id = $1) AS devices
+            `, [branchId]);
+            const dc = dataCheck.rows[0];
+
+            if (dc.shifts_open > 0) {
+                return res.status(409).json({
+                    success: false,
+                    code: 'SHIFTS_OPEN',
+                    message: `Hay ${dc.shifts_open} turno(s) abierto(s) en esta sucursal. Ciérralos primero.`
+                });
+            }
+
+            const hasTransactional = dc.ventas + dc.shifts + dc.cash_cuts + dc.purchases + dc.kardex + dc.notas_credito > 0;
+            if (hasTransactional && !force) {
+                return res.status(409).json({
+                    success: false,
+                    code: 'HAS_TRANSACTIONAL_DATA',
+                    message: 'La sucursal tiene datos transaccionales. Usa force=true para forzar (se perderá histórico).',
+                    counts: dc
+                });
+            }
+
+            // 6) Transacción
+            await client.query('BEGIN');
+
+            // 6a) Tablas con FK NO ACTION (CASCADE no las maneja)
+            const tablesNoAction = [
+                'data_resets',
+                'employee_debts',
+                'kardex_entries',
+                'notas_credito',
+                'preparation_mode_logs',
+                'production_alerts',
+                'production_entries',
+                'production_yield_configs',
+                'producto_branches',
+                'sync_error_reports',
+                'sync_events'
+            ];
+            for (const t of tablesNoAction) {
+                await client.query(`DELETE FROM ${t} WHERE branch_id = $1`, [branchId]);
+            }
+            // inventory_transfers tiene from_branch_id y to_branch_id
+            await client.query(
+                `DELETE FROM inventory_transfers WHERE from_branch_id = $1 OR to_branch_id = $1`,
+                [branchId]
+            );
+            // employees.main_branch_id NO ACTION → SET NULL
+            await client.query(
+                `UPDATE employees SET main_branch_id = NULL WHERE main_branch_id = $1`,
+                [branchId]
+            );
+
+            // 6b) Manejar licencia asociada
+            let licenseAction = null;
+            let licenseId = null;
+            if (revokeLicense) {
+                const lr = await client.query(`
+                    UPDATE branch_licenses
+                    SET status = 'revoked', branch_id = NULL, revoked_at = NOW(), updated_at = NOW()
+                    WHERE branch_id = $1 AND status = 'active'
+                    RETURNING id
+                `, [branchId]);
+                if (lr.rowCount > 0) {
+                    licenseId = lr.rows[0].id;
+                    licenseAction = 'revoked';
+                }
+            } else {
+                const lr = await client.query(`
+                    UPDATE branch_licenses
+                    SET status = 'available', branch_id = NULL, activated_at = NULL, updated_at = NOW()
+                    WHERE branch_id = $1 AND status = 'active'
+                    RETURNING id
+                `, [branchId]);
+                if (lr.rowCount > 0) {
+                    licenseId = lr.rows[0].id;
+                    licenseAction = 'released';
+                }
+            }
+
+            // 6c) Borrar branch (CASCADE se encarga del resto)
+            const del = await client.query(
+                'DELETE FROM branches WHERE id = $1 AND id <> (SELECT MIN(id) FROM branches WHERE tenant_id = $2) RETURNING id',
+                [branchId, branch.tenant_id]
+            );
+            if (del.rowCount !== 1) {
+                throw new Error('Branch no fue borrada (posible carrera con Matriz) — ROLLBACK');
+            }
+
+            // 6d) Verificar invariantes post-delete
+            const stillHas = await client.query(
+                'SELECT COUNT(*)::int AS n FROM branches WHERE tenant_id = $1',
+                [branch.tenant_id]
+            );
+            if (stillHas.rows[0].n < 1) {
+                throw new Error('Tenant quedaría sin sucursales — ROLLBACK');
+            }
+
+            await client.query('COMMIT');
+
+            console.log(`[Superadmin] 🗑️ Branch eliminada: ${branch.name} (id=${branchId}, tenant=${branch.tenant_id}) license=${licenseAction || 'none'}${force ? ' [FORCE]' : ''}`);
+
+            // Notificar a clientes del tenant
+            try {
+                io.to(`branch_${branchId}`).emit('branch_deleted', { branchId });
+            } catch (_) {}
+
+            res.json({
+                success: true,
+                message: `Sucursal "${branch.name}" eliminada correctamente`,
+                deleted: {
+                    id: branchId,
+                    name: branch.name,
+                    branchCode: branch.branch_code,
+                    tenantId: branch.tenant_id
+                },
+                license: licenseId ? { id: licenseId, action: licenseAction } : null,
+                counts: dc
+            });
+        } catch (error) {
+            await client.query('ROLLBACK').catch(() => {});
+            console.error('[Superadmin Delete Branch] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error al eliminar sucursal: ' + error.message
+            });
+        } finally {
+            client.release();
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
     // POST /api/superadmin/tenants/:id/send-followup
     // Enviar email de seguimiento al owner del tenant
     // ─────────────────────────────────────────────────────────
