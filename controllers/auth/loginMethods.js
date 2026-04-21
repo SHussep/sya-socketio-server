@@ -802,6 +802,171 @@ module.exports = {
                 ...(process.env.NODE_ENV !== 'production' && { error: error.message })
             });
         }
+    },
+
+    // ═══════════════════════════════════════════════════════════════
+    // EMPLOYEE PASSWORD LOGIN — bubble-flow auth por employeeId + password
+    // Resuelve el hueco donde empleados sin email (cajeros) no pueden usar
+    // desktop-login (que busca por email). Permite al bubble login obtener
+    // JWT+refreshToken del backend tras validar password local.
+    // Mirrors pinLogin's response envelope.
+    // ═══════════════════════════════════════════════════════════════
+    async employeePasswordLogin(req, res) {
+        const { tenantCode, branchId, employeeId, employeeGlobalId, password } = req.body || {};
+
+        if (!password || typeof password !== 'string' || password.length < 1) {
+            return res.status(400).json({ success: false, code: 'INVALID_PASSWORD_FORMAT', message: 'Password requerido' });
+        }
+        if (!tenantCode || !branchId || (!employeeId && !employeeGlobalId)) {
+            return res.status(400).json({ success: false, code: 'MISSING_FIELDS', message: 'tenantCode, branchId y (employeeId o employeeGlobalId) son requeridos' });
+        }
+
+        try {
+            const tenantLookup = await this.pool.query(
+                'SELECT id FROM tenants WHERE tenant_code = $1 AND is_active = true',
+                [tenantCode]
+            );
+            if (tenantLookup.rows.length === 0) {
+                return res.status(404).json({ success: false, code: 'TENANT_NOT_FOUND', message: 'Tenant no encontrado' });
+            }
+            const tenantId = tenantLookup.rows[0].id;
+
+            // Resolver empleado por global_id (preferido, estable entre BD local y PG)
+            // o por id (fallback cuando el desktop aún tiene el remoteId de PG).
+            const empQuery = employeeGlobalId
+                ? `SELECT * FROM employees WHERE global_id = $1 AND tenant_id = $2 AND is_active = true`
+                : `SELECT * FROM employees WHERE id = $1 AND tenant_id = $2 AND is_active = true`;
+            const empParam = employeeGlobalId || employeeId;
+            const empResult = await this.pool.query(empQuery, [empParam, tenantId]);
+
+            if (empResult.rows.length === 0) {
+                return res.status(404).json({ success: false, code: 'EMPLOYEE_NOT_FOUND', message: 'Empleado no encontrado' });
+            }
+            const employee = empResult.rows[0];
+
+            if (!employee.password_hash) {
+                return res.status(401).json({ success: false, code: 'PASSWORD_NOT_SET', message: 'Este empleado no tiene contraseña configurada' });
+            }
+
+            let validPassword = false;
+            try {
+                validPassword = await bcrypt.compare(password, employee.password_hash);
+            } catch (bcryptError) {
+                console.error('[Employee Password Login] Error bcrypt:', bcryptError.message);
+                return res.status(500).json({ success: false, message: 'Error en el servidor' });
+            }
+
+            if (!validPassword) {
+                console.log(`[Employee Password Login] ❌ Password incorrecta para empleado ${employeeId}`);
+                return res.status(401).json({ success: false, code: 'INVALID_PASSWORD', message: 'Credenciales inválidas' });
+            }
+
+            // Tenant + license
+            const tenantResult = await this.pool.query(
+                `SELECT t.*, s.name as subscription_name
+                 FROM tenants t
+                 JOIN subscriptions s ON t.subscription_id = s.id
+                 WHERE t.id = $1 AND t.is_active = true`,
+                [employee.tenant_id]
+            );
+            if (tenantResult.rows.length === 0) {
+                return res.status(403).json({ success: false, message: 'Tenant inactivo o no encontrado' });
+            }
+            const tenant = tenantResult.rows[0];
+            const now = new Date();
+            const trialEndsAt = tenant.trial_ends_at ? new Date(tenant.trial_ends_at) : null;
+            if (trialEndsAt && trialEndsAt < now) {
+                const daysExpired = Math.ceil((now - trialEndsAt) / (1000 * 60 * 60 * 24));
+                return res.status(403).json({
+                    success: false,
+                    message: 'Su licencia ha caducado.',
+                    error: 'LICENSE_EXPIRED',
+                    licenseInfo: { expiresAt: trialEndsAt.toISOString(), daysExpired, businessName: tenant.business_name }
+                });
+            }
+            const daysRemaining = trialEndsAt ? Math.ceil((trialEndsAt - now) / (1000 * 60 * 60 * 24)) : null;
+
+            const branchesResult = await this.pool.query(`
+                SELECT b.*
+                FROM branches b
+                JOIN employee_branches eb ON b.id = eb.branch_id
+                WHERE eb.employee_id = $1 AND b.is_active = true
+                ORDER BY b.name
+            `, [employee.id]);
+            const branches = branchesResult.rows;
+            if (branches.length === 0) {
+                return res.status(403).json({ success: false, message: 'No tienes acceso a ninguna sucursal' });
+            }
+            const selectedBranch = branches.find(b => b.id === parseInt(branchId)) || branches[0];
+
+            const token = jwt.sign(
+                {
+                    employeeId: employee.id,
+                    tenantId: employee.tenant_id,
+                    branchId: selectedBranch.id,
+                    roleId: employee.role_id,
+                    email: employee.email,
+                    is_owner: employee.is_owner === true
+                },
+                JWT_SECRET,
+                { expiresIn: '15m' }
+            );
+            const refreshToken = jwt.sign(
+                { employeeId: employee.id, tenantId: employee.tenant_id, is_owner: employee.is_owner === true },
+                JWT_SECRET,
+                { expiresIn: '30d' }
+            );
+
+            console.log(`[Employee Password Login] ✅ Login exitoso: empleado ${employee.id} (${employee.email || employee.username || 'sin email'}) → ${selectedBranch.name}`);
+
+            res.json({
+                success: true,
+                message: 'Login por empleado+password exitoso',
+                data: {
+                    token,
+                    refreshToken,
+                    employee: {
+                        id: employee.id,
+                        email: employee.email,
+                        username: employee.username,
+                        fullName: `${employee.first_name || ''} ${employee.last_name || ''}`.trim(),
+                        firstName: employee.first_name,
+                        lastName: employee.last_name,
+                        roleId: employee.role_id,
+                        isOwner: employee.is_owner === true,
+                        mainBranchId: employee.main_branch_id,
+                        canUseMobileApp: employee.can_use_mobile_app,
+                        globalId: employee.global_id,
+                        terminalId: employee.terminal_id
+                    },
+                    tenant: {
+                        id: tenant.id,
+                        businessName: tenant.business_name,
+                        tenantCode: tenant.tenant_code,
+                        rfc: tenant.rfc,
+                        subscription: tenant.subscription_name,
+                        license: {
+                            expiresAt: trialEndsAt ? trialEndsAt.toISOString() : null,
+                            daysRemaining,
+                            status: daysRemaining === null ? 'unlimited' : (daysRemaining <= 7 ? 'expiring_soon' : 'active')
+                        }
+                    },
+                    branch: {
+                        id: selectedBranch.id,
+                        code: selectedBranch.branch_code,
+                        name: selectedBranch.name
+                    }
+                }
+            });
+
+        } catch (error) {
+            console.error('[Employee Password Login] Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error en el servidor',
+                ...(process.env.NODE_ENV !== 'production' && { error: error.message })
+            });
+        }
     }
 
 };

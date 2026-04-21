@@ -22,6 +22,7 @@ module.exports = function (pool) {
     router.post('/desktop-login', loginRateLimiter, bind(authController.desktopLogin));
     router.post('/mobile-login', loginRateLimiter, bind(authController.mobileLogin));
     router.post('/pin-login', loginRateLimiter, bind(authController.pinLogin));
+    router.post('/employee-password-login', loginRateLimiter, bind(authController.employeePasswordLogin));
     router.post('/refresh-token', bind(authController.refreshToken));
 
     // Google Auth (con rate limiting)
