@@ -98,14 +98,26 @@ async function sendNotificationToDevice(deviceToken, {
         return response;
     } catch (error) {
         console.error(`[FCM] ❌ Error enviando notificación: ${error.message}`);
-        // Si el token es inválido, debería ser removido
+
+        // Errores que SÍ indican token inválido (remover de BD).
+        // NOTA: messaging/third-party-auth-error NO va aquí — ese es un problema
+        // de credenciales APNs/OAuth del servidor, no del token del dispositivo.
+        // Marcar tokens válidos como inválidos por este error causa que todos los
+        // dispositivos queden desactivados silenciosamente.
         if (error.code === 'messaging/invalid-registration-token' ||
             error.code === 'messaging/registration-token-not-registered' ||
-            error.code === 'messaging/third-party-auth-error' ||
             error.message?.includes('Requested entity was not found')) {
             console.warn(`[FCM] ⚠️ Token inválido, debería ser removido de BD (${error.code})`);
             return 'INVALID_TOKEN';
         }
+
+        // Error de credenciales del servidor (APNs expirado, service account mal, etc).
+        // Log explícito para que sea obvio que el token NO es el problema.
+        if (error.code === 'messaging/third-party-auth-error') {
+            console.error(`[FCM] 🚨 ERROR DE CREDENCIALES DEL SERVIDOR (no del token): ${error.code}`);
+            console.error(`[FCM]    Verificar APNs Authentication Key en Firebase Console → Cloud Messaging`);
+        }
+
         return null;
     }
 }
