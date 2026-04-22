@@ -532,7 +532,16 @@ function getGuardianSimpleCategory(eventType) {
  *   notify_guardian_operacion_irregular, notify_guardian_discrepancia
  */
 async function notifyScaleAlert(branchId, { severity, eventType, details, employeeName, simpleCategory, pageContext }) {
-    const severityText = severity === 'high' ? 'ALTA' : severity === 'medium' ? 'MEDIA' : 'BAJA';
+    // Normalizar severity: desktop manda "Critical"/"High"/"Moderate"/"Low"/"Informative" capitalizado,
+    // otros paths pueden mandar 'high'/'medium' lowercase. Comparar en lowercase y cubrir todos los casos.
+    const s = (severity || '').toLowerCase();
+    const severityText =
+        s === 'critical' ? 'CRÍTICA' :
+        s === 'high'     ? 'ALTA'    :
+        s === 'medium' || s === 'moderate' ? 'MEDIA' :
+        s === 'low'      ? 'BAJA'    :
+        s === 'informative' ? 'INFO' :
+        'MEDIA'; // fallback conservador: si viene algo inesperado, no degradar a BAJA
 
     // Si no viene simpleCategory del frontend, determinarla a partir del eventType
     const resolvedCategory = simpleCategory || getGuardianSimpleCategory(eventType);
