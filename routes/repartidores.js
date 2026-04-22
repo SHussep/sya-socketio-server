@@ -136,8 +136,17 @@ module.exports = (pool, io) => {
                         COUNT(rr.id) as return_count
                     FROM repartidor_returns rr
                     INNER JOIN repartidor_assignments ra ON rr.assignment_id = ra.id
+                    LEFT JOIN shifts rs ON ra.repartidor_shift_id = rs.id
                     WHERE rr.tenant_id = $1
             `;
+
+            // ✅ FIX: aplicar el mismo filtro only_open_shifts a las devoluciones.
+            // Sin esto, el Resumen de Reparto muestra devoluciones históricas de turnos
+            // cerrados (QA-10 F7.2 — Gerardo abre un turno nuevo con 1 pz devuelta pero
+            // la UI mostraba 14 pz porque sumaba QA-08 previo).
+            if (only_open_shifts === 'true') {
+                query += ` AND (rs.id IS NULL OR rs.is_cash_cut_open = true)`;
+            }
 
             // Repetir filtros para returns (usando los mismos índices de params)
             let returnsParamIndex = 2;
