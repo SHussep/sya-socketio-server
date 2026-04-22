@@ -449,7 +449,18 @@ function createRepartidorAssignmentRoutes(io) {
       // ON CONFLICT: Permite updates de datos si el registro NO está liquidado
       // Si ya está liquidado, solo se actualizan campos de pago (para correcciones post-liquidación)
       // RETURNING xmax=0 indica INSERT nuevo, xmax>0 indica UPDATE de registro existente
+      // ✅ RACE-SAFE: CTE `locked_prev` bloquea la fila con FOR UPDATE dentro del mismo
+      //    statement del UPSERT. Si dos requests concurrentes llegan con el mismo global_id
+      //    (SyncImmediately + ciclo periódico sin lock, doble-tap, retry), la segunda
+      //    espera a que la primera commitee y lee el qty/status actualizado → delta=0 y no
+      //    duplica el ajuste de inventario (descarga/restore).
       const query = `
+        WITH locked_prev AS (
+          SELECT assigned_quantity AS prev_qty, status AS prev_status
+          FROM repartidor_assignments
+          WHERE global_id = $16::uuid
+          FOR UPDATE
+        )
         INSERT INTO repartidor_assignments (
           tenant_id, branch_id, venta_id, employee_id,
           created_by_employee_id, shift_id, repartidor_shift_id,
@@ -529,7 +540,9 @@ function createRepartidorAssignmentRoutes(io) {
             -- Batch grouping
             batch_global_id = COALESCE(EXCLUDED.batch_global_id, repartidor_assignments.batch_global_id),
             updated_at = NOW()
-        RETURNING *, (xmax = 0) AS inserted
+        RETURNING *, (xmax = 0) AS inserted,
+          (SELECT prev_qty FROM locked_prev) AS locked_prev_qty,
+          (SELECT prev_status FROM locked_prev) AS locked_prev_status
       `;
 
       const result = await pool.query(query, [
@@ -583,6 +596,18 @@ function createRepartidorAssignmentRoutes(io) {
 
       const assignment = result.rows[0];
       const wasInserted = assignment.inserted; // true = nueva asignación, false = actualización
+
+      // ✅ RACE-SAFE: Sobreescribir previousQuantity/previousStatus con los valores capturados
+      // ATÓMICAMENTE por el CTE `locked_prev` (SELECT FOR UPDATE dentro del mismo statement del
+      // UPSERT). Esto cierra la ventana de carrera entre el prevCheck() y el UPSERT: si llega
+      // una segunda request concurrente con el mismo global_id, bloquea en el FOR UPDATE hasta
+      // que la primera commitee, luego lee qty post-update → delta=0, no duplica inventario.
+      if (assignment.locked_prev_qty !== null && assignment.locked_prev_qty !== undefined) {
+        previousQuantity = parseFloat(assignment.locked_prev_qty);
+      }
+      if (assignment.locked_prev_status !== null && assignment.locked_prev_status !== undefined) {
+        previousStatus = assignment.locked_prev_status;
+      }
 
       // Log para diagnosticar: verificar que assigned_quantity no se corrompió con NaN
       if (status === 'cancelled' && !wasInserted) {
