@@ -38,12 +38,13 @@ module.exports = (pool) => {
                 employeeId: employeeIdLegacy,
                 employeeGlobalId,
                 branchId,
-                isActive = true
+                isActive = true,
+                globalId: assignmentGlobalId  // ← NUEVO: UUID de la fila EmployeeBranch generado por el desktop
             } = req.body;
 
             const idShown = employeeGlobalId || employeeIdLegacy;
             console.log(`[EmployeeBranches/Sync] 🔄 [INCOMING POST] Payload completo: ${JSON.stringify(req.body)}`);
-            console.log(`[EmployeeBranches/Sync] 🔄 Sincronizando: Empleado ${idShown} → Sucursal ${branchId} (Tenant: ${tenantId}, isActive=${isActive})`);
+            console.log(`[EmployeeBranches/Sync] 🔄 Sincronizando: Empleado ${idShown} → Sucursal ${branchId} (Tenant: ${tenantId}, isActive=${isActive}, globalId=${assignmentGlobalId ?? 'none'})`);
 
             // Validate required fields
             if (!tenantId || (!employeeGlobalId && !employeeIdLegacy) || !branchId) {
@@ -99,30 +100,56 @@ module.exports = (pool) => {
                 });
             }
 
-            // Check if relationship already exists
-            const existingResult = await client.query(
-                `SELECT id FROM employee_branches
-                 WHERE tenant_id = $1 AND employee_id = $2 AND branch_id = $3`,
-                [tenantId, employeeId, branchId]
-            );
+            // ═════════════════════════════════════════════════════════════
+            // RESOLUCIÓN DE IDEMPOTENCIA
+            // 1. Si viene globalId → buscar por global_id (prioridad).
+            // 2. Si no viene, fallback a llave natural (tenant, emp, branch)
+            //    para compatibilidad con clientes antiguos que aún no envían globalId.
+            // Si se encuentra por llave natural pero no tiene global_id en PG,
+            // populamos el global_id recibido (o generamos uno) para reconciliar.
+            // ═════════════════════════════════════════════════════════════
+            let existingResult;
+            if (assignmentGlobalId) {
+                existingResult = await client.query(
+                    `SELECT id, global_id FROM employee_branches WHERE global_id = $1`,
+                    [assignmentGlobalId]
+                );
+            } else {
+                existingResult = { rows: [] };
+            }
+
+            if (existingResult.rows.length === 0) {
+                // Fallback a llave natural
+                existingResult = await client.query(
+                    `SELECT id, global_id FROM employee_branches
+                     WHERE tenant_id = $1 AND employee_id = $2 AND branch_id = $3`,
+                    [tenantId, employeeId, branchId]
+                );
+            }
 
             if (existingResult.rows.length > 0) {
                 // Update existing relationship
                 const existingId = existingResult.rows[0].id;
-                console.log(`[EmployeeBranches/Sync] ⚠️ Relación ya existe (ID: ${existingId}), actualizando...`);
+                const existingGlobalId = existingResult.rows[0].global_id;
+                console.log(`[EmployeeBranches/Sync] ⚠️ Relación ya existe (ID: ${existingId}, global_id=${existingGlobalId}), actualizando...`);
+
+                // Reconciliar global_id: si PG no tiene y el cliente sí → adoptar el del cliente
+                // Si PG tiene uno distinto al que envía el cliente → conservar el de PG (el cliente ajusta)
+                const globalIdToPersist = existingGlobalId || assignmentGlobalId || null;
 
                 const updateResult = await client.query(
                     `UPDATE employee_branches
                      SET removed_at = CASE WHEN $1 = false THEN NOW() ELSE NULL END,
+                         global_id = COALESCE(global_id, $3),
                          updated_at = NOW()
                      WHERE id = $2
-                     RETURNING id, tenant_id, employee_id, branch_id, assigned_at, removed_at, updated_at`,
-                    [isActive, existingId]
+                     RETURNING id, tenant_id, employee_id, branch_id, global_id, assigned_at, removed_at, updated_at`,
+                    [isActive, existingId, globalIdToPersist]
                 );
 
                 if (updateResult.rows.length > 0) {
                     const relationship = updateResult.rows[0];
-                    console.log(`[EmployeeBranches/Sync] ✅ Relación actualizada: Empleado ${employeeId} en Sucursal ${branchId}`);
+                    console.log(`[EmployeeBranches/Sync] ✅ Relación actualizada: Empleado ${employeeId} en Sucursal ${branchId} (global_id=${relationship.global_id})`);
 
                     // Notificar a la sucursal afectada via Socket.IO
                     emitBranchAssignmentEvent(req, employeeId, branchId, isActive, 'updated');
@@ -131,25 +158,26 @@ module.exports = (pool) => {
                         success: true,
                         data: relationship,
                         id: relationship.id,
-                        remoteId: relationship.id
+                        remoteId: relationship.id,
+                        globalId: relationship.global_id
                     });
                 }
             }
 
             // Create new relationship
-            console.log(`[EmployeeBranches/Sync] 📝 Creando nueva relación: Empleado ${employeeId} → Sucursal ${branchId}`);
+            console.log(`[EmployeeBranches/Sync] 📝 Creando nueva relación: Empleado ${employeeId} → Sucursal ${branchId} (global_id=${assignmentGlobalId ?? '(auto)'})`);
 
             const insertResult = await client.query(
                 `INSERT INTO employee_branches
-                 (tenant_id, employee_id, branch_id, assigned_at, removed_at, updated_at)
-                 VALUES ($1, $2, $3, NOW(), CASE WHEN $4 = false THEN NOW() ELSE NULL END, NOW())
-                 RETURNING id, tenant_id, employee_id, branch_id, assigned_at, removed_at, updated_at`,
-                [tenantId, employeeId, branchId, isActive]
+                 (tenant_id, employee_id, branch_id, global_id, assigned_at, removed_at, updated_at)
+                 VALUES ($1, $2, $3, COALESCE($5, gen_random_uuid()), NOW(), CASE WHEN $4 = false THEN NOW() ELSE NULL END, NOW())
+                 RETURNING id, tenant_id, employee_id, branch_id, global_id, assigned_at, removed_at, updated_at`,
+                [tenantId, employeeId, branchId, isActive, assignmentGlobalId || null]
             );
 
             if (insertResult.rows.length > 0) {
                 const relationship = insertResult.rows[0];
-                console.log(`[EmployeeBranches/Sync] ✅ Relación creada: Empleado ${employeeId} en Sucursal ${branchId} (ID: ${relationship.id})`);
+                console.log(`[EmployeeBranches/Sync] ✅ Relación creada: Empleado ${employeeId} en Sucursal ${branchId} (ID: ${relationship.id}, global_id=${relationship.global_id})`);
 
                 // Notificar a la sucursal afectada via Socket.IO
                 emitBranchAssignmentEvent(req, employeeId, branchId, isActive, 'assigned');
@@ -158,7 +186,8 @@ module.exports = (pool) => {
                     success: true,
                     data: relationship,
                     id: relationship.id,
-                    remoteId: relationship.id
+                    remoteId: relationship.id,
+                    globalId: relationship.global_id
                 });
             }
 
@@ -198,7 +227,7 @@ module.exports = (pool) => {
 
             let query = `
                 SELECT eb.id, eb.tenant_id, eb.employee_id, eb.branch_id,
-                       eb.assigned_at, eb.removed_at, eb.updated_at,
+                       eb.global_id, eb.assigned_at, eb.removed_at, eb.updated_at,
                        (eb.removed_at IS NULL) as is_active,
                        b.name as branch_name, b.branch_code as branch_code,
                        e.global_id as employee_global_id,

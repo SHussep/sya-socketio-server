@@ -144,17 +144,23 @@ CREATE INDEX IF NOT EXISTS idx_employees_email ON employees(email);
 CREATE INDEX IF NOT EXISTS idx_employees_global_id ON employees(global_id);
 
 -- employee_branches (empleados asignados a sucursales)
+-- global_id: idempotencia offline-first — el desktop genera UUID localmente
+-- al crear la fila. Server resuelve primero por global_id, fallback a la
+-- llave natural (tenant, emp, branch) para filas antiguas sin global_id.
 CREATE TABLE IF NOT EXISTS employee_branches (
     id SERIAL PRIMARY KEY,
     tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
     branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+    global_id UUID UNIQUE NOT NULL DEFAULT gen_random_uuid(),
     assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     removed_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(tenant_id, employee_id, branch_id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_employee_branches_global_id ON employee_branches(global_id);
 
 -- device_tokens (tokens FCM para notificaciones push)
 CREATE TABLE IF NOT EXISTS device_tokens (
