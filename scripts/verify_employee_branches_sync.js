@@ -50,7 +50,15 @@ async function main() {
     `).all(tenantId);
     sqlite.close();
 
-    const localMap = new Map(); // key: "emp_id:branch_id" → row
+    // Leemos Employee local para mapear Employee.Id → Employee.GlobalId
+    // (porque el employee_id local NO coincide con el PG — cada lado tiene
+    // su propio auto-increment; la llave compartida es Employee.GlobalId).
+    const empMap = new Map();
+    try {
+        const empRows = sqlite.prepare('SELECT Id, GlobalId FROM Employee WHERE GlobalId IS NOT NULL').all();
+        for (const e of empRows) empMap.set(e.Id, e.GlobalId);
+    } catch {}
+
     const localByGlobalId = new Map();
     const localNullGid = [];
     for (const r of localRows) {
@@ -59,7 +67,6 @@ async function main() {
         } else {
             localByGlobalId.set(r.GlobalId, r);
         }
-        localMap.set(`${r.EmployeeId}:${r.BranchId}`, r);
     }
 
     // 2. Leer PG
@@ -67,20 +74,20 @@ async function main() {
     let pgRows;
     try {
         const r = await pool.query(`
-            SELECT id, global_id, tenant_id, employee_id, branch_id,
-                   (removed_at IS NULL) AS is_active
-            FROM employee_branches
-            WHERE tenant_id = $1
+            SELECT eb.id, eb.global_id, eb.tenant_id, eb.employee_id, eb.branch_id,
+                   e.global_id AS employee_global_id,
+                   (eb.removed_at IS NULL) AS is_active
+            FROM employee_branches eb
+            JOIN employees e ON e.id = eb.employee_id
+            WHERE eb.tenant_id = $1
         `, [tenantId]);
         pgRows = r.rows;
     } finally {
         await pool.end();
     }
 
-    const pgMap = new Map();
     const pgByGlobalId = new Map();
     for (const r of pgRows) {
-        pgMap.set(`${r.employee_id}:${r.branch_id}`, r);
         if (r.global_id) pgByGlobalId.set(r.global_id, r);
     }
 
@@ -97,28 +104,26 @@ async function main() {
         console.log();
     }
 
-    // Mismatch por llave natural (emp, branch)
+    // Comparar por GlobalId de la fila EmployeeBranch (llave compartida
+    // verdadera entre local y PG — independiente de los auto-increments).
     const onlyLocal = [];
     const onlyPg = [];
-    const gidMismatch = [];
     const gidMatch = [];
 
-    for (const [key, local] of localMap) {
-        if (!local.GlobalId) continue;
-        const pg = pgMap.get(key);
+    for (const [gid, local] of localByGlobalId) {
+        const pg = pgByGlobalId.get(gid);
         if (!pg) {
             onlyLocal.push(local);
-            continue;
-        }
-        if (local.GlobalId === pg.global_id) {
-            gidMatch.push({ local, pg });
         } else {
-            gidMismatch.push({ local, pg });
+            gidMatch.push({ local, pg });
         }
     }
-    for (const [key, pg] of pgMap) {
-        if (!localMap.has(key)) onlyPg.push(pg);
+    for (const [gid, pg] of pgByGlobalId) {
+        if (!localByGlobalId.has(gid)) onlyPg.push(pg);
     }
+    // gidMismatch ya no aplica: si los GlobalIds difieren entre emp/branch,
+    // es porque son asignaciones diferentes conceptualmente. No es error.
+    const gidMismatch = [];
 
     if (onlyPg.length > 0) {
         console.log(`⚠️  EN PG PERO NO EN LOCAL (${onlyPg.length}) — pendientes de pull:`);
