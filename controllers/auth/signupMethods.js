@@ -267,8 +267,8 @@ module.exports = {
 
             await client.query(`
                 INSERT INTO employee_branches (
-                    tenant_id, employee_id, branch_id
-                ) VALUES ($1, $2, $3)
+                    tenant_id, employee_id, branch_id, global_id
+                ) VALUES ($1, $2, $3, gen_random_uuid())
             `, [tenant.id, employee.id, branch.id]);
 
             const genericCustomerResult = await client.query(

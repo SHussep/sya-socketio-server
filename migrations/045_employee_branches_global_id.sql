@@ -25,6 +25,12 @@ UPDATE employee_branches SET global_id = gen_random_uuid() WHERE global_id IS NU
 -- Enforce NOT NULL y UNIQUE después del backfill.
 ALTER TABLE employee_branches ALTER COLUMN global_id SET NOT NULL;
 
+-- DEFAULT gen_random_uuid() como safety net: cualquier INSERT (legacy o nuevo)
+-- que no provea global_id recibe uno válido automáticamente. Evita violaciones
+-- de NOT NULL en paths server-side que aún no fueron migrados para pasarlo
+-- explícitamente (ej. googleSignup, joinBranch, etc).
+ALTER TABLE employee_branches ALTER COLUMN global_id SET DEFAULT gen_random_uuid();
+
 -- UNIQUE constraint + index (IF NOT EXISTS-safe pattern).
 DO $$
 BEGIN
