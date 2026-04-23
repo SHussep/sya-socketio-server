@@ -265,11 +265,14 @@ module.exports = {
 
             console.log(`[Google Signup] ✅ Employee creado: ${employee.email} (ID: ${employee.id}, RoleId: ${employee.role_id})`);
 
-            await client.query(`
+            const employeeBranchResult = await client.query(`
                 INSERT INTO employee_branches (
                     tenant_id, employee_id, branch_id, global_id
                 ) VALUES ($1, $2, $3, gen_random_uuid())
+                RETURNING id, global_id
             `, [tenant.id, employee.id, branch.id]);
+            const employeeBranch = employeeBranchResult.rows[0];
+            console.log(`[Google Signup] ✅ EmployeeBranch creado: ID=${employeeBranch.id}, GlobalId=${employeeBranch.global_id}`);
 
             const genericCustomerResult = await client.query(
                 'SELECT get_or_create_generic_customer($1, $2) as customer_id',
@@ -471,6 +474,12 @@ Este backup inicial está vacío y se actualizará con el primer respaldo real d
                     id: branch.id,
                     branchCode: branch.branch_code,
                     name: branch.name
+                },
+                // Permite al desktop guardar el mismo UUID que PG — evita un ciclo de
+                // reconciliación en el primer sync tras el registro.
+                employeeBranch: {
+                    id: employeeBranch.id,
+                    globalId: employeeBranch.global_id
                 }
             });
 
