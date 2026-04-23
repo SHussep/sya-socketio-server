@@ -42,7 +42,8 @@ module.exports = (pool) => {
             } = req.body;
 
             const idShown = employeeGlobalId || employeeIdLegacy;
-            console.log(`[EmployeeBranches/Sync] 🔄 Sincronizando: Empleado ${idShown} → Sucursal ${branchId} (Tenant: ${tenantId})`);
+            console.log(`[EmployeeBranches/Sync] 🔄 [INCOMING POST] Payload completo: ${JSON.stringify(req.body)}`);
+            console.log(`[EmployeeBranches/Sync] 🔄 Sincronizando: Empleado ${idShown} → Sucursal ${branchId} (Tenant: ${tenantId}, isActive=${isActive})`);
 
             // Validate required fields
             if (!tenantId || (!employeeGlobalId && !employeeIdLegacy) || !branchId) {
@@ -186,6 +187,8 @@ module.exports = (pool) => {
         try {
             const { tenantId, employeeId } = req.query;
 
+            console.log(`[EmployeeBranches/GET] 🔍 Query: tenantId=${tenantId} employeeId=${employeeId ?? '(all)'}`);
+
             if (!tenantId) {
                 return res.status(400).json({
                     success: false,
@@ -198,7 +201,8 @@ module.exports = (pool) => {
                        eb.assigned_at, eb.removed_at, eb.updated_at,
                        (eb.removed_at IS NULL) as is_active,
                        b.name as branch_name, b.branch_code as branch_code,
-                       e.global_id as employee_global_id
+                       e.global_id as employee_global_id,
+                       e.first_name, e.last_name
                 FROM employee_branches eb
                 JOIN branches b ON b.id = eb.branch_id
                 JOIN employees e ON e.id = eb.employee_id
@@ -211,9 +215,14 @@ module.exports = (pool) => {
                 params.push(employeeId);
             }
 
-            query += ` ORDER BY b.name ASC`;
+            query += ` ORDER BY e.id, b.name ASC`;
 
             const result = await pool.query(query, params);
+
+            console.log(`[EmployeeBranches/GET] 🔍 ${result.rows.length} filas devueltas:`);
+            for (const row of result.rows) {
+                console.log(`[EmployeeBranches/GET]    emp_id=${row.employee_id} (${row.first_name} ${row.last_name}) → branch_id=${row.branch_id} (${row.branch_name}) is_active=${row.is_active} removed_at=${row.removed_at ?? 'null'}`);
+            }
 
             res.json({
                 success: true,
