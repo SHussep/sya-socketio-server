@@ -1567,21 +1567,33 @@ module.exports = (pool, io) => {
             }
 
             // 🧹 Auto-cerrar TODOS los turnos previos del empleado en CUALQUIER sucursal
-            // (excepto el que estamos sincronizando, identificado por local_shift_id)
+            // (excepto el que estamos sincronizando, identificado por la combinación
+            // branch_id + local_shift_id).
+            //
+            // BUG HISTÓRICO (resuelto): el filtro usaba SOLO local_shift_id, pero cada
+            // desktop tiene su propia SQLite con autoincrement independiente. Dos desktops
+            // de sucursales distintas pueden generar local_shift_id=1 para sus primeros
+            // turnos, y el filtro dejaba vivo al otro. Resultado: 2 shifts abiertos en
+            // distintas sucursales para el mismo empleado (tenant 90, Gerardo en 121 + 122
+            // simultáneamente, ambos con end_time IS NULL). Composite key arregla esto.
             const staleShifts = await pool.query(
                 `SELECT id, branch_id, local_shift_id, start_time FROM shifts
                  WHERE tenant_id = $1 AND employee_id = $2 AND is_cash_cut_open = true
-                 AND (local_shift_id IS NULL OR local_shift_id != $3)`,
-                [tenantId, employeeId, localShiftId || 0]
+                 AND (local_shift_id IS NULL
+                      OR branch_id != $3
+                      OR local_shift_id != $4)`,
+                [tenantId, employeeId, branchId, localShiftId || 0]
             );
 
             if (staleShifts.rows.length > 0) {
                 const autoCloseResult = await pool.query(
                     `UPDATE shifts SET end_time = CURRENT_TIMESTAMP, is_cash_cut_open = false, updated_at = NOW()
                      WHERE tenant_id = $1 AND employee_id = $2 AND is_cash_cut_open = true
-                     AND (local_shift_id IS NULL OR local_shift_id != $3)
+                     AND (local_shift_id IS NULL
+                          OR branch_id != $3
+                          OR local_shift_id != $4)
                      RETURNING id, branch_id`,
-                    [tenantId, employeeId, localShiftId || 0]
+                    [tenantId, employeeId, branchId, localShiftId || 0]
                 );
                 console.log(`[Sync/Shifts] 🧹 Auto-cerrados ${autoCloseResult.rows.length} turnos huérfanos: ${autoCloseResult.rows.map(r => `ID ${r.id} (branch ${r.branch_id})`).join(', ')}`);
             }
