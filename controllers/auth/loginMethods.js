@@ -172,6 +172,17 @@ module.exports = {
             const daysRemaining = trialEndsAt ? Math.ceil((trialEndsAt - now) / (1000 * 60 * 60 * 24)) : null;
             console.log(`[Desktop Login] Licencia válida. Días restantes: ${daysRemaining || 'ilimitado'}`);
 
+            // Licencias de sucursal (para que el cliente sepa si puede crear más)
+            const licensesResult = await this.pool.query(`
+                SELECT
+                    COUNT(*) FILTER (WHERE status IN ('available', 'active')) as total_licenses,
+                    COUNT(*) FILTER (WHERE status = 'active') as used_licenses,
+                    COUNT(*) FILTER (WHERE status = 'available') as available_licenses
+                FROM branch_licenses
+                WHERE tenant_id = $1
+            `, [tenant.id]);
+            const licenseInfo = licensesResult.rows[0];
+
             // Query simplificado - sin columnas de permisos que pueden no existir
             const branchesResult = await this.pool.query(`
                 SELECT b.*
@@ -279,7 +290,14 @@ module.exports = {
                         id: b.id,
                         code: b.branch_code,
                         name: b.name
-                    }))
+                    })),
+                    planLimits: {
+                        maxBranches: parseInt(licenseInfo?.total_licenses, 10) || 1,
+                        usedBranches: parseInt(licenseInfo?.used_licenses, 10) || 0,
+                        availableBranches: parseInt(licenseInfo?.available_licenses, 10) || 0,
+                        maxEmployees: tenant.max_employees,
+                        maxDevicesPerBranch: tenant.max_devices_per_branch
+                    }
                 }
             });
 
