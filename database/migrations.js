@@ -3534,6 +3534,20 @@ async function runMigrations() {
                 console.log('[Schema] ⚠️ Migration 056 (use_pin_login):', m056err.message);
             }
 
+            // ── Migration 057 (2026-04-23): bubble login como DEFAULT ──
+            // bf4fe65 hizo bubble login el flujo principal del desktop. PG seguía con
+            // default=false lo cual sobrescribía la preferencia local al sincronizar.
+            // Ahora default=true; branches existentes se resetean a true para aplicar
+            // la nueva política uniforme. Usuarios que deseen classic apagan el toggle
+            // desde Settings (persiste false solo vía acción explícita).
+            try {
+                await client.query(`ALTER TABLE branches ALTER COLUMN use_pin_login SET DEFAULT true;`);
+                const upd = await client.query(`UPDATE branches SET use_pin_login = true WHERE use_pin_login IS DISTINCT FROM true;`);
+                console.log(`[Schema] ✅ Migration 057 (2026-04-23): use_pin_login default=true, ${upd.rowCount} branches actualizados`);
+            } catch (m057err) {
+                console.log('[Schema] ⚠️ Migration 057 (bubble default):', m057err.message);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {
