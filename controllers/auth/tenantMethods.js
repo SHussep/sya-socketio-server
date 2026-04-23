@@ -542,7 +542,7 @@ module.exports = {
             });
         }
 
-        const { name, address, timezone } = req.body;
+        const { name, address, timezone, phone } = req.body;
 
         if (!name) {
             return res.status(400).json({
@@ -605,10 +605,10 @@ module.exports = {
             const branchCode = `B${tenantId}S${branchCount + 1}`;
 
             const newBranchResult = await client.query(`
-                INSERT INTO branches (tenant_id, branch_code, name, address, timezone)
-                VALUES ($1, $2, $3, $4, $5)
-                RETURNING id, branch_code, name, address, timezone, created_at
-            `, [tenantId, branchCode, name, address, timezone || 'America/Mexico_City']);
+                INSERT INTO branches (tenant_id, branch_code, name, address, timezone, phone)
+                VALUES ($1, $2, $3, $4, $5, $6)
+                RETURNING id, branch_code, name, address, timezone, phone, created_at
+            `, [tenantId, branchCode, name, address, timezone || 'America/Mexico_City', phone || null]);
 
             const newBranch = newBranchResult.rows[0];
 
