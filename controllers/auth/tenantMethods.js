@@ -624,13 +624,24 @@ module.exports = {
                 [tenantId]
             );
 
+            // Owner EmployeeBranch: devolvemos su global_id para que el desktop lo use
+            // en SQLite (evita el ciclo de reconciliación del primer sync en nueva sucursal).
+            let ownerEmployeeBranch = null;
             if (ownerResult.rows.length > 0) {
                 const ownerId = ownerResult.rows[0].id;
-                await client.query(`
-                    INSERT INTO employee_branches (tenant_id, employee_id, branch_id)
-                    VALUES ($1, $2, $3)
-                    ON CONFLICT DO NOTHING
+                const ebResult = await client.query(`
+                    INSERT INTO employee_branches (tenant_id, employee_id, branch_id, global_id)
+                    VALUES ($1, $2, $3, gen_random_uuid())
+                    ON CONFLICT (tenant_id, employee_id, branch_id) DO UPDATE
+                        SET removed_at = NULL, updated_at = NOW()
+                    RETURNING id, global_id
                 `, [tenantId, ownerId, newBranch.id]);
+                if (ebResult.rows.length > 0) {
+                    ownerEmployeeBranch = {
+                        id: ebResult.rows[0].id,
+                        globalId: ebResult.rows[0].global_id
+                    };
+                }
             }
 
             const genericCustomerResult = await client.query(
@@ -641,12 +652,13 @@ module.exports = {
 
             await client.query('COMMIT');
 
-            console.log(`[Create Branch] ✅ Sucursal creada: ${newBranch.name} (${newBranch.branch_code})`);
+            console.log(`[Create Branch] ✅ Sucursal creada: ${newBranch.name} (${newBranch.branch_code}) + owner EmployeeBranch globalId=${ownerEmployeeBranch?.globalId ?? 'skipped'}`);
 
             res.status(201).json({
                 success: true,
                 message: 'Sucursal creada exitosamente',
-                branch: newBranch
+                branch: newBranch,
+                ownerEmployeeBranch  // globalId del EB del owner para que el desktop lo adopte
             });
 
         } catch (error) {
