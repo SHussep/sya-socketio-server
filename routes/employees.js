@@ -1484,7 +1484,8 @@ module.exports = (pool) => {
                 passwordUpdatedAt,    // ✅ Nuevo: timestamp del cambio de contraseña
                 emailVerified,        // ✅ Nuevo: sincronizar estado de verificación de email
                 profilePhotoUrl,      // ✅ Nuevo: actualizar foto de perfil desde mobile/desktop
-                mapIcon               // Map marker icon for GPS tracking (Material Icons name)
+                mapIcon,              // Map marker icon for GPS tracking (Material Icons name)
+                pin_hash              // ✅ Nuevo: PIN hash BCrypt para bubble login (safety net — el push principal es vía /api/employees/:id/pin)
             } = req.body;
 
             console.log(`[Employees/Update] 🔄 [UPDATE RECIBIDO] Actualizando empleado ID: ${employeeId}`);
@@ -1775,6 +1776,16 @@ module.exports = (pool) => {
                 params.push(profilePhotoUrl);
                 paramIndex++;
                 console.log(`[Employees/Update] 📷 Actualizando profile_photo_url para empleado ${employeeId}`);
+            }
+
+            // ✅ PIN hash (safety net). El push principal del PIN es POST /api/employees/:id/pin
+            // que valida permisos finos. Este UPDATE solo aplica si el cliente envía pin_hash
+            // pre-hasheado (Desktop usa BCrypt local). Null se ignora (no borra accidentalmente).
+            if (pin_hash !== undefined && pin_hash !== null && pin_hash.length > 0) {
+                updates.push(`pin_hash = $${paramIndex}`);
+                params.push(pin_hash);
+                paramIndex++;
+                console.log(`[Employees/Update] 🔢 Actualizando pin_hash para empleado ${employeeId}`);
             }
 
             // Map icon for GPS tracking markers
