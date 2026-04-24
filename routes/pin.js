@@ -23,25 +23,34 @@ module.exports = (pool) => {
                 });
             }
 
-            // Verify target employee exists and belongs to same tenant
+            // Verify target employee exists and belongs to same tenant (incluye pin_hash)
             const empResult = await pool.query(
-                'SELECT id, tenant_id FROM employees WHERE id = $1 AND tenant_id = $2 AND is_active = true',
+                'SELECT id, tenant_id, pin_hash FROM employees WHERE id = $1 AND tenant_id = $2 AND is_active = true',
                 [targetId, tenantId]
             );
             if (empResult.rows.length === 0) {
                 return res.status(404).json({ success: false, message: 'Empleado no encontrado' });
             }
+            const targetHasPin = !!empResult.rows[0].pin_hash;
 
-            // Query caller's is_owner from DB (not in JWT yet)
-            const callerResult = await pool.query(
-                'SELECT is_owner FROM employees WHERE id = $1 AND tenant_id = $2 AND is_active = true',
-                [callerId, tenantId]
-            );
-            const callerIsOwner = callerResult.rows[0]?.is_owner;
+            // Caller is_owner: JWT primero, fallback a DB
+            let callerIsOwner = req.user.is_owner === true;
+            if (!callerIsOwner) {
+                const callerResult = await pool.query(
+                    'SELECT is_owner FROM employees WHERE id = $1 AND tenant_id = $2 AND is_active = true',
+                    [callerId, tenantId]
+                );
+                callerIsOwner = callerResult.rows[0]?.is_owner === true;
+                console.log(`[PIN] 🔍 is_owner DB fallback para caller ${callerId}: ${callerIsOwner}`);
+            }
 
-            // Authorization: only self or owner can set PIN
-            if (targetId !== callerId && !callerIsOwner) {
+            // Authorization: self, owner, o first-time setup (empleado sin PIN previo)
+            const isFirstTimeSetup = !targetHasPin;
+            if (targetId !== callerId && !callerIsOwner && !isFirstTimeSetup) {
                 return res.status(403).json({ success: false, message: 'Solo el propietario puede cambiar el PIN de otro empleado' });
+            }
+            if (isFirstTimeSetup && targetId !== callerId && !callerIsOwner) {
+                console.log(`[PIN] 🆕 First-time PIN setup: caller ${callerId} configurando PIN de empleado ${targetId}`);
             }
 
             const pinHash = await bcrypt.hash(pin, 12);
@@ -80,26 +89,39 @@ module.exports = (pool) => {
                 });
             }
 
-            // Resolver employee por globalId
+            // Resolver employee por globalId (incluye pin_hash para detectar first-time setup)
             const empResult = await pool.query(
-                'SELECT id, tenant_id FROM employees WHERE global_id = $1 AND tenant_id = $2 AND is_active = true',
+                'SELECT id, tenant_id, pin_hash FROM employees WHERE global_id = $1 AND tenant_id = $2 AND is_active = true',
                 [targetGlobalId, tenantId]
             );
             if (empResult.rows.length === 0) {
                 return res.status(404).json({ success: false, message: 'Empleado no encontrado por globalId' });
             }
             const targetId = empResult.rows[0].id;
+            const targetHasPin = !!empResult.rows[0].pin_hash;
 
-            // Caller is_owner check
-            const callerResult = await pool.query(
-                'SELECT is_owner FROM employees WHERE id = $1 AND tenant_id = $2 AND is_active = true',
-                [callerId, tenantId]
-            );
-            const callerIsOwner = callerResult.rows[0]?.is_owner;
+            // Caller is_owner: JWT claim primero, fallback a DB (JWTs viejos pueden no tenerlo)
+            let callerIsOwner = req.user.is_owner === true;
+            if (!callerIsOwner) {
+                const callerResult = await pool.query(
+                    'SELECT is_owner FROM employees WHERE id = $1 AND tenant_id = $2 AND is_active = true',
+                    [callerId, tenantId]
+                );
+                callerIsOwner = callerResult.rows[0]?.is_owner === true;
+                console.log(`[PIN/GlobalId] 🔍 is_owner DB fallback para caller ${callerId}: ${callerIsOwner}`);
+            }
 
-            // Authorization: only self or owner can set PIN
-            if (targetId !== callerId && !callerIsOwner) {
+            // Authorization:
+            //   (a) Self: targetId === callerId
+            //   (b) Owner: callerIsOwner
+            //   (c) First-time setup: empleado sin PIN previo → cualquier caller autenticado
+            //       del mismo tenant puede establecerlo (bubble login "PIN offer" flow)
+            const isFirstTimeSetup = !targetHasPin;
+            if (targetId !== callerId && !callerIsOwner && !isFirstTimeSetup) {
                 return res.status(403).json({ success: false, message: 'Solo el propietario puede cambiar el PIN de otro empleado' });
+            }
+            if (isFirstTimeSetup && targetId !== callerId && !callerIsOwner) {
+                console.log(`[PIN/GlobalId] 🆕 First-time PIN setup: caller ${callerId} configurando PIN de empleado ${targetId} (sin PIN previo)`);
             }
 
             const pinHash = await bcrypt.hash(pin, 12);
