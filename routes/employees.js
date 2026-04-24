@@ -125,6 +125,7 @@ module.exports = (pool) => {
                 password,  // Plain text from mobile, BCrypt hash from Desktop
                 roleId,
                 roleName,  // Fallback: Desktop envía nombre del rol para resolver si roleId local no mapea
+                role_global_id,  // ✅ PRIORITARIO: UUID estable del rol (preferido sobre roleId/roleName)
                 isActive,
                 isOwner,
                 mainBranchId,
@@ -182,10 +183,29 @@ module.exports = (pool) => {
 
             // Validar que el rol exista en la base de datos para este tenant
             // Y obtener su mobile_access_type directamente de la tabla roles
-            let mappedRoleId = roleId;
+            //
+            // ✅ RESOLUCIÓN TIERED (preferencia: GlobalId > roleId > roleName):
+            //   1) role_global_id (UUID estable) — nunca cambia aunque PG se restaure
+            //   2) roleId (numérico de PG cacheado) — puede estar stale
+            //   3) roleName (string) — último fallback para roles legacy
+            let mappedRoleId = null;
             let roleMobileAccessType = 'none';
 
-            if (roleId) {
+            // Tier 1: intentar por role_global_id (prioritario)
+            if (role_global_id) {
+                const roleByGlobalId = await client.query(
+                    `SELECT id, name, mobile_access_type FROM roles WHERE global_id = $1 AND (tenant_id = $2 OR tenant_id IS NULL) LIMIT 1`,
+                    [role_global_id, tenantId]
+                );
+                if (roleByGlobalId.rows.length > 0) {
+                    mappedRoleId = roleByGlobalId.rows[0].id;
+                    roleMobileAccessType = roleByGlobalId.rows[0].mobile_access_type || 'none';
+                    console.log(`[Employees/Sync] 🔗 Rol resuelto por role_global_id: ${role_global_id} → ID ${mappedRoleId} (${roleByGlobalId.rows[0].name})`);
+                }
+            }
+
+            // Tier 2 & 3: si GlobalId no resolvió, caer a lógica original (roleId + roleName fallback)
+            if (mappedRoleId === null && roleId) {
                 const roleCheck = await client.query(
                     `SELECT id, name, mobile_access_type FROM roles WHERE id = $1 AND (tenant_id = $2 OR tenant_id IS NULL)`,
                     [roleId, tenantId]
@@ -1012,10 +1032,11 @@ module.exports = (pool) => {
             );
 
             let roleId;
+            let authoritativeGlobalId = global_id;  // ← valor que retornaremos al desktop
             let isNew = false;
 
             if (existingByGlobalId.rows.length > 0) {
-                // Actualizar rol existente
+                // Actualizar rol existente (match directo por global_id)
                 roleId = existingByGlobalId.rows[0].id;
                 console.log(`[Roles/Sync] 🔄 Actualizando rol existente ID: ${roleId}`);
 
@@ -1031,26 +1052,28 @@ module.exports = (pool) => {
             } else {
                 // Verificar si ya existe un rol con el mismo nombre para este tenant
                 const existingByName = await client.query(
-                    `SELECT id FROM roles WHERE tenant_id = $1 AND name = $2`,
+                    `SELECT id, global_id FROM roles WHERE tenant_id = $1 AND name = $2`,
                     [tenantId, name]
                 );
 
                 if (existingByName.rows.length > 0) {
-                    // Ya existe con ese nombre, actualizar global_id
+                    // Rol existe por nombre pero su global_id difiere del que manda el desktop.
+                    // ✅ PG es autoritativo: NO sobrescribimos su global_id. Retornamos el de PG
+                    // para que el desktop actualice su local. Esto permite que múltiples desktops
+                    // de un mismo tenant (multi-caja) converjan al mismo GlobalId por rol.
                     roleId = existingByName.rows[0].id;
-                    console.log(`[Roles/Sync] 🔗 Vinculando rol existente "${name}" (ID: ${roleId}) con global_id`);
+                    const pgGlobalId = existingByName.rows[0].global_id;
+                    authoritativeGlobalId = pgGlobalId;  // ← retornar el de PG, no el del desktop
+                    console.log(`[Roles/Sync] 🔗 Rol "${name}" ya existe en PG (ID: ${roleId}, global_id=${pgGlobalId}) — retornando global_id autoritativo (desktop envió ${global_id})`);
 
+                    // Solo actualizar metadata (nunca global_id)
                     await client.query(
                         `UPDATE roles SET
-                            global_id = $1,
-                            description = COALESCE($2, description),
-                            mobile_access_type = COALESCE($3, mobile_access_type),
-                            terminal_id = $4,
-                            local_op_seq = $5,
-                            created_local_utc = $6,
+                            description = COALESCE($1, description),
+                            mobile_access_type = COALESCE($2, mobile_access_type),
                             updated_at = NOW()
-                         WHERE id = $7`,
-                        [global_id, description, mobileAccessType, terminal_id, local_op_seq, created_local_utc, roleId]
+                         WHERE id = $3`,
+                        [description, mobileAccessType, roleId]
                     );
                 } else {
                     // Crear nuevo rol
@@ -1082,7 +1105,7 @@ module.exports = (pool) => {
 
             await client.query('COMMIT');
 
-            console.log(`[Roles/Sync] ✅ Rol ${isNew ? 'creado' : 'actualizado'}: ${name} (ID: ${roleId})`);
+            console.log(`[Roles/Sync] ✅ Rol ${isNew ? 'creado' : 'actualizado'}: ${name} (ID: ${roleId}, global_id=${authoritativeGlobalId})`);
 
             res.json({
                 success: true,
@@ -1090,7 +1113,7 @@ module.exports = (pool) => {
                 data: {
                     id: roleId,
                     name,
-                    global_id,
+                    global_id: authoritativeGlobalId,  // ✅ Valor autoritativo de PG (puede diferir del que mandó el desktop)
                     isNew
                 }
             });

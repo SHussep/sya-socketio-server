@@ -3548,6 +3548,91 @@ async function runMigrations() {
                 console.log('[Schema] ⚠️ Migration 057 (bubble default):', m057err.message);
             }
 
+            // ── Migration 058 (2026-04-23): roles.global_id como fuente de verdad ──
+            // Antes: roles.global_id era NULLABLE y sin default. Los roles seed (creados
+            // por schema.js y por el trigger seed_default_roles_for_tenant) quedaban con
+            // global_id=NULL, y POST /api/roles sobreescribía ese NULL con el GlobalId
+            // local del desktop — último desktop en sincronizar gana (problema en
+            // multi-caja, los demás desktops quedaban con GlobalId local huérfano).
+            //
+            // Ahora: PG genera gen_random_uuid() como default, backfillea los NULL
+            // existentes, y el endpoint POST /api/roles NO sobrescribe (retorna el
+            // global_id autoritativo de PG al cliente). El desktop adopta el valor
+            // de PG en su SQLite local, convergiendo todos los terminales al mismo
+            // GlobalId por (tenant,rol).
+            try {
+                // Backfill: asignar UUID a roles que no tienen global_id
+                const backfillResult = await client.query(`
+                    UPDATE roles
+                    SET global_id = gen_random_uuid()::text
+                    WHERE global_id IS NULL
+                `);
+                console.log(`[Schema] ✅ Migration 058 (2026-04-23): global_id backfill en ${backfillResult.rowCount} roles`);
+
+                // Default para nuevos INSERTs que omitan global_id
+                await client.query(`
+                    ALTER TABLE roles
+                    ALTER COLUMN global_id SET DEFAULT gen_random_uuid()::text
+                `);
+
+                // NOT NULL — ahora que todo está poblado y hay default, es seguro
+                await client.query(`
+                    ALTER TABLE roles
+                    ALTER COLUMN global_id SET NOT NULL
+                `);
+
+                // Actualizar trigger para setear global_id explícitamente en roles seed
+                // por tenant. (El DEFAULT ya cubre el caso, pero explícito es defensa en
+                // profundidad y documenta la intención.)
+                await client.query(`
+                    CREATE OR REPLACE FUNCTION seed_default_roles_for_tenant()
+                    RETURNS TRIGGER AS $$
+                    BEGIN
+                        INSERT INTO roles (tenant_id, name, description, is_system, mobile_access_type, global_id)
+                        VALUES
+                            (NEW.id, 'Administrador', 'Acceso total al sistema', true, 'admin', gen_random_uuid()::text),
+                            (NEW.id, 'Encargado', 'Gerente de turno - permisos extensos', true, 'none', gen_random_uuid()::text),
+                            (NEW.id, 'Repartidor', 'Acceso limitado como repartidor', true, 'distributor', gen_random_uuid()::text),
+                            (NEW.id, 'Ayudante', 'Soporte - acceso limitado', true, 'none', gen_random_uuid()::text),
+                            (NEW.id, 'Cajero', 'Ventas, liquidaciones y producción', true, 'cashier', gen_random_uuid()::text);
+
+                        INSERT INTO role_permissions (role_id, permission_id)
+                        SELECT r.id, p.id FROM roles r CROSS JOIN permissions p
+                        WHERE r.tenant_id = NEW.id AND r.name = 'Administrador';
+
+                        INSERT INTO role_permissions (role_id, permission_id)
+                        SELECT r.id, p.id FROM roles r CROSS JOIN permissions p
+                        WHERE r.tenant_id = NEW.id AND r.name = 'Encargado'
+                        AND p.code IN (
+                            'AccessPointOfSale', 'SettleDeliveries', 'ManageCashDrawer',
+                            'ManageExpenses', 'ManageCustomers', 'ManageProducts',
+                            'ManageCashCuts', 'AccessProduction', 'ManageProduction'
+                        );
+
+                        INSERT INTO role_permissions (role_id, permission_id)
+                        SELECT r.id, p.id FROM roles r CROSS JOIN permissions p
+                        WHERE r.tenant_id = NEW.id AND r.name = 'Repartidor'
+                        AND p.code = 'AccessPointOfSale';
+
+                        INSERT INTO role_permissions (role_id, permission_id)
+                        SELECT r.id, p.id FROM roles r CROSS JOIN permissions p
+                        WHERE r.tenant_id = NEW.id AND r.name = 'Ayudante'
+                        AND p.code IN ('AccessPointOfSale', 'AccessProduction');
+
+                        INSERT INTO role_permissions (role_id, permission_id)
+                        SELECT r.id, p.id FROM roles r CROSS JOIN permissions p
+                        WHERE r.tenant_id = NEW.id AND r.name = 'Cajero'
+                        AND p.code IN ('AccessPointOfSale', 'SettleDeliveries', 'ManageExpenses', 'AccessProduction');
+
+                        RETURN NEW;
+                    END;
+                    $$ LANGUAGE plpgsql
+                `);
+                console.log('[Schema] ✅ Migration 058: trigger seed_default_roles_for_tenant ahora setea global_id explícito');
+            } catch (m058err) {
+                console.log('[Schema] ⚠️ Migration 058 (roles global_id authority):', m058err.message);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {
