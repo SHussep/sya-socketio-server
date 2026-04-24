@@ -64,6 +64,63 @@ module.exports = (pool) => {
         }
     });
 
+    // POST /api/employees/by-global-id/:globalId/pin - Set/update PIN usando globalId
+    // Motivo: RemoteId local puede estar desincronizado o faltar en instalaciones nuevas.
+    // GlobalId es estable entre dispositivos y es el único campo garantizado por el wizard.
+    router.post('/by-global-id/:globalId/pin', authenticateToken, async (req, res) => {
+        try {
+            const { tenantId, employeeId: callerId } = req.user;
+            const targetGlobalId = req.params.globalId;
+            const { pin } = req.body;
+
+            if (!pin || pin.length < 4 || pin.length > 6 || !/^\d+$/.test(pin)) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'PIN debe ser numérico de 4-6 dígitos'
+                });
+            }
+
+            // Resolver employee por globalId
+            const empResult = await pool.query(
+                'SELECT id, tenant_id FROM employees WHERE global_id = $1 AND tenant_id = $2 AND is_active = true',
+                [targetGlobalId, tenantId]
+            );
+            if (empResult.rows.length === 0) {
+                return res.status(404).json({ success: false, message: 'Empleado no encontrado por globalId' });
+            }
+            const targetId = empResult.rows[0].id;
+
+            // Caller is_owner check
+            const callerResult = await pool.query(
+                'SELECT is_owner FROM employees WHERE id = $1 AND tenant_id = $2 AND is_active = true',
+                [callerId, tenantId]
+            );
+            const callerIsOwner = callerResult.rows[0]?.is_owner;
+
+            // Authorization: only self or owner can set PIN
+            if (targetId !== callerId && !callerIsOwner) {
+                return res.status(403).json({ success: false, message: 'Solo el propietario puede cambiar el PIN de otro empleado' });
+            }
+
+            const pinHash = await bcrypt.hash(pin, 12);
+            await pool.query(
+                'UPDATE employees SET pin_hash = $1, updated_at = NOW() WHERE id = $2 AND tenant_id = $3',
+                [pinHash, targetId, tenantId]
+            );
+
+            console.log(`[PIN/GlobalId] ✅ PIN ${callerId === targetId ? 'self' : 'by-owner'} set for employee ${targetId} (globalId=${targetGlobalId})`);
+
+            res.json({
+                success: true,
+                message: 'PIN actualizado',
+                data: { pin_hash: pinHash, resolvedId: targetId }
+            });
+        } catch (error) {
+            console.error('[PIN/GlobalId] Error setting PIN:', error);
+            res.status(500).json({ success: false, message: 'Error al actualizar PIN' });
+        }
+    });
+
     // POST /api/employees/:id/pin/verify - Verify PIN server-side
     router.post('/:id/pin/verify', authenticateToken, async (req, res) => {
         try {
