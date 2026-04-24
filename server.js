@@ -289,6 +289,8 @@ app.use('/api/admin', adminRoutes(pool));
 app.use('/api/employees', employeesRoutes);
 app.use('/api/cancelaciones', cancelacionesRoutes(pool, io));
 app.use('/api/employee-roles', employeeRolesRoutes);
+// Alias backwards-compat: desktop viejo pegaba a /api/roles. Montamos el mismo router ahí.
+app.use('/api/roles', employeeRolesRoutes);
 app.use('/api/customers', customersRoutes(pool, io));
 app.use('/api/productos', productosRoutes(pool, io));
 app.use('/api/categorias-productos', categoriasProductosRoutes(pool));
@@ -316,6 +318,8 @@ app.use('/api/data-reset', dataResetRoutes(pool));
 app.use('/api/customer-product-prices', customerProductPricesRoutes(pool, io));
 app.use('/api/kardex', kardexRoutes(pool));
 app.use('/api/producto-branch', productoBranchRoutes(pool, io));
+// Alias backwards-compat: desktop viejo del wizard pegaba al plural. Montamos el mismo router.
+app.use('/api/producto-branches', productoBranchRoutes(pool, io));
 app.use('/api/branch-settings', require('./routes/branchSettings')(pool));
 app.use('/api/units-of-measure', require('./routes/unitsOfMeasure')(pool));
 
