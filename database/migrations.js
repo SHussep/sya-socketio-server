@@ -3707,6 +3707,25 @@ async function runMigrations() {
                 console.log('[Schema] ⚠️ Migration 062 (fix active branch licenses):', m062err.message);
             }
 
+            // ── Migration 063 (2026-04-25): Backfill producto_branches CRÍTICO ──
+            // 15+ usuarios actualizaron y sus productos desaparecieron porque el filtro
+            // del desktop (commit f2a4cbc) requiere ProductoBranch explícito y los
+            // tenants legacy no los tenían. Backfill de TODAS las combinaciones faltantes
+            // (tenant, branch, producto) heredando precio/inventario/mínimo del Producto
+            // base. Idempotente — no toca producto_branches existentes.
+            try {
+                const bpbPath = path.join(__dirname, 'migrations', '20260425_backfill_producto_branches.sql');
+                if (fs.existsSync(bpbPath)) {
+                    const bpbSql = fs.readFileSync(bpbPath, 'utf8');
+                    await client.query(bpbSql);
+                    console.log('[Schema] ✅ Migration 063 (2026-04-25): producto_branches backfill applied');
+                } else {
+                    console.error('[Schema] ⚠️ Migration 063: SQL file not found at', bpbPath);
+                }
+            } catch (m063err) {
+                console.log('[Schema] ⚠️ Migration 063 (backfill producto_branches):', m063err.message);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {
