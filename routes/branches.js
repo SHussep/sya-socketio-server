@@ -120,12 +120,21 @@ module.exports = (pool, io, scaleStatusByBranch) => {
                 [tenantId, branchCode, name, address || null, phoneNumber || null, timezone || 'America/Mexico_City']
             );
 
-            // Activar la licencia con el branch recién creado
+            // Activar la licencia con el branch recién creado.
+            // CRÍTICO: si la licencia 'available' del cupo no tiene expires_at,
+            // heredar tenant.trial_ends_at para evitar que el desktop la vea
+            // como "perpetua + isTrial" → "Tu licencia expiró el N/A".
             await client.query(`
                 UPDATE branch_licenses
-                SET branch_id = $1, status = 'active', activated_at = NOW(), updated_at = NOW()
+                SET branch_id = $1,
+                    status = 'active',
+                    activated_at = NOW(),
+                    assigned_at = NOW(),
+                    expires_at = COALESCE(expires_at, (SELECT trial_ends_at FROM tenants WHERE id = $3)),
+                    duration_days = COALESCE(duration_days, 30),
+                    updated_at = NOW()
                 WHERE id = $2
-            `, [result.rows[0].id, availableLicenseId]);
+            `, [result.rows[0].id, availableLicenseId, tenantId]);
 
             await client.query('COMMIT');
 

@@ -3689,6 +3689,24 @@ async function runMigrations() {
                 console.log('[Schema] ⚠️ Migration 061 (fix trial branch licenses):', m061err.message);
             }
 
+            // ── Migration 062 (2026-04-25): Fix branch_licenses activas asignadas sin expires_at ──
+            // Captura las creadas via POST /api/branches (granted_by='superadmin'),
+            // que activaba una licencia 'available' como 'active' sin setear expires_at.
+            // Filtra status='active' AND branch_id IS NOT NULL para no tocar
+            // cupos disponibles que pueden ser perpetuos intencionalmente.
+            try {
+                const fabPath = path.join(__dirname, 'migrations', '20260425_fix_active_branch_licenses_expiry.sql');
+                if (fs.existsSync(fabPath)) {
+                    const fabSql = fs.readFileSync(fabPath, 'utf8');
+                    await client.query(fabSql);
+                    console.log('[Schema] ✅ Migration 062 (2026-04-25): active branch licenses expiry fix applied');
+                } else {
+                    console.error('[Schema] ⚠️ Migration 062: SQL file not found at', fabPath);
+                }
+            } catch (m062err) {
+                console.log('[Schema] ⚠️ Migration 062 (fix active branch licenses):', m062err.message);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {
