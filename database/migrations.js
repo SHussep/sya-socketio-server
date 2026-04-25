@@ -3653,6 +3653,24 @@ async function runMigrations() {
                 console.log('[Schema] ⚠️ Migration 059 (branch license expiry):', m059err.message);
             }
 
+            // ── Migration 060 (2026-04-25): Backfill branch_licenses ──
+            // Copia tenant.trial_ends_at a cada branch activa que aún no tenga
+            // branch_license activa. Imprescindible para que el modelo simplificado
+            // (cada sucursal independiente) funcione sin romper a tenants existentes.
+            // Idempotente: NOT EXISTS evita duplicar.
+            try {
+                const blbfPath = path.join(__dirname, 'migrations', '20260425_branch_license_backfill.sql');
+                if (fs.existsSync(blbfPath)) {
+                    const blbfSql = fs.readFileSync(blbfPath, 'utf8');
+                    await client.query(blbfSql);
+                    console.log('[Schema] ✅ Migration 060 (2026-04-25): branch_licenses backfill ready');
+                } else {
+                    console.error('[Schema] ⚠️ Migration 060: SQL file not found at', blbfPath);
+                }
+            } catch (m060err) {
+                console.log('[Schema] ⚠️ Migration 060 (branch license backfill):', m060err.message);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {

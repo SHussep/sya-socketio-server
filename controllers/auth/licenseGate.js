@@ -1,109 +1,87 @@
 // ═══════════════════════════════════════════════════════════════════
-// License Gate (v1.3.1)
+// License Gate (v1.3.1 simplificado)
 // ═══════════════════════════════════════════════════════════════════
 //
-// Convivencia entre dos modelos de licencia:
+// Modelo: cada sucursal tiene su propio branch_license independiente.
+// SIN switch global por tenant.subscription_status.
 //
-//   subscription_status = 'trial'    → gate clásico (tenant.trial_ends_at)
-//   subscription_status = 'active'   → gate por sucursal (branch_licenses.expires_at)
-//   subscription_status = 'expired'  → bloqueo total
-//   subscription_status = 'cancelled' → bloqueo total
+// Para cada branch al login:
+//   1. Buscar branch_licenses activa de esa branch
+//      → existe + vigente → OK (scope='branch')
+//      → existe + vencida → 403 BRANCH_LICENSE_EXPIRED
+//      → no existe → fallback a tenant.trial_ends_at (safety net por si
+//                    backfill aún no corre para una branch nueva, o por
+//                    legacy mobile login sin branchId)
 //
-// El switch de trial → active es manual desde SuperAdmin via
-// POST /api/superadmin/tenants/:id/promote-to-active.
-//
-// Uso típico (después de seleccionar la branch, no antes):
-//
-//   const gate = await evaluateLicense(this.pool, tenant, selectedBranch.id);
-//   if (!gate.ok) {
-//       return res.status(403).json(licenseGateErrorResponse(gate, tenant.business_name));
-//   }
-//   const licenseBlock = buildLicenseBlock(gate);
-//   res.json({ ..., tenant: { license: licenseBlock }, branch: { ..., license: licenseBlock } });
+// La migración 060 garantiza que cada branch existente tenga una
+// branch_license heredada de tenant.trial_ends_at, por lo que el
+// fallback es excepcional (branches creadas entre deploys o flujos
+// no-branch como mobileLogin).
 // ═══════════════════════════════════════════════════════════════════
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
 
 /**
- * Evalúa si la licencia para (tenant, branch) está vigente.
- *
- * @param {Pool} pool   pg pool
- * @param {Object} tenant   row de tenants con id, subscription_status, trial_ends_at
- * @param {number|null} branchId   id de la branch seleccionada (puede ser null en flujos no-branch)
  * @returns {Promise<{
  *     ok: boolean,
- *     scope: 'tenant'|'branch',
+ *     scope: 'branch'|'trial',
  *     error?: string,
  *     message?: string,
  *     expiresAt?: string|null,
  *     daysRemaining?: number|null,
  *     daysExpired?: number,
- *     licenseId?: number
+ *     licenseId?: number,
+ *     isTrial?: boolean
  * }>}
  */
 async function evaluateLicense(pool, tenant, branchId) {
     const now = new Date();
-    const trialEnds = tenant.trial_ends_at ? new Date(tenant.trial_ends_at) : null;
-    const status = tenant.subscription_status;
 
-    // ── Path A: tenant en trial ──────────────────────────────────────────
-    if (status === 'trial' || !status) {
+    // Flujos sin branchId (ej. mobileLogin clásico): pass-through con
+    // tenant.trial_ends_at. Las acciones del POS validan per-branch en cada request.
+    if (!branchId) {
+        const trialEnds = tenant.trial_ends_at ? new Date(tenant.trial_ends_at) : null;
         if (trialEnds && trialEnds < now) {
             return {
                 ok: false,
                 error: 'LICENSE_EXPIRED',
-                scope: 'tenant',
+                scope: 'trial',
                 expiresAt: trialEnds.toISOString(),
                 daysExpired: Math.ceil((now - trialEnds) / MS_PER_DAY),
-                message: 'Su licencia ha caducado. Por favor, contacte con soporte para renovar.'
+                message: 'Su licencia ha caducado. Contacta a soporte para renovar.'
             };
         }
         return {
             ok: true,
-            scope: 'tenant',
+            scope: 'trial',
             expiresAt: trialEnds ? trialEnds.toISOString() : null,
-            daysRemaining: trialEnds
-                ? Math.ceil((trialEnds - now) / MS_PER_DAY)
-                : null
+            daysRemaining: trialEnds ? Math.ceil((trialEnds - now) / MS_PER_DAY) : null
         };
     }
 
-    // ── Path B: tenant suspendido/cancelado ──────────────────────────────
-    if (status === 'expired' || status === 'cancelled') {
-        return {
-            ok: false,
-            error: 'SUBSCRIPTION_INACTIVE',
-            scope: 'tenant',
-            message: status === 'cancelled'
-                ? 'Tu suscripción fue cancelada. Contacta a soporte.'
-                : 'Tu suscripción está expirada. Contacta a soporte para renovar.'
-        };
-    }
-
-    // ── Path C: tenant 'active' → buscar branch_license ──────────────────
-    if (!branchId) {
-        // Llamada sin branch (flujo no-branch). En ese caso devolvemos OK
-        // con scope tenant para no romper login mobile que no selecciona
-        // branch en el handshake. La autoridad real corre en cada acción
-        // concreta del POS.
-        return {
-            ok: true,
-            scope: 'tenant',
-            expiresAt: trialEnds ? trialEnds.toISOString() : null,
-            daysRemaining: trialEnds
-                ? Math.ceil((trialEnds - now) / MS_PER_DAY)
-                : null
-        };
-    }
-
+    // Path principal: branch tiene su propia licencia
     const { rows } = await pool.query(
-        `SELECT id, expires_at FROM branch_licenses
-         WHERE tenant_id = $1 AND branch_id = $2 AND status = 'active'
+        `SELECT id, expires_at, granted_by FROM branch_licenses
+         WHERE branch_id = $1 AND status = 'active'
          LIMIT 1`,
-        [tenant.id, branchId]
+        [branchId]
     );
 
     if (rows.length === 0) {
+        // Safety net: la migración 060 debería haber backfilleado esto.
+        // Si no existe row para esta branch, caemos a tenant.trial_ends_at
+        // como compatibilidad, así branches nuevas creadas entre deploys
+        // no se bloquean.
+        const trialEnds = tenant.trial_ends_at ? new Date(tenant.trial_ends_at) : null;
+        if (trialEnds && trialEnds > now) {
+            return {
+                ok: true,
+                scope: 'trial',
+                expiresAt: trialEnds.toISOString(),
+                daysRemaining: Math.ceil((trialEnds - now) / MS_PER_DAY),
+                isTrial: true
+            };
+        }
         return {
             ok: false,
             error: 'BRANCH_NO_LICENSE',
@@ -132,15 +110,11 @@ async function evaluateLicense(pool, tenant, branchId) {
         scope: 'branch',
         licenseId: lic.id,
         expiresAt: exp ? exp.toISOString() : null,
-        daysRemaining: exp ? Math.ceil((exp - now) / MS_PER_DAY) : null
+        daysRemaining: exp ? Math.ceil((exp - now) / MS_PER_DAY) : null,
+        isTrial: lic.granted_by === 'system'
     };
 }
 
-/**
- * Construye el body 403 de error de licencia.
- * @param {Object} gate    resultado de evaluateLicense (con ok=false)
- * @param {string} businessName
- */
 function licenseGateErrorResponse(gate, businessName) {
     return {
         success: false,
@@ -156,10 +130,6 @@ function licenseGateErrorResponse(gate, businessName) {
     };
 }
 
-/**
- * Construye el bloque "license" para la respuesta de login.
- * Se usa tanto en `tenant.license` como en `branch.license`.
- */
 function buildLicenseBlock(gate) {
     const days = gate.daysRemaining;
     let status;
@@ -173,6 +143,7 @@ function buildLicenseBlock(gate) {
         daysRemaining: days ?? null,
         scope: gate.scope,
         licenseId: gate.licenseId ?? null,
+        isTrial: gate.isTrial ?? false,
         status
     };
 }

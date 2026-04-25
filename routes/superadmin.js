@@ -2015,11 +2015,16 @@ module.exports = function(pool, io) {
     // BRANCH LICENSES — Per-branch expiration management (v1.3.1)
     // ═══════════════════════════════════════════════════════════════
     //
-    // Modelo:
-    //   - tenant.subscription_status='trial' → gate via tenant.trial_ends_at (legacy)
-    //   - tenant.subscription_status='active' → gate via branch_license.expires_at
+    // Modelo simplificado: cada sucursal tiene su propio branch_license
+    // independiente. Sin switch global por tenant.
     //
-    // Switch explícito: POST /tenants/:id/promote-to-active
+    // - Branch principal (1ra al registrarse): trial 30 días automático
+    // - Branches 2da+: arrancan con licencia paga desde día 1
+    //   (excepto si superadmin otorga gracia manual con +30 días gratis)
+    //
+    // El gate de login lee siempre branch_licenses; si no existe, cae a
+    // tenant.trial_ends_at como safety net (la migración 060 garantiza
+    // que cada branch existente tenga su row).
     // ═══════════════════════════════════════════════════════════════
 
     // Helper: registra una entrada de auditoría en branch_license_history
@@ -2564,109 +2569,6 @@ module.exports = function(pool, io) {
         } catch (error) {
             console.error('[SuperAdmin Expiring Licenses] Error:', error);
             res.status(500).json({ success: false, message: 'Error al obtener licencias por vencer' });
-        }
-    });
-
-    // ─────────────────────────────────────────────────────────
-    // POST /api/superadmin/tenants/:id/promote-to-active
-    // Cambia subscription_status='trial' → 'active'.
-    // Pre-check: TODAS las branches activas del tenant deben tener
-    // una branch_license activa con expires_at IS NOT NULL.
-    // ─────────────────────────────────────────────────────────
-    router.post('/tenants/:id/promote-to-active', async (req, res) => {
-        const { id } = req.params;
-
-        const client = await pool.connect();
-        try {
-            await client.query('BEGIN');
-
-            const tenantResult = await client.query(
-                'SELECT id, business_name, subscription_status FROM tenants WHERE id = $1 FOR UPDATE',
-                [id]
-            );
-            if (tenantResult.rows.length === 0) {
-                await client.query('ROLLBACK');
-                return res.status(404).json({ success: false, message: 'Tenant no encontrado' });
-            }
-            const tenant = tenantResult.rows[0];
-
-            if (tenant.subscription_status === 'active') {
-                await client.query('ROLLBACK');
-                return res.status(400).json({
-                    success: false,
-                    message: 'El tenant ya está en estado active'
-                });
-            }
-            if (['expired', 'cancelled'].includes(tenant.subscription_status)) {
-                await client.query('ROLLBACK');
-                return res.status(400).json({
-                    success: false,
-                    message: `No se puede promover desde estado '${tenant.subscription_status}'. Contacta soporte para reactivar.`
-                });
-            }
-
-            // Pre-check: branches activas sin licencia activa con expires_at
-            const checkResult = await client.query(`
-                SELECT b.id, b.name
-                FROM branches b
-                WHERE b.tenant_id = $1
-                  AND b.is_active = true
-                  AND NOT EXISTS (
-                      SELECT 1 FROM branch_licenses bl
-                      WHERE bl.branch_id = b.id
-                        AND bl.status = 'active'
-                        AND bl.expires_at IS NOT NULL
-                  )
-                ORDER BY b.name
-            `, [id]);
-
-            if (checkResult.rows.length > 0) {
-                await client.query('ROLLBACK');
-                return res.status(400).json({
-                    success: false,
-                    message: 'Hay sucursales sin licencia activa con fecha de expiración',
-                    branchesWithoutLicense: checkResult.rows.map(r => ({
-                        id: r.id,
-                        name: r.name
-                    }))
-                });
-            }
-
-            await client.query(`
-                UPDATE tenants
-                SET subscription_status = 'active',
-                    updated_at = NOW()
-                WHERE id = $1
-            `, [id]);
-
-            await client.query('COMMIT');
-
-            console.log(`[SuperAdmin] ✅ Tenant ${id} (${tenant.business_name}) promovido a 'active'`);
-
-            // Notificar a todas las sesiones del tenant para que recarguen estado
-            if (io) {
-                io.to(`tenant_${id}`).emit('tenant_promoted', {
-                    tenantId: parseInt(id, 10),
-                    promotedAt: new Date().toISOString()
-                });
-            }
-
-            res.json({
-                success: true,
-                message: `Tenant promovido a 'active'. Las licencias por-sucursal son ahora autoritativas.`,
-                data: {
-                    tenantId: tenant.id,
-                    businessName: tenant.business_name,
-                    newStatus: 'active'
-                }
-            });
-
-        } catch (error) {
-            await client.query('ROLLBACK').catch(() => {});
-            console.error('[SuperAdmin Promote Tenant] Error:', error);
-            res.status(500).json({ success: false, message: 'Error al promover tenant' });
-        } finally {
-            client.release();
         }
     });
 

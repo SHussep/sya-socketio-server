@@ -51,39 +51,20 @@ async function writeSystemState(key, value) {
 }
 
 /**
- * Procesa tenants activos y envía avisos de vencimiento.
+ * Procesa todas las branch_licenses activas y envía avisos de vencimiento.
  *
- * Convivencia v1.3.1:
- *   - tenants 'trial' → procesados por checkAndNotifyTenant (path viejo, tenant.trial_ends_at)
- *   - tenants 'active' → procesados por checkAndNotifyBranchLicense (path nuevo, branch_licenses.expires_at)
+ * Modelo v1.3.1 simplificado: cada branch tiene su propia branch_license
+ * (la migración 060 backfilleó las existentes). Solo iteramos esta tabla.
  */
 async function processLicenseExpiryNotifications() {
     try {
         const now = new Date();
 
-        // ── Path A: tenants en 'trial' (gate clásico tenant.trial_ends_at) ──
-        const { rows: tenantsTrial } = await pool.query(`
-            SELECT t.id, t.business_name, t.email AS tenant_email,
-                   t.subscription_status, t.trial_ends_at,
-                   t.license_expiry_last_notified_at, t.license_expiry_last_days_notified
-            FROM tenants t
-            WHERE t.is_active = true
-              AND t.subscription_status IN ('trial', 'expired')
-              AND t.trial_ends_at IS NOT NULL
-        `);
-
-        for (const tenant of tenantsTrial) {
-            try {
-                await checkAndNotifyTenant(tenant, now);
-            } catch (err) {
-                console.error(`[LicenseExpiry] Error procesando tenant ${tenant.id}:`, err.message);
-            }
-        }
-
-        // ── Path B: branch_licenses de tenants 'active' (modelo nuevo) ──
+        // Iterar todas las branch_licenses activas con fecha de vencimiento
         const { rows: branchLics } = await pool.query(`
             SELECT bl.id AS license_id, bl.tenant_id, bl.branch_id,
                    bl.expires_at, bl.last_days_notified, bl.last_notified_at,
+                   bl.granted_by,
                    t.business_name, t.email AS tenant_email,
                    b.name AS branch_name
             FROM branch_licenses bl
@@ -91,7 +72,6 @@ async function processLicenseExpiryNotifications() {
             JOIN branches b ON b.id = bl.branch_id
             WHERE bl.status = 'active'
               AND bl.expires_at IS NOT NULL
-              AND t.subscription_status = 'active'
               AND t.is_active = true
               AND b.is_active = true
         `);
@@ -125,22 +105,8 @@ async function sendSuperadminSummary(now) {
     const lastSentDate = await readSystemState(SUMMARY_STATE_KEY).catch(() => null);
     if (lastSentDate === todayKey) return;
 
-    // Tenants en trial: cuenta tenant.trial_ends_at
-    const { rows: trialRows } = await pool.query(`
-        SELECT
-            COUNT(*) FILTER (WHERE trial_ends_at < NOW()) AS expired,
-            COUNT(*) FILTER (WHERE trial_ends_at >= NOW()
-                              AND trial_ends_at <  NOW() + INTERVAL '7 days') AS expiring_7d,
-            COUNT(*) FILTER (WHERE trial_ends_at >= NOW() + INTERVAL '7 days'
-                              AND trial_ends_at <  NOW() + INTERVAL '14 days') AS expiring_14d
-        FROM tenants
-        WHERE is_active = TRUE
-          AND subscription_status IN ('trial','expired')
-          AND trial_ends_at IS NOT NULL
-    `);
-
-    // Tenants 'active': cuenta branch_licenses.expires_at (modelo nuevo v1.3.1)
-    const { rows: branchRows } = await pool.query(`
+    // Conteo unificado desde branch_licenses (modelo v1.3.1 simplificado)
+    const { rows } = await pool.query(`
         SELECT
             COUNT(*) FILTER (WHERE bl.expires_at < NOW()) AS expired,
             COUNT(*) FILTER (WHERE bl.expires_at >= NOW()
@@ -149,15 +115,16 @@ async function sendSuperadminSummary(now) {
                               AND bl.expires_at <  NOW() + INTERVAL '14 days') AS expiring_14d
         FROM branch_licenses bl
         JOIN tenants t ON t.id = bl.tenant_id
+        JOIN branches b ON b.id = bl.branch_id
         WHERE bl.status = 'active'
           AND bl.expires_at IS NOT NULL
-          AND t.subscription_status = 'active'
           AND t.is_active = TRUE
+          AND b.is_active = TRUE
     `);
 
-    const expired    = (Number(trialRows[0].expired)      || 0) + (Number(branchRows[0].expired)      || 0);
-    const expiring7  = (Number(trialRows[0].expiring_7d)  || 0) + (Number(branchRows[0].expiring_7d)  || 0);
-    const expiring14 = (Number(trialRows[0].expiring_14d) || 0) + (Number(branchRows[0].expiring_14d) || 0);
+    const expired    = Number(rows[0].expired)      || 0;
+    const expiring7  = Number(rows[0].expiring_7d)  || 0;
+    const expiring14 = Number(rows[0].expiring_14d) || 0;
 
     if (expired === 0 && expiring7 === 0 && expiring14 === 0) {
         await writeSystemState(SUMMARY_STATE_KEY, todayKey).catch(() => {});
