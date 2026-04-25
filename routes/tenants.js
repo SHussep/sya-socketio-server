@@ -5,6 +5,7 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { BCRYPT_ROUNDS } = require('../config/security');
+const { evaluateLicense, buildLicenseBlock } = require('../controllers/auth/licenseGate');
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
@@ -447,15 +448,21 @@ module.exports = function(pool, io) {
     });
 
     // ─────────────────────────────────────────────────────────
-    // GET /api/tenants/by-code/:tenantCode
-    // Obtener información de licencia del tenant por código
+    // GET /api/tenants/by-code/:tenantCode?branchId=X
+    // Obtener información de licencia del tenant por código.
     // (Sin autenticación - solo para sincronización de licencia en Desktop)
+    //
+    // v1.3.1: si se pasa branchId, ADEMÁS devuelve `branchLicense` con la
+    // licencia per-branch evaluada por evaluateLicense(). El desktop debe
+    // preferir branchLicense sobre la del tenant.
     // ─────────────────────────────────────────────────────────
     router.get('/by-code/:tenantCode', async (req, res) => {
         try {
             const { tenantCode } = req.params;
+            const branchIdRaw = req.query.branchId;
+            const branchId = branchIdRaw ? parseInt(branchIdRaw, 10) : null;
 
-            console.log(`[Tenant By Code] Consultando tenant: ${tenantCode}`);
+            console.log(`[Tenant By Code] Consultando tenant: ${tenantCode} (branchId=${branchId ?? 'none'})`);
 
             const result = await pool.query(
                 `SELECT
@@ -488,6 +495,18 @@ module.exports = function(pool, io) {
             const isExpired = trialEndsAt && trialEndsAt < now;
             const daysRemaining = trialEndsAt ? Math.ceil((trialEndsAt - now) / (1000 * 60 * 60 * 24)) : null;
 
+            // v1.3.1: branch.license per-sucursal si branchId fue provisto
+            let branchLicense = null;
+            if (branchId && Number.isFinite(branchId)) {
+                try {
+                    const gate = await evaluateLicense(pool, tenant, branchId);
+                    branchLicense = buildLicenseBlock(gate);
+                    console.log(`[Tenant By Code] branch ${branchId}: scope=${gate.scope}, expiresAt=${gate.expiresAt}, days=${gate.daysRemaining}, isTrial=${gate.isTrial}`);
+                } catch (e) {
+                    console.error(`[Tenant By Code] Error evaluando branch.license:`, e.message);
+                }
+            }
+
             console.log(`[Tenant By Code] ✅ Tenant encontrado: ${tenant.business_name}, Trial expira: ${trialEndsAt ? trialEndsAt.toISOString() : 'N/A'}, Días restantes: ${daysRemaining}`);
 
             res.json({
@@ -501,7 +520,8 @@ module.exports = function(pool, io) {
                     subscriptionName: tenant.subscription_name || 'Trial', // Nombre del plan
                     isActive: tenant.is_active,
                     isExpired: isExpired,
-                    daysRemaining: daysRemaining
+                    daysRemaining: daysRemaining,
+                    branchLicense: branchLicense
                 }
             });
 
