@@ -2,6 +2,11 @@
 
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const {
+    evaluateLicense,
+    licenseGateErrorResponse,
+    buildLicenseBlock
+} = require('./licenseGate');
 const JWT_SECRET = process.env.JWT_SECRET;
 
 const maskEmail = (email) => {
@@ -151,26 +156,9 @@ module.exports = {
 
             const tenant = tenantResult.rows[0];
 
-            const now = new Date();
-            const trialEndsAt = tenant.trial_ends_at ? new Date(tenant.trial_ends_at) : null;
-
-            if (trialEndsAt && trialEndsAt < now) {
-                const daysExpired = Math.ceil((now - trialEndsAt) / (1000 * 60 * 60 * 24));
-                console.log(`[Desktop Login] ❌ Licencia vencida para tenant ${tenant.id}. Expiró hace ${daysExpired} días.`);
-                return res.status(403).json({
-                    success: false,
-                    message: 'Su licencia ha caducado. Por favor, contacte con soporte para renovar.',
-                    error: 'LICENSE_EXPIRED',
-                    licenseInfo: {
-                        expiresAt: trialEndsAt.toISOString(),
-                        daysExpired: daysExpired,
-                        businessName: tenant.business_name
-                    }
-                });
-            }
-
-            const daysRemaining = trialEndsAt ? Math.ceil((trialEndsAt - now) / (1000 * 60 * 60 * 24)) : null;
-            console.log(`[Desktop Login] Licencia válida. Días restantes: ${daysRemaining || 'ilimitado'}`);
+            // License gate (v1.3.1): corre POST selección de branch (ver más abajo)
+            // para soportar empleados con asignación a multiples sucursales donde
+            // una está vencida y la otra no.
 
             // Licencias de sucursal (para que el cliente sepa si puede crear más)
             const licensesResult = await this.pool.query(`
@@ -213,6 +201,15 @@ module.exports = {
             } else {
                 selectedBranch = branches.find(b => b.id === employee.main_branch_id) || branches[0];
             }
+
+            // ── License gate (v1.3.1) ──────────────────────────────────
+            const gate = await evaluateLicense(this.pool, tenant, selectedBranch.id);
+            if (!gate.ok) {
+                console.log(`[Desktop Login] ❌ ${gate.error} tenant=${tenant.id} branch=${selectedBranch.id}`);
+                return res.status(403).json(licenseGateErrorResponse(gate, tenant.business_name));
+            }
+            const licenseBlock = buildLicenseBlock(gate);
+            console.log(`[Desktop Login] ✅ Licencia OK [${gate.scope}] tenant=${tenant.id} branch=${selectedBranch.id} daysRemaining=${gate.daysRemaining ?? 'ilimitado'}`);
 
             const token = jwt.sign(
                 {
@@ -269,16 +266,13 @@ module.exports = {
                         tenantCode: tenant.tenant_code,
                         rfc: tenant.rfc,
                         subscription: tenant.subscription_name,
-                        license: {
-                            expiresAt: trialEndsAt ? trialEndsAt.toISOString() : null,
-                            daysRemaining: daysRemaining,
-                            status: daysRemaining === null ? 'unlimited' : (daysRemaining <= 7 ? 'expiring_soon' : 'active')
-                        }
+                        license: licenseBlock
                     },
                     branch: {
                         id: selectedBranch.id,
                         code: selectedBranch.branch_code,
                         name: selectedBranch.name,
+                        license: licenseBlock,
                         permissions: {
                             canLogin: selectedBranch.can_login ?? true,
                             canSell: selectedBranch.can_sell ?? true,
@@ -396,26 +390,16 @@ module.exports = {
 
             const tenant = tenantResult.rows[0];
 
-            const now = new Date();
-            const trialEndsAt = tenant.trial_ends_at ? new Date(tenant.trial_ends_at) : null;
-
-            if (trialEndsAt && trialEndsAt < now) {
-                const daysExpired = Math.ceil((now - trialEndsAt) / (1000 * 60 * 60 * 24));
-                console.log(`[Mobile Login] ❌ Licencia vencida para tenant ${tenant.id}. Expiró hace ${daysExpired} días.`);
-                return res.status(403).json({
-                    success: false,
-                    message: 'Tu periodo de prueba ha finalizado.',
-                    error: 'LICENSE_EXPIRED',
-                    licenseInfo: {
-                        expiresAt: trialEndsAt.toISOString(),
-                        daysExpired: daysExpired,
-                        businessName: tenant.business_name
-                    }
-                });
+            // License gate (v1.3.1): mobile no selecciona branch en handshake.
+            // Si tenant está en 'active' caemos a scope 'tenant' por compat —
+            // las acciones del POS validan su licencia branch en cada request.
+            const gate = await evaluateLicense(this.pool, tenant, null);
+            if (!gate.ok) {
+                console.log(`[Mobile Login] ❌ ${gate.error} tenant=${tenant.id}`);
+                return res.status(403).json(licenseGateErrorResponse(gate, tenant.business_name));
             }
-
-            const daysRemaining = trialEndsAt ? Math.ceil((trialEndsAt - now) / (1000 * 60 * 60 * 24)) : null;
-            console.log(`[Mobile Login] Licencia válida. Días restantes: ${daysRemaining || 'ilimitado'}`);
+            const licenseBlock = buildLicenseBlock(gate);
+            console.log(`[Mobile Login] ✅ Licencia OK [${gate.scope}] tenant=${tenant.id} daysRemaining=${gate.daysRemaining ?? 'ilimitado'}`);
 
             // Query simplificado - sin columnas de permisos que pueden no existir
             const branchesResult = await this.pool.query(`
@@ -588,11 +572,7 @@ module.exports = {
                         businessName: tenant.business_name,
                         logoUrl: tenant.logo_url || null,
                         subscription: tenant.subscription_name,
-                        license: {
-                            expiresAt: trialEndsAt ? trialEndsAt.toISOString() : null,
-                            daysRemaining: daysRemaining,
-                            status: daysRemaining === null ? 'unlimited' : (daysRemaining <= 7 ? 'expiring_soon' : 'active')
-                        }
+                        license: licenseBlock
                     }
                 }
             });
@@ -714,18 +694,6 @@ module.exports = {
                 return res.status(403).json({ success: false, message: 'Tenant inactivo o no encontrado' });
             }
             const tenant = tenantResult.rows[0];
-            const now = new Date();
-            const trialEndsAt = tenant.trial_ends_at ? new Date(tenant.trial_ends_at) : null;
-            if (trialEndsAt && trialEndsAt < now) {
-                const daysExpired = Math.ceil((now - trialEndsAt) / (1000 * 60 * 60 * 24));
-                return res.status(403).json({
-                    success: false,
-                    message: 'Su licencia ha caducado.',
-                    error: 'LICENSE_EXPIRED',
-                    licenseInfo: { expiresAt: trialEndsAt.toISOString(), daysExpired, businessName: tenant.business_name }
-                });
-            }
-            const daysRemaining = trialEndsAt ? Math.ceil((trialEndsAt - now) / (1000 * 60 * 60 * 24)) : null;
 
             // Available branches
             const branchesResult = await this.pool.query(`
@@ -740,6 +708,14 @@ module.exports = {
                 return res.status(403).json({ success: false, message: 'No tienes acceso a ninguna sucursal' });
             }
             const selectedBranch = branches.find(b => b.id === parseInt(branchId)) || branches[0];
+
+            // ── License gate (v1.3.1) ──────────────────────────────────
+            const gate = await evaluateLicense(this.pool, tenant, selectedBranch.id);
+            if (!gate.ok) {
+                console.log(`[PIN Login] ❌ ${gate.error} tenant=${tenant.id} branch=${selectedBranch.id}`);
+                return res.status(403).json(licenseGateErrorResponse(gate, tenant.business_name));
+            }
+            const licenseBlock = buildLicenseBlock(gate);
 
             // Mint JWT (branchId MUST be present; downstream middleware reads it)
             const token = jwt.sign(
@@ -791,16 +767,13 @@ module.exports = {
                         tenantCode: tenant.tenant_code,
                         rfc: tenant.rfc,
                         subscription: tenant.subscription_name,
-                        license: {
-                            expiresAt: trialEndsAt ? trialEndsAt.toISOString() : null,
-                            daysRemaining,
-                            status: daysRemaining === null ? 'unlimited' : (daysRemaining <= 7 ? 'expiring_soon' : 'active')
-                        }
+                        license: licenseBlock
                     },
                     branch: {
                         id: selectedBranch.id,
                         code: selectedBranch.branch_code,
                         name: selectedBranch.name,
+                        license: licenseBlock,
                         permissions: {
                             canLogin: selectedBranch.can_login ?? true,
                             canSell: selectedBranch.can_sell ?? true,
@@ -891,18 +864,6 @@ module.exports = {
                 return res.status(403).json({ success: false, message: 'Tenant inactivo o no encontrado' });
             }
             const tenant = tenantResult.rows[0];
-            const now = new Date();
-            const trialEndsAt = tenant.trial_ends_at ? new Date(tenant.trial_ends_at) : null;
-            if (trialEndsAt && trialEndsAt < now) {
-                const daysExpired = Math.ceil((now - trialEndsAt) / (1000 * 60 * 60 * 24));
-                return res.status(403).json({
-                    success: false,
-                    message: 'Su licencia ha caducado.',
-                    error: 'LICENSE_EXPIRED',
-                    licenseInfo: { expiresAt: trialEndsAt.toISOString(), daysExpired, businessName: tenant.business_name }
-                });
-            }
-            const daysRemaining = trialEndsAt ? Math.ceil((trialEndsAt - now) / (1000 * 60 * 60 * 24)) : null;
 
             const branchesResult = await this.pool.query(`
                 SELECT b.*
@@ -916,6 +877,14 @@ module.exports = {
                 return res.status(403).json({ success: false, message: 'No tienes acceso a ninguna sucursal' });
             }
             const selectedBranch = branches.find(b => b.id === parseInt(branchId)) || branches[0];
+
+            // ── License gate (v1.3.1) ──────────────────────────────────
+            const gate = await evaluateLicense(this.pool, tenant, selectedBranch.id);
+            if (!gate.ok) {
+                console.log(`[Employee Password Login] ❌ ${gate.error} tenant=${tenant.id} branch=${selectedBranch.id}`);
+                return res.status(403).json(licenseGateErrorResponse(gate, tenant.business_name));
+            }
+            const licenseBlock = buildLicenseBlock(gate);
 
             const token = jwt.sign(
                 {
@@ -963,16 +932,13 @@ module.exports = {
                         tenantCode: tenant.tenant_code,
                         rfc: tenant.rfc,
                         subscription: tenant.subscription_name,
-                        license: {
-                            expiresAt: trialEndsAt ? trialEndsAt.toISOString() : null,
-                            daysRemaining,
-                            status: daysRemaining === null ? 'unlimited' : (daysRemaining <= 7 ? 'expiring_soon' : 'active')
-                        }
+                        license: licenseBlock
                     },
                     branch: {
                         id: selectedBranch.id,
                         code: selectedBranch.branch_code,
-                        name: selectedBranch.name
+                        name: selectedBranch.name,
+                        license: licenseBlock
                     }
                 }
             });
