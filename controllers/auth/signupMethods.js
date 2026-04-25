@@ -281,12 +281,15 @@ module.exports = {
             const genericCustomerId = genericCustomerResult.rows[0].customer_id;
             console.log(`[Google Signup] ✅ Cliente genérico creado: ID ${genericCustomerId}`);
 
-            // Crear licencia inicial para la sucursal principal
+            // Crear licencia inicial para la sucursal principal con expires_at del trial.
+            // CRÍTICO: sin expires_at la licencia se ve como "perpetua" pero
+            // granted_by='system' la marca como trial → el desktop la trata como
+            // expirada (días=0 + sin fecha = "Tu licencia expiró el N/A").
             await client.query(`
-                INSERT INTO branch_licenses (tenant_id, branch_id, status, granted_by, activated_at, notes)
-                VALUES ($1, $2, 'active', 'system', NOW(), 'Licencia inicial - registro')
-            `, [tenant.id, branch.id]);
-            console.log(`[Google Signup] ✅ Licencia de sucursal creada para branch ${branch.id}`);
+                INSERT INTO branch_licenses (tenant_id, branch_id, status, granted_by, expires_at, duration_days, activated_at, assigned_at, notes)
+                VALUES ($1, $2, 'active', 'system', $3, 30, NOW(), NOW(), 'Licencia inicial - trial 30 días')
+            `, [tenant.id, branch.id, tenant.trial_ends_at]);
+            console.log(`[Google Signup] ✅ Licencia de sucursal creada para branch ${branch.id} (expira ${tenant.trial_ends_at})`);
 
             // ===== Seed supplier "Productos propios" =====
             const supplierGlobalId = `SEED_SUPPLIER_PRODUCTOS_PROPIOS_${tenant.id}`;

@@ -3671,6 +3671,24 @@ async function runMigrations() {
                 console.log('[Schema] ⚠️ Migration 060 (branch license backfill):', m060err.message);
             }
 
+            // ── Migration 061 (2026-04-25): Fix branch_licenses con expires_at NULL ──
+            // Bug: los flujos de signup creaban la licencia inicial sin expires_at,
+            // resultando en "perpetua + isTrial=true" → desktop mostraba "expirada N/A".
+            // Fix: backfill expires_at desde tenant.trial_ends_at para licencias
+            // creadas con granted_by='system' y sin fecha. Idempotente.
+            try {
+                const ftbPath = path.join(__dirname, 'migrations', '20260425_fix_trial_branch_licenses.sql');
+                if (fs.existsSync(ftbPath)) {
+                    const ftbSql = fs.readFileSync(ftbPath, 'utf8');
+                    await client.query(ftbSql);
+                    console.log('[Schema] ✅ Migration 061 (2026-04-25): trial branch licenses fix applied');
+                } else {
+                    console.error('[Schema] ⚠️ Migration 061: SQL file not found at', ftbPath);
+                }
+            } catch (m061err) {
+                console.log('[Schema] ⚠️ Migration 061 (fix trial branch licenses):', m061err.message);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {

@@ -178,12 +178,15 @@ module.exports = function(pool, io) {
 
             console.log(`[Tenant Register] ✅ Empleado asignado a sucursal principal`);
 
-            // 5. Crear licencia inicial para la sucursal
+            // 5. Crear licencia inicial para la sucursal con expires_at del trial
+            // CRÍTICO: sin expires_at la licencia se ve como "perpetua" pero
+            // granted_by='system' la marca como trial → el desktop la trata como
+            // expirada (días=0 + sin fecha = "Tu licencia expiró el N/A").
             await pool.query(`
-                INSERT INTO branch_licenses (tenant_id, branch_id, status, granted_by, activated_at, notes)
-                VALUES ($1, $2, 'active', 'system', NOW(), 'Licencia inicial - registro')
-            `, [tenant.id, branch.id]);
-            console.log(`[Tenant Register] ✅ Licencia de sucursal creada para branch ${branch.id}`);
+                INSERT INTO branch_licenses (tenant_id, branch_id, status, granted_by, expires_at, duration_days, activated_at, assigned_at, notes)
+                VALUES ($1, $2, 'active', 'system', $3, 30, NOW(), NOW(), 'Licencia inicial - trial 30 días')
+            `, [tenant.id, branch.id, tenant.trial_ends_at]);
+            console.log(`[Tenant Register] ✅ Licencia de sucursal creada para branch ${branch.id} (expira ${tenant.trial_ends_at})`);
 
             // 6. Obtener plan de suscripción
             console.log(`[Tenant Register] 📋 Obteniendo plan de suscripción ID ${tenant.subscription_id}...`);
