@@ -680,6 +680,7 @@ module.exports = function(pool, io) {
             // Licencias del tenant
             const licensesResult = await pool.query(`
                 SELECT bl.id, bl.branch_id, bl.status, bl.granted_by, bl.granted_at, bl.activated_at,
+                       bl.expires_at, bl.duration_days, bl.assigned_at, bl.auto_renew,
                        b.name as branch_name, b.branch_code
                 FROM branch_licenses bl
                 LEFT JOIN branches b ON bl.branch_id = b.id
@@ -749,7 +750,11 @@ module.exports = function(pool, io) {
                             status: l.status,
                             grantedBy: l.granted_by,
                             grantedAt: l.granted_at,
-                            activatedAt: l.activated_at
+                            activatedAt: l.activated_at,
+                            expiresAt: l.expires_at,
+                            durationDays: l.duration_days,
+                            assignedAt: l.assigned_at,
+                            autoRenew: l.auto_renew
                         }))
                     },
                     branches: branchesResult.rows.map(b => ({
@@ -1824,6 +1829,8 @@ module.exports = function(pool, io) {
             const result = await pool.query(`
                 SELECT bl.id, bl.branch_id, bl.status, bl.granted_by, bl.notes,
                        bl.granted_at, bl.activated_at, bl.revoked_at, bl.created_at,
+                       bl.expires_at, bl.duration_days, bl.assigned_at,
+                       bl.auto_renew, bl.last_days_notified, bl.last_notified_at,
                        b.name as branch_name, b.branch_code, b.is_active as branch_is_active
                 FROM branch_licenses bl
                 LEFT JOIN branches b ON bl.branch_id = b.id
@@ -1852,7 +1859,13 @@ module.exports = function(pool, io) {
                         grantedAt: l.granted_at,
                         activatedAt: l.activated_at,
                         revokedAt: l.revoked_at,
-                        createdAt: l.created_at
+                        createdAt: l.created_at,
+                        expiresAt: l.expires_at,
+                        durationDays: l.duration_days,
+                        assignedAt: l.assigned_at,
+                        autoRenew: l.auto_renew,
+                        lastDaysNotified: l.last_days_notified,
+                        lastNotifiedAt: l.last_notified_at
                     }))
                 }
             });
@@ -1995,6 +2008,665 @@ module.exports = function(pool, io) {
                 message: 'Error al revocar licencia',
                 error: undefined
             });
+        }
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // BRANCH LICENSES — Per-branch expiration management (v1.3.1)
+    // ═══════════════════════════════════════════════════════════════
+    //
+    // Modelo:
+    //   - tenant.subscription_status='trial' → gate via tenant.trial_ends_at (legacy)
+    //   - tenant.subscription_status='active' → gate via branch_license.expires_at
+    //
+    // Switch explícito: POST /tenants/:id/promote-to-active
+    // ═══════════════════════════════════════════════════════════════
+
+    // Helper: registra una entrada de auditoría en branch_license_history
+    async function recordLicenseHistory(client, licenseId, action, oldRow, newRow, notes) {
+        await client.query(`
+            INSERT INTO branch_license_history (
+                license_id, action,
+                old_branch_id, new_branch_id,
+                old_expires_at, new_expires_at,
+                old_status, new_status,
+                notes, performed_by
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'superadmin')
+        `, [
+            licenseId, action,
+            oldRow?.branch_id ?? null,
+            newRow?.branch_id ?? null,
+            oldRow?.expires_at ?? null,
+            newRow?.expires_at ?? null,
+            oldRow?.status ?? null,
+            newRow?.status ?? null,
+            notes ?? null
+        ]);
+    }
+
+    // Helper: emite branch_license:updated al room de la branch afectada
+    function emitLicenseUpdate(branchId, payload) {
+        if (!branchId || !io) return;
+        io.to(`branch_${branchId}`).emit('branch_license:updated', payload);
+    }
+
+    // ─────────────────────────────────────────────────────────
+    // POST /api/superadmin/branch-licenses/:id/assign
+    // Asigna una licencia 'available' a una branch específica con expires_at
+    // Body: { branchId, expiresAt?, durationDays?, notes? }
+    // ─────────────────────────────────────────────────────────
+    router.post('/branch-licenses/:id/assign', async (req, res) => {
+        const { id } = req.params;
+        const { branchId, expiresAt, durationDays, notes } = req.body;
+
+        if (!branchId) {
+            return res.status(400).json({
+                success: false,
+                message: 'branchId es requerido'
+            });
+        }
+
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+
+            const licResult = await client.query(
+                'SELECT id, tenant_id, branch_id, status, expires_at FROM branch_licenses WHERE id = $1 FOR UPDATE',
+                [id]
+            );
+            if (licResult.rows.length === 0) {
+                await client.query('ROLLBACK');
+                return res.status(404).json({ success: false, message: 'Licencia no encontrada' });
+            }
+            const oldRow = licResult.rows[0];
+
+            if (oldRow.status === 'active') {
+                await client.query('ROLLBACK');
+                return res.status(409).json({
+                    success: false,
+                    message: 'Esta licencia ya está activa. Desactívala primero o usa otra.'
+                });
+            }
+            if (oldRow.status === 'revoked') {
+                await client.query('ROLLBACK');
+                return res.status(400).json({
+                    success: false,
+                    message: 'No se puede asignar una licencia revocada. Restáurala primero.'
+                });
+            }
+
+            // Verificar branch del mismo tenant
+            const branchResult = await client.query(
+                'SELECT id, tenant_id, name FROM branches WHERE id = $1 AND tenant_id = $2',
+                [branchId, oldRow.tenant_id]
+            );
+            if (branchResult.rows.length === 0) {
+                await client.query('ROLLBACK');
+                return res.status(404).json({
+                    success: false,
+                    message: 'Sucursal no encontrada o no pertenece al mismo tenant'
+                });
+            }
+
+            // Verificar que la branch no tenga ya una licencia activa
+            const existingActive = await client.query(
+                `SELECT id FROM branch_licenses
+                 WHERE branch_id = $1 AND status = 'active' LIMIT 1`,
+                [branchId]
+            );
+            if (existingActive.rows.length > 0) {
+                await client.query('ROLLBACK');
+                return res.status(409).json({
+                    success: false,
+                    message: `Esta sucursal ya tiene la licencia #${existingActive.rows[0].id} activa. Desactívala primero.`
+                });
+            }
+
+            const expiresAtVal = expiresAt ? new Date(expiresAt) : null;
+            const durationVal = durationDays != null ? parseInt(durationDays, 10) : null;
+
+            const updateResult = await client.query(`
+                UPDATE branch_licenses
+                SET status = 'active',
+                    branch_id = $1,
+                    expires_at = $2,
+                    duration_days = $3,
+                    assigned_at = NOW(),
+                    activated_at = NOW(),
+                    notes = COALESCE($4, notes),
+                    updated_at = NOW()
+                WHERE id = $5
+                RETURNING id, tenant_id, branch_id, status, expires_at, duration_days, assigned_at
+            `, [branchId, expiresAtVal, durationVal, notes, id]);
+
+            const newRow = updateResult.rows[0];
+            await recordLicenseHistory(client, id, 'assigned', oldRow, newRow, notes);
+
+            await client.query('COMMIT');
+
+            console.log(`[SuperAdmin] ✅ Licencia ${id} asignada a branch ${branchId} (vence ${expiresAtVal?.toISOString() ?? 'perpetua'})`);
+            emitLicenseUpdate(branchId, {
+                licenseId: parseInt(id, 10),
+                branchId,
+                expiresAt: newRow.expires_at,
+                status: 'active',
+                action: 'assigned'
+            });
+
+            res.json({
+                success: true,
+                message: 'Licencia asignada exitosamente',
+                data: {
+                    id: newRow.id,
+                    branchId: newRow.branch_id,
+                    branchName: branchResult.rows[0].name,
+                    expiresAt: newRow.expires_at,
+                    durationDays: newRow.duration_days,
+                    assignedAt: newRow.assigned_at,
+                    status: newRow.status
+                }
+            });
+
+        } catch (error) {
+            await client.query('ROLLBACK').catch(() => {});
+            console.error('[SuperAdmin Assign License] Error:', error);
+            res.status(500).json({ success: false, message: 'Error al asignar licencia' });
+        } finally {
+            client.release();
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
+    // PATCH /api/superadmin/branch-licenses/:id
+    // Renovar/extender expires_at o actualizar notas
+    // Body: { expiresAt?, notes? }
+    // ─────────────────────────────────────────────────────────
+    router.patch('/branch-licenses/:id', async (req, res) => {
+        const { id } = req.params;
+        const { expiresAt, notes } = req.body;
+
+        if (expiresAt === undefined && notes === undefined) {
+            return res.status(400).json({
+                success: false,
+                message: 'Al menos expiresAt o notes son requeridos'
+            });
+        }
+
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+
+            const licResult = await client.query(
+                'SELECT id, tenant_id, branch_id, status, expires_at, notes FROM branch_licenses WHERE id = $1 FOR UPDATE',
+                [id]
+            );
+            if (licResult.rows.length === 0) {
+                await client.query('ROLLBACK');
+                return res.status(404).json({ success: false, message: 'Licencia no encontrada' });
+            }
+            const oldRow = licResult.rows[0];
+
+            if (oldRow.status === 'revoked') {
+                await client.query('ROLLBACK');
+                return res.status(400).json({
+                    success: false,
+                    message: 'No se puede modificar una licencia revocada'
+                });
+            }
+
+            const updates = [];
+            const values = [];
+            let i = 1;
+
+            if (expiresAt !== undefined) {
+                updates.push(`expires_at = $${i++}`);
+                values.push(expiresAt ? new Date(expiresAt) : null);
+                // Reset notification dedup: nueva fecha = nueva ventana de avisos
+                updates.push(`last_days_notified = NULL`);
+                updates.push(`last_notified_at = NULL`);
+            }
+            if (notes !== undefined) {
+                updates.push(`notes = $${i++}`);
+                values.push(notes);
+            }
+            updates.push(`updated_at = NOW()`);
+            values.push(id);
+
+            const updateResult = await client.query(
+                `UPDATE branch_licenses SET ${updates.join(', ')} WHERE id = $${i}
+                 RETURNING id, tenant_id, branch_id, status, expires_at`,
+                values
+            );
+            const newRow = updateResult.rows[0];
+
+            // Acción según diff: 'renewed' si cambia expiresAt, 'extended' como sinónimo
+            // (el plan distingue pero por simplicidad usamos 'renewed' para cualquier cambio de fecha)
+            let action = 'renewed';
+            if (expiresAt === undefined) action = 'edited';
+
+            await recordLicenseHistory(client, id, action, oldRow, newRow, notes);
+            await client.query('COMMIT');
+
+            console.log(`[SuperAdmin] ✅ Licencia ${id} ${action}: ${oldRow.expires_at} → ${newRow.expires_at}`);
+            if (newRow.branch_id) {
+                emitLicenseUpdate(newRow.branch_id, {
+                    licenseId: parseInt(id, 10),
+                    branchId: newRow.branch_id,
+                    expiresAt: newRow.expires_at,
+                    status: newRow.status,
+                    action
+                });
+            }
+
+            res.json({
+                success: true,
+                message: action === 'renewed'
+                    ? `Licencia actualizada (nueva expiración: ${newRow.expires_at})`
+                    : 'Licencia actualizada',
+                data: { id: newRow.id, expiresAt: newRow.expires_at, status: newRow.status }
+            });
+
+        } catch (error) {
+            await client.query('ROLLBACK').catch(() => {});
+            console.error('[SuperAdmin Patch License] Error:', error);
+            res.status(500).json({ success: false, message: 'Error al actualizar licencia' });
+        } finally {
+            client.release();
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
+    // POST /api/superadmin/branch-licenses/:id/unassign
+    // Pasa active → available, conserva expires_at
+    // Body: { notes? }
+    // ─────────────────────────────────────────────────────────
+    router.post('/branch-licenses/:id/unassign', async (req, res) => {
+        const { id } = req.params;
+        const { notes } = req.body || {};
+
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+
+            const licResult = await client.query(
+                'SELECT id, tenant_id, branch_id, status, expires_at FROM branch_licenses WHERE id = $1 FOR UPDATE',
+                [id]
+            );
+            if (licResult.rows.length === 0) {
+                await client.query('ROLLBACK');
+                return res.status(404).json({ success: false, message: 'Licencia no encontrada' });
+            }
+            const oldRow = licResult.rows[0];
+
+            if (oldRow.status !== 'active') {
+                await client.query('ROLLBACK');
+                return res.status(400).json({
+                    success: false,
+                    message: `Solo se pueden desactivar licencias 'active' (estado actual: ${oldRow.status})`
+                });
+            }
+
+            const updateResult = await client.query(`
+                UPDATE branch_licenses
+                SET status = 'available',
+                    branch_id = NULL,
+                    notes = COALESCE($1, notes),
+                    updated_at = NOW()
+                WHERE id = $2
+                RETURNING id, tenant_id, branch_id, status, expires_at
+            `, [notes, id]);
+
+            const newRow = updateResult.rows[0];
+            await recordLicenseHistory(client, id, 'unassigned', oldRow, newRow, notes);
+            await client.query('COMMIT');
+
+            console.log(`[SuperAdmin] ✅ Licencia ${id} desactivada de branch ${oldRow.branch_id}`);
+            emitLicenseUpdate(oldRow.branch_id, {
+                licenseId: parseInt(id, 10),
+                branchId: oldRow.branch_id,
+                expiresAt: oldRow.expires_at,
+                status: 'available',
+                action: 'unassigned'
+            });
+
+            res.json({
+                success: true,
+                message: 'Licencia desactivada (vuelve al pool de disponibles)',
+                data: { id: newRow.id, status: newRow.status }
+            });
+
+        } catch (error) {
+            await client.query('ROLLBACK').catch(() => {});
+            console.error('[SuperAdmin Unassign License] Error:', error);
+            res.status(500).json({ success: false, message: 'Error al desactivar licencia' });
+        } finally {
+            client.release();
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
+    // POST /api/superadmin/branch-licenses/:id/revoke
+    // Pasa cualquier estado → 'revoked'. Acción destructiva.
+    // Body: { notes? }
+    // ─────────────────────────────────────────────────────────
+    router.post('/branch-licenses/:id/revoke', async (req, res) => {
+        const { id } = req.params;
+        const { notes } = req.body || {};
+
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+
+            const licResult = await client.query(
+                'SELECT id, tenant_id, branch_id, status, expires_at FROM branch_licenses WHERE id = $1 FOR UPDATE',
+                [id]
+            );
+            if (licResult.rows.length === 0) {
+                await client.query('ROLLBACK');
+                return res.status(404).json({ success: false, message: 'Licencia no encontrada' });
+            }
+            const oldRow = licResult.rows[0];
+
+            if (oldRow.status === 'revoked') {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ success: false, message: 'Esta licencia ya está revocada' });
+            }
+
+            const updateResult = await client.query(`
+                UPDATE branch_licenses
+                SET status = 'revoked',
+                    revoked_at = NOW(),
+                    notes = COALESCE($1, notes),
+                    updated_at = NOW()
+                WHERE id = $2
+                RETURNING id, tenant_id, branch_id, status, expires_at
+            `, [notes, id]);
+
+            const newRow = updateResult.rows[0];
+            await recordLicenseHistory(client, id, 'revoked', oldRow, newRow, notes);
+            await client.query('COMMIT');
+
+            console.log(`[SuperAdmin] ✅ Licencia ${id} revocada (era ${oldRow.status}, branch ${oldRow.branch_id})`);
+            if (oldRow.branch_id) {
+                emitLicenseUpdate(oldRow.branch_id, {
+                    licenseId: parseInt(id, 10),
+                    branchId: oldRow.branch_id,
+                    expiresAt: oldRow.expires_at,
+                    status: 'revoked',
+                    action: 'revoked'
+                });
+            }
+
+            res.json({
+                success: true,
+                message: 'Licencia revocada',
+                data: { id: newRow.id, status: newRow.status }
+            });
+
+        } catch (error) {
+            await client.query('ROLLBACK').catch(() => {});
+            console.error('[SuperAdmin Revoke Branch License] Error:', error);
+            res.status(500).json({ success: false, message: 'Error al revocar licencia' });
+        } finally {
+            client.release();
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
+    // POST /api/superadmin/branch-licenses/:id/restore
+    // revoked → available (limpia revoked_at)
+    // Body: { notes? }
+    // ─────────────────────────────────────────────────────────
+    router.post('/branch-licenses/:id/restore', async (req, res) => {
+        const { id } = req.params;
+        const { notes } = req.body || {};
+
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+
+            const licResult = await client.query(
+                'SELECT id, tenant_id, branch_id, status, expires_at FROM branch_licenses WHERE id = $1 FOR UPDATE',
+                [id]
+            );
+            if (licResult.rows.length === 0) {
+                await client.query('ROLLBACK');
+                return res.status(404).json({ success: false, message: 'Licencia no encontrada' });
+            }
+            const oldRow = licResult.rows[0];
+
+            if (oldRow.status !== 'revoked') {
+                await client.query('ROLLBACK');
+                return res.status(400).json({
+                    success: false,
+                    message: `Solo se pueden restaurar licencias 'revoked' (estado actual: ${oldRow.status})`
+                });
+            }
+
+            const updateResult = await client.query(`
+                UPDATE branch_licenses
+                SET status = 'available',
+                    branch_id = NULL,
+                    revoked_at = NULL,
+                    notes = COALESCE($1, notes),
+                    updated_at = NOW()
+                WHERE id = $2
+                RETURNING id, tenant_id, branch_id, status, expires_at
+            `, [notes, id]);
+
+            const newRow = updateResult.rows[0];
+            await recordLicenseHistory(client, id, 'restored', oldRow, newRow, notes);
+            await client.query('COMMIT');
+
+            console.log(`[SuperAdmin] ✅ Licencia ${id} restaurada (revoked → available)`);
+
+            res.json({
+                success: true,
+                message: 'Licencia restaurada al pool de disponibles',
+                data: { id: newRow.id, status: newRow.status }
+            });
+
+        } catch (error) {
+            await client.query('ROLLBACK').catch(() => {});
+            console.error('[SuperAdmin Restore License] Error:', error);
+            res.status(500).json({ success: false, message: 'Error al restaurar licencia' });
+        } finally {
+            client.release();
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
+    // GET /api/superadmin/branch-licenses/:id/history
+    // Auditoría completa de cambios de una licencia
+    // ─────────────────────────────────────────────────────────
+    router.get('/branch-licenses/:id/history', async (req, res) => {
+        try {
+            const { id } = req.params;
+
+            const result = await pool.query(`
+                SELECT id, action,
+                       old_branch_id, new_branch_id,
+                       old_expires_at, new_expires_at,
+                       old_status, new_status,
+                       notes, performed_by, performed_at
+                FROM branch_license_history
+                WHERE license_id = $1
+                ORDER BY performed_at DESC
+            `, [id]);
+
+            res.json({
+                success: true,
+                data: result.rows.map(r => ({
+                    id: r.id,
+                    action: r.action,
+                    oldBranchId: r.old_branch_id,
+                    newBranchId: r.new_branch_id,
+                    oldExpiresAt: r.old_expires_at,
+                    newExpiresAt: r.new_expires_at,
+                    oldStatus: r.old_status,
+                    newStatus: r.new_status,
+                    notes: r.notes,
+                    performedBy: r.performed_by,
+                    performedAt: r.performed_at
+                }))
+            });
+
+        } catch (error) {
+            console.error('[SuperAdmin License History] Error:', error);
+            res.status(500).json({ success: false, message: 'Error al obtener historial' });
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
+    // GET /api/superadmin/branch-licenses/expiring?days=14
+    // Cross-tenant: licencias activas que vencen en N días o menos
+    // (incluye ya vencidas con días negativos)
+    // ─────────────────────────────────────────────────────────
+    router.get('/branch-licenses/expiring', async (req, res) => {
+        try {
+            const days = Math.max(1, Math.min(365, parseInt(req.query.days, 10) || 14));
+
+            const result = await pool.query(`
+                SELECT bl.id AS license_id,
+                       bl.tenant_id,
+                       bl.branch_id,
+                       bl.expires_at,
+                       t.business_name,
+                       t.subscription_status,
+                       b.name AS branch_name,
+                       b.branch_code,
+                       EXTRACT(DAY FROM (bl.expires_at - NOW()))::int AS days_remaining
+                FROM branch_licenses bl
+                JOIN tenants t ON t.id = bl.tenant_id
+                JOIN branches b ON b.id = bl.branch_id
+                WHERE bl.status = 'active'
+                  AND bl.expires_at IS NOT NULL
+                  AND bl.expires_at < NOW() + INTERVAL '${days} days'
+                  AND t.is_active = true
+                ORDER BY bl.expires_at ASC
+            `);
+
+            res.json({
+                success: true,
+                data: result.rows.map(r => ({
+                    licenseId: r.license_id,
+                    tenantId: r.tenant_id,
+                    tenantBusinessName: r.business_name,
+                    tenantStatus: r.subscription_status,
+                    branchId: r.branch_id,
+                    branchName: r.branch_name,
+                    branchCode: r.branch_code,
+                    expiresAt: r.expires_at,
+                    daysRemaining: r.days_remaining
+                }))
+            });
+
+        } catch (error) {
+            console.error('[SuperAdmin Expiring Licenses] Error:', error);
+            res.status(500).json({ success: false, message: 'Error al obtener licencias por vencer' });
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
+    // POST /api/superadmin/tenants/:id/promote-to-active
+    // Cambia subscription_status='trial' → 'active'.
+    // Pre-check: TODAS las branches activas del tenant deben tener
+    // una branch_license activa con expires_at IS NOT NULL.
+    // ─────────────────────────────────────────────────────────
+    router.post('/tenants/:id/promote-to-active', async (req, res) => {
+        const { id } = req.params;
+
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+
+            const tenantResult = await client.query(
+                'SELECT id, business_name, subscription_status FROM tenants WHERE id = $1 FOR UPDATE',
+                [id]
+            );
+            if (tenantResult.rows.length === 0) {
+                await client.query('ROLLBACK');
+                return res.status(404).json({ success: false, message: 'Tenant no encontrado' });
+            }
+            const tenant = tenantResult.rows[0];
+
+            if (tenant.subscription_status === 'active') {
+                await client.query('ROLLBACK');
+                return res.status(400).json({
+                    success: false,
+                    message: 'El tenant ya está en estado active'
+                });
+            }
+            if (['expired', 'cancelled'].includes(tenant.subscription_status)) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({
+                    success: false,
+                    message: `No se puede promover desde estado '${tenant.subscription_status}'. Contacta soporte para reactivar.`
+                });
+            }
+
+            // Pre-check: branches activas sin licencia activa con expires_at
+            const checkResult = await client.query(`
+                SELECT b.id, b.name
+                FROM branches b
+                WHERE b.tenant_id = $1
+                  AND b.is_active = true
+                  AND NOT EXISTS (
+                      SELECT 1 FROM branch_licenses bl
+                      WHERE bl.branch_id = b.id
+                        AND bl.status = 'active'
+                        AND bl.expires_at IS NOT NULL
+                  )
+                ORDER BY b.name
+            `, [id]);
+
+            if (checkResult.rows.length > 0) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({
+                    success: false,
+                    message: 'Hay sucursales sin licencia activa con fecha de expiración',
+                    branchesWithoutLicense: checkResult.rows.map(r => ({
+                        id: r.id,
+                        name: r.name
+                    }))
+                });
+            }
+
+            await client.query(`
+                UPDATE tenants
+                SET subscription_status = 'active',
+                    updated_at = NOW()
+                WHERE id = $1
+            `, [id]);
+
+            await client.query('COMMIT');
+
+            console.log(`[SuperAdmin] ✅ Tenant ${id} (${tenant.business_name}) promovido a 'active'`);
+
+            // Notificar a todas las sesiones del tenant para que recarguen estado
+            if (io) {
+                io.to(`tenant_${id}`).emit('tenant_promoted', {
+                    tenantId: parseInt(id, 10),
+                    promotedAt: new Date().toISOString()
+                });
+            }
+
+            res.json({
+                success: true,
+                message: `Tenant promovido a 'active'. Las licencias por-sucursal son ahora autoritativas.`,
+                data: {
+                    tenantId: tenant.id,
+                    businessName: tenant.business_name,
+                    newStatus: 'active'
+                }
+            });
+
+        } catch (error) {
+            await client.query('ROLLBACK').catch(() => {});
+            console.error('[SuperAdmin Promote Tenant] Error:', error);
+            res.status(500).json({ success: false, message: 'Error al promover tenant' });
+        } finally {
+            client.release();
         }
     });
 

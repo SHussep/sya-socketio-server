@@ -3633,6 +3633,26 @@ async function runMigrations() {
                 console.log('[Schema] ⚠️ Migration 058 (roles global_id authority):', m058err.message);
             }
 
+            // ── Migration 059 (2026-04-25): Per-branch license expiry ──
+            // Loads external SQL file database/migrations/20260425_branch_license_expiry.sql
+            // Adds: branch_licenses.{expires_at, duration_days, assigned_at,
+            //       last_days_notified, last_notified_at, auto_renew}
+            // Creates: branch_license_history table
+            // Indexes: idx_branch_licenses_expiring, idx_branch_licenses_lookup,
+            //          idx_branch_license_history_license, idx_branch_license_history_action
+            try {
+                const blePath = path.join(__dirname, 'migrations', '20260425_branch_license_expiry.sql');
+                if (fs.existsSync(blePath)) {
+                    const bleSql = fs.readFileSync(blePath, 'utf8');
+                    await client.query(bleSql);
+                    console.log('[Schema] ✅ Migration 059 (2026-04-25): per-branch license expiry ready');
+                } else {
+                    console.error('[Schema] ⚠️ Migration 059: SQL file not found at', blePath);
+                }
+            } catch (m059err) {
+                console.log('[Schema] ⚠️ Migration 059 (branch license expiry):', m059err.message);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {

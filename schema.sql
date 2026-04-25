@@ -65,6 +65,9 @@ CREATE INDEX IF NOT EXISTS idx_branches_tenant_id ON branches(tenant_id);
 
 -- branch_licenses (licencias individuales por sucursal)
 -- Cada licencia permite operar UNA sucursal. El plan define features, no cantidad.
+-- v1.3.1+: cada licencia tiene su propia expires_at independiente del tenant.
+-- Gate: trial_ends_at mientras subscription_status='trial';
+--       branch_licenses.expires_at una vez promovido a 'active'.
 CREATE TABLE IF NOT EXISTS branch_licenses (
     id SERIAL PRIMARY KEY,
     tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
@@ -78,7 +81,13 @@ CREATE TABLE IF NOT EXISTS branch_licenses (
     notes TEXT,
     granted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     activated_at TIMESTAMP,
+    assigned_at TIMESTAMP,                          -- v1.3.1: cuando superadmin la asignó a branch
     revoked_at TIMESTAMP,
+    expires_at TIMESTAMP NULL,                      -- v1.3.1: NULL = perpetua
+    duration_days INTEGER NULL,                     -- v1.3.1: plan vendido (365=anual, 30=mensual)
+    last_days_notified INTEGER NULL,                -- v1.3.1: dedup notificaciones por-licencia
+    last_notified_at TIMESTAMP NULL,
+    auto_renew BOOLEAN NOT NULL DEFAULT false,      -- v1.3.1: reservado para v1.4 (pago integrado)
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -94,6 +103,39 @@ CREATE INDEX IF NOT EXISTS idx_branch_licenses_tenant_available
 -- Todas las licencias no-revocadas por tenant
 CREATE INDEX IF NOT EXISTS idx_branch_licenses_tenant_status
     ON branch_licenses(tenant_id, status);
+
+-- v1.3.1: licencias por vencer (job de notificación)
+CREATE INDEX IF NOT EXISTS idx_branch_licenses_expiring
+    ON branch_licenses(expires_at)
+    WHERE status = 'active' AND expires_at IS NOT NULL;
+
+-- v1.3.1: lookup rápido en evaluateLicense() de loginMethods.js
+CREATE INDEX IF NOT EXISTS idx_branch_licenses_lookup
+    ON branch_licenses(tenant_id, branch_id, status);
+
+-- v1.3.1: auditoría completa de cambios por licencia
+CREATE TABLE IF NOT EXISTS branch_license_history (
+    id SERIAL PRIMARY KEY,
+    license_id INTEGER NOT NULL REFERENCES branch_licenses(id) ON DELETE CASCADE,
+    action VARCHAR(50) NOT NULL,
+        -- 'assigned' | 'renewed' | 'extended' | 'unassigned'
+        -- 'revoked' | 'restored' | 'expired_auto'
+    old_branch_id INTEGER NULL,
+    new_branch_id INTEGER NULL,
+    old_expires_at TIMESTAMP NULL,
+    new_expires_at TIMESTAMP NULL,
+    old_status VARCHAR(20) NULL,
+    new_status VARCHAR(20) NULL,
+    notes TEXT,
+    performed_by VARCHAR(100) DEFAULT 'superadmin',
+    performed_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_branch_license_history_license
+    ON branch_license_history(license_id, performed_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_branch_license_history_action
+    ON branch_license_history(action, performed_at DESC);
 
 -- roles (GLOBAL - fixed IDs)
 CREATE TABLE IF NOT EXISTS roles (
