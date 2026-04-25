@@ -612,12 +612,21 @@ module.exports = {
 
             const newBranch = newBranchResult.rows[0];
 
-            // Activar la licencia con el branch recién creado
+            // Activar la licencia con el branch recién creado.
+            // CRÍTICO (v1.3.1): heredar tenant.trial_ends_at si la licencia no
+            // tiene expires_at, para evitar "Tu licencia expiró el N/A" en el
+            // desktop al crear una nueva sucursal.
             await client.query(`
                 UPDATE branch_licenses
-                SET branch_id = $1, status = 'active', activated_at = NOW(), updated_at = NOW()
+                SET branch_id = $1,
+                    status = 'active',
+                    activated_at = NOW(),
+                    assigned_at = NOW(),
+                    expires_at = COALESCE(expires_at, (SELECT trial_ends_at FROM tenants WHERE id = $3)),
+                    duration_days = COALESCE(duration_days, 30),
+                    updated_at = NOW()
                 WHERE id = $2
-            `, [newBranch.id, availableLicenseId]);
+            `, [newBranch.id, availableLicenseId, tenantId]);
 
             const ownerResult = await client.query(
                 'SELECT id FROM employees WHERE tenant_id = $1 AND is_owner = true',
