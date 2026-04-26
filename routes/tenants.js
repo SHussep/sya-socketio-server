@@ -344,11 +344,17 @@ module.exports = function(pool, io) {
     });
 
     // ─────────────────────────────────────────────────────────
-    // GET /api/tenants/:id
-    // Obtener información de un tenant
+    // GET /api/tenants/:id?branchId=X
+    // Obtener información de un tenant.
+    // Si se pasa branchId, ADEMÁS devuelve `branchLicense` con la
+    // licencia per-branch evaluada por evaluateLicense() — el desktop
+    // debe preferir branchLicense.expiresAt sobre tenant.trial_ends_at
+    // (que puede estar vencido aun cuando la branch tiene licencia activa).
     // ─────────────────────────────────────────────────────────
     router.get('/:id', async (req, res) => {
         const { id } = req.params;
+        const branchIdRaw = req.query.branchId;
+        const branchId = branchIdRaw ? parseInt(branchIdRaw, 10) : null;
 
         try {
             const result = await pool.query(`
@@ -370,7 +376,7 @@ module.exports = function(pool, io) {
             }
 
             const tenant = result.rows[0];
-            console.log(`[Tenant Get] ID=${tenant.id}, business_name="${tenant.business_name}"`);
+            console.log(`[Tenant Get] ID=${tenant.id}, business_name="${tenant.business_name}", branchId=${branchId ?? 'none'}`);
 
             // Contar sucursales, empleados
             const branchCount = await pool.query(
@@ -404,9 +410,21 @@ module.exports = function(pool, io) {
                 isActive: !isExpired && daysRemaining > 0,
                 isExpired: isExpired,
                 daysRemaining: Math.max(0, daysRemaining),
-                expiresAt: expiresAt.toISOString(),
+                expiresAt: expiresAt ? expiresAt.toISOString() : null,
                 status: isExpired ? 'expired' : (daysRemaining <= 7 ? 'expiring_soon' : 'active')
             };
+
+            // v1.3.1: branch.license per-sucursal si branchId fue provisto
+            let branchLicense = null;
+            if (branchId && Number.isFinite(branchId)) {
+                try {
+                    const gate = await evaluateLicense(pool, tenant, branchId);
+                    branchLicense = buildLicenseBlock(gate);
+                    console.log(`[Tenant Get] branch ${branchId}: scope=${gate.scope}, expiresAt=${gate.expiresAt}, days=${gate.daysRemaining}, isTrial=${gate.isTrial}`);
+                } catch (e) {
+                    console.error(`[Tenant Get] Error evaluando branch.license:`, e.message);
+                }
+            }
 
             res.json({
                 success: true,
@@ -436,7 +454,8 @@ module.exports = function(pool, io) {
                     },
                     logoUrl: tenant.logo_url || null,
                     isActive: tenant.is_active && trialStatus.isActive,
-                    createdAt: tenant.created_at
+                    createdAt: tenant.created_at,
+                    branchLicense: branchLicense
                 }
             });
 

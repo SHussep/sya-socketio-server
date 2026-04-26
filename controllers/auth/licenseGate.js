@@ -59,10 +59,14 @@ async function evaluateLicense(pool, tenant, branchId) {
         };
     }
 
-    // Path principal: branch tiene su propia licencia
+    // Path principal: branch tiene su propia licencia.
+    // ORDER BY blinda contra duplicados: si quedan dos rows activas para la misma branch
+    // (al reactivar sin desactivar la previa), gana la de fecha más lejana — y NULL
+    // (perpetua) gana sobre cualquier fecha. id DESC desempata por la más recientemente creada.
     const { rows } = await pool.query(
         `SELECT id, expires_at, granted_by FROM branch_licenses
          WHERE branch_id = $1 AND status = 'active'
+         ORDER BY expires_at DESC NULLS FIRST, id DESC
          LIMIT 1`,
         [branchId]
     );
