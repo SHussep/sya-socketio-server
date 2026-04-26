@@ -594,7 +594,9 @@ module.exports = function(pool, io) {
                     (SELECT COUNT(DISTINCT cb.customer_id) FROM cliente_branches cb
                      WHERE cb.branch_id = b.id AND cb.is_active = true) as customer_count,
                     (SELECT COUNT(*) FROM telemetry_events WHERE branch_id = b.id AND event_type = 'scale_configured') > 0 as has_scale,
-                    (SELECT MAX(event_timestamp) FROM telemetry_events WHERE branch_id = b.id) as last_activity
+                    (SELECT MAX(event_timestamp) FROM telemetry_events WHERE branch_id = b.id) as last_activity,
+                    (SELECT COALESCE(SUM(total), 0) FROM ventas WHERE branch_id = b.id) as total_revenue,
+                    (SELECT COUNT(*) FROM ventas WHERE branch_id = b.id) as total_sales
                 FROM branches b
                 WHERE b.tenant_id = $1
                 ORDER BY b.created_at
@@ -768,7 +770,9 @@ module.exports = function(pool, io) {
                         hasScale: b.has_scale,
                         lastActivity: b.last_activity,
                         isActive: b.is_active,
-                        createdAt: b.created_at
+                        createdAt: b.created_at,
+                        totalRevenue: parseFloat(b.total_revenue) || 0,
+                        totalSales: parseInt(b.total_sales) || 0
                     })),
                     employees: employeesResult.rows.map(e => ({
                         id: e.id,
