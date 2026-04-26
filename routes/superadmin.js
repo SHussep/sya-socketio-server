@@ -2829,17 +2829,36 @@ module.exports = function(pool, io) {
                 ORDER BY tenants_count DESC
             `);
 
-            // Temas en uso (resumen)
+            // Temas en uso (resumen) — REFLEJA TEMA ACTUAL, NO HISTORICO.
+            // Antes contaba todos los theme_changed events, asi que un tenant que
+            // cambio Midnight→Oceano Profundo aparecia en AMBOS temas. Bug.
+            // Ahora: para cada tenant tomamos su ULTIMO theme_changed (latest_theme)
+            // y agrupamos. tenants_count = tenants actualmente en ese tema.
+            // total_opens = suma de app_opens de esos tenants (proxy de "uso real").
             const themes = await pool.query(`
+                WITH latest_theme AS (
+                    SELECT DISTINCT ON (tenant_id)
+                        tenant_id, theme_name
+                    FROM telemetry_events
+                    WHERE event_type = 'theme_changed'
+                      AND theme_name IS NOT NULL
+                      AND event_timestamp >= NOW() - INTERVAL '${parseInt(days)} days'
+                    ORDER BY tenant_id, event_timestamp DESC
+                ),
+                tenant_opens AS (
+                    SELECT tenant_id, COUNT(*) AS app_opens
+                    FROM telemetry_events
+                    WHERE event_type = 'app_open'
+                      AND event_timestamp >= NOW() - INTERVAL '${parseInt(days)} days'
+                    GROUP BY tenant_id
+                )
                 SELECT
-                    theme_name,
-                    COUNT(DISTINCT tenant_id) as tenants_count,
-                    COUNT(*) as total_opens
-                FROM telemetry_events
-                WHERE event_type = 'theme_changed'
-                AND theme_name IS NOT NULL
-                AND event_timestamp >= NOW() - INTERVAL '${parseInt(days)} days'
-                GROUP BY theme_name
+                    lt.theme_name,
+                    COUNT(DISTINCT lt.tenant_id) AS tenants_count,
+                    COALESCE(SUM(opens.app_opens), 0) AS total_opens
+                FROM latest_theme lt
+                LEFT JOIN tenant_opens opens ON opens.tenant_id = lt.tenant_id
+                GROUP BY lt.theme_name
                 ORDER BY tenants_count DESC
             `);
 
