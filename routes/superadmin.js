@@ -131,8 +131,15 @@ module.exports = function(pool, io) {
                 // Total sucursales
                 pool.query('SELECT COUNT(*) as total FROM branches'),
 
-                // Total empleados
-                pool.query('SELECT COUNT(*) as total FROM employees WHERE is_active = true'),
+                // Total empleados activos de tenants activos.
+                // Antes: COUNT(*) FROM employees WHERE is_active=true — inflaba el conteo
+                // con empleados de tenants desactivados (cuyo POS ya no opera).
+                pool.query(`
+                    SELECT COUNT(*) as total
+                    FROM employees e
+                    JOIN tenants t ON t.id = e.tenant_id
+                    WHERE e.is_active = true AND t.is_active = true
+                `),
 
                 // Total aperturas de app (telemetry)
                 pool.query(`
