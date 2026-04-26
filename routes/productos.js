@@ -490,19 +490,32 @@ module.exports = (pool, io) => {
             const action = producto.inserted ? 'INSERTADO' : 'ACTUALIZADO';
 
             // ✅ Sync inventario/minimo a producto_branches (per-branch inventory)
+            // CRÍTICO: incluir precio_venta/precio_compra del producto al INSERT.
+            // Sin esto, los PB nuevos nacen con precio=0 (DEFAULT del schema) y
+            // el dueño ve productos a $0 — bug que ha contaminado tenants legacy.
+            // Al UPDATE preservamos el precio existente del PB (cada sucursal puede
+            // tener su propio precio configurado independientemente del catálogo).
             if (branch_id && (inventario !== undefined || minimo !== undefined)) {
                 try {
                     await pool.query(
-                        `INSERT INTO producto_branches (tenant_id, branch_id, product_global_id, inventario, minimo, global_id)
-                         VALUES ($1, $2, $3, COALESCE($4, 0), COALESCE($5, 0), gen_random_uuid())
+                        `INSERT INTO producto_branches (
+                            tenant_id, branch_id, product_global_id,
+                            precio_venta, precio_compra,
+                            inventario, minimo, global_id
+                         )
+                         VALUES ($1, $2, $3, COALESCE($4, 0), COALESCE($5, 0), COALESCE($6, 0), COALESCE($7, 0), gen_random_uuid()::text)
                          ON CONFLICT (tenant_id, product_global_id, branch_id)
                          DO UPDATE SET
-                            inventario = COALESCE($4, producto_branches.inventario),
-                            minimo = COALESCE($5, producto_branches.minimo),
+                            inventario = COALESCE($6, producto_branches.inventario),
+                            minimo = COALESCE($7, producto_branches.minimo),
                             updated_at = NOW()`,
-                        [tenant_id, branch_id, producto.global_id, inventario ?? null, minimo ?? null]
+                        [
+                            tenant_id, branch_id, producto.global_id,
+                            producto.precio_venta, producto.precio_compra,
+                            inventario ?? null, minimo ?? null
+                        ]
                     );
-                    console.log(`[Productos/Sync] ✅ producto_branches actualizado: branch=${branch_id}, inventario=${inventario}, minimo=${minimo}`);
+                    console.log(`[Productos/Sync] ✅ producto_branches actualizado: branch=${branch_id}, precio=${producto.precio_venta}, inventario=${inventario}, minimo=${minimo}`);
                 } catch (branchErr) {
                     console.error(`[Productos/Sync] ⚠️ Error actualizando producto_branches: ${branchErr.message}`);
                     // No fallar el sync principal por esto
@@ -894,18 +907,37 @@ module.exports = (pool, io) => {
                 ]
             );
 
-            // Also sync inventario/minimo to producto_branches if provided
+            // Also sync inventario/minimo to producto_branches if provided.
+            // CRÍTICO: incluir precio_venta/precio_compra (vienen del body de este
+            // endpoint que es justamente para precio per-branch). Sin esto los
+            // PB nuevos nacen con precio=0.
             const { inventario, minimo } = req.body;
             if (inventario !== undefined || minimo !== undefined) {
                 await pool.query(
-                    `INSERT INTO producto_branches (tenant_id, branch_id, product_global_id, inventario, minimo, global_id)
-                     VALUES ($1, $2, (SELECT global_id FROM productos WHERE id = $3 AND tenant_id = $1), COALESCE($4, 0), COALESCE($5, 0), gen_random_uuid())
+                    `INSERT INTO producto_branches (
+                        tenant_id, branch_id, product_global_id,
+                        precio_venta, precio_compra,
+                        inventario, minimo, global_id
+                     )
+                     VALUES (
+                        $1, $2,
+                        (SELECT global_id FROM productos WHERE id = $3 AND tenant_id = $1),
+                        COALESCE($4, 0), COALESCE($5, 0),
+                        COALESCE($6, 0), COALESCE($7, 0),
+                        gen_random_uuid()::text
+                     )
                      ON CONFLICT (tenant_id, product_global_id, branch_id)
                      DO UPDATE SET
-                        inventario = COALESCE($4, producto_branches.inventario),
-                        minimo = COALESCE($5, producto_branches.minimo),
+                        precio_venta = COALESCE($4, producto_branches.precio_venta),
+                        precio_compra = COALESCE($5, producto_branches.precio_compra),
+                        inventario = COALESCE($6, producto_branches.inventario),
+                        minimo = COALESCE($7, producto_branches.minimo),
                         updated_at = NOW()`,
-                    [tenant_id, branch_id, producto_id, inventario ?? null, minimo ?? null]
+                    [
+                        tenant_id, branch_id, producto_id,
+                        precio_venta, precio_compra,
+                        inventario ?? null, minimo ?? null
+                    ]
                 );
             }
 
