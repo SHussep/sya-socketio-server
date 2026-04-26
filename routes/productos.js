@@ -1735,14 +1735,21 @@ module.exports = (pool, io) => {
 
     // ═══════════════════════════════════════════════════════════════
     // GET /api/productos/duplicates-suggestion/:tenantId
-    // Wizard de limpieza post-bug v1.3.0.0. Detecta productos creados
-    // después de la primera vez que el tenant subió app_version 1.3.x
-    // a telemetry, y los empareja con productos previos cuyo nombre
-    // normalizado sea igual o muy parecido.
-    // Productos sin match con ninguno previo NO se devuelven (el dueño
-    // probablemente sí quería crearlos como nuevos).
-    // Si tenants.products_deduplicated_at != NULL → array vacío
-    // (ya completó el flujo, no insistir).
+    // Wizard de limpieza post-bug v1.3.0.0. Detecta GRUPOS de productos
+    // con nombre normalizado idéntico (mismas letras sin acentos ni
+    // mayúsculas) sin importar fecha de creación. Cada grupo con 2+
+    // productos = posible duplicado para que el dueño revise.
+    //
+    // Por qué grupos en vez de pares "viejo vs nuevo":
+    //   Algunos tenants (ej. Meza) crearon TODO durante el bug y no
+    //   tienen seeds originales contra qué comparar. Agrupar por nombre
+    //   los detecta igual.
+    //
+    // El backend NO recomienda cuál eliminar. Solo devuelve los grupos
+    // con datos crudos (ventas, $, fechas, "post-bug" flag). El dueño
+    // decide en el desktop.
+    //
+    // Si tenants.products_deduplicated_at != NULL → array vacío.
     // ═══════════════════════════════════════════════════════════════
     router.get('/duplicates-suggestion/:tenantId', async (req, res) => {
         try {
@@ -1751,7 +1758,6 @@ module.exports = (pool, io) => {
                 return res.status(400).json({ success: false, message: 'tenantId inválido' });
             }
 
-            // ¿Ya completó el flujo? → no insistir
             const tenantCheck = await pool.query(
                 'SELECT products_deduplicated_at FROM tenants WHERE id = $1',
                 [tenantId]
@@ -1763,19 +1769,21 @@ module.exports = (pool, io) => {
                 return res.json({ success: true, data: [], alreadyCompleted: true });
             }
 
-            // Fecha de corte = primera vez que el tenant reportó app_version 1.3.x
-            // Si nunca reportó (raro pero posible), usar 2026-04-15 como fallback global
+            // Cutoff sirve solo para anotar a cada miembro como wasPostBug=true/false.
+            // No filtra qué se devuelve.
             const cutoffResult = await pool.query(
-                `SELECT MIN(event_timestamp) AS cutoff
+                `SELECT MIN(event_timestamp) AS telemetry_first
                  FROM telemetry_events
                  WHERE tenant_id = $1 AND app_version LIKE '1.3.%'`,
                 [tenantId]
             );
-            const cutoff = cutoffResult.rows[0].cutoff || new Date('2026-04-15T00:00:00Z');
+            const releaseFloor = new Date('2026-04-15T00:00:00Z');
+            const telemetryFirst = cutoffResult.rows[0].telemetry_first;
+            const cutoff = telemetryFirst && telemetryFirst < releaseFloor
+                ? telemetryFirst
+                : releaseFloor;
 
-            // Detección de pares (nuevo + posible original) con datos comparativos.
-            // Match por nombre normalizado (minúsculas, sin acentos, sin caracteres no alfanum).
-            // Bonus match: primeros 5 chars normalizados iguales O substring.
+            // Encuentra grupos de productos con el mismo nombre normalizado.
             const result = await pool.query(`
                 WITH normalize AS (
                     SELECT id, descripcion, created_at, precio_venta,
@@ -1786,81 +1794,47 @@ module.exports = (pool, io) => {
                     FROM productos
                     WHERE tenant_id = $1 AND eliminado = false
                 ),
-                nuevos AS (
-                    SELECT * FROM normalize WHERE created_at >= $2
-                ),
-                viejos AS (
-                    SELECT * FROM normalize WHERE created_at < $2
-                ),
-                pairs AS (
-                    SELECT
-                        n.id AS nuevo_id, n.descripcion AS nuevo_desc,
-                        n.created_at AS nuevo_created, n.precio_venta AS nuevo_precio,
-                        v.id AS viejo_id, v.descripcion AS viejo_desc,
-                        v.created_at AS viejo_created, v.precio_venta AS viejo_precio,
-                        CASE
-                            WHEN n.nombre_norm = v.nombre_norm THEN 100
-                            WHEN POSITION(v.nombre_norm IN n.nombre_norm) > 0
-                                 OR POSITION(n.nombre_norm IN v.nombre_norm) > 0 THEN 80
-                            WHEN LEFT(n.nombre_norm, 5) = LEFT(v.nombre_norm, 5)
-                                 AND LENGTH(n.nombre_norm) >= 5 AND LENGTH(v.nombre_norm) >= 5 THEN 60
-                            ELSE 0
-                        END AS confidence,
-                        ROW_NUMBER() OVER (
-                            PARTITION BY n.id
-                            ORDER BY
-                                CASE
-                                    WHEN n.nombre_norm = v.nombre_norm THEN 100
-                                    WHEN POSITION(v.nombre_norm IN n.nombre_norm) > 0
-                                         OR POSITION(n.nombre_norm IN v.nombre_norm) > 0 THEN 80
-                                    WHEN LEFT(n.nombre_norm, 5) = LEFT(v.nombre_norm, 5)
-                                         AND LENGTH(n.nombre_norm) >= 5 AND LENGTH(v.nombre_norm) >= 5 THEN 60
-                                    ELSE 0
-                                END DESC,
-                                v.created_at ASC
-                        ) AS rn
-                    FROM nuevos n
-                    INNER JOIN viejos v ON (
-                        n.nombre_norm = v.nombre_norm
-                        OR POSITION(v.nombre_norm IN n.nombre_norm) > 0
-                        OR POSITION(n.nombre_norm IN v.nombre_norm) > 0
-                        OR (LEFT(n.nombre_norm, 5) = LEFT(v.nombre_norm, 5)
-                            AND LENGTH(n.nombre_norm) >= 5 AND LENGTH(v.nombre_norm) >= 5)
-                    )
+                grupos AS (
+                    SELECT nombre_norm, COUNT(*) AS miembros
+                    FROM normalize
+                    GROUP BY nombre_norm
+                    HAVING COUNT(*) >= 2
                 )
                 SELECT
-                    nuevo_id, nuevo_desc, nuevo_created, nuevo_precio,
-                    viejo_id, viejo_desc, viejo_created, viejo_precio,
-                    confidence,
-                    (SELECT COUNT(*) FROM ventas_detalle vd WHERE vd.id_producto = nuevo_id) AS nuevo_ventas,
+                    n.nombre_norm AS group_key,
+                    n.id, n.descripcion, n.created_at, n.precio_venta,
+                    (SELECT COUNT(*) FROM ventas_detalle vd WHERE vd.id_producto = n.id) AS ventas,
                     COALESCE((SELECT SUM(vd.cantidad * vd.precio_unitario)
-                              FROM ventas_detalle vd WHERE vd.id_producto = nuevo_id), 0) AS nuevo_monto,
-                    (SELECT COUNT(*) FROM ventas_detalle vd WHERE vd.id_producto = viejo_id) AS viejo_ventas,
-                    COALESCE((SELECT SUM(vd.cantidad * vd.precio_unitario)
-                              FROM ventas_detalle vd WHERE vd.id_producto = viejo_id), 0) AS viejo_monto
-                FROM pairs
-                WHERE rn = 1 AND confidence > 0
-                ORDER BY confidence DESC, nuevo_created DESC
-            `, [tenantId, cutoff]);
+                              FROM ventas_detalle vd WHERE vd.id_producto = n.id), 0) AS monto
+                FROM normalize n
+                INNER JOIN grupos g ON g.nombre_norm = n.nombre_norm
+                ORDER BY n.nombre_norm, n.created_at ASC
+            `, [tenantId]);
 
-            const pairs = result.rows.map(r => ({
-                nuevoId: r.nuevo_id,
-                nuevoDesc: r.nuevo_desc,
-                nuevoCreated: r.nuevo_created,
-                nuevoPrecio: parseFloat(r.nuevo_precio) || 0,
-                nuevoVentas: parseInt(r.nuevo_ventas) || 0,
-                nuevoMonto: parseFloat(r.nuevo_monto) || 0,
-                viejoId: r.viejo_id,
-                viejoDesc: r.viejo_desc,
-                viejoCreated: r.viejo_created,
-                viejoPrecio: parseFloat(r.viejo_precio) || 0,
-                viejoVentas: parseInt(r.viejo_ventas) || 0,
-                viejoMonto: parseFloat(r.viejo_monto) || 0,
-                confidence: r.confidence
-            }));
+            // Re-agrupar en JS por group_key
+            const groupsMap = new Map();
+            for (const row of result.rows) {
+                if (!groupsMap.has(row.group_key)) {
+                    groupsMap.set(row.group_key, {
+                        groupKey: row.group_key,
+                        members: []
+                    });
+                }
+                groupsMap.get(row.group_key).members.push({
+                    id: row.id,
+                    desc: row.descripcion,
+                    created: row.created_at,
+                    precio: parseFloat(row.precio_venta) || 0,
+                    ventas: parseInt(row.ventas) || 0,
+                    monto: parseFloat(row.monto) || 0,
+                    wasPostBug: new Date(row.created_at) >= cutoff
+                });
+            }
 
-            console.log(`[Productos/DupSuggestion] tenant=${tenantId} cutoff=${cutoff.toISOString()} pairs=${pairs.length}`);
-            res.json({ success: true, data: pairs, cutoff, alreadyCompleted: false });
+            const groups = Array.from(groupsMap.values());
+
+            console.log(`[Productos/DupSuggestion] tenant=${tenantId} cutoff=${cutoff.toISOString()} groups=${groups.length}`);
+            res.json({ success: true, data: groups, cutoff, alreadyCompleted: false });
         } catch (error) {
             console.error('[Productos/DupSuggestion] ❌', error.message);
             res.status(500).json({ success: false, message: 'Error detectando duplicados', error: error.message });
