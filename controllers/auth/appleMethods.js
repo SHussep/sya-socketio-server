@@ -456,6 +456,23 @@ module.exports = {
             }
             console.log(`[Apple Signup] ✅ 9 productos seed creados para tenant ${tenant.id}`);
 
+            // Crear ProductoBranch para cada seed en la sucursal principal.
+            // Misma transacción → si falla, todo el signup hace ROLLBACK.
+            for (const p of seedProducts) {
+                await client.query(`
+                    INSERT INTO producto_branches (
+                        tenant_id, branch_id, product_global_id,
+                        precio_venta, precio_compra, inventario, minimo,
+                        is_active, global_id, created_at, updated_at
+                    ) VALUES ($1, $2, $3, $4, 0, 0, 0, true, gen_random_uuid()::text, NOW(), NOW())
+                `, [
+                    tenant.id, branch.id,
+                    `SEED_PRODUCT_${tenant.id}_${p.id}`,
+                    p.precio
+                ]);
+            }
+            console.log(`[Apple Signup] ✅ 9 producto_branches creados para branch ${branch.id}`);
+
             await client.query('COMMIT');
 
             // Generar tokens
