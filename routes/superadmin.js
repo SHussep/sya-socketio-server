@@ -602,7 +602,10 @@ module.exports = function(pool, io) {
                 ORDER BY b.created_at
             `, [id]);
 
-            // Empleados del tenant
+            // Empleados del tenant + array de sucursales a las que esta asignado.
+            // Owners (is_owner=true) sin filas en employee_branches igual deberian
+            // verse en TODAS las sucursales del tenant — eso lo aplica el desktop;
+            // aqui solo reportamos las asignaciones reales.
             const employeesResult = await pool.query(`
                 SELECT
                     e.id,
@@ -614,7 +617,14 @@ module.exports = function(pool, io) {
                     r.name as role_name,
                     e.is_owner,
                     e.is_active,
-                    e.created_at
+                    e.created_at,
+                    COALESCE(
+                        (SELECT json_agg(json_build_object('id', b.id, 'name', b.name) ORDER BY b.id)
+                         FROM employee_branches eb
+                         JOIN branches b ON eb.branch_id = b.id
+                         WHERE eb.employee_id = e.id),
+                        '[]'::json
+                    ) as branch_assignments
                 FROM employees e
                 LEFT JOIN roles r ON e.role_id = r.id
                 WHERE e.tenant_id = $1
@@ -783,7 +793,8 @@ module.exports = function(pool, io) {
                         roleId: e.role_id,
                         isOwner: e.is_owner,
                         isActive: e.is_active,
-                        createdAt: e.created_at
+                        createdAt: e.created_at,
+                        branchAssignments: e.branch_assignments || []
                     })),
                     telemetry: {
                         appOpens: parseInt(telemetryResult.rows[0]?.app_opens || 0),
