@@ -776,21 +776,37 @@ module.exports = function(pool, io) {
                             autoRenew: l.auto_renew
                         }))
                     },
-                    branches: branchesResult.rows.map(b => ({
-                        id: b.id,
-                        code: b.branch_code,
-                        name: b.name,
-                        address: b.address,
-                        employeeCount: parseInt(b.employee_count) || 0,
-                        totalEmployeeCount: parseInt(b.total_employee_count) || 0,
-                        customerCount: parseInt(b.customer_count) || 0,
-                        hasScale: b.has_scale,
-                        lastActivity: b.last_activity,
-                        isActive: b.is_active,
-                        createdAt: b.created_at,
-                        totalRevenue: parseFloat(b.total_revenue) || 0,
-                        totalSales: parseInt(b.total_sales) || 0
-                    })),
+                    branches: branchesResult.rows.map(b => {
+                        // Online check per-branch: hay algun socket con
+                        // clientType='desktop' en el room 'branch_${id}'?
+                        const roomSockets = io.sockets.adapter.rooms.get(`branch_${b.id}`);
+                        let desktopOnline = false;
+                        if (roomSockets) {
+                            for (const socketId of roomSockets) {
+                                const s = io.sockets.sockets.get(socketId);
+                                if (s && s.clientType === 'desktop') {
+                                    desktopOnline = true;
+                                    break;
+                                }
+                            }
+                        }
+                        return {
+                            id: b.id,
+                            code: b.branch_code,
+                            name: b.name,
+                            address: b.address,
+                            employeeCount: parseInt(b.employee_count) || 0,
+                            totalEmployeeCount: parseInt(b.total_employee_count) || 0,
+                            customerCount: parseInt(b.customer_count) || 0,
+                            hasScale: b.has_scale,
+                            lastActivity: b.last_activity,
+                            isActive: b.is_active,
+                            createdAt: b.created_at,
+                            totalRevenue: parseFloat(b.total_revenue) || 0,
+                            totalSales: parseInt(b.total_sales) || 0,
+                            desktopOnline
+                        };
+                    }),
                     employees: employeesResult.rows.map(e => ({
                         id: e.id,
                         email: e.email,
