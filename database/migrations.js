@@ -3726,6 +3726,22 @@ async function runMigrations() {
                 console.log('[Schema] ⚠️ Migration 063 (backfill producto_branches):', m063err.message);
             }
 
+            // ── Migration 064 (2026-04-25): tenants.products_deduplicated_at ──
+            // Marca por tenant para que el wizard de limpieza de duplicados
+            // de productos solo aparezca una vez. NULL = pendiente.
+            try {
+                const tdcPath = path.join(__dirname, 'migrations', '20260425_tenants_dedup_completed.sql');
+                if (fs.existsSync(tdcPath)) {
+                    const tdcSql = fs.readFileSync(tdcPath, 'utf8');
+                    await client.query(tdcSql);
+                    console.log('[Schema] ✅ Migration 064 (2026-04-25): tenants.products_deduplicated_at ready');
+                } else {
+                    console.error('[Schema] ⚠️ Migration 064: SQL file not found at', tdcPath);
+                }
+            } catch (m064err) {
+                console.log('[Schema] ⚠️ Migration 064 (tenants dedup completed):', m064err.message);
+            }
+
             console.log('[Schema] ✅ Database initialization complete');
 
         } finally {

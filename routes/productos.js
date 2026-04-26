@@ -1733,5 +1733,170 @@ module.exports = (pool, io) => {
         }
     });
 
+    // ═══════════════════════════════════════════════════════════════
+    // GET /api/productos/duplicates-suggestion/:tenantId
+    // Wizard de limpieza post-bug v1.3.0.0. Detecta productos creados
+    // después de la primera vez que el tenant subió app_version 1.3.x
+    // a telemetry, y los empareja con productos previos cuyo nombre
+    // normalizado sea igual o muy parecido.
+    // Productos sin match con ninguno previo NO se devuelven (el dueño
+    // probablemente sí quería crearlos como nuevos).
+    // Si tenants.products_deduplicated_at != NULL → array vacío
+    // (ya completó el flujo, no insistir).
+    // ═══════════════════════════════════════════════════════════════
+    router.get('/duplicates-suggestion/:tenantId', async (req, res) => {
+        try {
+            const tenantId = parseInt(req.params.tenantId);
+            if (!tenantId) {
+                return res.status(400).json({ success: false, message: 'tenantId inválido' });
+            }
+
+            // ¿Ya completó el flujo? → no insistir
+            const tenantCheck = await pool.query(
+                'SELECT products_deduplicated_at FROM tenants WHERE id = $1',
+                [tenantId]
+            );
+            if (tenantCheck.rows.length === 0) {
+                return res.status(404).json({ success: false, message: 'Tenant no encontrado' });
+            }
+            if (tenantCheck.rows[0].products_deduplicated_at != null) {
+                return res.json({ success: true, data: [], alreadyCompleted: true });
+            }
+
+            // Fecha de corte = primera vez que el tenant reportó app_version 1.3.x
+            // Si nunca reportó (raro pero posible), usar 2026-04-15 como fallback global
+            const cutoffResult = await pool.query(
+                `SELECT MIN(event_timestamp) AS cutoff
+                 FROM telemetry_events
+                 WHERE tenant_id = $1 AND app_version LIKE '1.3.%'`,
+                [tenantId]
+            );
+            const cutoff = cutoffResult.rows[0].cutoff || new Date('2026-04-15T00:00:00Z');
+
+            // Detección de pares (nuevo + posible original) con datos comparativos.
+            // Match por nombre normalizado (minúsculas, sin acentos, sin caracteres no alfanum).
+            // Bonus match: primeros 5 chars normalizados iguales O substring.
+            const result = await pool.query(`
+                WITH normalize AS (
+                    SELECT id, descripcion, created_at, precio_venta,
+                           LOWER(TRIM(REGEXP_REPLACE(
+                               TRANSLATE(descripcion, 'áéíóúÁÉÍÓÚñÑüÜ', 'aeiouAEIOUnNuU'),
+                               '[^a-zA-Z0-9 ]', '', 'g'
+                           ))) AS nombre_norm
+                    FROM productos
+                    WHERE tenant_id = $1 AND eliminado = false
+                ),
+                nuevos AS (
+                    SELECT * FROM normalize WHERE created_at >= $2
+                ),
+                viejos AS (
+                    SELECT * FROM normalize WHERE created_at < $2
+                ),
+                pairs AS (
+                    SELECT
+                        n.id AS nuevo_id, n.descripcion AS nuevo_desc,
+                        n.created_at AS nuevo_created, n.precio_venta AS nuevo_precio,
+                        v.id AS viejo_id, v.descripcion AS viejo_desc,
+                        v.created_at AS viejo_created, v.precio_venta AS viejo_precio,
+                        CASE
+                            WHEN n.nombre_norm = v.nombre_norm THEN 100
+                            WHEN POSITION(v.nombre_norm IN n.nombre_norm) > 0
+                                 OR POSITION(n.nombre_norm IN v.nombre_norm) > 0 THEN 80
+                            WHEN LEFT(n.nombre_norm, 5) = LEFT(v.nombre_norm, 5)
+                                 AND LENGTH(n.nombre_norm) >= 5 AND LENGTH(v.nombre_norm) >= 5 THEN 60
+                            ELSE 0
+                        END AS confidence,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY n.id
+                            ORDER BY
+                                CASE
+                                    WHEN n.nombre_norm = v.nombre_norm THEN 100
+                                    WHEN POSITION(v.nombre_norm IN n.nombre_norm) > 0
+                                         OR POSITION(n.nombre_norm IN v.nombre_norm) > 0 THEN 80
+                                    WHEN LEFT(n.nombre_norm, 5) = LEFT(v.nombre_norm, 5)
+                                         AND LENGTH(n.nombre_norm) >= 5 AND LENGTH(v.nombre_norm) >= 5 THEN 60
+                                    ELSE 0
+                                END DESC,
+                                v.created_at ASC
+                        ) AS rn
+                    FROM nuevos n
+                    INNER JOIN viejos v ON (
+                        n.nombre_norm = v.nombre_norm
+                        OR POSITION(v.nombre_norm IN n.nombre_norm) > 0
+                        OR POSITION(n.nombre_norm IN v.nombre_norm) > 0
+                        OR (LEFT(n.nombre_norm, 5) = LEFT(v.nombre_norm, 5)
+                            AND LENGTH(n.nombre_norm) >= 5 AND LENGTH(v.nombre_norm) >= 5)
+                    )
+                )
+                SELECT
+                    nuevo_id, nuevo_desc, nuevo_created, nuevo_precio,
+                    viejo_id, viejo_desc, viejo_created, viejo_precio,
+                    confidence,
+                    (SELECT COUNT(*) FROM ventas_detalle vd WHERE vd.id_producto = nuevo_id) AS nuevo_ventas,
+                    COALESCE((SELECT SUM(vd.cantidad * vd.precio_unitario)
+                              FROM ventas_detalle vd WHERE vd.id_producto = nuevo_id), 0) AS nuevo_monto,
+                    (SELECT COUNT(*) FROM ventas_detalle vd WHERE vd.id_producto = viejo_id) AS viejo_ventas,
+                    COALESCE((SELECT SUM(vd.cantidad * vd.precio_unitario)
+                              FROM ventas_detalle vd WHERE vd.id_producto = viejo_id), 0) AS viejo_monto
+                FROM pairs
+                WHERE rn = 1 AND confidence > 0
+                ORDER BY confidence DESC, nuevo_created DESC
+            `, [tenantId, cutoff]);
+
+            const pairs = result.rows.map(r => ({
+                nuevoId: r.nuevo_id,
+                nuevoDesc: r.nuevo_desc,
+                nuevoCreated: r.nuevo_created,
+                nuevoPrecio: parseFloat(r.nuevo_precio) || 0,
+                nuevoVentas: parseInt(r.nuevo_ventas) || 0,
+                nuevoMonto: parseFloat(r.nuevo_monto) || 0,
+                viejoId: r.viejo_id,
+                viejoDesc: r.viejo_desc,
+                viejoCreated: r.viejo_created,
+                viejoPrecio: parseFloat(r.viejo_precio) || 0,
+                viejoVentas: parseInt(r.viejo_ventas) || 0,
+                viejoMonto: parseFloat(r.viejo_monto) || 0,
+                confidence: r.confidence
+            }));
+
+            console.log(`[Productos/DupSuggestion] tenant=${tenantId} cutoff=${cutoff.toISOString()} pairs=${pairs.length}`);
+            res.json({ success: true, data: pairs, cutoff, alreadyCompleted: false });
+        } catch (error) {
+            console.error('[Productos/DupSuggestion] ❌', error.message);
+            res.status(500).json({ success: false, message: 'Error detectando duplicados', error: error.message });
+        }
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // POST /api/productos/mark-dedup-completed/:tenantId
+    // Marca el tenant como "ya pasó por el wizard" para no volver a
+    // mostrarlo. Se llama tras confirmar limpieza O tras dismiss explícito.
+    // ═══════════════════════════════════════════════════════════════
+    router.post('/mark-dedup-completed/:tenantId', async (req, res) => {
+        try {
+            const tenantId = parseInt(req.params.tenantId);
+            if (!tenantId) {
+                return res.status(400).json({ success: false, message: 'tenantId inválido' });
+            }
+
+            const result = await pool.query(
+                `UPDATE tenants SET products_deduplicated_at = NOW()
+                 WHERE id = $1 AND products_deduplicated_at IS NULL
+                 RETURNING products_deduplicated_at`,
+                [tenantId]
+            );
+
+            console.log(`[Productos/MarkDedup] tenant=${tenantId} marked at ${result.rows[0]?.products_deduplicated_at || 'already done'}`);
+            res.json({
+                success: true,
+                completedAt: result.rows[0]?.products_deduplicated_at || null,
+                wasAlreadyCompleted: result.rows.length === 0
+            });
+        } catch (error) {
+            console.error('[Productos/MarkDedup] ❌', error.message);
+            res.status(500).json({ success: false, message: 'Error marcando dedup', error: error.message });
+        }
+    });
+
     return router;
 };
