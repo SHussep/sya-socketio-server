@@ -390,16 +390,26 @@ module.exports = {
 
             const tenant = tenantResult.rows[0];
 
-            // License gate (v1.3.1): mobile no selecciona branch en handshake.
-            // Si tenant está en 'active' caemos a scope 'tenant' por compat —
-            // las acciones del POS validan su licencia branch en cada request.
+            // License gate móvil (Apple Guideline 3.1.3(b)): NO bloqueamos login
+            // por licencia vencida. El cliente oculta features (POS) silenciosamente
+            // leyendo licenseBlock.status === 'expired'. Las acciones de venta del POS
+            // validan licencia per-branch en cada request (server-side enforcement).
             const gate = await evaluateLicense(this.pool, tenant, null);
-            if (!gate.ok) {
-                console.log(`[Mobile Login] ❌ ${gate.error} tenant=${tenant.id}`);
-                return res.status(403).json(licenseGateErrorResponse(gate, tenant.business_name));
+            let licenseBlock;
+            if (gate.ok) {
+                licenseBlock = buildLicenseBlock(gate);
+                console.log(`[Mobile Login] ✅ Licencia OK [${gate.scope}] tenant=${tenant.id} daysRemaining=${gate.daysRemaining ?? 'ilimitado'}`);
+            } else {
+                licenseBlock = {
+                    expiresAt: gate.expiresAt ?? null,
+                    daysRemaining: gate.daysExpired != null ? -gate.daysExpired : -1,
+                    scope: gate.scope ?? 'trial',
+                    licenseId: gate.licenseId ?? null,
+                    isTrial: gate.isTrial ?? false,
+                    status: 'expired'
+                };
+                console.log(`[Mobile Login] ⚠️ Licencia vencida (${gate.error}) tenant=${tenant.id} — login permitido en modo restringido`);
             }
-            const licenseBlock = buildLicenseBlock(gate);
-            console.log(`[Mobile Login] ✅ Licencia OK [${gate.scope}] tenant=${tenant.id} daysRemaining=${gate.daysRemaining ?? 'ilimitado'}`);
 
             // Query simplificado - sin columnas de permisos que pueden no existir
             const branchesResult = await this.pool.query(`
