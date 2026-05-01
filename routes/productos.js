@@ -497,6 +497,15 @@ module.exports = (pool, io) => {
             // tener su propio precio configurado independientemente del catálogo).
             if (branch_id && (inventario !== undefined || minimo !== undefined)) {
                 try {
+                    // node-postgres serializa NUMERIC como string ("17.00"). Si en
+                    // producción la columna quedó como INTEGER (schema legacy),
+                    // pasar el string crudo dispara "invalid input syntax for type
+                    // integer: 17.00". parseFloat normaliza a Number antes del query.
+                    const precioVentaNum = parseFloat(producto.precio_venta) || 0;
+                    const precioCompraNum = parseFloat(producto.precio_compra) || 0;
+                    const inventarioNum = inventario != null ? parseFloat(inventario) : null;
+                    const minimoNum = minimo != null ? parseFloat(minimo) : null;
+
                     await pool.query(
                         `INSERT INTO producto_branches (
                             tenant_id, branch_id, product_global_id,
@@ -511,8 +520,8 @@ module.exports = (pool, io) => {
                             updated_at = NOW()`,
                         [
                             tenant_id, branch_id, producto.global_id,
-                            producto.precio_venta, producto.precio_compra,
-                            inventario ?? null, minimo ?? null
+                            precioVentaNum, precioCompraNum,
+                            inventarioNum, minimoNum
                         ]
                     );
                     console.log(`[Productos/Sync] ✅ producto_branches actualizado: branch=${branch_id}, precio=${producto.precio_venta}, inventario=${inventario}, minimo=${minimo}`);

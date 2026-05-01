@@ -51,12 +51,23 @@ function initializeFirebase() {
 }
 
 /**
- * Envía notificación FCM a un dispositivo específico
+ * Envía notificación FCM a un dispositivo específico.
+ *
+ * dataOnly: cuando true, omite el campo `notification:` y envía solo `data:`.
+ * Necesario para flujos donde la app móvil construye su propia notificación
+ * local (flutter_local_notifications) — incluir `notification:` causaba doble
+ * notificación en Android porque el SO la mostraba auto y la app además
+ * llamaba a show() desde onMessage. iOS ya lo evita con
+ * setForegroundNotificationPresentationOptions(alert: false).
+ *
+ * En data-only, los strings `title` y `body` se incluyen dentro de `data` para
+ * que la app pueda renderizar la notif local con el mismo contenido.
  */
 async function sendNotificationToDevice(deviceToken, {
     title = 'SYA Notificación',
     body = '',
-    data = {}
+    data = {},
+    dataOnly = false
 } = {}) {
     if (!firebaseInitialized || !admin.apps.length) {
         console.warn('⚠️ Firebase not initialized, cannot send notification');
@@ -64,34 +75,42 @@ async function sendNotificationToDevice(deviceToken, {
     }
 
     try {
+        // FCM data fields deben ser strings — convertir cualquier number/bool
+        // a string para evitar "must only contain string values" del SDK admin.
+        const stringifiedData = {};
+        for (const [k, v] of Object.entries(data || {})) {
+            if (v == null) continue;
+            stringifiedData[k] = typeof v === 'string' ? v : String(v);
+        }
+
         const message = {
-            notification: {
-                title,
-                body
-            },
-            data,
+            data: dataOnly
+                ? { ...stringifiedData, title: String(title), body: String(body) }
+                : stringifiedData,
             token: deviceToken,
-            // Configuraciones específicas
             android: {
                 priority: 'high',
-                ttl: 3600 // 1 hora
+                ttl: 3600
             },
             apns: {
                 headers: {
                     'apns-priority': '10'
                 },
                 payload: {
-                    aps: {
-                        alert: {
-                            title: title,
-                            body: body
-                        },
-                        sound: 'default',
-                        badge: 1
-                    }
+                    aps: dataOnly
+                        // En iOS data-only debe ir content-available para wake en background.
+                        ? { 'content-available': 1 }
+                        : {
+                            alert: { title, body },
+                            sound: 'default',
+                            badge: 1
+                        }
                 }
             }
         };
+        if (!dataOnly) {
+            message.notification = { title, body };
+        }
 
         const response = await admin.messaging().send(message);
         console.log(`[FCM] ✅ Notificación enviada a dispositivo: ${response}`);
@@ -123,7 +142,9 @@ async function sendNotificationToDevice(deviceToken, {
 }
 
 /**
- * Envía notificación a múltiples dispositivos
+ * Envía notificación a múltiples dispositivos.
+ * notificationData puede incluir dataOnly:true para omitir el campo
+ * `notification:` y dejar que la app construya su propia notif local.
  */
 async function sendNotificationToMultipleDevices(deviceTokens, notificationData) {
     if (!firebaseInitialized || !admin.apps.length) {

@@ -176,11 +176,15 @@ async function sendNotificationToBranch(branchId, { title, body, data = {} }) {
  * Útil para eventos que solo los supervisores deben ver (login, alertas, etc.)
  * @param {number} branchId - ID de la sucursal
  * @param {object} notification - { title, body, data }
- * @param {object} options - { excludeEmployeeGlobalId: string, notificationType: string } - Opciones de filtrado
+ * @param {object} options - { excludeEmployeeGlobalId, notificationType, dataOnly } - Opciones de filtrado.
+ *   dataOnly:true → omite el campo `notification:` del payload FCM. Necesario para
+ *   tipos de notificación donde la app móvil construye su propia notif local
+ *   (caso scale_alert: evita doble notificación porque Android mostraba la auto
+ *   del payload + la local de showScaleAlertNotification).
  */
 async function sendNotificationToAdminsInBranch(branchId, { title, body, data = {} }, options = {}) {
     try {
-        const { excludeEmployeeGlobalId, notificationType } = options;
+        const { excludeEmployeeGlobalId, notificationType, dataOnly = false } = options;
 
         // Obtener ID numérico del empleado a excluir (si se especificó)
         let excludeEmployeeId = null;
@@ -239,7 +243,8 @@ async function sendNotificationToAdminsInBranch(branchId, { title, body, data = 
         const results = await sendNotificationToMultipleDevices(deviceTokens, {
             title,
             body,
-            data
+            data,
+            dataOnly
         });
 
         const successCount = results.filter(r => r.success).length;
@@ -554,6 +559,9 @@ async function notifyScaleAlert(branchId, { severity, eventType, details, employ
 
     console.log(`[NotificationHelper] 🎯 Guardian Alert: ${eventType} → categoría: ${resolvedCategory}, fuente: ${sourceLabel}`);
 
+    // dataOnly:true → la app móvil construye su propia notif local desde fcm_service.
+    // Sin esto, Android mostraba 1 notif del payload `notification:` + 1 local
+    // de showScaleAlertNotification = doble notificación.
     return await sendNotificationToAdminsInBranch(branchId, {
         title: `Alerta de Báscula [${severityText}] — ${sourceLabel}`,
         body: `${eventType}: ${details} (${employeeName})`,
@@ -565,7 +573,7 @@ async function notifyScaleAlert(branchId, { severity, eventType, details, employ
             details,
             simpleCategory: resolvedCategory
         }
-    }, notificationType ? { notificationType } : {});
+    }, { notificationType, dataOnly: true });
 }
 
 /**
