@@ -97,3 +97,64 @@ describe('super-admin-backups (placeholder)', () => {
         expect(() => makeApp(pool)).not.toThrow();
     });
 });
+
+describe('POST /api/super-admin/backups/temp-link', () => {
+    test('400 when backup_id missing', async () => {
+        const pool = { query: jest.fn() };
+        const app = makeApp(pool);
+        const res = await request(app)
+            .post('/api/super-admin/backups/temp-link')
+            .set('Authorization', `Bearer ${signSuperAdminJwt()}`)
+            .send({});
+        expect(res.status).toBe(400);
+    });
+
+    test('404 when backup_id not found', async () => {
+        const pool = { query: jest.fn().mockResolvedValue({ rowCount: 0, rows: [] }) };
+        const app = makeApp(pool);
+        const res = await request(app)
+            .post('/api/super-admin/backups/temp-link')
+            .set('Authorization', `Bearer ${signSuperAdminJwt()}`)
+            .send({ backup_id: 9999 });
+        expect(res.status).toBe(404);
+    });
+
+    test('200 returns temp_link and expires_at on success', async () => {
+        const dropboxManager = require('../utils/dropbox-manager');
+        dropboxManager.getClient.mockResolvedValue({
+            filesGetTemporaryLink: jest.fn().mockResolvedValue({
+                result: { link: 'https://dl.dropboxusercontent.com/abc123' }
+            })
+        });
+        const pool = { query: jest.fn().mockResolvedValue({
+            rowCount: 1, rows: [{ backup_path: '/tenants/7/branches/12/backup.sdf' }]
+        }) };
+        const app = makeApp(pool);
+        const before = Date.now();
+        const res = await request(app)
+            .post('/api/super-admin/backups/temp-link')
+            .set('Authorization', `Bearer ${signSuperAdminJwt()}`)
+            .send({ backup_id: 4521 });
+        expect(res.status).toBe(200);
+        expect(res.body.temp_link).toBe('https://dl.dropboxusercontent.com/abc123');
+        const expires = new Date(res.body.expires_at).getTime();
+        expect(expires).toBeGreaterThan(before + 4 * 3600_000 - 60_000);
+        expect(expires).toBeLessThan(before + 4 * 3600_000 + 60_000);
+    });
+
+    test('502 when Dropbox call fails', async () => {
+        const dropboxManager = require('../utils/dropbox-manager');
+        dropboxManager.getClient.mockResolvedValue({
+            filesGetTemporaryLink: jest.fn().mockRejectedValue(new Error('dropbox boom'))
+        });
+        const pool = { query: jest.fn().mockResolvedValue({
+            rowCount: 1, rows: [{ backup_path: '/x' }]
+        }) };
+        const app = makeApp(pool);
+        const res = await request(app)
+            .post('/api/super-admin/backups/temp-link')
+            .set('Authorization', `Bearer ${signSuperAdminJwt()}`)
+            .send({ backup_id: 1 });
+        expect(res.status).toBe(502);
+    });
+});

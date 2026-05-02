@@ -1,4 +1,5 @@
 const express = require('express');
+const dropboxManager = require('../utils/dropbox-manager');
 
 const LIST_SQL = `
     SELECT DISTINCT ON (bm.tenant_id, bm.branch_id)
@@ -59,6 +60,32 @@ module.exports = function createSuperAdminBackupsRouter(pool) {
         } catch (err) {
             console.error('[super-admin-backups] /list error:', err);
             res.status(500).json({ success: false, error: 'internal' });
+        }
+    });
+
+    router.post('/temp-link', express.json(), async (req, res) => {
+        const backupId = Number(req.body?.backup_id);
+        if (!Number.isInteger(backupId) || backupId <= 0) {
+            return res.status(400).json({ success: false, error: 'invalid_backup_id' });
+        }
+        try {
+            const lookup = await pool.query(
+                'SELECT backup_path FROM backup_metadata WHERE id = $1 LIMIT 1',
+                [backupId]
+            );
+            if (lookup.rowCount === 0) {
+                return res.status(404).json({ success: false, error: 'not_found' });
+            }
+            const backupPath = lookup.rows[0].backup_path;
+            const dbx = await dropboxManager.getClient();
+            const result = await dbx.filesGetTemporaryLink({ path: backupPath });
+            const tempLink = result?.result?.link || result?.link;
+            if (!tempLink) throw new Error('dropbox_no_link');
+            const expiresAt = new Date(Date.now() + 4 * 3600_000).toISOString();
+            return res.json({ temp_link: tempLink, expires_at: expiresAt });
+        } catch (err) {
+            console.error('[super-admin-backups] /temp-link error:', err.message);
+            return res.status(502).json({ success: false, error: 'dropbox_failure', detail: err.message });
         }
     });
 
