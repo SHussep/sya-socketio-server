@@ -1092,6 +1092,7 @@ module.exports = function(pool, io) {
             await safeDel('DELETE FROM followup_emails WHERE tenant_id = $1', [id]);
             await safeDel('DELETE FROM sessions WHERE tenant_id = $1', [id]);
             await safeDel('DELETE FROM beta_enrollments WHERE tenant_id = $1', [id]);
+            await safeDel('DELETE FROM beta_enrollment_emails WHERE tenant_id = $1', [id]);
 
             // ── Phase 9: Devices ──
             await safeDel('DELETE FROM device_tokens WHERE employee_id IN (SELECT id FROM employees WHERE tenant_id = $1)', [id]);
@@ -3691,27 +3692,98 @@ body{background:#080e1a;font-family:'Inter','Segoe UI',sans-serif;min-height:100
 
     // ─────────────────────────────────────────────────────────
     // GET /api/superadmin/beta-enrollments
-    // List all tenants who requested beta / more info
+    // Lista agrupada por tenant con sus correos beta
     // ─────────────────────────────────────────────────────────
     router.get('/beta-enrollments', async (req, res) => {
         try {
             const result = await pool.query(`
-                SELECT be.id, be.tenant_id, be.employee_id, be.email,
-                       be.business_name, be.platform, be.enrolled_at,
+                SELECT bee.id, bee.tenant_id, bee.email, bee.platform,
+                       bee.enrolled_at, bee.invitation_sent_at,
                        t.business_name as tenant_name
-                FROM beta_enrollments be
-                LEFT JOIN tenants t ON t.id = be.tenant_id
-                ORDER BY be.enrolled_at DESC
+                FROM beta_enrollment_emails bee
+                LEFT JOIN tenants t ON t.id = bee.tenant_id
+                ORDER BY bee.tenant_id, bee.enrolled_at
             `);
 
-            res.json({
-                success: true,
-                count: result.rows.length,
-                data: result.rows
-            });
+            // Agrupar por tenant_id
+            const byTenant = new Map();
+            for (const row of result.rows) {
+                let group = byTenant.get(row.tenant_id);
+                if (!group) {
+                    group = {
+                        tenant_id: row.tenant_id,
+                        tenant_name: row.tenant_name,
+                        emails: [],
+                    };
+                    byTenant.set(row.tenant_id, group);
+                }
+                group.emails.push({
+                    id: row.id,
+                    email: row.email,
+                    platform: row.platform,
+                    enrolled_at: row.enrolled_at,
+                    invitation_sent_at: row.invitation_sent_at,
+                });
+            }
+
+            const data = [...byTenant.values()].map(g => ({
+                ...g,
+                any_pending: g.emails.some(e => !e.invitation_sent_at),
+                all_invited: g.emails.length > 0 && g.emails.every(e => e.invitation_sent_at),
+            }));
+
+            res.json({ success: true, count: data.length, data });
         } catch (error) {
             console.error('[Beta Enrollments] Error:', error);
             res.status(500).json({ success: false, message: 'Error al obtener beta enrollments' });
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
+    // POST /api/superadmin/beta-enrollments/:emailId/mark-invited
+    // Marca un correo como ya invitado (Saul lo llama al enviar email/WhatsApp)
+    // ─────────────────────────────────────────────────────────
+    router.post('/beta-enrollments/:emailId/mark-invited', async (req, res) => {
+        try {
+            const { emailId } = req.params;
+            const result = await pool.query(
+                `UPDATE beta_enrollment_emails
+                 SET invitation_sent_at = NOW()
+                 WHERE id = $1
+                 RETURNING id, tenant_id, email, platform, enrolled_at, invitation_sent_at`,
+                [emailId]
+            );
+            if (result.rowCount === 0) {
+                return res.status(404).json({ success: false, message: 'no encontrado' });
+            }
+            res.json({ success: true, data: result.rows[0] });
+        } catch (error) {
+            console.error('[Beta mark-invited] Error:', error);
+            res.status(500).json({ success: false, message: 'Error al marcar invitado' });
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────
+    // POST /api/superadmin/beta-enrollments/:emailId/mark-uninvited
+    // Undo manual
+    // ─────────────────────────────────────────────────────────
+    router.post('/beta-enrollments/:emailId/mark-uninvited', async (req, res) => {
+        try {
+            const { emailId } = req.params;
+            const result = await pool.query(
+                `UPDATE beta_enrollment_emails
+                 SET invitation_sent_at = NULL
+                 WHERE id = $1
+                 RETURNING id, tenant_id, email, platform, enrolled_at, invitation_sent_at`,
+                [emailId]
+            );
+            if (result.rowCount === 0) {
+                return res.status(404).json({ success: false, message: 'no encontrado' });
+            }
+            res.json({ success: true, data: result.rows[0] });
+        } catch (error) {
+            console.error('[Beta mark-uninvited] Error:', error);
+            res.status(500).json({ success: false, message: 'Error al desmarcar' });
         }
     });
 
