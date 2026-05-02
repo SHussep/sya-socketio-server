@@ -170,6 +170,7 @@ app.use('/api/backup', backupRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/auth', masterAuthRoutes(pool));
 app.use('/api/auth/super-admin', require('./routes/super-admin-auth'));
+app.use('/api/super-admin/backups', require('./middleware/superAdminAuth'), require('./routes/super-admin-backups')(pool));
 app.use('/api/password-reset', passwordResetRoutes);
 app.use('/api/devices', devicesRoutes(pool));
 app.use('/api/notifications', notificationRoutes);
