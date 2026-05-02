@@ -2317,6 +2317,48 @@ async function runMigrations() {
                 console.error(`[Schema] ⚠️ beta_enrollments migration error: ${beErr.message}`);
             }
 
+            // ═══════════════════════════════════════════════════════════════
+            // Migration 023: beta_enrollment_emails - múltiples correos por tenant
+            // ═══════════════════════════════════════════════════════════════
+            console.log('[Schema] 🔍 Checking beta_enrollment_emails table (Migration 023)...');
+            try {
+                await client.query(`
+                    CREATE TABLE IF NOT EXISTS beta_enrollment_emails (
+                        id SERIAL PRIMARY KEY,
+                        tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                        email VARCHAR(255) NOT NULL,
+                        platform VARCHAR(20) NOT NULL DEFAULT 'both'
+                            CHECK (platform IN ('ios','android','both')),
+                        enrolled_at TIMESTAMPTZ DEFAULT NOW(),
+                        invitation_sent_at TIMESTAMPTZ
+                    )
+                `);
+                await client.query(`
+                    CREATE UNIQUE INDEX IF NOT EXISTS beta_enrollment_emails_tenant_email_idx
+                        ON beta_enrollment_emails (tenant_id, lower(email))
+                `);
+                await client.query(`
+                    ALTER TABLE beta_enrollment_emails
+                        ADD COLUMN IF NOT EXISTS invitation_sent_at TIMESTAMPTZ
+                `);
+                // Backfill desde la tabla vieja, solo si existe y tiene datos
+                await client.query(`
+                    DO $$
+                    BEGIN
+                        IF EXISTS (SELECT FROM information_schema.tables
+                                   WHERE table_name = 'beta_enrollments') THEN
+                            INSERT INTO beta_enrollment_emails (tenant_id, email, platform, enrolled_at)
+                            SELECT tenant_id, email, COALESCE(platform,'both'), enrolled_at
+                            FROM beta_enrollments
+                            ON CONFLICT (tenant_id, lower(email)) DO NOTHING;
+                        END IF;
+                    END $$;
+                `);
+                console.log('[Schema] ✅ beta_enrollment_emails table ready');
+            } catch (beeErr) {
+                console.error(`[Schema] ⚠️ beta_enrollment_emails migration error: ${beeErr.message}`);
+            }
+
             // Patch: Add liquidaciones columns to cash_cuts (for consolidated repartidor liquidations in cash cuts)
             console.log('[Schema] 🔍 Checking cash_cuts liquidaciones columns...');
             const checkCashCutsTable = await client.query(`
